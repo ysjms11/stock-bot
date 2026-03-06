@@ -65,20 +65,19 @@ async def get_foreign_flow(ticker: str, token: str):
 
 # /start 명령어
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = """
-🤖 *주식 분석 봇 시작!*
-
-사용 가능한 명령어:
-/portfolio - 보유 종목 현황
-/analyze 종목코드 - 종목 분석
-/help - 도움말
-    """
+    msg = (
+        "🤖 *주식 분석 봇 시작!*\n\n"
+        "사용 가능한 명령어:\n"
+        "/portfolio - 보유 종목 현황\n"
+        "/analyze 종목코드 - 종목 분석\n"
+        "/help - 도움말"
+    )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 # /portfolio 명령어
 async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ 포트폴리오 조회 중...")
-    
+
     # 보유 종목 (티커: 종목명, 수량, 평균단가)
     holdings = {
         "009540": ("HD한국조선해양", 50, 0),
@@ -87,18 +86,18 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "267260": ("HD현대일렉트릭", 3, 0),
         "034020": ("두산에너빌리티", 19, 0),
     }
-    
+
     try:
         token = await get_kis_token()
         msg = "📊 *보유 종목 현황*\n\n"
-        
+
         for ticker, (name, qty, avg) in holdings.items():
-            price_data = get_stock_price(ticker, token)
+            price_data = await get_stock_price(ticker, token)  # ← await 추가 (버그 수정)
             await asyncio.sleep(0.3)  # API 제한
-            
+
         msg += "_KIS API 실제 연동 후 가격 표시됩니다_"
         await update.message.reply_text(msg, parse_mode="Markdown")
-        
+
     except Exception as e:
         await update.message.reply_text(f"❌ 오류 발생: {str(e)}\n\nAPI 키를 확인해주세요.")
 
@@ -107,43 +106,38 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("사용법: /analyze 005930 (삼성전자 예시)")
         return
-    
+
     ticker = context.args[0]
     await update.message.reply_text(f"⏳ {ticker} 분석 중...")
-    
-    msg = f"""
-📈 *{ticker} 분석*
 
-현재가: KIS API 연동 필요
-등락률: -
-거래량: -
-외국인: -
-기관: -
-
-_실제 데이터는 KIS API 키 설정 후 표시됩니다_
-    """
+    msg = (
+        f"📈 *{ticker} 분석*\n\n"
+        "현재가: KIS API 연동 필요\n"
+        "등락률: -\n"
+        "거래량: -\n"
+        "외국인: -\n"
+        "기관: -\n\n"
+        "_실제 데이터는 KIS API 키 설정 후 표시됩니다_"
+    )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# /help 명령어  
+# /help 명령어
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = """
-📖 *도움말*
-
-/portfolio - 보유 종목 손익 현황
-/analyze [코드] - 특정 종목 분석
-  예) /analyze 034020 (두산에너빌리티)
-/help - 이 메시지
-
-🔔 *자동 알림*
-- 매일 장 마감 후 외국인 순매수 요약
-- 이상 신호 감지 시 즉시 알림
-    """
+    msg = (
+        "📖 *도움말*\n\n"
+        "/portfolio - 보유 종목 손익 현황\n"
+        "/analyze [코드] - 특정 종목 분석\n"
+        "  예) /analyze 034020 (두산에너빌리티)\n"
+        "/help - 이 메시지\n\n"
+        "🔔 *자동 알림*\n"
+        "- 매일 장 마감 후 외국인 순매수 요약\n"
+        "- 이상 신호 감지 시 즉시 알림"
+    )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# 봇 시작 알림
-async def send_startup_message():
-    bot = Bot(token=TELEGRAM_TOKEN)
-    await bot.send_message(
+# 봇 시작 후 알림 (post_init 콜백)
+async def post_init(application: Application):
+    await application.bot.send_message(
         chat_id=CHAT_ID,
         text="✅ *주식 봇 시작됨!*\n\n/help 로 명령어 확인하세요",
         parse_mode="Markdown"
@@ -151,16 +145,13 @@ async def send_startup_message():
 
 def main():
     print("봇 시작 중...")
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("portfolio", portfolio))
     app.add_handler(CommandHandler("analyze", analyze))
     app.add_handler(CommandHandler("help", help_cmd))
-    
-    # 시작 알림 보내기
-    asyncio.get_event_loop().run_until_complete(send_startup_message())
-    
+
     print("봇 실행 중!")
     app.run_polling()
 
