@@ -271,10 +271,33 @@ def save_target_history(data):
     save_json(TARGET_HISTORY_FILE, data)
 
 
-async def get_hankyung_consensus(ticker):
-    """한경 컨센서스 페이지에서 목표가/투자의견/리포트 크롤링"""
-    url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
+def strip_html(html):
+    """HTML 태그 제거 → 순수 텍스트"""
+    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text
 
+
+def find_stock_name_from_watchlist(ticker):
+    """워치리스트에서 종목명 조회"""
+    wl = load_watchlist()
+    return wl.get(ticker, "")
+
+
+def find_ticker_from_name(name):
+    """종목명으로 티커 찾기 (워치리스트 기반)"""
+    wl = load_watchlist()
+    for ticker, wname in wl.items():
+        if name in wname or wname in name:
+            return ticker
+    return None
+
+
+async def get_hankyung_consensus(ticker):
+    """한경 컨센서스에서 목표가/투자의견/리포트 크롤링"""
+    url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers={
@@ -282,52 +305,66 @@ async def get_hankyung_consensus(ticker):
             }) as resp:
                 if resp.status != 200:
                     return None
-
                 html = await resp.text()
-                result = {"ticker": ticker, "reports": []}
+                text = strip_html(html)
+                result = {"ticker": ticker, "reports": [], "stock_name": ""}
 
-                # 컨센서스 목표가 추출 (목표가 333,333 원)
-                target_match = re.search(r'목표가.*?(\d[\d,]+)\s*원', html)
-                if target_match:
-                    result["consensus_target"] = int(target_match.group(1).replace(",", ""))
+                # 종목명 추출 (페이지 타이틀: "삼성전자-컨센서스")
+                name_m = re.search(r'<title>([^-<]+)', html)
+                if name_m:
+                    result["stock_name"] = name_m.group(1).strip()
 
-                # 투자의견 추출
-                opinion_match = re.search(r'투자의견.*?<[^>]*>\s*\*\*(매수|보유|매도|강력매수|강력매도)\*\*', html)
-                if not opinion_match:
-                    opinion_match = re.search(r'투자의견[^<]*</td>.*?<td[^>]*>.*?\*\*(매수|보유|매도)\*\*', html, re.DOTALL)
-                if opinion_match:
-                    result["opinion"] = opinion_match.group(1)
+                # 컨센서스 목표가 (테이블: 목표가 78,971 원)
+                # HTML에서 목표가 뒤의 숫자 찾기 (종가보다 뒤에 나옴)
+                target_m = re.search(r'목표가[^0-9]*?(\d[\d,]+)\s*원', text)
+                if target_m:
+                    result["consensus_target"] = int(target_m.group(1).replace(",", ""))
 
-                # 개별 리포트 추출 (투자의견, 목표주가, 발표일, 작성자, 발행기관)
-                report_blocks = re.findall(
-                    r'투자의견\s*:\s*(매수|보유|매도|강력매수|강력매도|Buy|Hold|Sell).*?'
-                    r'목표주가\s*:\s*([\d,]+).*?원.*?'
-                    r'발표일\s*:\s*([\d.]+).*?'
-                    r'작성자\s*:\s*([^\n<]+?)(?:\s*발행기관|\s*</)',
-                    html, re.DOTALL
+                # 투자의견 (강력매수/매수/보유/매도/강력매도)
+                opinion_m = re.search(r'투자의견.*?(강력매수|강력매도|매수|보유|매도)', text)
+                if opinion_m:
+                    result["opinion"] = opinion_m.group(1)
+
+                # 개별 리포트 추출
+                # 패턴: 투자의견 : 매수 ... 목표주가 : 135,000원 ... 발표일 : 2025.10.31 ... 발행기관 : iM증권
+                report_pattern = re.findall(
+                    r'투자의견\s*:?\s*(강력매수|강력매도|매수|보유|매도|Buy|Hold|Sell|Overweight|Underweight|Neutral)'
+                    r'.*?목표주가\s*:?\s*([\d,]+)\s*원'
+                    r'.*?발표일\s*:?\s*([\d.]+)'
+                    r'.*?발행기관\s*:?\s*([^\s<]+)',
+                    text
                 )
 
-                # 더 간단한 패턴으로 재시도
-                if not report_blocks:
-                    report_blocks = re.findall(
-                        r'투자의견\s*:?\s*(매수|보유|매도|강력매수|강력매도|Buy|Hold|Sell).*?'
-                        r'목표주가\s*:?\s*([\d,]+).*?원.*?'
-                        r'발표일\s*:?\s*([\d.]+).*?'
-                        r'발행기관\s*:?\s*([^\n<]+)',
-                        html, re.DOTALL
-                    )
+                # 작성자도 포함하는 패턴
+                report_with_author = re.findall(
+                    r'투자의견\s*:?\s*(강력매수|강력매도|매수|보유|매도|Buy|Hold|Sell|Overweight|Underweight|Neutral)'
+                    r'.*?목표주가\s*:?\s*([\d,]+)\s*원'
+                    r'.*?발표일\s*:?\s*([\d.]+)'
+                    r'.*?작성자\s*:?\s*([^\s발]+)'
+                    r'.*?발행기관\s*:?\s*([^\s<]+)',
+                    text
+                )
 
-                for block in report_blocks[:5]:
-                    opinion, price, date, info = block
-                    result["reports"].append({
-                        "opinion": opinion.strip(),
-                        "target_price": int(price.replace(",", "")),
-                        "date": date.strip(),
-                        "broker": info.strip(),
-                    })
+                if report_with_author:
+                    for opinion, price, date, author, broker in report_with_author[:5]:
+                        result["reports"].append({
+                            "opinion": opinion.strip(),
+                            "target_price": int(price.replace(",", "")),
+                            "date": date.strip(),
+                            "author": author.strip(),
+                            "broker": broker.strip(),
+                        })
+                elif report_pattern:
+                    for opinion, price, date, broker in report_pattern[:5]:
+                        result["reports"].append({
+                            "opinion": opinion.strip(),
+                            "target_price": int(price.replace(",", "")),
+                            "date": date.strip(),
+                            "broker": broker.strip(),
+                        })
 
-                # 리포트에서도 목표가 평균 계산
-                if result["reports"] and "consensus_target" not in result:
+                # 리포트에서 컨센서스 목표가 보정
+                if result["reports"] and not result.get("consensus_target"):
                     prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
                     if prices:
                         result["consensus_target"] = sum(prices) // len(prices)
@@ -978,11 +1015,25 @@ async def dart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /target 개별 종목 목표가 조회
 async def target_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("사용법: /target 종목코드\n예) /target 005930")
+        await update.message.reply_text("사용법: /target 종목코드 또는 종목명\n예) /target 005930\n예) /target 삼성전자")
         return
 
-    ticker = context.args[0]
-    await update.message.reply_text(f"⏳ {ticker} 목표가 조회 중...")
+    query = " ".join(context.args)
+
+    # 종목코드인지 종목명인지 판단
+    if query.isdigit() and len(query) == 6:
+        ticker = query
+        name = find_stock_name_from_watchlist(ticker)
+    else:
+        # 종목명으로 검색 (워치리스트에서)
+        ticker = find_ticker_from_name(query)
+        if not ticker:
+            await update.message.reply_text(f"📭 '{query}'를 워치리스트에서 찾을 수 없습니다.\n종목코드로 직접 입력하세요: /target 005930")
+            return
+        name = query
+
+    display = f"{name} ({ticker})" if name else ticker
+    await update.message.reply_text(f"⏳ {display} 목표가 조회 중...")
 
     try:
         # 현재가 조회
@@ -996,19 +1047,30 @@ async def target_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         consensus = await get_hankyung_consensus(ticker)
 
         if not consensus:
-            await update.message.reply_text(f"📭 {ticker} 컨센서스 데이터를 찾을 수 없습니다.")
+            await update.message.reply_text(f"📭 {display} 컨센서스 데이터를 찾을 수 없습니다.")
             return
 
-        msg = f"🎯 *{ticker} 애널리스트 목표가*\n\n"
+        # 종목명 보정 (한경에서 가져온 이름 우선)
+        if consensus.get("stock_name"):
+            name = consensus["stock_name"]
+            display = f"{name} ({ticker})"
+
+        msg = f"🎯 *{display} 컨센서스*\n\n"
 
         if current_price > 0:
-            msg += f"💰 현재가: {current_price:,}원\n\n"
+            msg += f"💰 현재가: {current_price:,}원\n"
 
         ct = consensus.get("consensus_target", 0)
         if ct > 0:
             upside = ((ct - current_price) / current_price * 100) if current_price > 0 else 0
             emoji = "📈" if upside > 0 else "📉"
-            msg += f"📊 *컨센서스 목표가*: {ct:,}원 ({emoji} {upside:+.1f}%)\n\n"
+            msg += f"🎯 목표가: {ct:,}원 ({emoji} {upside:+.1f}%)\n"
+
+        opinion = consensus.get("opinion", "")
+        if opinion:
+            msg += f"📊 투자의견: {opinion}\n"
+
+        msg += "\n"
 
         reports = consensus.get("reports", [])
         if reports:
@@ -1016,11 +1078,18 @@ async def target_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for r in reports[:5]:
                 tp = r.get("target_price", 0)
                 broker = r.get("broker", "?")
-                opinion = r.get("opinion", "?")
+                op = r.get("opinion", "?")
                 date = r.get("date", "")
+                author = r.get("author", "")
                 tp_str = f"{tp:,}원" if tp > 0 else "N/A"
-                msg += f"• *{broker}* {tp_str} ({opinion}) - {date}\n"
+                line = f"• *{broker}* {tp_str} ({op}) - {date}"
+                if author:
+                    line += f" ({author})"
+                msg += line + "\n"
             msg += "\n"
+
+        if not ct and not reports:
+            msg += "📭 컨센서스 데이터가 없습니다.\n\n"
 
         msg += "💡 Claude에서 \"이 목표가 근거 분석해줘\" 물어보세요"
         await update.message.reply_text(msg, parse_mode="Markdown")
@@ -1212,7 +1281,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/dart - 워치리스트 DART 공시\n"
         "/summary - 한국 장마감 요약(수동)\n\n"
         "🎯 *목표가*\n"
-        "/target 코드 - 애널리스트 목표가 조회\n"
+        "/target 코드/이름 - 애널리스트 목표가\n"
         "/targetscan - 워치리스트 전체 스캔\n\n"
         "👀 *한국 워치리스트*\n"
         "/watchlist · /watch 코드 이름 · /unwatch 코드\n\n"
