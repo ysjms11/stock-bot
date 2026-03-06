@@ -261,7 +261,7 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# 한경 컨센서스 크롤링
+# 컨센서스 크롤링 (한경 + 디버그)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def load_target_history():
     return load_json(TARGET_HISTORY_FILE, {})
@@ -271,23 +271,12 @@ def save_target_history(data):
     save_json(TARGET_HISTORY_FILE, data)
 
 
-def strip_html(html):
-    """HTML 태그 제거 → 순수 텍스트"""
-    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text
-
-
 def find_stock_name_from_watchlist(ticker):
-    """워치리스트에서 종목명 조회"""
     wl = load_watchlist()
     return wl.get(ticker, "")
 
 
 def find_ticker_from_name(name):
-    """종목명으로 티커 찾기 (워치리스트 기반)"""
     wl = load_watchlist()
     for ticker, wname in wl.items():
         if name in wname or wname in name:
@@ -295,75 +284,121 @@ def find_ticker_from_name(name):
     return None
 
 
-async def get_hankyung_consensus(ticker):
-    """한경 컨센서스에서 목표가/투자의견/리포트 크롤링"""
+async def get_hankyung_consensus(ticker, debug=False):
+    """한경 컨센서스 크롤링 - __NEXT_DATA__ JSON 우선, HTML 폴백"""
     url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
+    debug_info = []
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }) as resp:
                 if resp.status != 200:
-                    return None
+                    debug_info.append(f"HTTP {resp.status}")
+                    return {"debug": debug_info} if debug else None
+
                 html = await resp.text()
-                text = strip_html(html)
-                result = {"ticker": ticker, "reports": [], "stock_name": ""}
+                debug_info.append(f"HTML길이: {len(html)}")
+                result = {"ticker": ticker, "reports": [], "stock_name": "", "debug": debug_info}
 
-                # 종목명 추출 (페이지 타이틀: "삼성전자-컨센서스")
-                name_m = re.search(r'<title>([^-<]+)', html)
-                if name_m:
-                    result["stock_name"] = name_m.group(1).strip()
-
-                # 컨센서스 목표가 (테이블: 목표가 78,971 원)
-                # HTML에서 목표가 뒤의 숫자 찾기 (종가보다 뒤에 나옴)
-                target_m = re.search(r'목표가[^0-9]*?(\d[\d,]+)\s*원', text)
-                if target_m:
-                    result["consensus_target"] = int(target_m.group(1).replace(",", ""))
-
-                # 투자의견 (강력매수/매수/보유/매도/강력매도)
-                opinion_m = re.search(r'투자의견.*?(강력매수|강력매도|매수|보유|매도)', text)
-                if opinion_m:
-                    result["opinion"] = opinion_m.group(1)
-
-                # 개별 리포트 추출
-                # 패턴: 투자의견 : 매수 ... 목표주가 : 135,000원 ... 발표일 : 2025.10.31 ... 발행기관 : iM증권
-                report_pattern = re.findall(
-                    r'투자의견\s*:?\s*(강력매수|강력매도|매수|보유|매도|Buy|Hold|Sell|Overweight|Underweight|Neutral)'
-                    r'.*?목표주가\s*:?\s*([\d,]+)\s*원'
-                    r'.*?발표일\s*:?\s*([\d.]+)'
-                    r'.*?발행기관\s*:?\s*([^\s<]+)',
-                    text
+                # 방법 1: __NEXT_DATA__ JSON 파싱 (Next.js 앱)
+                next_data_match = re.search(
+                    r'<script\s+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                    html, re.DOTALL
                 )
+                if next_data_match:
+                    debug_info.append("__NEXT_DATA__ 발견!")
+                    try:
+                        import json as json_mod
+                        next_json = json_mod.loads(next_data_match.group(1))
+                        debug_info.append(f"JSON키: {list(next_json.get('props', {}).get('pageProps', {}).keys())[:5]}")
+                        # Next.js data에서 컨센서스 정보 추출 시도
+                        page_props = next_json.get("props", {}).get("pageProps", {})
 
-                # 작성자도 포함하는 패턴
-                report_with_author = re.findall(
-                    r'투자의견\s*:?\s*(강력매수|강력매도|매수|보유|매도|Buy|Hold|Sell|Overweight|Underweight|Neutral)'
-                    r'.*?목표주가\s*:?\s*([\d,]+)\s*원'
-                    r'.*?발표일\s*:?\s*([\d.]+)'
-                    r'.*?작성자\s*:?\s*([^\s발]+)'
-                    r'.*?발행기관\s*:?\s*([^\s<]+)',
-                    text
-                )
+                        # 종목명
+                        stock_name = page_props.get("stockName", "") or page_props.get("name", "")
+                        if stock_name:
+                            result["stock_name"] = stock_name
 
-                if report_with_author:
-                    for opinion, price, date, author, broker in report_with_author[:5]:
-                        result["reports"].append({
-                            "opinion": opinion.strip(),
-                            "target_price": int(price.replace(",", "")),
-                            "date": date.strip(),
-                            "author": author.strip(),
-                            "broker": broker.strip(),
-                        })
-                elif report_pattern:
-                    for opinion, price, date, broker in report_pattern[:5]:
-                        result["reports"].append({
-                            "opinion": opinion.strip(),
-                            "target_price": int(price.replace(",", "")),
-                            "date": date.strip(),
-                            "broker": broker.strip(),
-                        })
+                        # 다양한 키 패턴으로 컨센서스 데이터 탐색
+                        for key in page_props:
+                            val = page_props[key]
+                            if isinstance(val, dict):
+                                # 목표가
+                                for tkey in ["targetPrice", "target_price", "avgTargetPrice", "consensusTargetPrice"]:
+                                    if tkey in val:
+                                        try:
+                                            tp = int(str(val[tkey]).replace(",", ""))
+                                            if tp > 0:
+                                                result["consensus_target"] = tp
+                                        except:
+                                            pass
+                                # 투자의견
+                                for okey in ["opinion", "investmentOpinion", "recommendation"]:
+                                    if okey in val:
+                                        result["opinion"] = str(val[okey])
+                            elif isinstance(val, list) and len(val) > 0:
+                                # 리포트 리스트 가능
+                                first = val[0]
+                                if isinstance(first, dict) and any(k in first for k in ["targetPrice", "target_price", "broker", "발행기관"]):
+                                    debug_info.append(f"리포트리스트 키: {key}, 항목수: {len(val)}")
+                                    for item in val[:5]:
+                                        report = {
+                                            "opinion": item.get("opinion", item.get("investmentOpinion", "")),
+                                            "target_price": int(str(item.get("targetPrice", item.get("target_price", 0))).replace(",", "")),
+                                            "date": item.get("date", item.get("publishDate", "")),
+                                            "broker": item.get("broker", item.get("발행기관", "")),
+                                            "author": item.get("author", item.get("analyst", "")),
+                                        }
+                                        if report["target_price"] > 0:
+                                            result["reports"].append(report)
+                    except Exception as e:
+                        debug_info.append(f"JSON파싱오류: {str(e)[:100]}")
+                else:
+                    debug_info.append("__NEXT_DATA__ 없음")
 
-                # 리포트에서 컨센서스 목표가 보정
+                # 방법 2: HTML 텍스트 파싱 (서버사이드 렌더링인 경우)
+                if not result.get("consensus_target") and not result["reports"]:
+                    # HTML 태그 제거
+                    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+                    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+                    text = re.sub(r'<[^>]+>', ' ', text)
+                    text = re.sub(r'\s+', ' ', text)
+                    debug_info.append(f"텍스트(200자): {text[200:400]}")
+
+                    # 종목명
+                    name_m = re.search(r'<title>([^-<]+)', html)
+                    if name_m and not result["stock_name"]:
+                        result["stock_name"] = name_m.group(1).strip()
+
+                    # 목표가
+                    target_m = re.search(r'목표가[^0-9]*?(\d[\d,]+)\s*원', text)
+                    if target_m:
+                        result["consensus_target"] = int(target_m.group(1).replace(",", ""))
+                        debug_info.append(f"목표가 발견: {target_m.group(1)}")
+
+                    # 투자의견
+                    opinion_m = re.search(r'투자의견.*?(강력매수|강력매도|매수|보유|매도)', text)
+                    if opinion_m:
+                        result["opinion"] = opinion_m.group(1)
+
+                    # 리포트
+                    report_pattern = re.findall(
+                        r'투자의견\s*:?\s*(강력매수|강력매도|매수|보유|매도)'
+                        r'.*?목표주가\s*:?\s*([\d,]+)\s*원'
+                        r'.*?발표일\s*:?\s*([\d.]+)'
+                        r'.*?발행기관\s*:?\s*([^\s<]+)',
+                        text
+                    )
+                    if report_pattern:
+                        debug_info.append(f"리포트 {len(report_pattern)}개 발견")
+                        for op, price, date, broker in report_pattern[:5]:
+                            result["reports"].append({
+                                "opinion": op.strip(), "target_price": int(price.replace(",", "")),
+                                "date": date.strip(), "broker": broker.strip(),
+                            })
+
+                # 리포트에서 평균 계산
                 if result["reports"] and not result.get("consensus_target"):
                     prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
                     if prices:
@@ -372,8 +407,9 @@ async def get_hankyung_consensus(ticker):
                 return result
 
     except Exception as e:
+        debug_info.append(f"오류: {str(e)[:200]}")
         print(f"한경 크롤링 오류 ({ticker}): {e}")
-        return None
+        return {"debug": debug_info} if debug else None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1043,11 +1079,17 @@ async def target_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pd = await get_stock_price(ticker, token)
             current_price = int(pd.get("stck_prpr", 0))
 
-        # 한경 컨센서스
-        consensus = await get_hankyung_consensus(ticker)
+        # 한경 컨센서스 (디버그 모드)
+        consensus = await get_hankyung_consensus(ticker, debug=True)
 
-        if not consensus:
-            await update.message.reply_text(f"📭 {display} 컨센서스 데이터를 찾을 수 없습니다.")
+        if not consensus or (not consensus.get("consensus_target") and not consensus.get("reports")):
+            debug = consensus.get("debug", []) if consensus else ["응답 없음"]
+            debug_text = "\n".join(debug[:5])
+            await update.message.reply_text(
+                f"📭 {display} 컨센서스 없음\n\n"
+                f"🔧 디버그:\n{debug_text}\n\n"
+                f"한경 페이지가 JavaScript로 렌더링되어 데이터를 못 가져올 수 있습니다."
+            )
             return
 
         # 종목명 보정 (한경에서 가져온 이름 우선)
