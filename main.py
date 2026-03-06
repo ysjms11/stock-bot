@@ -92,7 +92,7 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "📊 *보유 종목 현황*\n\n"
 
         for ticker, (name, qty, avg) in holdings.items():
-            price_data = await get_stock_price(ticker, token)  # ← await 추가 (버그 수정)
+            price_data = await get_stock_price(ticker, token)
             await asyncio.sleep(0.3)  # API 제한
 
         msg += "_KIS API 실제 연동 후 가격 표시됩니다_"
@@ -135,13 +135,19 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# 봇 시작 후 알림 (post_init 콜백)
+# 봇 시작 후 알림 (실패해도 봇은 계속 작동)
 async def post_init(application: Application):
-    await application.bot.send_message(
-        chat_id=CHAT_ID,
-        text="✅ *주식 봇 시작됨!*\n\n/help 로 명령어 확인하세요",
-        parse_mode="Markdown"
-    )
+    try:
+        await application.bot.send_message(
+            chat_id=CHAT_ID,
+            text="✅ *주식 봇 시작됨!*\n\n/help 로 명령어 확인하세요",
+            parse_mode="Markdown"
+        )
+        print("시작 알림 전송 성공!")
+    except Exception as e:
+        print(f"시작 알림 전송 실패 (봇은 정상 작동 중): {e}")
+        print(f"CHAT_ID: {CHAT_ID}")
+        print("텔레그램에서 봇에게 /start 를 먼저 보내주세요.")
 
 def main():
     print("봇 시작 중...")
