@@ -2,8 +2,9 @@ import os
 import json
 import asyncio
 import aiohttp
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -13,22 +14,26 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
+DART_API_KEY = os.environ.get("DART_API_KEY", "")
 
 KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+DART_BASE_URL = "https://opendart.fss.or.kr/api"
 KST = timezone(timedelta(hours=9))
 
 WATCHLIST_FILE = "/app/watchlist.json"
 STOPLOSS_FILE = "/app/stoploss.json"
+US_WATCHLIST_FILE = "/app/us_watchlist.json"
+DART_SEEN_FILE = "/app/dart_seen.json"
 
 _token_cache = {"token": None, "expires": None}
 
-# 미국 보유 종목 (텔레그램에서 수정 가능하도록 나중에 파일로 전환 가능)
-US_WATCHLIST = {
-    "TSLA": ("테슬라", 12),
-    "CRSP": ("크리스퍼", 70),
-    "AMD": ("AMD", 17),
-    "LITE": ("루멘텀", 4),
-}
+# DART 중요 공시 키워드
+DART_KEYWORDS = [
+    "수주", "계약", "공급계약", "납품", "유상증자", "무상증자",
+    "전환사채", "신주인수권", "자기주식", "배당", "합병",
+    "분할", "영업양수", "영업양도", "소송", "상장폐지",
+    "실적", "매출", "영업이익", "감자", "대규모",
+]
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -52,16 +57,27 @@ def save_json(filepath, data):
 
 def load_watchlist():
     return load_json(WATCHLIST_FILE, {
-        "009540": "HD한국조선해양",
-        "298040": "효성중공업",
-        "010120": "LS ELECTRIC",
-        "267260": "HD현대일렉트릭",
+        "009540": "HD한국조선해양", "298040": "효성중공업",
+        "010120": "LS ELECTRIC", "267260": "HD현대일렉트릭",
         "034020": "두산에너빌리티",
     })
 
 
 def load_stoploss():
     return load_json(STOPLOSS_FILE, {})
+
+
+def load_us_watchlist():
+    return load_json(US_WATCHLIST_FILE, {
+        "TSLA": {"name": "테슬라", "qty": 12},
+        "CRSP": {"name": "크리스퍼", "qty": 70},
+        "AMD": {"name": "AMD", "qty": 17},
+        "LITE": {"name": "루멘텀", "qty": 4},
+    })
+
+
+def load_dart_seen():
+    return load_json(DART_SEEN_FILE, {"ids": []})
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -115,11 +131,25 @@ async def get_volume_rank(token):
         "FID_COND_MRKT_DIV_CODE": "J", "FID_COND_SCR_DIV_CODE": "20101",
         "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "0", "FID_BLNG_CLS_CODE": "0",
         "FID_TRGT_CLS_CODE": "111111111", "FID_TRGT_EXLS_CLS_CODE": "000000",
-        "FID_INPUT_PRICE_1": "0", "FID_INPUT_PRICE_2": "0", "FID_VOL_CNT": "0", "FID_INPUT_DATE_1": ""
+        "FID_INPUT_PRICE_1": "0", "FID_INPUT_PRICE_2": "0",
+        "FID_VOL_CNT": "0", "FID_INPUT_DATE_1": ""
     }
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers, params=params) as resp:
             return (await resp.json()).get("output", [])
+
+
+async def get_kis_index(token, index_code="0001"):
+    """KIS API로 KOSPI/KOSDAQ 지수 조회 (0001=KOSPI, 1001=KOSDAQ)"""
+    url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-index-price"
+    headers = {
+        "content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}",
+        "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHPUP02100000"
+    }
+    params = {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": index_code}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers, params=params) as resp:
+            return (await resp.json()).get("output", {})
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -138,6 +168,94 @@ async def get_yahoo_quote(symbol):
     except Exception:
         pass
     return {"price": 0, "prev": 0, "change_pct": 0}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART API - 공시 조회
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def search_dart_disclosures(days_back=1):
+    """최근 N일 공시 검색 (전체 기업)"""
+    if not DART_API_KEY:
+        return []
+
+    now = datetime.now(KST)
+    end_date = now.strftime("%Y%m%d")
+    start_date = (now - timedelta(days=days_back)).strftime("%Y%m%d")
+
+    url = f"{DART_BASE_URL}/list.json"
+    params = {
+        "crtfc_key": DART_API_KEY,
+        "bgn_de": start_date,
+        "end_de": end_date,
+        "page_count": 100,
+        "sort": "date",
+        "sort_mth": "desc",
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("status") == "000":
+                        return data.get("list", [])
+    except Exception as e:
+        print(f"DART API 오류: {e}")
+    return []
+
+
+def filter_important_disclosures(disclosures, watchlist_names):
+    """워치리스트 기업의 중요 공시만 필터링"""
+    important = []
+    for d in disclosures:
+        corp_name = d.get("corp_name", "")
+        report_nm = d.get("report_nm", "")
+
+        # 워치리스트 기업인지 확인
+        is_watched = any(name in corp_name for name in watchlist_names)
+        if not is_watched:
+            continue
+
+        # 중요 키워드 매칭
+        is_important = any(kw in report_nm for kw in DART_KEYWORDS)
+        # 주요사항보고서(B), 발행공시(C)는 항상 중요
+        pblntf_ty = d.get("pblntf_ty", "")
+        if pblntf_ty in ("B", "C"):
+            is_important = True
+
+        if is_important:
+            important.append(d)
+
+    return important
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 뉴스 조회 (Google News RSS)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def fetch_news(query="주식 시장 한국", max_items=8):
+    """Google News RSS로 뉴스 헤드라인 가져오기"""
+    import urllib.parse
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    # 간단한 XML 파싱
+                    root = ET.fromstring(text)
+                    items = root.findall(".//item")
+                    results = []
+                    for item in items[:max_items]:
+                        title = item.find("title").text if item.find("title") is not None else ""
+                        pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                        source = item.find("source").text if item.find("source") is not None else ""
+                        results.append({"title": title, "date": pub_date, "source": source})
+                    return results
+    except Exception as e:
+        print(f"뉴스 조회 오류: {e}")
+    return []
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -169,9 +287,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
 
                 inv = await get_investor_trend(ticker, token)
                 await asyncio.sleep(0.4)
-                fn = 0
-                ins = 0
-                fr = 0.0
+                fn, ins, fr = 0, 0, 0.0
                 if inv and len(inv) > 0:
                     t = inv[0] if isinstance(inv, list) else inv
                     fn = int(t.get("frgn_ntby_qty", 0))
@@ -211,22 +327,24 @@ async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE):
     if now.weekday() in (0, 6):
         return
     try:
+        us_wl = load_us_watchlist()
         fx = await get_yahoo_quote("KRW=X")
         fx_rate = fx.get("price", 1300)
 
         msg = f"🇺🇸 *미국 장 마감 요약* ({now.strftime('%m/%d %H:%M')})\n💱 환율: {fx_rate:,.0f}원\n\n"
 
-        for sym, (name, qty) in US_WATCHLIST.items():
+        for sym, info in us_wl.items():
             try:
+                name = info["name"]
+                qty = info["qty"]
                 d = await get_yahoo_quote(sym)
                 await asyncio.sleep(0.3)
-                p = d["price"]
-                c = d["change_pct"]
+                p, c = d["price"], d["change_pct"]
                 cs = "🔴" if c < 0 else "🟢" if c > 0 else "⚪"
                 val_krw = p * qty * fx_rate
                 msg += f"{cs} *{name}* ${p:,.2f} ({c:+.1f}%) | {qty}주 ₩{val_krw:,.0f}\n\n"
             except Exception:
-                msg += f"❌ *{name}* 조회 실패\n\n"
+                msg += f"❌ *{info.get('name', sym)}* 조회 실패\n\n"
 
         sp = await get_yahoo_quote("^GSPC")
         vix = await get_yahoo_quote("^VIX")
@@ -297,8 +415,8 @@ async def check_fx_alert(context: ContextTypes.DEFAULT_TYPE):
         if abs(c) >= 1.0:
             rate = d["price"]
             direction = "급등 📈" if c > 0 else "급락 📉"
-            impact = "원화약세 → 미국주식 원화이익↑, 수입물가↑" if c > 0 else "원화강세 → 미국주식 원화이익↓"
-            msg = f"💱 *환율 {direction}*\n\nUSD/KRW: {rate:,.1f}원 ({c:+.1f}%)\n\n📌 {impact}"
+            impact = "원화약세 → 미국주식 원화이익↑" if c > 0 else "원화강세 → 미국주식 원화이익↓"
+            msg = f"💱 *환율 {direction}*\n\nUSD/KRW: {rate:,.1f}원 ({c:+.1f}%)\n📌 {impact}"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"환율 체크 오류: {e}")
@@ -332,15 +450,13 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
 
                 inv = await get_investor_trend(ticker, token)
                 await asyncio.sleep(0.4)
-                fr = 0.0
-                fn = 0
+                fr, fn = 0.0, 0
                 if inv and len(inv) > 0:
                     t = inv[0] if isinstance(inv, list) else inv
                     fn = int(t.get("frgn_ntby_qty", 0))
                     if mcap > 0 and price > 0:
                         fr = (fn * price) / (mcap * 1e8) * 100
 
-                # 복합 신호만 (노이즈 차단)
                 if vol_ok and fr > 0.03:
                     alerts.append(
                         f"🚨 *{name}* ({ticker})\n"
@@ -351,10 +467,10 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         if alerts:
-            msg = f"🔔 *복합 신호 감지* ({now.strftime('%H:%M')})\n\n"
+            msg = f"🔔 *복합 신호* ({now.strftime('%H:%M')})\n\n"
             for a in alerts:
                 msg += f"{a}\n\n"
-            msg += "💡 Claude에서 진입 여부 분석하세요"
+            msg += "💡 Claude에서 진입 분석하세요"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"이상 신호 오류: {e}")
@@ -366,13 +482,13 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
 async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "📋 *주간 리뷰 시간입니다*\n\n"
-        "Claude에서 점검하세요:\n\n"
-        "1️⃣ 보유 종목 Thesis 유효한가?\n"
-        "2️⃣ 손절/익절 대상 있는가?\n"
-        "3️⃣ 섹터 모멘텀 살아있는가?\n"
+        "Claude에서 점검하세요:\n"
+        "1️⃣ 보유 종목 Thesis 유효?\n"
+        "2️⃣ 손절/익절 대상?\n"
+        "3️⃣ 섹터 모멘텀 생존?\n"
         "4️⃣ 다음 주 매크로 이벤트?\n"
-        "5️⃣ 현금 비중 적절한가?\n\n"
-        "💡 포트폴리오 스크린샷 + \"리뷰해줘\" 보내세요"
+        "5️⃣ 현금 비중 적절?\n\n"
+        "💡 스크린샷 + \"리뷰해줘\" 보내세요"
     )
     try:
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
@@ -381,22 +497,86 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림 7: DART 공시 체크 (30분마다)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    # 장중 + 전후 1시간 (08:00~16:30)
+    if now.hour < 8 or now.hour > 16:
+        return
+    if not DART_API_KEY:
+        return
+
+    try:
+        disclosures = await search_dart_disclosures(days_back=1)
+        if not disclosures:
+            return
+
+        # 워치리스트 기업명 목록
+        watchlist = load_watchlist()
+        wl_names = list(watchlist.values())
+
+        # 중요 공시 필터링
+        important = filter_important_disclosures(disclosures, wl_names)
+        if not important:
+            return
+
+        # 이미 알림 보낸 공시 제외
+        seen_data = load_dart_seen()
+        seen_ids = set(seen_data.get("ids", []))
+
+        new_disclosures = [d for d in important if d.get("rcept_no", "") not in seen_ids]
+        if not new_disclosures:
+            return
+
+        msg = f"📢 *DART 공시 알림* ({now.strftime('%H:%M')})\n\n"
+        new_ids = []
+
+        for d in new_disclosures[:5]:  # 최대 5개
+            corp = d.get("corp_name", "?")
+            title = d.get("report_nm", "?")
+            date = d.get("rcept_dt", "?")
+            rcept_no = d.get("rcept_no", "")
+            link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
+
+            msg += f"🏢 *{corp}*\n"
+            msg += f"📄 {title}\n"
+            msg += f"📅 {date}\n"
+            msg += f"🔗 [공시 원문]({link})\n\n"
+
+            new_ids.append(rcept_no)
+
+        msg += "💡 Claude에서 영향 분석하세요"
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
+
+        # 알림 보낸 공시 ID 저장
+        seen_ids.update(new_ids)
+        # 최근 500개만 유지
+        seen_list = list(seen_ids)[-500:]
+        save_json(DART_SEEN_FILE, {"ids": seen_list})
+
+    except Exception as e:
+        print(f"DART 체크 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 텔레그램 명령어
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "🤖 *부자가될거야 봇 v5*\n\n"
+        "🤖 *부자가될거야 봇 v6*\n\n"
         "📌 *조회*\n"
-        "/analyze 코드 - 종목분석(수급포함)\n"
-        "/scan - 거래량 급등 TOP10\n"
-        "/macro - VIX/환율/유가/금리\n"
-        "/summary - 장마감 요약(수동)\n\n"
-        "👀 *워치리스트*\n"
-        "/watchlist · /watch 코드 이름 · /unwatch 코드\n\n"
+        "/analyze 코드 · /scan · /macro · /news\n"
+        "/summary · /dart\n\n"
+        "👀 *한국 워치리스트*\n"
+        "/watchlist · /watch · /unwatch\n\n"
+        "🇺🇸 *미국 종목 관리*\n"
+        "/uslist · /addus · /remus\n\n"
         "🛑 *손절관리*\n"
-        "/setstop 코드 이름 손절가 진입가\n"
-        "/delstop 코드 · /stops\n\n"
-        "🔔 *자동알림* — 설정 불필요, 자동 작동!"
+        "/setstop · /delstop · /stops\n\n"
+        "🔔 *자동알림* — 설정 불필요!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -487,15 +667,29 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def macro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ 매크로 조회 중...")
     try:
-        symbols = {"^VIX": "VIX", "KRW=X": "USD/KRW", "CL=F": "WTI유가", "^TNX": "10년금리", "^GSPC": "S&P500", "^KS11": "KOSPI"}
+        # KIS API로 KOSPI 조회
+        token = await get_kis_token()
+        kospi_data = {}
+        kosdaq_data = {}
+        if token:
+            try:
+                kospi_data = await get_kis_index(token, "0001")
+                await asyncio.sleep(0.3)
+                kosdaq_data = await get_kis_index(token, "1001")
+            except Exception:
+                pass
+
+        # Yahoo로 나머지 조회
+        yahoo_symbols = {"^VIX": "VIX", "KRW=X": "USD/KRW", "CL=F": "WTI유가", "^TNX": "10년금리", "^GSPC": "S&P500"}
         msg = "🌐 *매크로 현황*\n\n"
         vix_val = 0
-        for sym, name in symbols.items():
+
+        for sym, name in yahoo_symbols.items():
             d = await get_yahoo_quote(sym)
             await asyncio.sleep(0.3)
             p, c = d["price"], d["change_pct"]
             cs = "🔴" if c < 0 else "🟢" if c > 0 else "⚪"
-            if "환율" in name or "KRW" in name: ps = f"{p:,.1f}원"
+            if "KRW" in name: ps = f"{p:,.1f}원"
             elif "금리" in name: ps = f"{p:.2f}%"
             elif "VIX" in name:
                 ps = f"{p:.1f}"
@@ -507,21 +701,110 @@ async def macro(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else: ps = f"{p:,.1f}"
             msg += f"{cs} *{name}* {ps} ({c:+.1f}%)\n"
 
+        # KIS KOSPI/KOSDAQ
+        if kospi_data:
+            kp = kospi_data.get("bstp_nmix_prpr", "0")
+            kc = kospi_data.get("bstp_nmix_prdy_ctrt", "0")
+            kcs = "🔴" if float(kc) < 0 else "🟢" if float(kc) > 0 else "⚪"
+            msg += f"{kcs} *KOSPI* {float(kp):,.1f} ({kc}%)\n"
+
+        if kosdaq_data:
+            kqp = kosdaq_data.get("bstp_nmix_prpr", "0")
+            kqc = kosdaq_data.get("bstp_nmix_prdy_ctrt", "0")
+            kqcs = "🔴" if float(kqc) < 0 else "🟢" if float(kqc) > 0 else "⚪"
+            msg += f"{kqcs} *KOSDAQ* {float(kqp):,.1f} ({kqc}%)\n"
+
         msg += "\n━━━━━━━━━━━━━━━━\n"
         if vix_val > 25: msg += "🔴 *레짐: 위기* — 신규매수 금지"
         elif vix_val > 20: msg += "🟠 *레짐: 경계* — 기존 포지션만 관리"
         elif vix_val > 15: msg += "🟡 *레짐: 중립* — 확신 높은 것만"
         else: msg += "🟢 *레짐: 공격* — 핵심 섹터 적극 매수"
+
+        msg += f"\n\n⏰ {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}"
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ 오류: {str(e)}")
 
 
+# /news 뉴스 요약
+async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = " ".join(context.args) if context.args else "주식 증시 코스피"
+    await update.message.reply_text(f"⏳ 뉴스 조회 중... ({query})")
+
+    try:
+        articles = await fetch_news(query, max_items=8)
+        if not articles:
+            await update.message.reply_text("📭 뉴스를 가져올 수 없습니다.")
+            return
+
+        msg = f"📰 *뉴스* ({query})\n\n"
+        for i, a in enumerate(articles, 1):
+            title = a["title"]
+            source = a.get("source", "")
+            # 제목이 너무 길면 자르기
+            if len(title) > 60:
+                title = title[:57] + "..."
+            msg += f"{i}. {title}\n"
+            if source:
+                msg += f"   _{source}_\n"
+            msg += "\n"
+
+        msg += "💡 Claude에서 \"이 뉴스가 내 포트폴리오에 영향?\" 물어보세요"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ 뉴스 오류: {str(e)}")
+
+
+# /dart 수동 공시 조회
+async def dart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not DART_API_KEY:
+        await update.message.reply_text("❌ DART API 키 미설정\nRailway Variables에 DART_API_KEY 추가하세요.")
+        return
+
+    await update.message.reply_text("⏳ DART 공시 조회 중...")
+
+    try:
+        disclosures = await search_dart_disclosures(days_back=3)
+        if not disclosures:
+            await update.message.reply_text("📭 최근 3일간 공시가 없습니다.")
+            return
+
+        watchlist = load_watchlist()
+        wl_names = list(watchlist.values())
+        important = filter_important_disclosures(disclosures, wl_names)
+
+        if not important:
+            # 워치리스트 관련 중요 공시 없으면 전체 중 최근 5개
+            msg = "📢 *최근 DART 공시* (워치리스트 관련 없음)\n\n"
+            for d in disclosures[:5]:
+                corp = d.get("corp_name", "?")
+                title = d.get("report_nm", "?")
+                date = d.get("rcept_dt", "?")
+                msg += f"• *{corp}* - {title} ({date})\n\n"
+            msg += "워치리스트 종목 관련 중요 공시는 없습니다."
+        else:
+            msg = f"📢 *워치리스트 관련 공시* (최근 3일)\n\n"
+            for d in important[:10]:
+                corp = d.get("corp_name", "?")
+                title = d.get("report_nm", "?")
+                date = d.get("rcept_dt", "?")
+                rcept_no = d.get("rcept_no", "")
+                link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
+                msg += f"🏢 *{corp}*\n📄 {title}\n📅 {date}\n🔗 [원문]({link})\n\n"
+
+        await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ DART 오류: {str(e)}")
+
+
+# 워치리스트
 async def watchlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wl = load_watchlist()
     if not wl:
         await update.message.reply_text("📭 비어있음. /watch 코드 이름"); return
-    msg = "👀 *워치리스트*\n\n"
+    msg = "👀 *한국 워치리스트*\n\n"
     for t, n in wl.items():
         msg += f"• {n} ({t})\n"
     msg += f"\n총 {len(wl)}개 감시 중"
@@ -549,6 +832,47 @@ async def unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 없음")
 
 
+# 🇺🇸 미국 종목 관리
+async def uslist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    us = load_us_watchlist()
+    if not us:
+        await update.message.reply_text("📭 비어있음. /addus TSLA 테슬라 12"); return
+    msg = "🇺🇸 *미국 보유 종목*\n\n"
+    for sym, info in us.items():
+        msg += f"• *{info['name']}* ({sym}) - {info['qty']}주\n"
+    msg += f"\n총 {len(us)}개 종목"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def addus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 3:
+        await update.message.reply_text("사용법: /addus TSLA 테슬라 12\n(심볼 이름 수량)"); return
+    sym = context.args[0].upper()
+    name = context.args[1]
+    try:
+        qty = int(context.args[2])
+    except ValueError:
+        await update.message.reply_text("❌ 수량은 숫자로"); return
+    us = load_us_watchlist()
+    us[sym] = {"name": name, "qty": qty}
+    save_json(US_WATCHLIST_FILE, us)
+    await update.message.reply_text(f"✅ 🇺🇸 *{name}* ({sym}) {qty}주 추가!", parse_mode="Markdown")
+
+
+async def remus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("사용법: /remus TSLA"); return
+    sym = context.args[0].upper()
+    us = load_us_watchlist()
+    if sym in us:
+        name = us.pop(sym)["name"]
+        save_json(US_WATCHLIST_FILE, us)
+        await update.message.reply_text(f"🗑 *{name}* ({sym}) 삭제!", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ {sym} 없음")
+
+
+# 손절 관리
 async def setstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 3:
         await update.message.reply_text(
@@ -587,7 +911,9 @@ async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 손절선 없음\n/setstop 코드 이름 손절가 진입가"); return
     msg = "🛑 *손절선 목록*\n\n"
     for t, i in stops.items():
-        lp = f" | 진입 {i['entry_price']:,.0f} ({((i['stop_price']-i['entry_price'])/i['entry_price']*100):.1f}%)" if i.get("entry_price", 0) > 0 else ""
+        lp = ""
+        if i.get("entry_price", 0) > 0:
+            lp = f" | 진입 {i['entry_price']:,.0f} ({((i['stop_price']-i['entry_price'])/i['entry_price']*100):.1f}%)"
         msg += f"• *{i['name']}* ({t}): {i['stop_price']:,.0f}원{lp}\n"
     msg += "\n장중 10분마다 자동 체크"
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -600,13 +926,25 @@ async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "📖 *도움말*\n\n"
-        "📌 /analyze 코드 · /scan · /macro · /summary\n"
-        "👀 /watchlist · /watch · /unwatch\n"
-        "🛑 /setstop · /delstop · /stops\n\n"
+        "📖 *도움말 v6*\n\n"
+        "📌 *조회*\n"
+        "/analyze 코드 - 종목분석(수급포함)\n"
+        "/scan - 거래량 급등 TOP10\n"
+        "/macro - VIX/환율/유가/금리/KOSPI/KOSDAQ\n"
+        "/news [키워드] - 뉴스 헤드라인\n"
+        "/dart - 워치리스트 DART 공시\n"
+        "/summary - 한국 장마감 요약(수동)\n\n"
+        "👀 *한국 워치리스트*\n"
+        "/watchlist · /watch 코드 이름 · /unwatch 코드\n\n"
+        "🇺🇸 *미국 종목*\n"
+        "/uslist · /addus 심볼 이름 수량 · /remus 심볼\n\n"
+        "🛑 *손절관리*\n"
+        "/setstop 코드 이름 손절가 진입가\n"
+        "/delstop 코드 · /stops\n\n"
         "🔔 *자동 알림*\n"
         "• 🔴 손절선: 장중 10분마다\n"
         "• 🔴 복합신호: 장중 30분마다\n"
+        "• 📢 DART공시: 장중 30분마다\n"
         "• 📊 한국요약: 평일 15:40\n"
         "• 🇺🇸 미국요약: 평일 07:00\n"
         "• 💱 환율급변: 1시간마다\n"
@@ -620,10 +958,16 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 봇 시작
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def post_init(application: Application):
+    dart_status = "✅ DART 활성" if DART_API_KEY else "❌ DART 미설정 (DART_API_KEY 필요)"
     try:
         await application.bot.send_message(
             chat_id=CHAT_ID,
-            text="✅ *부자가될거야 v5 시작!*\n\n🔔 손절선/복합신호/장마감/미국/환율/주간리뷰 알림 활성화\n/help",
+            text=(
+                f"✅ *부자가될거야 v6 시작!*\n\n"
+                f"🔔 알림: 손절/복합신호/DART/장마감/미국/환율/주간리뷰\n"
+                f"📢 {dart_status}\n"
+                f"/help"
+            ),
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -634,23 +978,30 @@ def main():
     print("봇 시작 중...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
-    for cmd, fn in [
+    # 명령어 등록
+    commands = [
         ("start", start), ("analyze", analyze), ("scan", scan), ("macro", macro),
-        ("summary", manual_summary), ("watchlist", watchlist_cmd), ("watch", watch),
-        ("unwatch", unwatch), ("setstop", setstop), ("delstop", delstop),
-        ("stops", stops_cmd), ("help", help_cmd),
-    ]:
+        ("news", news_cmd), ("dart", dart_cmd), ("summary", manual_summary),
+        ("watchlist", watchlist_cmd), ("watch", watch), ("unwatch", unwatch),
+        ("uslist", uslist_cmd), ("addus", addus), ("remus", remus),
+        ("setstop", setstop), ("delstop", delstop), ("stops", stops_cmd),
+        ("help", help_cmd),
+    ]
+    for cmd, fn in commands:
         app.add_handler(CommandHandler(cmd, fn))
 
+    # 자동 알림 스케줄
     jq = app.job_queue
-    jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")
-    jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
-    jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
-    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")
-    jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")
-    jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
+    jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")        # 10분
+    jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")         # 30분
+    jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")             # 1시간
+    jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")    # 30분
+    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")   # 15:40 KST
+    jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")   # 07:00 KST
+    jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")  # 일 10:00 KST
 
-    print("봇 실행! 알림: 손절(10분)/복합(30분)/한국(15:40)/미국(07:00)/환율(1h)/주간(일10시)")
+    print("봇 실행! v6 전체 기능 활성화")
+    print("알림: 손절(10분)/복합(30분)/DART(30분)/한국(15:40)/미국(07:00)/환율(1h)/주간(일10시)")
     app.run_polling()
 
 
