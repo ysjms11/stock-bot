@@ -127,7 +127,7 @@ async def get_volume_rank(token):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def get_yahoo_quote(symbol):
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
                 if resp.status == 200:
