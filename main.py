@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import asyncio
 import aiohttp
 import xml.etree.ElementTree as ET
@@ -24,6 +25,7 @@ WATCHLIST_FILE = "/app/watchlist.json"
 STOPLOSS_FILE = "/app/stoploss.json"
 US_WATCHLIST_FILE = "/app/us_watchlist.json"
 DART_SEEN_FILE = "/app/dart_seen.json"
+TARGET_HISTORY_FILE = "/app/target_history.json"
 
 _token_cache = {"token": None, "expires": None}
 
@@ -256,6 +258,85 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
     except Exception as e:
         print(f"뉴스 조회 오류: {e}")
     return []
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 한경 컨센서스 크롤링
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def load_target_history():
+    return load_json(TARGET_HISTORY_FILE, {})
+
+
+def save_target_history(data):
+    save_json(TARGET_HISTORY_FILE, data)
+
+
+async def get_hankyung_consensus(ticker):
+    """한경 컨센서스 페이지에서 목표가/투자의견/리포트 크롤링"""
+    url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }) as resp:
+                if resp.status != 200:
+                    return None
+
+                html = await resp.text()
+                result = {"ticker": ticker, "reports": []}
+
+                # 컨센서스 목표가 추출 (목표가 333,333 원)
+                target_match = re.search(r'목표가.*?(\d[\d,]+)\s*원', html)
+                if target_match:
+                    result["consensus_target"] = int(target_match.group(1).replace(",", ""))
+
+                # 투자의견 추출
+                opinion_match = re.search(r'투자의견.*?<[^>]*>\s*\*\*(매수|보유|매도|강력매수|강력매도)\*\*', html)
+                if not opinion_match:
+                    opinion_match = re.search(r'투자의견[^<]*</td>.*?<td[^>]*>.*?\*\*(매수|보유|매도)\*\*', html, re.DOTALL)
+                if opinion_match:
+                    result["opinion"] = opinion_match.group(1)
+
+                # 개별 리포트 추출 (투자의견, 목표주가, 발표일, 작성자, 발행기관)
+                report_blocks = re.findall(
+                    r'투자의견\s*:\s*(매수|보유|매도|강력매수|강력매도|Buy|Hold|Sell).*?'
+                    r'목표주가\s*:\s*([\d,]+).*?원.*?'
+                    r'발표일\s*:\s*([\d.]+).*?'
+                    r'작성자\s*:\s*([^\n<]+?)(?:\s*발행기관|\s*</)',
+                    html, re.DOTALL
+                )
+
+                # 더 간단한 패턴으로 재시도
+                if not report_blocks:
+                    report_blocks = re.findall(
+                        r'투자의견\s*:?\s*(매수|보유|매도|강력매수|강력매도|Buy|Hold|Sell).*?'
+                        r'목표주가\s*:?\s*([\d,]+).*?원.*?'
+                        r'발표일\s*:?\s*([\d.]+).*?'
+                        r'발행기관\s*:?\s*([^\n<]+)',
+                        html, re.DOTALL
+                    )
+
+                for block in report_blocks[:5]:
+                    opinion, price, date, info = block
+                    result["reports"].append({
+                        "opinion": opinion.strip(),
+                        "target_price": int(price.replace(",", "")),
+                        "date": date.strip(),
+                        "broker": info.strip(),
+                    })
+
+                # 리포트에서도 목표가 평균 계산
+                if result["reports"] and "consensus_target" not in result:
+                    prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
+                    if prices:
+                        result["consensus_target"] = sum(prices) // len(prices)
+
+                return result
+
+    except Exception as e:
+        print(f"한경 크롤링 오류 ({ticker}): {e}")
+        return None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -562,14 +643,109 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림 8: 목표가 변동 감지 (매일 16:10)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def check_target_price_change(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+
+    try:
+        watchlist = load_watchlist()
+        if not watchlist:
+            return
+
+        history = load_target_history()
+        alerts = []
+        new_history = {}
+
+        for ticker, name in watchlist.items():
+            try:
+                consensus = await get_hankyung_consensus(ticker)
+                await asyncio.sleep(1.0)  # 한경 서버 부하 방지
+
+                if not consensus:
+                    continue
+
+                current_target = consensus.get("consensus_target", 0)
+                current_reports = consensus.get("reports", [])
+
+                if current_target <= 0 and not current_reports:
+                    continue
+
+                # 이전 데이터와 비교
+                prev = history.get(ticker, {})
+                prev_target = prev.get("consensus_target", 0)
+                prev_report_dates = set(prev.get("report_dates", []))
+
+                # 새 리포트 감지
+                new_reports = []
+                for r in current_reports:
+                    report_key = f"{r.get('broker', '')}_{r.get('date', '')}"
+                    if report_key not in prev_report_dates:
+                        new_reports.append(r)
+
+                # 컨센서스 목표가 변동 감지
+                target_changed = False
+                if prev_target > 0 and current_target > 0 and prev_target != current_target:
+                    target_changed = True
+                    change_pct = ((current_target - prev_target) / prev_target) * 100
+                    direction = "📈 상향" if change_pct > 0 else "📉 하향"
+                    alerts.append(
+                        f"{direction} *{name}* ({ticker})\n"
+                        f"  목표가: {prev_target:,} → {current_target:,}원 ({change_pct:+.1f}%)"
+                    )
+
+                # 새 리포트 알림
+                for r in new_reports[:2]:  # 최대 2개
+                    tp = r.get("target_price", 0)
+                    broker = r.get("broker", "?")
+                    opinion = r.get("opinion", "?")
+                    date = r.get("date", "")
+                    if tp > 0:
+                        alerts.append(
+                            f"📋 *{name}* 신규 리포트\n"
+                            f"  {broker}: {tp:,}원 ({opinion}) - {date}"
+                        )
+
+                # 현재 데이터 저장
+                report_dates = [f"{r.get('broker', '')}_{r.get('date', '')}" for r in current_reports]
+                new_history[ticker] = {
+                    "consensus_target": current_target,
+                    "report_dates": report_dates,
+                    "updated": now.strftime("%Y-%m-%d"),
+                }
+
+            except Exception as e:
+                print(f"목표가 체크 오류 ({ticker}): {e}")
+
+        # 히스토리 저장 (기존 데이터 유지 + 업데이트)
+        history.update(new_history)
+        save_target_history(history)
+
+        # 알림 발송
+        if alerts:
+            msg = f"🎯 *목표가 변동 알림* ({now.strftime('%m/%d %H:%M')})\n\n"
+            for a in alerts:
+                msg += f"{a}\n\n"
+            msg += "💡 Claude에서 상세 분석하세요"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+    except Exception as e:
+        print(f"목표가 변동 감지 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 텔레그램 명령어
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "🤖 *부자가될거야 봇 v6*\n\n"
+        "🤖 *부자가될거야 봇 v7*\n\n"
         "📌 *조회*\n"
         "/analyze 코드 · /scan · /macro · /news\n"
         "/summary · /dart\n\n"
+        "🎯 *목표가*\n"
+        "/target 코드 · /targetscan\n\n"
         "👀 *한국 워치리스트*\n"
         "/watchlist · /watch · /unwatch\n\n"
         "🇺🇸 *미국 종목 관리*\n"
@@ -799,6 +975,107 @@ async def dart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ DART 오류: {str(e)}")
 
 
+# /target 개별 종목 목표가 조회
+async def target_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("사용법: /target 종목코드\n예) /target 005930")
+        return
+
+    ticker = context.args[0]
+    await update.message.reply_text(f"⏳ {ticker} 목표가 조회 중...")
+
+    try:
+        # 현재가 조회
+        token = await get_kis_token()
+        current_price = 0
+        if token:
+            pd = await get_stock_price(ticker, token)
+            current_price = int(pd.get("stck_prpr", 0))
+
+        # 한경 컨센서스
+        consensus = await get_hankyung_consensus(ticker)
+
+        if not consensus:
+            await update.message.reply_text(f"📭 {ticker} 컨센서스 데이터를 찾을 수 없습니다.")
+            return
+
+        msg = f"🎯 *{ticker} 애널리스트 목표가*\n\n"
+
+        if current_price > 0:
+            msg += f"💰 현재가: {current_price:,}원\n\n"
+
+        ct = consensus.get("consensus_target", 0)
+        if ct > 0:
+            upside = ((ct - current_price) / current_price * 100) if current_price > 0 else 0
+            emoji = "📈" if upside > 0 else "📉"
+            msg += f"📊 *컨센서스 목표가*: {ct:,}원 ({emoji} {upside:+.1f}%)\n\n"
+
+        reports = consensus.get("reports", [])
+        if reports:
+            msg += "📋 *최근 리포트*\n\n"
+            for r in reports[:5]:
+                tp = r.get("target_price", 0)
+                broker = r.get("broker", "?")
+                opinion = r.get("opinion", "?")
+                date = r.get("date", "")
+                tp_str = f"{tp:,}원" if tp > 0 else "N/A"
+                msg += f"• *{broker}* {tp_str} ({opinion}) - {date}\n"
+            msg += "\n"
+
+        msg += "💡 Claude에서 \"이 목표가 근거 분석해줘\" 물어보세요"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ 목표가 조회 오류: {str(e)}")
+
+
+# /targetscan 워치리스트 전체 스캔
+async def targetscan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ 워치리스트 목표가 스캔 중... (시간 좀 걸립니다)")
+
+    try:
+        watchlist = load_watchlist()
+        if not watchlist:
+            await update.message.reply_text("📭 워치리스트가 비어있습니다.")
+            return
+
+        token = await get_kis_token()
+        msg = "🎯 *워치리스트 목표가 스캔*\n\n"
+
+        for ticker, name in watchlist.items():
+            try:
+                current_price = 0
+                if token:
+                    pd = await get_stock_price(ticker, token)
+                    current_price = int(pd.get("stck_prpr", 0))
+                    await asyncio.sleep(0.3)
+
+                consensus = await get_hankyung_consensus(ticker)
+                await asyncio.sleep(1.0)
+
+                ct = consensus.get("consensus_target", 0) if consensus else 0
+
+                if ct > 0 and current_price > 0:
+                    upside = ((ct - current_price) / current_price * 100)
+                    if upside > 20: emoji = "🟢🟢"
+                    elif upside > 10: emoji = "🟢"
+                    elif upside > 0: emoji = "🟡"
+                    else: emoji = "🔴"
+                    msg += f"{emoji} *{name}* ({ticker})\n  현재 {current_price:,} → 목표 {ct:,}원 ({upside:+.1f}%)\n\n"
+                else:
+                    msg += f"⚪ *{name}* ({ticker}) - 데이터 없음\n\n"
+
+            except Exception:
+                msg += f"❌ *{name}* ({ticker}) - 조회 실패\n\n"
+
+        msg += f"⏰ {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}\n"
+        msg += "💡 /target 코드 로 개별 상세 조회"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ 스캔 오류: {str(e)}")
+
+
 # 워치리스트
 async def watchlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wl = load_watchlist()
@@ -926,7 +1203,7 @@ async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "📖 *도움말 v6*\n\n"
+        "📖 *도움말 v7*\n\n"
         "📌 *조회*\n"
         "/analyze 코드 - 종목분석(수급포함)\n"
         "/scan - 거래량 급등 TOP10\n"
@@ -934,6 +1211,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/news [키워드] - 뉴스 헤드라인\n"
         "/dart - 워치리스트 DART 공시\n"
         "/summary - 한국 장마감 요약(수동)\n\n"
+        "🎯 *목표가*\n"
+        "/target 코드 - 애널리스트 목표가 조회\n"
+        "/targetscan - 워치리스트 전체 스캔\n\n"
         "👀 *한국 워치리스트*\n"
         "/watchlist · /watch 코드 이름 · /unwatch 코드\n\n"
         "🇺🇸 *미국 종목*\n"
@@ -945,6 +1225,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🔴 손절선: 장중 10분마다\n"
         "• 🔴 복합신호: 장중 30분마다\n"
         "• 📢 DART공시: 장중 30분마다\n"
+        "• 🎯 목표가변동: 평일 16:10\n"
         "• 📊 한국요약: 평일 15:40\n"
         "• 🇺🇸 미국요약: 평일 07:00\n"
         "• 💱 환율급변: 1시간마다\n"
@@ -963,9 +1244,10 @@ async def post_init(application: Application):
         await application.bot.send_message(
             chat_id=CHAT_ID,
             text=(
-                f"✅ *부자가될거야 v6 시작!*\n\n"
-                f"🔔 알림: 손절/복합신호/DART/장마감/미국/환율/주간리뷰\n"
+                f"✅ *부자가될거야 v7 시작!*\n\n"
+                f"🔔 알림: 손절/복합신호/DART/목표가/장마감/미국/환율/주간리뷰\n"
                 f"📢 {dart_status}\n"
+                f"🎯 목표가 변동 감지 활성 (한경 컨센서스)\n"
                 f"/help"
             ),
             parse_mode="Markdown"
@@ -985,6 +1267,7 @@ def main():
         ("watchlist", watchlist_cmd), ("watch", watch), ("unwatch", unwatch),
         ("uslist", uslist_cmd), ("addus", addus), ("remus", remus),
         ("setstop", setstop), ("delstop", delstop), ("stops", stops_cmd),
+        ("target", target_cmd), ("targetscan", targetscan_cmd),
         ("help", help_cmd),
     ]
     for cmd, fn in commands:
@@ -998,10 +1281,11 @@ def main():
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")    # 30분
     jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")   # 15:40 KST
     jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")   # 07:00 KST
+    jq.run_daily(check_target_price_change, time=datetime.strptime("07:10", "%H:%M").time(), name="target_scan")  # 16:10 KST
     jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")  # 일 10:00 KST
 
-    print("봇 실행! v6 전체 기능 활성화")
-    print("알림: 손절(10분)/복합(30분)/DART(30분)/한국(15:40)/미국(07:00)/환율(1h)/주간(일10시)")
+    print("봇 실행! v7 전체 기능 활성화")
+    print("알림: 손절(10분)/복합(30분)/DART(30분)/목표가(16:10)/한국(15:40)/미국(07:00)/환율(1h)/주간(일10시)")
     app.run_polling()
 
 
