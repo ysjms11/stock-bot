@@ -27,6 +27,7 @@ WATCHLIST_FILE = "/app/watchlist.json"
 STOPLOSS_FILE = "/app/stoploss.json"
 US_WATCHLIST_FILE = "/app/us_watchlist.json"
 DART_SEEN_FILE = "/app/dart_seen.json"
+PORTFOLIO_FILE = "/app/portfolio.json"
 
 _token_cache = {"token": None, "expires": None}
 
@@ -1017,6 +1018,43 @@ async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await daily_kr_summary(context)
 
 
+async def setportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """형식: /setportfolio 종목코드,수량,평단가 ..."""
+    if not context.args:
+        await update.message.reply_text(
+            "사용법: /setportfolio 종목코드,수량,평단가 ...\n"
+            "예시: /setportfolio 009540,50,413590 298040,2,2800000"
+        )
+        return
+
+    portfolio = load_json(PORTFOLIO_FILE, {})
+    added, errors = [], []
+
+    for arg in context.args:
+        parts = arg.split(",")
+        if len(parts) != 3:
+            errors.append(f"❌ 형식 오류: {arg}")
+            continue
+        ticker, qty_s, avg_s = parts
+        ticker = ticker.strip()
+        try:
+            qty = int(qty_s.strip())
+            avg = int(avg_s.strip())
+        except ValueError:
+            errors.append(f"❌ 숫자 오류: {arg}")
+            continue
+        wl = load_watchlist()
+        name = wl.get(ticker, ticker)
+        portfolio[ticker] = {"name": name, "qty": qty, "avg_price": avg}
+        added.append(f"✅ {name}({ticker}) {qty}주 @ {avg:,}원")
+
+    save_json(PORTFOLIO_FILE, portfolio)
+
+    lines = ["📁 *포트폴리오 저장 완료*\n"] + added + (errors or [])
+    lines.append(f"\n총 {len(portfolio)}종목 저장됨")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "📖 *도움말 v7*\n\n"
@@ -1137,12 +1175,38 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                        "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt")} for r in rows[:15]]
 
         elif name == "get_portfolio":
-            wl = load_watchlist()
-            result = []
-            for ticker, sname in list(wl.items())[:10]:
-                d = await kis_stock_price(ticker, token)
-                result.append({"ticker": ticker, "name": sname,
-                                "price": d.get("stck_prpr"), "chg": d.get("prdy_ctrt")})
+            portfolio = load_json(PORTFOLIO_FILE, {})
+            if not portfolio:
+                result = {"message": "포트폴리오가 비어있습니다. /setportfolio 로 등록하세요."}
+            else:
+                result = []
+                total_eval, total_cost = 0, 0
+                for ticker, info in portfolio.items():
+                    d = await kis_stock_price(ticker, token)
+                    cur = int(d.get("stck_prpr", 0) or 0)
+                    qty = info.get("qty", 0)
+                    avg = info.get("avg_price", 0)
+                    eval_amt = cur * qty
+                    cost_amt = avg * qty
+                    pnl = eval_amt - cost_amt
+                    pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                    total_eval += eval_amt
+                    total_cost += cost_amt
+                    result.append({
+                        "ticker": ticker, "name": info.get("name", ticker),
+                        "qty": qty, "avg_price": avg, "cur_price": cur,
+                        "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                        "chg_today": d.get("prdy_ctrt"),
+                    })
+                total_pnl = total_eval - total_cost
+                total_pnl_pct = round(total_pnl / total_cost * 100, 2) if total_cost else 0
+                result = {
+                    "holdings": result,
+                    "summary": {
+                        "total_eval": total_eval, "total_cost": total_cost,
+                        "total_pnl": total_pnl, "total_pnl_pct": total_pnl_pct,
+                    },
+                }
 
         elif name == "get_stock_detail":
             ticker = arguments.get("ticker", "005930")
@@ -1297,6 +1361,7 @@ def main():
         ("watchlist", watchlist_cmd), ("watch", watch), ("unwatch", unwatch),
         ("uslist", uslist_cmd), ("addus", addus), ("remus", remus),
         ("setstop", setstop), ("delstop", delstop), ("stops", stops_cmd),
+        ("setportfolio", setportfolio_cmd),
         ("help", help_cmd),
     ]
     for cmd, fn in commands:
