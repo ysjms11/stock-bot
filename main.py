@@ -1074,6 +1074,7 @@ async def setusportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     portfolio = load_json(PORTFOLIO_FILE, {})
+    us_stocks = portfolio.get("us_stocks", {})
     added, errors = [], []
 
     for arg in context.args:
@@ -1089,13 +1090,14 @@ async def setusportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except ValueError:
             errors.append(f"❌ 숫자 오류: {arg}")
             continue
-        portfolio[symbol] = {"name": symbol, "qty": qty, "avg_price": avg, "market": "US"}
+        us_stocks[symbol] = {"name": symbol, "qty": qty, "avg_price": avg}
         added.append(f"✅ {symbol} {qty}주 @ ${avg:,.2f}")
 
+    portfolio["us_stocks"] = us_stocks
     save_json(PORTFOLIO_FILE, portfolio)
 
     lines = ["🇺🇸 *해외 포트폴리오 저장 완료*\n"] + added + (errors or [])
-    lines.append(f"\n총 {len(portfolio)}종목 저장됨")
+    lines.append(f"\n총 {len(us_stocks)}종목 저장됨")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -1220,47 +1222,49 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
         elif name == "get_portfolio":
             portfolio = load_json(PORTFOLIO_FILE, {})
-            if not portfolio:
+            kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+            us_stocks = portfolio.get("us_stocks", {})
+            if not kr_stocks and not us_stocks:
                 result = {"message": "포트폴리오가 비어있습니다. /setportfolio 또는 /setusportfolio 로 등록하세요."}
             else:
                 kr_holdings, us_holdings = [], []
                 kr_eval = kr_cost = us_eval = us_cost = 0
 
-                for ticker, info in portfolio.items():
+                for ticker, info in kr_stocks.items():
                     qty = info.get("qty", 0)
                     avg = info.get("avg_price", 0)
-                    is_us = info.get("market") == "US"
+                    d = await kis_stock_price(ticker, token)
+                    cur = int(d.get("stck_prpr", 0) or 0)
+                    eval_amt = cur * qty
+                    cost_amt = int(avg) * qty
+                    pnl = eval_amt - cost_amt
+                    pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                    kr_eval += eval_amt
+                    kr_cost += cost_amt
+                    kr_holdings.append({
+                        "ticker": ticker, "name": info.get("name", ticker),
+                        "qty": qty, "avg_price": avg, "cur_price": cur,
+                        "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                        "chg_today": d.get("prdy_ctrt"),
+                    })
 
-                    if is_us:
-                        d = await kis_us_stock_price(ticker, token)
-                        cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
-                        eval_amt = round(cur * qty, 2)
-                        cost_amt = round(avg * qty, 2)
-                        pnl = round(eval_amt - cost_amt, 2)
-                        pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
-                        us_eval += eval_amt
-                        us_cost += cost_amt
-                        us_holdings.append({
-                            "ticker": ticker, "name": info.get("name", ticker),
-                            "qty": qty, "avg_price": avg, "cur_price": cur,
-                            "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                            "chg_today": d.get("diff_rate"),
-                        })
-                    else:
-                        d = await kis_stock_price(ticker, token)
-                        cur = int(d.get("stck_prpr", 0) or 0)
-                        eval_amt = cur * qty
-                        cost_amt = int(avg) * qty
-                        pnl = eval_amt - cost_amt
-                        pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
-                        kr_eval += eval_amt
-                        kr_cost += cost_amt
-                        kr_holdings.append({
-                            "ticker": ticker, "name": info.get("name", ticker),
-                            "qty": qty, "avg_price": avg, "cur_price": cur,
-                            "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                            "chg_today": d.get("prdy_ctrt"),
-                        })
+                for symbol, info in us_stocks.items():
+                    qty = info.get("qty", 0)
+                    avg = info.get("avg_price", 0)
+                    d = await kis_us_stock_price(symbol, token)
+                    cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
+                    eval_amt = round(cur * qty, 2)
+                    cost_amt = round(avg * qty, 2)
+                    pnl = round(eval_amt - cost_amt, 2)
+                    pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                    us_eval += eval_amt
+                    us_cost += cost_amt
+                    us_holdings.append({
+                        "ticker": symbol, "name": info.get("name", symbol),
+                        "qty": qty, "avg_price": avg, "cur_price": cur,
+                        "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                        "chg_today": d.get("diff_rate"),
+                    })
 
                 result = {
                     "kr": {
@@ -1346,7 +1350,7 @@ async def _handle_jsonrpc(body: dict) -> dict | None:
         return None  # notification은 응답 없음
 
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": MCP_TOOLS}}
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": MCP_TOOLS, "nextCursor": None}}
 
     if method == "tools/call":
         tool_name = params.get("name", "")
