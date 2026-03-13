@@ -383,68 +383,57 @@ def _parse_hankyung_api(data, ticker, debug_info):
     return result
 
 
-def _parse_fnguide_consensus(html, ticker, debug_info):
-    """FnGuide 컨센서스 페이지 파싱 - 목표주가, 투자의견, 증권사 리포트"""
+def _parse_naver_mobile_consensus(data, ticker, debug_info):
+    """네이버 모바일 investmentOpinion JSON 파싱"""
     result = {"ticker": ticker, "reports": [], "stock_name": ""}
     try:
-        # 종목명
-        name_m = re.search(r'<title>([^|<(]+)', html)
-        if name_m:
-            result["stock_name"] = name_m.group(1).strip()
-
-        # 컨센서스 목표주가 (평균)
-        tgt_m = re.search(r'목표주가[^<]*<[^>]+>\s*([\d,]+)', html)
-        if tgt_m:
-            try:
-                result["consensus_target"] = int(tgt_m.group(1).replace(",", ""))
-                debug_info.append(f"[3단계] 목표주가: {tgt_m.group(1)}")
-            except:
-                pass
-
-        # 투자의견
-        opinion_m = re.search(r'투자의견[^<]*<[^>]+>\s*([^<]{2,10})', html)
-        if opinion_m:
-            result["opinion"] = opinion_m.group(1).strip()
-
-        # 증권사별 리포트 행 파싱
-        # FnGuide 테이블: 날짜 | 증권사 | 투자의견 | 목표주가 | 애널리스트
-        rows = re.findall(
-            r'(\d{4}/\d{2}/\d{2})'           # 날짜
-            r'(?:(?!</tr>).)*?'
-            r'<td[^>]*>\s*([^<]{2,30}?)\s*</td>'  # 증권사
-            r'(?:(?!</tr>).)*?'
-            r'<td[^>]*>\s*(매수|중립|매도|보유|강력매수|[A-Z]+(?:\+)?)\s*</td>'  # 투자의견
-            r'(?:(?!</tr>).)*?'
-            r'<td[^>]*>\s*([\d,]+)\s*</td>',  # 목표주가
-            html,
-            re.DOTALL,
+        # 최상위가 리스트인 경우와 dict인 경우 모두 처리
+        items = data if isinstance(data, list) else (
+            data.get("list") or data.get("items") or data.get("data") or []
         )
-        for row in rows[:10]:
-            try:
-                date, broker, opinion, tp_str = row
-                tp = int(tp_str.replace(",", ""))
-                if tp > 0:
-                    result["reports"].append({
-                        "opinion": opinion.strip(),
-                        "target_price": tp,
-                        "date": date.strip(),
-                        "broker": broker.strip(),
-                    })
-            except:
-                pass
 
-        # 목표주가 없으면 리포트 평균으로 산출
+        # 컨센서스 요약이 dict 최상위에 있을 때
+        if isinstance(data, dict):
+            tp_raw = data.get("targetPrice") or data.get("consensusTargetPrice")
+            if tp_raw:
+                try:
+                    result["consensus_target"] = int(str(tp_raw).replace(",", ""))
+                    debug_info.append(f"[3단계] 목표주가(요약): {tp_raw}")
+                except:
+                    pass
+            if data.get("opinion") or data.get("investmentOpinion"):
+                result["opinion"] = str(data.get("opinion") or data.get("investmentOpinion"))
+
+        for item in (items or [])[:10]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                tp = int(str(item.get("targetPrice", 0)).replace(",", ""))
+            except:
+                tp = 0
+            opinion = item.get("opinion") or item.get("investmentOpinion") or ""
+            date = item.get("date") or item.get("reportDate") or item.get("pubDate") or ""
+            broker = item.get("broker") or item.get("companyName") or item.get("stockFirm") or ""
+            if tp > 0 or broker:
+                result["reports"].append({
+                    "opinion": str(opinion).strip(),
+                    "target_price": tp,
+                    "date": str(date).strip(),
+                    "broker": str(broker).strip(),
+                })
+
         if result["reports"] and not result.get("consensus_target"):
             prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
             if prices:
                 result["consensus_target"] = sum(prices) // len(prices)
+                debug_info.append(f"[3단계] 목표주가(평균): {result['consensus_target']}")
     except Exception as e:
         debug_info.append(f"[3단계] 파싱오류: {str(e)[:60]}")
     return result
 
 
 async def get_hankyung_consensus(ticker, debug=False):
-    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → FnGuide"""
+    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → 네이버 모바일 API"""
     debug_info = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -502,14 +491,17 @@ async def get_hankyung_consensus(ticker, debug=False):
             except Exception as e:
                 debug_info.append(f"[2단계] 오류: {str(e)[:80]}")
 
-            # ── 3단계: FnGuide 컨센서스 ──────────────────────────────────
+            # ── 3단계: 네이버 모바일 API ─────────────────────────────────
             try:
-                fnguide_url = f"https://comp.fnguide.com/SVO2/asp/SVD_Consensus.asp?gicode=A{ticker}"
-                fnguide_headers = {**headers, "Referer": "https://comp.fnguide.com/"}
-                async with session.get(fnguide_url, headers=fnguide_headers) as resp:
+                naver_url = f"https://m.stock.naver.com/api/stock/{ticker}/investmentOpinion"
+                naver_mobile_headers = {
+                    **headers,
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                }
+                async with session.get(naver_url, headers=naver_mobile_headers) as resp:
                     if resp.status == 200:
-                        html = await resp.text(encoding="euc-kr", errors="replace")
-                        result = _parse_fnguide_consensus(html, ticker, debug_info)
+                        data = await resp.json(content_type=None)
+                        result = _parse_naver_mobile_consensus(data, ticker, debug_info)
                         if result.get("consensus_target") or result.get("reports"):
                             debug_info.append("[3단계] 성공")
                             result["debug"] = debug_info
