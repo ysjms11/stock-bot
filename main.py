@@ -1498,6 +1498,28 @@ async def post_init(application: Application):
     except Exception as e:
         print(f"시작 알림 실패: {e}")
 
+    # 컨센서스 자동 테스트
+    try:
+        consensus = await get_hankyung_consensus("005930", debug=True)
+        if consensus and (consensus.get("consensus_target") or consensus.get("reports")):
+            tp = consensus.get("consensus_target", 0)
+            reports = consensus.get("reports", [])
+            debug_logs = "\n".join(consensus.get("debug", []))
+            msg = (
+                f"🤖 [시작테스트] 삼성전자 목표가: {tp:,}원\n"
+                f"리포트 수: {len(reports)}개\n\n"
+                f"── 디버그 ──\n{debug_logs}"
+            )
+        else:
+            debug_logs = "\n".join((consensus or {}).get("debug", ["결과 없음"]))
+            msg = f"🤖 [시작테스트] 삼성전자 컨센서스 실패\n\n── 디버그 ──\n{debug_logs}"
+        await application.bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        try:
+            await application.bot.send_message(chat_id=CHAT_ID, text=f"🤖 [시작테스트] 오류: {e}")
+        except:
+            print(f"시작 테스트 실패: {e}")
+
 
 def main():
     print("봇 시작 중...")
