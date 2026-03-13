@@ -508,7 +508,7 @@ async def get_hankyung_consensus(ticker, debug=False):
                 fnguide_headers = {**headers, "Referer": "https://comp.fnguide.com/"}
                 async with session.get(fnguide_url, headers=fnguide_headers) as resp:
                     if resp.status == 200:
-                        html = await resp.text(encoding="utf-8", errors="replace")
+                        html = await resp.text(encoding="euc-kr", errors="replace")
                         result = _parse_fnguide_consensus(html, ticker, debug_info)
                         if result.get("consensus_target") or result.get("reports"):
                             debug_info.append("[3단계] 성공")
