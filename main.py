@@ -433,7 +433,7 @@ def _parse_naver_mobile_consensus(data, ticker, debug_info):
 
 
 async def get_hankyung_consensus(ticker, debug=False):
-    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → 네이버 모바일 API"""
+    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → 네이버 모바일(investmentOpinion → itemSummary)"""
     debug_info = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -491,7 +491,7 @@ async def get_hankyung_consensus(ticker, debug=False):
             except Exception as e:
                 debug_info.append(f"[2단계] 오류: {str(e)[:80]}")
 
-            # ── 3단계: 네이버 모바일 API ─────────────────────────────────
+            # ── 3단계-1: 네이버 모바일 investmentOpinion API ─────────────
             try:
                 naver_url = f"https://m.stock.naver.com/api/stock/{ticker}/investmentOpinion"
                 naver_mobile_headers = {
@@ -503,14 +503,39 @@ async def get_hankyung_consensus(ticker, debug=False):
                         data = await resp.json(content_type=None)
                         result = _parse_naver_mobile_consensus(data, ticker, debug_info)
                         if result.get("consensus_target") or result.get("reports"):
-                            debug_info.append("[3단계] 성공")
+                            debug_info.append("[3-1단계] 성공")
                             result["debug"] = debug_info
                             return result
-                        debug_info.append("[3단계] 데이터 없음")
+                        debug_info.append("[3-1단계] 데이터 없음")
                     else:
-                        debug_info.append(f"[3단계] HTTP {resp.status}")
+                        debug_info.append(f"[3-1단계] HTTP {resp.status}")
             except Exception as e:
-                debug_info.append(f"[3단계] 오류: {str(e)[:80]}")
+                debug_info.append(f"[3-1단계] 오류: {str(e)[:80]}")
+
+            # ── 3단계-2: 네이버 finance API itemSummary ──────────────────
+            try:
+                summary_url = f"https://api.finance.naver.com/service/itemSummary.naver?itemcode={ticker}"
+                async with session.get(summary_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        tp_raw = data.get("targetPrice") if isinstance(data, dict) else None
+                        if tp_raw:
+                            try:
+                                tp = int(str(tp_raw).replace(",", "").split(".")[0])
+                                if tp > 0:
+                                    debug_info.append(f"[3-2단계] 목표주가: {tp}")
+                                    result = {"ticker": ticker, "reports": [], "consensus_target": tp}
+                                    result["debug"] = debug_info
+                                    return result
+                            except:
+                                pass
+                        debug_info.append("[3-2단계] 데이터 없음")
+                    else:
+                        debug_info.append(f"[3-2단계] HTTP {resp.status}")
+            except Exception as e:
+                debug_info.append(f"[3-2단계] 오류: {str(e)[:80]}")
+
+            debug_info.append("[3단계] 전체 실패 - 해외IP 차단 가능성")
 
     except Exception as e:
         debug_info.append(f"전체 오류: {str(e)[:200]}")
