@@ -25,7 +25,6 @@ WATCHLIST_FILE = "/app/watchlist.json"
 STOPLOSS_FILE = "/app/stoploss.json"
 US_WATCHLIST_FILE = "/app/us_watchlist.json"
 DART_SEEN_FILE = "/app/dart_seen.json"
-TARGET_HISTORY_FILE = "/app/target_history.json"
 
 _token_cache = {"token": None, "expires": None}
 
@@ -258,290 +257,6 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
     except Exception as e:
         print(f"뉴스 조회 오류: {e}")
     return []
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-# 컨센서스 크롤링 (한경 + 디버그)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-def load_target_history():
-    return load_json(TARGET_HISTORY_FILE, {})
-
-
-def save_target_history(data):
-    save_json(TARGET_HISTORY_FILE, data)
-
-
-def find_stock_name_from_watchlist(ticker):
-    wl = load_watchlist()
-    return wl.get(ticker, "")
-
-
-def find_ticker_from_name(name):
-    wl = load_watchlist()
-    for ticker, wname in wl.items():
-        if name in wname or wname in name:
-            return ticker
-    return None
-
-
-def _parse_hankyung_nextdata(api_json, ticker, debug_info):
-    """Next.js /_next/data/ JSON 파싱"""
-    result = {"ticker": ticker, "reports": [], "stock_name": ""}
-    try:
-        page_props = api_json.get("pageProps", {})
-        for k in ["stockName", "name"]:
-            v = page_props.get(k)
-            if isinstance(v, str) and v:
-                result["stock_name"] = v
-                break
-            elif isinstance(v, dict):
-                result["stock_name"] = v.get("name", "") or v.get("stockName", "")
-        for key, val in page_props.items():
-            if isinstance(val, dict):
-                for tkey in ["targetPrice", "target_price", "avgTargetPrice", "consensusTargetPrice"]:
-                    if tkey in val:
-                        try:
-                            tp = int(str(val[tkey]).replace(",", ""))
-                            if tp > 0:
-                                result["consensus_target"] = tp
-                        except:
-                            pass
-                for okey in ["opinion", "investmentOpinion", "recommendation"]:
-                    if okey in val:
-                        result["opinion"] = str(val[okey])
-            elif isinstance(val, list) and val:
-                first = val[0]
-                if isinstance(first, dict) and any(k in first for k in ["targetPrice", "target_price", "broker", "발행기관"]):
-                    debug_info.append(f"[1단계] 리포트키: {key}, {len(val)}개")
-                    for item in val[:5]:
-                        try:
-                            tp = int(str(item.get("targetPrice", item.get("target_price", 0))).replace(",", ""))
-                        except:
-                            tp = 0
-                        if tp > 0:
-                            result["reports"].append({
-                                "opinion": item.get("opinion", item.get("investmentOpinion", "")),
-                                "target_price": tp,
-                                "date": item.get("date", item.get("publishDate", "")),
-                                "broker": item.get("broker", item.get("발행기관", "")),
-                                "author": item.get("author", item.get("analyst", "")),
-                            })
-        if result["reports"] and not result.get("consensus_target"):
-            prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
-            if prices:
-                result["consensus_target"] = sum(prices) // len(prices)
-    except Exception as e:
-        debug_info.append(f"[1단계] 파싱오류: {str(e)[:60]}")
-    return result
-
-
-def _parse_hankyung_api(data, ticker, debug_info):
-    """한경 내부 API JSON 파싱"""
-    result = {"ticker": ticker, "reports": [], "stock_name": ""}
-    try:
-        if isinstance(data, dict):
-            for tkey in ["targetPrice", "target_price", "avgTargetPrice", "consensusTargetPrice"]:
-                if tkey in data:
-                    try:
-                        tp = int(str(data[tkey]).replace(",", ""))
-                        if tp > 0:
-                            result["consensus_target"] = tp
-                    except:
-                        pass
-            inner = data.get("data") or data.get("result") or data.get("consensus") or {}
-            if isinstance(inner, dict):
-                for tkey in ["targetPrice", "target_price", "avgTargetPrice"]:
-                    if tkey in inner:
-                        try:
-                            tp = int(str(inner[tkey]).replace(",", ""))
-                            if tp > 0:
-                                result["consensus_target"] = tp
-                        except:
-                            pass
-            reports_raw = data.get("reports") or data.get("list") or (inner.get("reports") if isinstance(inner, dict) else None) or []
-            if isinstance(reports_raw, list):
-                for item in reports_raw[:5]:
-                    if not isinstance(item, dict):
-                        continue
-                    try:
-                        tp = int(str(item.get("targetPrice", item.get("target_price", 0))).replace(",", ""))
-                    except:
-                        tp = 0
-                    if tp > 0:
-                        result["reports"].append({
-                            "opinion": item.get("opinion", ""),
-                            "target_price": tp,
-                            "date": item.get("date", ""),
-                            "broker": item.get("broker", ""),
-                        })
-        if result["reports"] and not result.get("consensus_target"):
-            prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
-            if prices:
-                result["consensus_target"] = sum(prices) // len(prices)
-    except Exception as e:
-        debug_info.append(f"[2단계] 파싱오류: {str(e)[:60]}")
-    return result
-
-
-def _parse_naver_mobile_consensus(data, ticker, debug_info):
-    """네이버 모바일 investmentOpinion JSON 파싱"""
-    result = {"ticker": ticker, "reports": [], "stock_name": ""}
-    try:
-        # 최상위가 리스트인 경우와 dict인 경우 모두 처리
-        items = data if isinstance(data, list) else (
-            data.get("list") or data.get("items") or data.get("data") or []
-        )
-
-        # 컨센서스 요약이 dict 최상위에 있을 때
-        if isinstance(data, dict):
-            tp_raw = data.get("targetPrice") or data.get("consensusTargetPrice")
-            if tp_raw:
-                try:
-                    result["consensus_target"] = int(str(tp_raw).replace(",", ""))
-                    debug_info.append(f"[3단계] 목표주가(요약): {tp_raw}")
-                except:
-                    pass
-            if data.get("opinion") or data.get("investmentOpinion"):
-                result["opinion"] = str(data.get("opinion") or data.get("investmentOpinion"))
-
-        for item in (items or [])[:10]:
-            if not isinstance(item, dict):
-                continue
-            try:
-                tp = int(str(item.get("targetPrice", 0)).replace(",", ""))
-            except:
-                tp = 0
-            opinion = item.get("opinion") or item.get("investmentOpinion") or ""
-            date = item.get("date") or item.get("reportDate") or item.get("pubDate") or ""
-            broker = item.get("broker") or item.get("companyName") or item.get("stockFirm") or ""
-            if tp > 0 or broker:
-                result["reports"].append({
-                    "opinion": str(opinion).strip(),
-                    "target_price": tp,
-                    "date": str(date).strip(),
-                    "broker": str(broker).strip(),
-                })
-
-        if result["reports"] and not result.get("consensus_target"):
-            prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
-            if prices:
-                result["consensus_target"] = sum(prices) // len(prices)
-                debug_info.append(f"[3단계] 목표주가(평균): {result['consensus_target']}")
-    except Exception as e:
-        debug_info.append(f"[3단계] 파싱오류: {str(e)[:60]}")
-    return result
-
-
-async def get_hankyung_consensus(ticker, debug=False):
-    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → 네이버 모바일(investmentOpinion → itemSummary)"""
-    debug_info = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    try:
-        async with aiohttp.ClientSession() as session:
-
-            # ── 1단계: Next.js /_next/data/ API ──────────────────────────
-            try:
-                page_url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
-                async with session.get(page_url, headers=headers) as resp:
-                    if resp.status == 200:
-                        html = await resp.text()
-                        build_id_m = re.search(r'"buildId"\s*:\s*"([^"]+)"', html)
-                        if build_id_m:
-                            build_id = build_id_m.group(1)
-                            debug_info.append(f"[1단계] buildId: {build_id}")
-                            api_url = f"https://markets.hankyung.com/_next/data/{build_id}/stock/{ticker}/consensus.json"
-                            async with session.get(api_url, headers=headers) as api_resp:
-                                if api_resp.status == 200:
-                                    api_json = await api_resp.json(content_type=None)
-                                    result = _parse_hankyung_nextdata(api_json, ticker, debug_info)
-                                    if result.get("consensus_target") or result.get("reports"):
-                                        debug_info.append("[1단계] 성공")
-                                        result["debug"] = debug_info
-                                        return result
-                                debug_info.append(f"[1단계] API HTTP {api_resp.status}")
-                        else:
-                            debug_info.append("[1단계] buildId 없음")
-                    else:
-                        debug_info.append(f"[1단계] 페이지 HTTP {resp.status}")
-            except Exception as e:
-                debug_info.append(f"[1단계] 오류: {str(e)[:80]}")
-
-            # ── 2단계: 한경 내부 API ──────────────────────────────────────
-            try:
-                hankyung_apis = [
-                    f"https://markets.hankyung.com/api/consensus/{ticker}",
-                    f"https://markets.hankyung.com/api/stock/{ticker}/consensus",
-                ]
-                for api_url in hankyung_apis:
-                    async with session.get(api_url, headers=headers) as resp:
-                        if resp.status == 200:
-                            try:
-                                data = await resp.json(content_type=None)
-                                result = _parse_hankyung_api(data, ticker, debug_info)
-                                if result.get("consensus_target") or result.get("reports"):
-                                    debug_info.append(f"[2단계] 성공: {api_url}")
-                                    result["debug"] = debug_info
-                                    return result
-                            except Exception as je:
-                                debug_info.append(f"[2단계] JSON오류: {str(je)[:60]}")
-                        debug_info.append(f"[2단계] HTTP {resp.status}")
-            except Exception as e:
-                debug_info.append(f"[2단계] 오류: {str(e)[:80]}")
-
-            # ── 3단계-1: 네이버 모바일 investmentOpinion API ─────────────
-            try:
-                naver_url = f"https://m.stock.naver.com/api/stock/{ticker}/investmentOpinion"
-                naver_mobile_headers = {
-                    **headers,
-                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                }
-                async with session.get(naver_url, headers=naver_mobile_headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        result = _parse_naver_mobile_consensus(data, ticker, debug_info)
-                        if result.get("consensus_target") or result.get("reports"):
-                            debug_info.append("[3-1단계] 성공")
-                            result["debug"] = debug_info
-                            return result
-                        debug_info.append("[3-1단계] 데이터 없음")
-                    else:
-                        debug_info.append(f"[3-1단계] HTTP {resp.status}")
-            except Exception as e:
-                debug_info.append(f"[3-1단계] 오류: {str(e)[:80]}")
-
-            # ── 3단계-2: 네이버 finance API itemSummary ──────────────────
-            try:
-                summary_url = f"https://api.finance.naver.com/service/itemSummary.naver?itemcode={ticker}"
-                async with session.get(summary_url, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        tp_raw = data.get("targetPrice") if isinstance(data, dict) else None
-                        if tp_raw:
-                            try:
-                                tp = int(str(tp_raw).replace(",", "").split(".")[0])
-                                if tp > 0:
-                                    debug_info.append(f"[3-2단계] 목표주가: {tp}")
-                                    result = {"ticker": ticker, "reports": [], "consensus_target": tp}
-                                    result["debug"] = debug_info
-                                    return result
-                            except:
-                                pass
-                        debug_info.append("[3-2단계] 데이터 없음")
-                    else:
-                        debug_info.append(f"[3-2단계] HTTP {resp.status}")
-            except Exception as e:
-                debug_info.append(f"[3-2단계] 오류: {str(e)[:80]}")
-
-            debug_info.append("[3단계] 전체 실패 - 해외IP 차단 가능성")
-
-    except Exception as e:
-        debug_info.append(f"전체 오류: {str(e)[:200]}")
-        print(f"컨센서스 크롤링 오류 ({ticker}): {e}")
-
-    return {"debug": debug_info} if debug else None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -848,99 +563,6 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 8: 목표가 변동 감지 (매일 16:10)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def check_target_price_change(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now(KST)
-    if now.weekday() >= 5:
-        return
-
-    try:
-        watchlist = load_watchlist()
-        if not watchlist:
-            return
-
-        history = load_target_history()
-        alerts = []
-        new_history = {}
-
-        for ticker, name in watchlist.items():
-            try:
-                consensus = await get_hankyung_consensus(ticker)
-                await asyncio.sleep(1.0)  # 한경 서버 부하 방지
-
-                if not consensus:
-                    continue
-
-                current_target = consensus.get("consensus_target", 0)
-                current_reports = consensus.get("reports", [])
-
-                if current_target <= 0 and not current_reports:
-                    continue
-
-                # 이전 데이터와 비교
-                prev = history.get(ticker, {})
-                prev_target = prev.get("consensus_target", 0)
-                prev_report_dates = set(prev.get("report_dates", []))
-
-                # 새 리포트 감지
-                new_reports = []
-                for r in current_reports:
-                    report_key = f"{r.get('broker', '')}_{r.get('date', '')}"
-                    if report_key not in prev_report_dates:
-                        new_reports.append(r)
-
-                # 컨센서스 목표가 변동 감지
-                target_changed = False
-                if prev_target > 0 and current_target > 0 and prev_target != current_target:
-                    target_changed = True
-                    change_pct = ((current_target - prev_target) / prev_target) * 100
-                    direction = "📈 상향" if change_pct > 0 else "📉 하향"
-                    alerts.append(
-                        f"{direction} *{name}* ({ticker})\n"
-                        f"  목표가: {prev_target:,} → {current_target:,}원 ({change_pct:+.1f}%)"
-                    )
-
-                # 새 리포트 알림
-                for r in new_reports[:2]:  # 최대 2개
-                    tp = r.get("target_price", 0)
-                    broker = r.get("broker", "?")
-                    opinion = r.get("opinion", "?")
-                    date = r.get("date", "")
-                    if tp > 0:
-                        alerts.append(
-                            f"📋 *{name}* 신규 리포트\n"
-                            f"  {broker}: {tp:,}원 ({opinion}) - {date}"
-                        )
-
-                # 현재 데이터 저장
-                report_dates = [f"{r.get('broker', '')}_{r.get('date', '')}" for r in current_reports]
-                new_history[ticker] = {
-                    "consensus_target": current_target,
-                    "report_dates": report_dates,
-                    "updated": now.strftime("%Y-%m-%d"),
-                }
-
-            except Exception as e:
-                print(f"목표가 체크 오류 ({ticker}): {e}")
-
-        # 히스토리 저장 (기존 데이터 유지 + 업데이트)
-        history.update(new_history)
-        save_target_history(history)
-
-        # 알림 발송
-        if alerts:
-            msg = f"🎯 *목표가 변동 알림* ({now.strftime('%m/%d %H:%M')})\n\n"
-            for a in alerts:
-                msg += f"{a}\n\n"
-            msg += "💡 Claude에서 상세 분석하세요"
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-
-    except Exception as e:
-        print(f"목표가 변동 감지 오류: {e}")
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 텔레그램 명령어
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -949,8 +571,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 *조회*\n"
         "/analyze 코드 · /scan · /macro · /news\n"
         "/summary · /dart\n\n"
-        "🎯 *목표가*\n"
-        "/target 코드 · /targetscan\n\n"
         "👀 *한국 워치리스트*\n"
         "/watchlist · /watch · /unwatch\n\n"
         "🇺🇸 *미국 종목 관리*\n"
@@ -1180,145 +800,6 @@ async def dart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ DART 오류: {str(e)}")
 
 
-# /target 개별 종목 목표가 조회
-async def target_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("사용법: /target 종목코드 또는 종목명\n예) /target 005930\n예) /target 삼성전자")
-        return
-
-    query = " ".join(context.args)
-
-    # 종목코드인지 종목명인지 판단
-    if query.isdigit() and len(query) == 6:
-        ticker = query
-        name = find_stock_name_from_watchlist(ticker)
-    else:
-        # 종목명으로 검색 (워치리스트에서)
-        ticker = find_ticker_from_name(query)
-        if not ticker:
-            await update.message.reply_text(f"📭 '{query}'를 워치리스트에서 찾을 수 없습니다.\n종목코드로 직접 입력하세요: /target 005930")
-            return
-        name = query
-
-    display = f"{name} ({ticker})" if name else ticker
-    await update.message.reply_text(f"⏳ {display} 목표가 조회 중...")
-
-    try:
-        # 현재가 조회
-        token = await get_kis_token()
-        current_price = 0
-        if token:
-            pd = await get_stock_price(ticker, token)
-            current_price = int(pd.get("stck_prpr", 0))
-
-        # 한경 컨센서스 (디버그 모드)
-        consensus = await get_hankyung_consensus(ticker, debug=True)
-
-        if not consensus or (not consensus.get("consensus_target") and not consensus.get("reports")):
-            debug = consensus.get("debug", []) if consensus else ["응답 없음"]
-            debug_text = "\n".join(debug[:5])
-            await update.message.reply_text(
-                f"📭 {display} 컨센서스 없음\n\n"
-                f"🔧 디버그:\n{debug_text}\n\n"
-                f"한경 페이지가 JavaScript로 렌더링되어 데이터를 못 가져올 수 있습니다."
-            )
-            return
-
-        # 종목명 보정 (한경에서 가져온 이름 우선)
-        if consensus.get("stock_name"):
-            name = consensus["stock_name"]
-            display = f"{name} ({ticker})"
-
-        msg = f"🎯 *{display} 컨센서스*\n\n"
-
-        if current_price > 0:
-            msg += f"💰 현재가: {current_price:,}원\n"
-
-        ct = consensus.get("consensus_target", 0)
-        if ct > 0:
-            upside = ((ct - current_price) / current_price * 100) if current_price > 0 else 0
-            emoji = "📈" if upside > 0 else "📉"
-            msg += f"🎯 목표가: {ct:,}원 ({emoji} {upside:+.1f}%)\n"
-
-        opinion = consensus.get("opinion", "")
-        if opinion:
-            msg += f"📊 투자의견: {opinion}\n"
-
-        msg += "\n"
-
-        reports = consensus.get("reports", [])
-        if reports:
-            msg += "📋 *최근 리포트*\n\n"
-            for r in reports[:5]:
-                tp = r.get("target_price", 0)
-                broker = r.get("broker", "?")
-                op = r.get("opinion", "?")
-                date = r.get("date", "")
-                author = r.get("author", "")
-                tp_str = f"{tp:,}원" if tp > 0 else "N/A"
-                line = f"• *{broker}* {tp_str} ({op}) - {date}"
-                if author:
-                    line += f" ({author})"
-                msg += line + "\n"
-            msg += "\n"
-
-        if not ct and not reports:
-            msg += "📭 컨센서스 데이터가 없습니다.\n\n"
-
-        msg += "💡 Claude에서 \"이 목표가 근거 분석해줘\" 물어보세요"
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ 목표가 조회 오류: {str(e)}")
-
-
-# /targetscan 워치리스트 전체 스캔
-async def targetscan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ 워치리스트 목표가 스캔 중... (시간 좀 걸립니다)")
-
-    try:
-        watchlist = load_watchlist()
-        if not watchlist:
-            await update.message.reply_text("📭 워치리스트가 비어있습니다.")
-            return
-
-        token = await get_kis_token()
-        msg = "🎯 *워치리스트 목표가 스캔*\n\n"
-
-        for ticker, name in watchlist.items():
-            try:
-                current_price = 0
-                if token:
-                    pd = await get_stock_price(ticker, token)
-                    current_price = int(pd.get("stck_prpr", 0))
-                    await asyncio.sleep(0.3)
-
-                consensus = await get_hankyung_consensus(ticker)
-                await asyncio.sleep(1.0)
-
-                ct = consensus.get("consensus_target", 0) if consensus else 0
-
-                if ct > 0 and current_price > 0:
-                    upside = ((ct - current_price) / current_price * 100)
-                    if upside > 20: emoji = "🟢🟢"
-                    elif upside > 10: emoji = "🟢"
-                    elif upside > 0: emoji = "🟡"
-                    else: emoji = "🔴"
-                    msg += f"{emoji} *{name}* ({ticker})\n  현재 {current_price:,} → 목표 {ct:,}원 ({upside:+.1f}%)\n\n"
-                else:
-                    msg += f"⚪ *{name}* ({ticker}) - 데이터 없음\n\n"
-
-            except Exception:
-                msg += f"❌ *{name}* ({ticker}) - 조회 실패\n\n"
-
-        msg += f"⏰ {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}\n"
-        msg += "💡 /target 코드 로 개별 상세 조회"
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ 스캔 오류: {str(e)}")
-
-
 # 워치리스트
 async def watchlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wl = load_watchlist()
@@ -1454,9 +935,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/news [키워드] - 뉴스 헤드라인\n"
         "/dart - 워치리스트 DART 공시\n"
         "/summary - 한국 장마감 요약(수동)\n\n"
-        "🎯 *목표가*\n"
-        "/target 코드/이름 - 애널리스트 목표가\n"
-        "/targetscan - 워치리스트 전체 스캔\n\n"
         "👀 *한국 워치리스트*\n"
         "/watchlist · /watch 코드 이름 · /unwatch 코드\n\n"
         "🇺🇸 *미국 종목*\n"
@@ -1488,9 +966,8 @@ async def post_init(application: Application):
             chat_id=CHAT_ID,
             text=(
                 f"✅ *부자가될거야 v7 시작!*\n\n"
-                f"🔔 알림: 손절/복합신호/DART/목표가/장마감/미국/환율/주간리뷰\n"
+                f"🔔 알림: 손절/복합신호/DART/장마감/미국/환율/주간리뷰\n"
                 f"📢 {dart_status}\n"
-                f"🎯 목표가 변동 감지 활성 (한경 컨센서스)\n"
                 f"/help"
             ),
             parse_mode="Markdown"
@@ -1498,27 +975,6 @@ async def post_init(application: Application):
     except Exception as e:
         print(f"시작 알림 실패: {e}")
 
-    # 컨센서스 자동 테스트
-    try:
-        consensus = await get_hankyung_consensus("005930", debug=True)
-        if consensus and (consensus.get("consensus_target") or consensus.get("reports")):
-            tp = consensus.get("consensus_target", 0)
-            reports = consensus.get("reports", [])
-            debug_logs = "\n".join(consensus.get("debug", []))
-            msg = (
-                f"🤖 [시작테스트] 삼성전자 목표가: {tp:,}원\n"
-                f"리포트 수: {len(reports)}개\n\n"
-                f"── 디버그 ──\n{debug_logs}"
-            )
-        else:
-            debug_logs = "\n".join((consensus or {}).get("debug", ["결과 없음"]))
-            msg = f"🤖 [시작테스트] 삼성전자 컨센서스 실패\n\n── 디버그 ──\n{debug_logs}"
-        await application.bot.send_message(chat_id=CHAT_ID, text=msg)
-    except Exception as e:
-        try:
-            await application.bot.send_message(chat_id=CHAT_ID, text=f"🤖 [시작테스트] 오류: {e}")
-        except:
-            print(f"시작 테스트 실패: {e}")
 
 
 def main():
@@ -1532,7 +988,6 @@ def main():
         ("watchlist", watchlist_cmd), ("watch", watch), ("unwatch", unwatch),
         ("uslist", uslist_cmd), ("addus", addus), ("remus", remus),
         ("setstop", setstop), ("delstop", delstop), ("stops", stops_cmd),
-        ("target", target_cmd), ("targetscan", targetscan_cmd),
         ("help", help_cmd),
     ]
     for cmd, fn in commands:
@@ -1546,7 +1001,6 @@ def main():
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")    # 30분
     jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")   # 15:40 KST
     jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")   # 07:00 KST
-    jq.run_daily(check_target_price_change, time=datetime.strptime("07:10", "%H:%M").time(), name="target_scan")  # 16:10 KST
     jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")  # 일 10:00 KST
 
     print("봇 실행! v7 전체 기능 활성화")
