@@ -383,21 +383,43 @@ def _parse_hankyung_api(data, ticker, debug_info):
     return result
 
 
-def _parse_naver_consensus(html, ticker, debug_info):
-    """네이버 금융 애널리스트 페이지 파싱"""
+def _parse_fnguide_consensus(html, ticker, debug_info):
+    """FnGuide 컨센서스 페이지 파싱 - 목표주가, 투자의견, 증권사 리포트"""
     result = {"ticker": ticker, "reports": [], "stock_name": ""}
     try:
-        name_m = re.search(r'<title>([^|<]+)', html)
+        # 종목명
+        name_m = re.search(r'<title>([^|<(]+)', html)
         if name_m:
             result["stock_name"] = name_m.group(1).strip()
+
+        # 컨센서스 목표주가 (평균)
+        tgt_m = re.search(r'목표주가[^<]*<[^>]+>\s*([\d,]+)', html)
+        if tgt_m:
+            try:
+                result["consensus_target"] = int(tgt_m.group(1).replace(",", ""))
+                debug_info.append(f"[3단계] 목표주가: {tgt_m.group(1)}")
+            except:
+                pass
+
+        # 투자의견
+        opinion_m = re.search(r'투자의견[^<]*<[^>]+>\s*([^<]{2,10})', html)
+        if opinion_m:
+            result["opinion"] = opinion_m.group(1).strip()
+
+        # 증권사별 리포트 행 파싱
+        # FnGuide 테이블: 날짜 | 증권사 | 투자의견 | 목표주가 | 애널리스트
         rows = re.findall(
-            r'<tr[^>]*>\s*<td[^>]*>\s*(\d{4}\.\d{2}\.\d{2})\s*</td>\s*'
-            r'<td[^>]*>([^<]+)</td>\s*'
-            r'<td[^>]*>(매수|보유|매도|강력매수|강력매도)[^<]*</td>\s*'
-            r'<td[^>]*>([\d,]+)</td>',
-            html
+            r'(\d{4}/\d{2}/\d{2})'           # 날짜
+            r'(?:(?!</tr>).)*?'
+            r'<td[^>]*>\s*([^<]{2,30}?)\s*</td>'  # 증권사
+            r'(?:(?!</tr>).)*?'
+            r'<td[^>]*>\s*(매수|중립|매도|보유|강력매수|[A-Z]+(?:\+)?)\s*</td>'  # 투자의견
+            r'(?:(?!</tr>).)*?'
+            r'<td[^>]*>\s*([\d,]+)\s*</td>',  # 목표주가
+            html,
+            re.DOTALL,
         )
-        for row in rows[:5]:
+        for row in rows[:10]:
             try:
                 date, broker, opinion, tp_str = row
                 tp = int(tp_str.replace(",", ""))
@@ -410,16 +432,8 @@ def _parse_naver_consensus(html, ticker, debug_info):
                     })
             except:
                 pass
-        if not result["reports"]:
-            text = re.sub(r'<[^>]+>', ' ', html)
-            text = re.sub(r'\s+', ' ', text)
-            tgt_m = re.search(r'목표주가\s*([\d,]+)', text)
-            if tgt_m:
-                try:
-                    result["consensus_target"] = int(tgt_m.group(1).replace(",", ""))
-                    debug_info.append(f"[3단계] 목표주가: {tgt_m.group(1)}")
-                except:
-                    pass
+
+        # 목표주가 없으면 리포트 평균으로 산출
         if result["reports"] and not result.get("consensus_target"):
             prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
             if prices:
@@ -430,7 +444,7 @@ def _parse_naver_consensus(html, ticker, debug_info):
 
 
 async def get_hankyung_consensus(ticker, debug=False):
-    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → 네이버 금융"""
+    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → FnGuide"""
     debug_info = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -488,14 +502,14 @@ async def get_hankyung_consensus(ticker, debug=False):
             except Exception as e:
                 debug_info.append(f"[2단계] 오류: {str(e)[:80]}")
 
-            # ── 3단계: 네이버 금융 ────────────────────────────────────────
+            # ── 3단계: FnGuide 컨센서스 ──────────────────────────────────
             try:
-                naver_url = f"https://m.stock.naver.com/api/stock/{ticker}/consensus"
-                naver_headers = {**headers, "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"}
-                async with session.get(naver_url, headers=naver_headers) as resp:
+                fnguide_url = f"https://comp.fnguide.com/SVO2/asp/SVD_Consensus.asp?gicode=A{ticker}"
+                fnguide_headers = {**headers, "Referer": "https://comp.fnguide.com/"}
+                async with session.get(fnguide_url, headers=fnguide_headers) as resp:
                     if resp.status == 200:
                         html = await resp.text(encoding="utf-8", errors="replace")
-                        result = _parse_naver_consensus(html, ticker, debug_info)
+                        result = _parse_fnguide_consensus(html, ticker, debug_info)
                         if result.get("consensus_target") or result.get("reports"):
                             debug_info.append("[3단계] 성공")
                             result["debug"] = debug_info
