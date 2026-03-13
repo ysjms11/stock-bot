@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import uuid
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -1099,8 +1100,10 @@ async def post_init(application: Application):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# MCP HTTP 서버 (JSON-RPC 2.0)
+# MCP over SSE 서버
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+_mcp_sessions: dict = {}  # session_id → asyncio.Queue
+
 MCP_TOOLS = [
     {
         "name": "get_stock_price",
@@ -1179,42 +1182,109 @@ async def _call_mcp_tool(name: str, args: dict) -> dict:
     return {"error": f"unknown tool: {name}"}
 
 
-async def mcp_http_handler(request):
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response(
-            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status=400)
-
+async def _handle_jsonrpc(body: dict) -> dict:
+    """JSON-RPC 요청 처리 → 응답 dict 반환"""
     req_id = body.get("id")
     method = body.get("method", "")
-    params = body.get("params", {})
+    params = body.get("params") or {}
+
+    # initialize handshake
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "stock-bot-mcp", "version": "1.0"},
+            },
+        }
+
+    # notifications (no response needed — return None)
+    if method.startswith("notifications/"):
+        return None
 
     if method == "tools/list":
-        return web.json_response({
+        return {
             "jsonrpc": "2.0", "id": req_id,
             "result": {"tools": MCP_TOOLS},
-        })
+        }
 
     if method == "tools/call":
         tool_name = params.get("name", "")
-        tool_args = params.get("arguments", {})
+        tool_args = params.get("arguments") or {}
         try:
             result = await _call_mcp_tool(tool_name, tool_args)
-            return web.json_response({
+            return {
                 "jsonrpc": "2.0", "id": req_id,
                 "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]},
-            })
+            }
         except Exception as e:
-            return web.json_response({
+            return {
                 "jsonrpc": "2.0", "id": req_id,
                 "error": {"code": -32000, "message": str(e)},
-            })
+            }
 
-    return web.json_response({
+    return {
         "jsonrpc": "2.0", "id": req_id,
         "error": {"code": -32601, "message": f"Method not found: {method}"},
+    }
+
+
+async def mcp_sse_handler(request):
+    """GET /mcp  → SSE 스트림. endpoint 이벤트로 POST URL 전달."""
+    session_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _mcp_sessions[session_id] = queue
+
+    resp = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        "Access-Control-Allow-Origin": "*",
     })
+    await resp.prepare(request)
+
+    # 클라이언트에게 메시지 POST 경로 알림
+    endpoint = f"/mcp?session_id={session_id}"
+    await resp.write(f"event: endpoint\ndata: {endpoint}\n\n".encode())
+
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=25)
+                if msg is None:
+                    break
+                await resp.write(
+                    f"event: message\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n".encode()
+                )
+            except asyncio.TimeoutError:
+                await resp.write(b": keepalive\n\n")  # SSE heartbeat
+    except (ConnectionResetError, asyncio.CancelledError, Exception):
+        pass
+    finally:
+        _mcp_sessions.pop(session_id, None)
+
+    return resp
+
+
+async def mcp_post_handler(request):
+    """POST /mcp?session_id=...  → JSON-RPC 수신 후 SSE 큐에 응답 전송."""
+    session_id = request.rel_url.query.get("session_id")
+    queue = _mcp_sessions.get(session_id)
+    if not queue:
+        return web.json_response({"error": "session not found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    response = await _handle_jsonrpc(body)
+    if response is not None:
+        await queue.put(response)
+
+    return web.Response(status=202, text="Accepted")
 
 
 def main():
@@ -1251,13 +1321,14 @@ def main():
 async def _run_all(app, port):
     # MCP aiohttp 서버 시작
     mcp_app = web.Application()
-    mcp_app.router.add_post("/mcp", mcp_http_handler)
+    mcp_app.router.add_get("/mcp", mcp_sse_handler)
+    mcp_app.router.add_post("/mcp", mcp_post_handler)
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"MCP 서버 시작: 0.0.0.0:{port}/mcp")
+    print(f"MCP SSE 서버 시작: 0.0.0.0:{port}/mcp")
 
     # 텔레그램 봇 비동기 실행
     async with app:
