@@ -10,8 +10,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send Telegram notification
+      - name: Send deploy notification
         run: |
           curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage \
             -d chat_id=${{ secrets.CHAT_ID }} \
-            -d text="🔄 배포 완료! Railway 재시작 후 /target 005930 으로 테스트해주세요"
+            -d text="🔄 배포 완료! Railway 재시작 대기 중 (30초)..."
+
+      - name: Wait for Railway restart
+        run: sleep 30
+
+      - name: Trigger /target 005930
+        run: |
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage \
+            -d chat_id=${{ secrets.CHAT_ID }} \
+            -d text="/target 005930"
