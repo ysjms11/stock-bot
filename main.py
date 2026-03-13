@@ -27,7 +27,7 @@ WATCHLIST_FILE = "/app/watchlist.json"
 STOPLOSS_FILE = "/app/stoploss.json"
 US_WATCHLIST_FILE = "/app/us_watchlist.json"
 DART_SEEN_FILE = "/app/dart_seen.json"
-PORTFOLIO_FILE = "/app/portfolio.json"
+PORTFOLIO_FILE = "/data/portfolio.json"
 
 _token_cache = {"token": None, "expires": None}
 
