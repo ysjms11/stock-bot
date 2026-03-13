@@ -1,10 +1,17 @@
 import os
 import json
 import re
-import uuid
 import asyncio
 import aiohttp
 from aiohttp import web
+import uvicorn
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
+from mcp.types import Tool, TextContent
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from telegram import Update
@@ -1100,191 +1107,132 @@ async def post_init(application: Application):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# MCP over SSE 서버
+# MCP 공식 라이브러리 서버
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-_mcp_sessions: dict = {}  # session_id → asyncio.Queue
-
-MCP_TOOLS = [
-    {
-        "name": "get_stock_price",
-        "description": "KIS API로 국내 주식 현재가, 등락률, 거래량, 52주 최고/최저 조회",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string", "description": "종목코드 (예: 005930)"}},
-            "required": ["ticker"],
-        },
-    },
-    {
-        "name": "get_stock_info",
-        "description": "KIS API로 국내 주식 PER, PBR, EPS 등 기본 정보 조회",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
-            "required": ["ticker"],
-        },
-    },
-    {
-        "name": "get_investor_trend",
-        "description": "KIS API로 외국인+기관 순매수 수급 조회",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
-            "required": ["ticker"],
-        },
-    },
-    {
-        "name": "get_credit_balance",
-        "description": "KIS API로 신용잔고 조회",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
-            "required": ["ticker"],
-        },
-    },
-    {
-        "name": "get_short_selling",
-        "description": "KIS API로 최근 7일 공매도 현황 조회",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
-            "required": ["ticker"],
-        },
-    },
-    {
-        "name": "get_volume_rank",
-        "description": "KIS API로 거래량 상위 종목 리스트 조회",
-        "inputSchema": {"type": "object", "properties": {}, "required": []},
-    },
-]
+mcp_server = Server("stock-bot-mcp")
 
 
-async def _call_mcp_tool(name: str, args: dict) -> dict:
-    token = await get_kis_token()
-    if not token:
-        return {"error": "KIS 토큰 발급 실패"}
-    if name == "get_stock_price":
-        d = await kis_stock_price(args["ticker"], token)
-        return {k: d.get(k) for k in ["stck_prpr", "prdy_ctrt", "acml_vol", "w52_hgpr", "w52_lwpr"] if k in d} or d
-    if name == "get_stock_info":
-        d = await kis_stock_info(args["ticker"], token)
-        return {k: d.get(k) for k in ["per", "pbr", "eps", "bps", "roe_val"] if k in d} or d
-    if name == "get_investor_trend":
-        rows = await kis_investor_trend(args["ticker"], token)
-        return {"rows": rows[:5]} if rows else {}
-    if name == "get_credit_balance":
-        return await kis_credit_balance(args["ticker"], token)
-    if name == "get_short_selling":
-        rows = await kis_short_selling(args["ticker"], token)
-        return {"rows": rows[:5]} if rows else {}
-    if name == "get_volume_rank":
-        rows = await kis_volume_rank_api(token)
-        return {"rows": [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"), "vol": r.get("acml_vol")} for r in rows[:10]]}
-    return {"error": f"unknown tool: {name}"}
-
-
-async def _handle_jsonrpc(body: dict) -> dict:
-    """JSON-RPC 요청 처리 → 응답 dict 반환"""
-    req_id = body.get("id")
-    method = body.get("method", "")
-    params = body.get("params") or {}
-
-    # initialize handshake
-    if method == "initialize":
-        return {
-            "jsonrpc": "2.0", "id": req_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "stock-bot-mcp", "version": "1.0"},
+@mcp_server.list_tools()
+async def _list_tools() -> list[Tool]:
+    return [
+        Tool(
+            name="scan_market",
+            description="거래량 상위 종목 스캔. 시장 과열/침체 신호 포함.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_portfolio",
+            description="한국 워치리스트 전 종목의 현재가·등락률·수급 조회",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_stock_detail",
+            description="개별 종목 상세: 현재가·등락률·PER·PBR·외국인수급",
+            inputSchema={
+                "type": "object",
+                "properties": {"ticker": {"type": "string", "description": "종목코드 (예: 005930)"}},
+                "required": ["ticker"],
             },
-        }
-
-    # notifications (no response needed — return None)
-    if method.startswith("notifications/"):
-        return None
-
-    if method == "tools/list":
-        return {
-            "jsonrpc": "2.0", "id": req_id,
-            "result": {"tools": MCP_TOOLS},
-        }
-
-    if method == "tools/call":
-        tool_name = params.get("name", "")
-        tool_args = params.get("arguments") or {}
-        try:
-            result = await _call_mcp_tool(tool_name, tool_args)
-            return {
-                "jsonrpc": "2.0", "id": req_id,
-                "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]},
-            }
-        except Exception as e:
-            return {
-                "jsonrpc": "2.0", "id": req_id,
-                "error": {"code": -32000, "message": str(e)},
-            }
-
-    return {
-        "jsonrpc": "2.0", "id": req_id,
-        "error": {"code": -32601, "message": f"Method not found: {method}"},
-    }
+        ),
+        Tool(
+            name="get_foreign_rank",
+            description="외국인 순매수 상위 종목 리스트",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_dart",
+            description="워치리스트 종목의 최근 DART 중요 공시 조회",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_macro",
+            description="KOSPI·KOSDAQ 지수 + 환율(USD/KRW) 매크로 현황",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+    ]
 
 
-async def mcp_sse_handler(request):
-    """GET /mcp  → SSE 스트림. endpoint 이벤트로 POST URL 전달."""
-    session_id = str(uuid.uuid4())
-    queue: asyncio.Queue = asyncio.Queue()
-    _mcp_sessions[session_id] = queue
-
-    resp = web.StreamResponse(headers={
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-        "Access-Control-Allow-Origin": "*",
-    })
-    await resp.prepare(request)
-
-    # 클라이언트에게 메시지 POST 경로 알림
-    endpoint = f"/mcp?session_id={session_id}"
-    await resp.write(f"event: endpoint\ndata: {endpoint}\n\n".encode())
-
+@mcp_server.call_tool()
+async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
-        while True:
-            try:
-                msg = await asyncio.wait_for(queue.get(), timeout=25)
-                if msg is None:
-                    break
-                await resp.write(
-                    f"event: message\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n".encode()
-                )
-            except asyncio.TimeoutError:
-                await resp.write(b": keepalive\n\n")  # SSE heartbeat
-    except (ConnectionResetError, asyncio.CancelledError, Exception):
-        pass
-    finally:
-        _mcp_sessions.pop(session_id, None)
+        token = await get_kis_token()
+        if not token:
+            raise RuntimeError("KIS 토큰 발급 실패")
 
-    return resp
+        if name == "scan_market":
+            rows = await kis_volume_rank_api(token)
+            result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
+                       "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt")} for r in rows[:15]]
+
+        elif name == "get_portfolio":
+            wl = load_watchlist()
+            result = []
+            for ticker, sname in list(wl.items())[:10]:
+                d = await kis_stock_price(ticker, token)
+                result.append({"ticker": ticker, "name": sname,
+                                "price": d.get("stck_prpr"), "chg": d.get("prdy_ctrt")})
+
+        elif name == "get_stock_detail":
+            ticker = arguments.get("ticker", "005930")
+            price = await kis_stock_price(ticker, token)
+            info  = await kis_stock_info(ticker, token)
+            inv   = await kis_investor_trend(ticker, token)
+            result = {
+                "ticker": ticker,
+                "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
+                "vol": price.get("acml_vol"),
+                "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
+                "per": info.get("per"), "pbr": info.get("pbr"), "eps": info.get("eps"),
+                "investor": inv[:3] if isinstance(inv, list) else inv,
+            }
+
+        elif name == "get_foreign_rank":
+            rows = await kis_foreigner_trend(token)
+            result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
+                       "net_buy": r.get("frgn_ntby_qty")} for r in rows[:15]]
+
+        elif name == "get_dart":
+            disclosures = await search_dart_disclosures(days_back=3)
+            wl = load_watchlist()
+            wl_names = list(wl.values())
+            important = filter_important_disclosures(disclosures, wl_names)
+            result = [{"corp": d.get("corp_name"), "title": d.get("report_nm"),
+                       "date": d.get("rcept_dt")} for d in important[:10]]
+
+        elif name == "get_macro":
+            kospi  = await get_kis_index(token, "0001")
+            kosdaq = await get_kis_index(token, "1001")
+            usd    = await get_yahoo_quote("USDKRW=X")
+            result = {
+                "kospi":  {"index": kospi.get("bstp_nmix_prpr"),  "chg": kospi.get("bstp_nmix_prdy_ctrt")},
+                "kosdaq": {"index": kosdaq.get("bstp_nmix_prpr"), "chg": kosdaq.get("bstp_nmix_prdy_ctrt")},
+                "usd_krw": {"price": usd.get("price") if usd else None, "chg_pct": usd.get("change_pct") if usd else None},
+            }
+
+        else:
+            result = {"error": f"unknown tool: {name}"}
+
+    except Exception as e:
+        result = {"error": str(e)}
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
-async def mcp_post_handler(request):
-    """POST /mcp?session_id=...  → JSON-RPC 수신 후 SSE 큐에 응답 전송."""
-    session_id = request.rel_url.query.get("session_id")
-    queue = _mcp_sessions.get(session_id)
-    if not queue:
-        return web.json_response({"error": "session not found"}, status=404)
+def _build_mcp_starlette() -> Starlette:
+    sse = SseServerTransport("/mcp/messages")
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+    async def handle_sse(request: Request):
+        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+            await mcp_server.run(
+                streams[0], streams[1],
+                mcp_server.create_initialization_options(),
+            )
 
-    response = await _handle_jsonrpc(body)
-    if response is not None:
-        await queue.put(response)
-
-    return web.Response(status=202, text="Accepted")
+    return Starlette(routes=[
+        Route("/mcp", endpoint=handle_sse),
+        Mount("/mcp/messages", app=sse.handle_post_message),
+        Route("/health", endpoint=lambda r: JSONResponse({"status": "ok"})),
+    ])
 
 
 def main():
@@ -1314,20 +1262,15 @@ def main():
     jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
 
     port = int(os.environ.get("PORT", 8080))
-    print(f"봇 실행! MCP HTTP 서버 포트: {port}")
+    print(f"봇 실행! MCP SSE 서버 포트: {port}")
     asyncio.run(_run_all(app, port))
 
 
 async def _run_all(app, port):
-    # MCP aiohttp 서버 시작
-    mcp_app = web.Application()
-    mcp_app.router.add_get("/mcp", mcp_sse_handler)
-    mcp_app.router.add_post("/mcp", mcp_post_handler)
-    mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
-    runner = web.AppRunner(mcp_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    # MCP Starlette + uvicorn 서버 시작
+    starlette_app = _build_mcp_starlette()
+    config = uvicorn.Config(starlette_app, host="0.0.0.0", port=port, log_level="warning")
+    uv_server = uvicorn.Server(config)
     print(f"MCP SSE 서버 시작: 0.0.0.0:{port}/mcp")
 
     # 텔레그램 봇 비동기 실행
@@ -1335,7 +1278,7 @@ async def _run_all(app, port):
         await app.initialize()
         await app.start()
         await app.updater.start_polling()
-        await asyncio.Event().wait()  # 무한 대기
+        await uv_server.serve()  # uvicorn이 이벤트루프 점유, 봇은 백그라운드로 동작
 
 
 if __name__ == "__main__":
