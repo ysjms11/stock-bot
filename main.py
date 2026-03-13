@@ -246,6 +246,15 @@ async def kis_sector_price(token):
         return d.get("output", [])
 
 
+async def kis_us_stock_price(symbol: str, token: str, excd: str = "NAS") -> dict:
+    """KIS API 해외주식 현재가 (HHDFS00000300)"""
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
+            "HHDFS00000300", token,
+            {"AUTH": "", "EXCD": excd, "SYMB": symbol})
+        return d.get("output", {})
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Yahoo Finance
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1055,6 +1064,41 @@ async def setportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def setusportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """형식: /setusportfolio 심볼,수량,평단가(USD) ..."""
+    if not context.args:
+        await update.message.reply_text(
+            "사용법: /setusportfolio 심볼,수량,평단가 ...\n"
+            "예시: /setusportfolio TSLA,12,431.92 CRSP,70,55.03"
+        )
+        return
+
+    portfolio = load_json(PORTFOLIO_FILE, {})
+    added, errors = [], []
+
+    for arg in context.args:
+        parts = arg.split(",")
+        if len(parts) != 3:
+            errors.append(f"❌ 형식 오류: {arg}")
+            continue
+        symbol, qty_s, avg_s = parts
+        symbol = symbol.strip().upper()
+        try:
+            qty = int(qty_s.strip())
+            avg = float(avg_s.strip())
+        except ValueError:
+            errors.append(f"❌ 숫자 오류: {arg}")
+            continue
+        portfolio[symbol] = {"name": symbol, "qty": qty, "avg_price": avg, "market": "US"}
+        added.append(f"✅ {symbol} {qty}주 @ ${avg:,.2f}")
+
+    save_json(PORTFOLIO_FILE, portfolio)
+
+    lines = ["🇺🇸 *해외 포트폴리오 저장 완료*\n"] + added + (errors or [])
+    lines.append(f"\n총 {len(portfolio)}종목 저장됨")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "📖 *도움말 v7*\n\n"
@@ -1177,34 +1221,63 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
         elif name == "get_portfolio":
             portfolio = load_json(PORTFOLIO_FILE, {})
             if not portfolio:
-                result = {"message": "포트폴리오가 비어있습니다. /setportfolio 로 등록하세요."}
+                result = {"message": "포트폴리오가 비어있습니다. /setportfolio 또는 /setusportfolio 로 등록하세요."}
             else:
-                result = []
-                total_eval, total_cost = 0, 0
+                kr_holdings, us_holdings = [], []
+                kr_eval = kr_cost = us_eval = us_cost = 0
+
                 for ticker, info in portfolio.items():
-                    d = await kis_stock_price(ticker, token)
-                    cur = int(d.get("stck_prpr", 0) or 0)
                     qty = info.get("qty", 0)
                     avg = info.get("avg_price", 0)
-                    eval_amt = cur * qty
-                    cost_amt = avg * qty
-                    pnl = eval_amt - cost_amt
-                    pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
-                    total_eval += eval_amt
-                    total_cost += cost_amt
-                    result.append({
-                        "ticker": ticker, "name": info.get("name", ticker),
-                        "qty": qty, "avg_price": avg, "cur_price": cur,
-                        "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                        "chg_today": d.get("prdy_ctrt"),
-                    })
-                total_pnl = total_eval - total_cost
-                total_pnl_pct = round(total_pnl / total_cost * 100, 2) if total_cost else 0
+                    is_us = info.get("market") == "US"
+
+                    if is_us:
+                        d = await kis_us_stock_price(ticker, token)
+                        cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
+                        eval_amt = round(cur * qty, 2)
+                        cost_amt = round(avg * qty, 2)
+                        pnl = round(eval_amt - cost_amt, 2)
+                        pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                        us_eval += eval_amt
+                        us_cost += cost_amt
+                        us_holdings.append({
+                            "ticker": ticker, "name": info.get("name", ticker),
+                            "qty": qty, "avg_price": avg, "cur_price": cur,
+                            "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                            "chg_today": d.get("diff_rate"),
+                        })
+                    else:
+                        d = await kis_stock_price(ticker, token)
+                        cur = int(d.get("stck_prpr", 0) or 0)
+                        eval_amt = cur * qty
+                        cost_amt = int(avg) * qty
+                        pnl = eval_amt - cost_amt
+                        pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                        kr_eval += eval_amt
+                        kr_cost += cost_amt
+                        kr_holdings.append({
+                            "ticker": ticker, "name": info.get("name", ticker),
+                            "qty": qty, "avg_price": avg, "cur_price": cur,
+                            "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                            "chg_today": d.get("prdy_ctrt"),
+                        })
+
                 result = {
-                    "holdings": result,
-                    "summary": {
-                        "total_eval": total_eval, "total_cost": total_cost,
-                        "total_pnl": total_pnl, "total_pnl_pct": total_pnl_pct,
+                    "kr": {
+                        "holdings": kr_holdings,
+                        "summary": {
+                            "total_eval": kr_eval, "total_cost": kr_cost,
+                            "total_pnl": kr_eval - kr_cost,
+                            "total_pnl_pct": round((kr_eval - kr_cost) / kr_cost * 100, 2) if kr_cost else 0,
+                        },
+                    },
+                    "us": {
+                        "holdings": us_holdings,
+                        "summary": {
+                            "total_eval": round(us_eval, 2), "total_cost": round(us_cost, 2),
+                            "total_pnl": round(us_eval - us_cost, 2),
+                            "total_pnl_pct": round((us_eval - us_cost) / us_cost * 100, 2) if us_cost else 0,
+                        },
                     },
                 }
 
@@ -1362,6 +1435,7 @@ def main():
         ("uslist", uslist_cmd), ("addus", addus), ("remus", remus),
         ("setstop", setstop), ("delstop", delstop), ("stops", stops_cmd),
         ("setportfolio", setportfolio_cmd),
+        ("setusportfolio", setusportfolio_cmd),
         ("help", help_cmd),
     ]
     for cmd, fn in commands:
