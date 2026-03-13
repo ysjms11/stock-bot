@@ -3,6 +3,7 @@ import json
 import re
 import asyncio
 import aiohttp
+from aiohttp import web
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from telegram import Update
@@ -1182,7 +1183,7 @@ async def mcp_http_handler(request):
     try:
         body = await request.json()
     except Exception:
-        return aiohttp.web.json_response(
+        return web.json_response(
             {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status=400)
 
     req_id = body.get("id")
@@ -1190,7 +1191,7 @@ async def mcp_http_handler(request):
     params = body.get("params", {})
 
     if method == "tools/list":
-        return aiohttp.web.json_response({
+        return web.json_response({
             "jsonrpc": "2.0", "id": req_id,
             "result": {"tools": MCP_TOOLS},
         })
@@ -1200,17 +1201,17 @@ async def mcp_http_handler(request):
         tool_args = params.get("arguments", {})
         try:
             result = await _call_mcp_tool(tool_name, tool_args)
-            return aiohttp.web.json_response({
+            return web.json_response({
                 "jsonrpc": "2.0", "id": req_id,
                 "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]},
             })
         except Exception as e:
-            return aiohttp.web.json_response({
+            return web.json_response({
                 "jsonrpc": "2.0", "id": req_id,
                 "error": {"code": -32000, "message": str(e)},
             })
 
-    return aiohttp.web.json_response({
+    return web.json_response({
         "jsonrpc": "2.0", "id": req_id,
         "error": {"code": -32601, "message": f"Method not found: {method}"},
     })
@@ -1249,12 +1250,12 @@ def main():
 
 async def _run_all(app, port):
     # MCP aiohttp 서버 시작
-    mcp_app = aiohttp.web.Application()
+    mcp_app = web.Application()
     mcp_app.router.add_post("/mcp", mcp_http_handler)
-    mcp_app.router.add_get("/health", lambda r: aiohttp.web.json_response({"status": "ok"}))
-    runner = aiohttp.web.AppRunner(mcp_app)
+    mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
+    runner = web.AppRunner(mcp_app)
     await runner.setup()
-    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"MCP 서버 시작: 0.0.0.0:{port}/mcp")
 
