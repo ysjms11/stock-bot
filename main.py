@@ -153,6 +153,96 @@ async def get_kis_index(token, index_code="0001"):
             return (await resp.json()).get("output", {})
 
 
+def _kis_headers(token, tr_id):
+    return {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "tr_id": tr_id,
+    }
+
+
+async def _kis_get(session, path, tr_id, token, params):
+    url = f"{KIS_BASE_URL}{path}"
+    async with session.get(url, headers=_kis_headers(token, tr_id), params=params) as r:
+        data = await r.json(content_type=None)
+        return r.status, data
+
+
+async def kis_stock_price(ticker, token):
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "FHKST01010100", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+        return d.get("output", {})
+
+
+async def kis_stock_info(ticker, token):
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/search-stock-info",
+            "CTPF1002R", token,
+            {"PRDT_TYPE_CD": "300", "PDNO": ticker})
+        return d.get("output", {})
+
+
+async def kis_investor_trend(ticker, token):
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-investor",
+            "FHKST01010900", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+        return d.get("output", [])
+
+
+async def kis_credit_balance(ticker, token):
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-credit-by-company",
+            "FHKST01010600", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+        return d.get("output", {})
+
+
+async def kis_short_selling(ticker, token):
+    today = datetime.now().strftime("%Y%m%d")
+    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-short-selling",
+            "FHKST01010700", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker,
+             "fid_begin_dt": week_ago, "fid_end_dt": today})
+        return d.get("output", [])
+
+
+async def kis_volume_rank_api(token):
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/volume-rank",
+            "FHPST01710000", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_cond_scr_div_code": "20171",
+             "fid_input_iscd": "0000", "fid_div_cls_code": "0", "fid_blng_cls_code": "0",
+             "fid_trgt_cls_code": "111111111", "fid_trgt_exls_cls_code": "000000",
+             "fid_input_price_1": "", "fid_input_price_2": "", "fid_vol_cnt": "", "fid_input_date_1": ""})
+        return d.get("output", [])
+
+
+async def kis_foreigner_trend(token):
+    today = datetime.now().strftime("%Y%m%d")
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-foreigner-trend",
+            "FHPTJ04060100", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": "0000", "fid_input_date_1": today})
+        return d.get("output", [])
+
+
+async def kis_sector_price(token):
+    today = datetime.now().strftime("%Y%m%d")
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-daily-sector-price",
+            "FHKUP03500100", token,
+            {"fid_cond_mrkt_div_code": "U", "fid_input_iscd": "0001",
+             "fid_input_date_1": today, "fid_period_div_code": "D"})
+        return d.get("output", [])
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Yahoo Finance
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -975,6 +1065,155 @@ async def post_init(application: Application):
     except Exception as e:
         print(f"시작 알림 실패: {e}")
 
+    # ── KIS API 시작 테스트 ──────────────────────────────────────
+    if KIS_APP_KEY and KIS_APP_SECRET:
+        lines = ["🔬 *KIS API 시작테스트* (005930 삼성전자)\n"]
+        try:
+            token = await get_kis_token()
+            lines.append(f"🔑 토큰 발급: ✅")
+
+            async def chk(label, coro):
+                try:
+                    r = await coro
+                    ok = bool(r)
+                    lines.append(f"{'✅' if ok else '❌'} {label}")
+                except Exception as e:
+                    lines.append(f"❌ {label}: {str(e)[:50]}")
+
+            await chk("현재가/등락률/거래량",  kis_stock_price("005930", token))
+            await chk("PER/PBR/EPS",          kis_stock_info("005930", token))
+            await chk("외국인+기관 수급",       kis_investor_trend("005930", token))
+            await chk("신용잔고",               kis_credit_balance("005930", token))
+            await chk("공매도",                kis_short_selling("005930", token))
+            await chk("거래량 상위",            kis_volume_rank_api(token))
+            await chk("외국인순매수 상위",       kis_foreigner_trend(token))
+            await chk("업종별 시세",            kis_sector_price(token))
+        except Exception as e:
+            lines.append(f"❌ 토큰 발급 실패: {e}")
+        try:
+            await application.bot.send_message(
+                chat_id=CHAT_ID, text="\n".join(lines), parse_mode="Markdown")
+        except Exception as e:
+            print(f"KIS 테스트 결과 전송 실패: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# MCP HTTP 서버 (JSON-RPC 2.0)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+MCP_TOOLS = [
+    {
+        "name": "get_stock_price",
+        "description": "KIS API로 국내 주식 현재가, 등락률, 거래량, 52주 최고/최저 조회",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "종목코드 (예: 005930)"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_stock_info",
+        "description": "KIS API로 국내 주식 PER, PBR, EPS 등 기본 정보 조회",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_investor_trend",
+        "description": "KIS API로 외국인+기관 순매수 수급 조회",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_credit_balance",
+        "description": "KIS API로 신용잔고 조회",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_short_selling",
+        "description": "KIS API로 최근 7일 공매도 현황 조회",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "종목코드"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_volume_rank",
+        "description": "KIS API로 거래량 상위 종목 리스트 조회",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
+
+async def _call_mcp_tool(name: str, args: dict) -> dict:
+    token = await get_kis_token()
+    if not token:
+        return {"error": "KIS 토큰 발급 실패"}
+    if name == "get_stock_price":
+        d = await kis_stock_price(args["ticker"], token)
+        return {k: d.get(k) for k in ["stck_prpr", "prdy_ctrt", "acml_vol", "w52_hgpr", "w52_lwpr"] if k in d} or d
+    if name == "get_stock_info":
+        d = await kis_stock_info(args["ticker"], token)
+        return {k: d.get(k) for k in ["per", "pbr", "eps", "bps", "roe_val"] if k in d} or d
+    if name == "get_investor_trend":
+        rows = await kis_investor_trend(args["ticker"], token)
+        return {"rows": rows[:5]} if rows else {}
+    if name == "get_credit_balance":
+        return await kis_credit_balance(args["ticker"], token)
+    if name == "get_short_selling":
+        rows = await kis_short_selling(args["ticker"], token)
+        return {"rows": rows[:5]} if rows else {}
+    if name == "get_volume_rank":
+        rows = await kis_volume_rank_api(token)
+        return {"rows": [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"), "vol": r.get("acml_vol")} for r in rows[:10]]}
+    return {"error": f"unknown tool: {name}"}
+
+
+async def mcp_http_handler(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return aiohttp.web.json_response(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status=400)
+
+    req_id = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
+
+    if method == "tools/list":
+        return aiohttp.web.json_response({
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {"tools": MCP_TOOLS},
+        })
+
+    if method == "tools/call":
+        tool_name = params.get("name", "")
+        tool_args = params.get("arguments", {})
+        try:
+            result = await _call_mcp_tool(tool_name, tool_args)
+            return aiohttp.web.json_response({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]},
+            })
+        except Exception as e:
+            return aiohttp.web.json_response({
+                "jsonrpc": "2.0", "id": req_id,
+                "error": {"code": -32000, "message": str(e)},
+            })
+
+    return aiohttp.web.json_response({
+        "jsonrpc": "2.0", "id": req_id,
+        "error": {"code": -32601, "message": f"Method not found: {method}"},
+    })
 
 
 def main():
@@ -995,17 +1234,36 @@ def main():
 
     # 자동 알림 스케줄
     jq = app.job_queue
-    jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")        # 10분
-    jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")         # 30분
-    jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")             # 1시간
-    jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")    # 30분
-    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")   # 15:40 KST
-    jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")   # 07:00 KST
-    jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")  # 일 10:00 KST
+    jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")
+    jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
+    jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
+    jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
+    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")
+    jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")
+    jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
 
-    print("봇 실행! v7 전체 기능 활성화")
-    print("알림: 손절(10분)/복합(30분)/DART(30분)/목표가(16:10)/한국(15:40)/미국(07:00)/환율(1h)/주간(일10시)")
-    app.run_polling()
+    port = int(os.environ.get("PORT", 8080))
+    print(f"봇 실행! MCP HTTP 서버 포트: {port}")
+    asyncio.run(_run_all(app, port))
+
+
+async def _run_all(app, port):
+    # MCP aiohttp 서버 시작
+    mcp_app = aiohttp.web.Application()
+    mcp_app.router.add_post("/mcp", mcp_http_handler)
+    mcp_app.router.add_get("/health", lambda r: aiohttp.web.json_response({"status": "ok"}))
+    runner = aiohttp.web.AppRunner(mcp_app)
+    await runner.setup()
+    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"MCP 서버 시작: 0.0.0.0:{port}/mcp")
+
+    # 텔레그램 봇 비동기 실행
+    async with app:
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        await asyncio.Event().wait()  # 무한 대기
 
 
 if __name__ == "__main__":
