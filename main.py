@@ -490,11 +490,11 @@ async def get_hankyung_consensus(ticker, debug=False):
 
             # ── 3단계: 네이버 금융 ────────────────────────────────────────
             try:
-                naver_url = f"https://finance.naver.com/item/analyst.naver?code={ticker}"
-                naver_headers = {**headers, "Referer": "https://finance.naver.com/"}
+                naver_url = f"https://m.stock.naver.com/api/stock/{ticker}/consensus"
+                naver_headers = {**headers, "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"}
                 async with session.get(naver_url, headers=naver_headers) as resp:
                     if resp.status == 200:
-                        html = await resp.text(encoding="euc-kr", errors="replace")
+                        html = await resp.text(encoding="utf-8", errors="replace")
                         result = _parse_naver_consensus(html, ticker, debug_info)
                         if result.get("consensus_target") or result.get("reports"):
                             debug_info.append("[3단계] 성공")
