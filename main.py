@@ -1155,11 +1155,14 @@ async def _list_tools() -> list[Tool]:
 @mcp_server.call_tool()
 async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
     arguments = arguments or {}
+    print(f"툴 호출: {name} {arguments}")
 
     def _ok(data) -> list[TextContent]:
+        print(f"툴 결과: {name} → {json.dumps(data, ensure_ascii=False)[:200]}")
         return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
 
     def _err(msg: str) -> list[TextContent]:
+        print(f"에러: {name} → {msg}")
         return [TextContent(type="text", text=json.dumps({"error": msg}, ensure_ascii=False))]
 
     try:
@@ -1246,11 +1249,19 @@ def _build_mcp_starlette() -> Starlette:
 
     # ASGI app으로 직접 처리 (Route endpoint 사용 시 None 반환 → TypeError 방지)
     async def sse_asgi(scope, receive, send):
-        async with sse.connect_sse(scope, receive, send) as streams:
-            await mcp_server.run(
-                streams[0], streams[1],
-                mcp_server.create_initialization_options(),
-            )
+        import uuid as _uuid
+        session_id = str(_uuid.uuid4())[:8]
+        print(f"SSE 연결됨: {session_id}")
+        try:
+            async with sse.connect_sse(scope, receive, send) as streams:
+                await mcp_server.run(
+                    streams[0], streams[1],
+                    mcp_server.create_initialization_options(),
+                )
+        except Exception as e:
+            print(f"에러: SSE [{session_id}] {e}")
+        finally:
+            print(f"SSE 종료: {session_id}")
 
     return Starlette(routes=[
         Mount("/mcp", app=sse_asgi),
@@ -1301,7 +1312,7 @@ async def _run_all(app, port):
     async with app:
         await app.initialize()
         await app.start()
-        await app.updater.start_polling()
+        await app.updater.start_polling(drop_pending_updates=True)
         await uv_server.serve()  # uvicorn이 이벤트루프 점유, 봇은 백그라운드로 동작
 
 
