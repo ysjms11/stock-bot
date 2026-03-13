@@ -284,132 +284,233 @@ def find_ticker_from_name(name):
     return None
 
 
+def _parse_hankyung_nextdata(api_json, ticker, debug_info):
+    """Next.js /_next/data/ JSON 파싱"""
+    result = {"ticker": ticker, "reports": [], "stock_name": ""}
+    try:
+        page_props = api_json.get("pageProps", {})
+        for k in ["stockName", "name"]:
+            v = page_props.get(k)
+            if isinstance(v, str) and v:
+                result["stock_name"] = v
+                break
+            elif isinstance(v, dict):
+                result["stock_name"] = v.get("name", "") or v.get("stockName", "")
+        for key, val in page_props.items():
+            if isinstance(val, dict):
+                for tkey in ["targetPrice", "target_price", "avgTargetPrice", "consensusTargetPrice"]:
+                    if tkey in val:
+                        try:
+                            tp = int(str(val[tkey]).replace(",", ""))
+                            if tp > 0:
+                                result["consensus_target"] = tp
+                        except:
+                            pass
+                for okey in ["opinion", "investmentOpinion", "recommendation"]:
+                    if okey in val:
+                        result["opinion"] = str(val[okey])
+            elif isinstance(val, list) and val:
+                first = val[0]
+                if isinstance(first, dict) and any(k in first for k in ["targetPrice", "target_price", "broker", "발행기관"]):
+                    debug_info.append(f"[1단계] 리포트키: {key}, {len(val)}개")
+                    for item in val[:5]:
+                        try:
+                            tp = int(str(item.get("targetPrice", item.get("target_price", 0))).replace(",", ""))
+                        except:
+                            tp = 0
+                        if tp > 0:
+                            result["reports"].append({
+                                "opinion": item.get("opinion", item.get("investmentOpinion", "")),
+                                "target_price": tp,
+                                "date": item.get("date", item.get("publishDate", "")),
+                                "broker": item.get("broker", item.get("발행기관", "")),
+                                "author": item.get("author", item.get("analyst", "")),
+                            })
+        if result["reports"] and not result.get("consensus_target"):
+            prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
+            if prices:
+                result["consensus_target"] = sum(prices) // len(prices)
+    except Exception as e:
+        debug_info.append(f"[1단계] 파싱오류: {str(e)[:60]}")
+    return result
+
+
+def _parse_hankyung_api(data, ticker, debug_info):
+    """한경 내부 API JSON 파싱"""
+    result = {"ticker": ticker, "reports": [], "stock_name": ""}
+    try:
+        if isinstance(data, dict):
+            for tkey in ["targetPrice", "target_price", "avgTargetPrice", "consensusTargetPrice"]:
+                if tkey in data:
+                    try:
+                        tp = int(str(data[tkey]).replace(",", ""))
+                        if tp > 0:
+                            result["consensus_target"] = tp
+                    except:
+                        pass
+            inner = data.get("data") or data.get("result") or data.get("consensus") or {}
+            if isinstance(inner, dict):
+                for tkey in ["targetPrice", "target_price", "avgTargetPrice"]:
+                    if tkey in inner:
+                        try:
+                            tp = int(str(inner[tkey]).replace(",", ""))
+                            if tp > 0:
+                                result["consensus_target"] = tp
+                        except:
+                            pass
+            reports_raw = data.get("reports") or data.get("list") or (inner.get("reports") if isinstance(inner, dict) else None) or []
+            if isinstance(reports_raw, list):
+                for item in reports_raw[:5]:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        tp = int(str(item.get("targetPrice", item.get("target_price", 0))).replace(",", ""))
+                    except:
+                        tp = 0
+                    if tp > 0:
+                        result["reports"].append({
+                            "opinion": item.get("opinion", ""),
+                            "target_price": tp,
+                            "date": item.get("date", ""),
+                            "broker": item.get("broker", ""),
+                        })
+        if result["reports"] and not result.get("consensus_target"):
+            prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
+            if prices:
+                result["consensus_target"] = sum(prices) // len(prices)
+    except Exception as e:
+        debug_info.append(f"[2단계] 파싱오류: {str(e)[:60]}")
+    return result
+
+
+def _parse_naver_consensus(html, ticker, debug_info):
+    """네이버 금융 애널리스트 페이지 파싱"""
+    result = {"ticker": ticker, "reports": [], "stock_name": ""}
+    try:
+        name_m = re.search(r'<title>([^|<]+)', html)
+        if name_m:
+            result["stock_name"] = name_m.group(1).strip()
+        rows = re.findall(
+            r'<tr[^>]*>\s*<td[^>]*>\s*(\d{4}\.\d{2}\.\d{2})\s*</td>\s*'
+            r'<td[^>]*>([^<]+)</td>\s*'
+            r'<td[^>]*>(매수|보유|매도|강력매수|강력매도)[^<]*</td>\s*'
+            r'<td[^>]*>([\d,]+)</td>',
+            html
+        )
+        for row in rows[:5]:
+            try:
+                date, broker, opinion, tp_str = row
+                tp = int(tp_str.replace(",", ""))
+                if tp > 0:
+                    result["reports"].append({
+                        "opinion": opinion.strip(),
+                        "target_price": tp,
+                        "date": date.strip(),
+                        "broker": broker.strip(),
+                    })
+            except:
+                pass
+        if not result["reports"]:
+            text = re.sub(r'<[^>]+>', ' ', html)
+            text = re.sub(r'\s+', ' ', text)
+            tgt_m = re.search(r'목표주가\s*([\d,]+)', text)
+            if tgt_m:
+                try:
+                    result["consensus_target"] = int(tgt_m.group(1).replace(",", ""))
+                    debug_info.append(f"[3단계] 목표주가: {tgt_m.group(1)}")
+                except:
+                    pass
+        if result["reports"] and not result.get("consensus_target"):
+            prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
+            if prices:
+                result["consensus_target"] = sum(prices) // len(prices)
+    except Exception as e:
+        debug_info.append(f"[3단계] 파싱오류: {str(e)[:60]}")
+    return result
+
+
 async def get_hankyung_consensus(ticker, debug=False):
-    """한경 컨센서스 크롤링 - __NEXT_DATA__ JSON 우선, HTML 폴백"""
-    url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
+    """한경 컨센서스 - 3단계 폴백: Next.js API → 한경 내부 API → 네이버 금융"""
     debug_info = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }) as resp:
-                if resp.status != 200:
-                    debug_info.append(f"HTTP {resp.status}")
-                    return {"debug": debug_info} if debug else None
 
-                html = await resp.text()
-                debug_info.append(f"HTML길이: {len(html)}")
-                result = {"ticker": ticker, "reports": [], "stock_name": "", "debug": debug_info}
+            # ── 1단계: Next.js /_next/data/ API ──────────────────────────
+            try:
+                page_url = f"https://markets.hankyung.com/stock/{ticker}/consensus"
+                async with session.get(page_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        html = await resp.text()
+                        build_id_m = re.search(r'"buildId"\s*:\s*"([^"]+)"', html)
+                        if build_id_m:
+                            build_id = build_id_m.group(1)
+                            debug_info.append(f"[1단계] buildId: {build_id}")
+                            api_url = f"https://markets.hankyung.com/_next/data/{build_id}/stock/{ticker}/consensus.json"
+                            async with session.get(api_url, headers=headers) as api_resp:
+                                if api_resp.status == 200:
+                                    api_json = await api_resp.json(content_type=None)
+                                    result = _parse_hankyung_nextdata(api_json, ticker, debug_info)
+                                    if result.get("consensus_target") or result.get("reports"):
+                                        debug_info.append("[1단계] 성공")
+                                        result["debug"] = debug_info
+                                        return result
+                                debug_info.append(f"[1단계] API HTTP {api_resp.status}")
+                        else:
+                            debug_info.append("[1단계] buildId 없음")
+                    else:
+                        debug_info.append(f"[1단계] 페이지 HTTP {resp.status}")
+            except Exception as e:
+                debug_info.append(f"[1단계] 오류: {str(e)[:80]}")
 
-                # 방법 1: __NEXT_DATA__ JSON 파싱 (Next.js 앱)
-                next_data_match = re.search(
-                    r'<script\s+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                    html, re.DOTALL
-                )
-                if next_data_match:
-                    debug_info.append("__NEXT_DATA__ 발견!")
-                    try:
-                        import json as json_mod
-                        next_json = json_mod.loads(next_data_match.group(1))
-                        debug_info.append(f"JSON키: {list(next_json.get('props', {}).get('pageProps', {}).keys())[:5]}")
-                        # Next.js data에서 컨센서스 정보 추출 시도
-                        page_props = next_json.get("props", {}).get("pageProps", {})
+            # ── 2단계: 한경 내부 API ──────────────────────────────────────
+            try:
+                hankyung_apis = [
+                    f"https://markets.hankyung.com/api/consensus/{ticker}",
+                    f"https://markets.hankyung.com/api/stock/{ticker}/consensus",
+                ]
+                for api_url in hankyung_apis:
+                    async with session.get(api_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            try:
+                                data = await resp.json(content_type=None)
+                                result = _parse_hankyung_api(data, ticker, debug_info)
+                                if result.get("consensus_target") or result.get("reports"):
+                                    debug_info.append(f"[2단계] 성공: {api_url}")
+                                    result["debug"] = debug_info
+                                    return result
+                            except Exception as je:
+                                debug_info.append(f"[2단계] JSON오류: {str(je)[:60]}")
+                        debug_info.append(f"[2단계] HTTP {resp.status}")
+            except Exception as e:
+                debug_info.append(f"[2단계] 오류: {str(e)[:80]}")
 
-                        # 종목명
-                        stock_name = page_props.get("stockName", "") or page_props.get("name", "")
-                        if stock_name:
-                            result["stock_name"] = stock_name
-
-                        # 다양한 키 패턴으로 컨센서스 데이터 탐색
-                        for key in page_props:
-                            val = page_props[key]
-                            if isinstance(val, dict):
-                                # 목표가
-                                for tkey in ["targetPrice", "target_price", "avgTargetPrice", "consensusTargetPrice"]:
-                                    if tkey in val:
-                                        try:
-                                            tp = int(str(val[tkey]).replace(",", ""))
-                                            if tp > 0:
-                                                result["consensus_target"] = tp
-                                        except:
-                                            pass
-                                # 투자의견
-                                for okey in ["opinion", "investmentOpinion", "recommendation"]:
-                                    if okey in val:
-                                        result["opinion"] = str(val[okey])
-                            elif isinstance(val, list) and len(val) > 0:
-                                # 리포트 리스트 가능
-                                first = val[0]
-                                if isinstance(first, dict) and any(k in first for k in ["targetPrice", "target_price", "broker", "발행기관"]):
-                                    debug_info.append(f"리포트리스트 키: {key}, 항목수: {len(val)}")
-                                    for item in val[:5]:
-                                        report = {
-                                            "opinion": item.get("opinion", item.get("investmentOpinion", "")),
-                                            "target_price": int(str(item.get("targetPrice", item.get("target_price", 0))).replace(",", "")),
-                                            "date": item.get("date", item.get("publishDate", "")),
-                                            "broker": item.get("broker", item.get("발행기관", "")),
-                                            "author": item.get("author", item.get("analyst", "")),
-                                        }
-                                        if report["target_price"] > 0:
-                                            result["reports"].append(report)
-                    except Exception as e:
-                        debug_info.append(f"JSON파싱오류: {str(e)[:100]}")
-                else:
-                    debug_info.append("__NEXT_DATA__ 없음")
-
-                # 방법 2: HTML 텍스트 파싱 (서버사이드 렌더링인 경우)
-                if not result.get("consensus_target") and not result["reports"]:
-                    # HTML 태그 제거
-                    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-                    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-                    text = re.sub(r'<[^>]+>', ' ', text)
-                    text = re.sub(r'\s+', ' ', text)
-                    debug_info.append(f"텍스트(200자): {text[200:400]}")
-
-                    # 종목명
-                    name_m = re.search(r'<title>([^-<]+)', html)
-                    if name_m and not result["stock_name"]:
-                        result["stock_name"] = name_m.group(1).strip()
-
-                    # 목표가
-                    target_m = re.search(r'목표가[^0-9]*?(\d[\d,]+)\s*원', text)
-                    if target_m:
-                        result["consensus_target"] = int(target_m.group(1).replace(",", ""))
-                        debug_info.append(f"목표가 발견: {target_m.group(1)}")
-
-                    # 투자의견
-                    opinion_m = re.search(r'투자의견.*?(강력매수|강력매도|매수|보유|매도)', text)
-                    if opinion_m:
-                        result["opinion"] = opinion_m.group(1)
-
-                    # 리포트
-                    report_pattern = re.findall(
-                        r'투자의견\s*:?\s*(강력매수|강력매도|매수|보유|매도)'
-                        r'.*?목표주가\s*:?\s*([\d,]+)\s*원'
-                        r'.*?발표일\s*:?\s*([\d.]+)'
-                        r'.*?발행기관\s*:?\s*([^\s<]+)',
-                        text
-                    )
-                    if report_pattern:
-                        debug_info.append(f"리포트 {len(report_pattern)}개 발견")
-                        for op, price, date, broker in report_pattern[:5]:
-                            result["reports"].append({
-                                "opinion": op.strip(), "target_price": int(price.replace(",", "")),
-                                "date": date.strip(), "broker": broker.strip(),
-                            })
-
-                # 리포트에서 평균 계산
-                if result["reports"] and not result.get("consensus_target"):
-                    prices = [r["target_price"] for r in result["reports"] if r["target_price"] > 0]
-                    if prices:
-                        result["consensus_target"] = sum(prices) // len(prices)
-
-                return result
+            # ── 3단계: 네이버 금융 ────────────────────────────────────────
+            try:
+                naver_url = f"https://finance.naver.com/item/analyst.naver?code={ticker}"
+                naver_headers = {**headers, "Referer": "https://finance.naver.com/"}
+                async with session.get(naver_url, headers=naver_headers) as resp:
+                    if resp.status == 200:
+                        html = await resp.text(encoding="euc-kr", errors="replace")
+                        result = _parse_naver_consensus(html, ticker, debug_info)
+                        if result.get("consensus_target") or result.get("reports"):
+                            debug_info.append("[3단계] 성공")
+                            result["debug"] = debug_info
+                            return result
+                        debug_info.append("[3단계] 데이터 없음")
+                    else:
+                        debug_info.append(f"[3단계] HTTP {resp.status}")
+            except Exception as e:
+                debug_info.append(f"[3단계] 오류: {str(e)[:80]}")
 
     except Exception as e:
-        debug_info.append(f"오류: {str(e)[:200]}")
-        print(f"한경 크롤링 오류 ({ticker}): {e}")
-        return {"debug": debug_info} if debug else None
+        debug_info.append(f"전체 오류: {str(e)[:200]}")
+        print(f"컨센서스 크롤링 오류 ({ticker}): {e}")
+
+    return {"debug": debug_info} if debug else None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
