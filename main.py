@@ -1154,82 +1154,106 @@ async def _list_tools() -> list[Tool]:
 
 @mcp_server.call_tool()
 async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
+    arguments = arguments or {}
+
+    def _ok(data) -> list[TextContent]:
+        return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
+
+    def _err(msg: str) -> list[TextContent]:
+        return [TextContent(type="text", text=json.dumps({"error": msg}, ensure_ascii=False))]
+
     try:
         token = await get_kis_token()
         if not token:
-            raise RuntimeError("KIS 토큰 발급 실패")
+            return _err("KIS 토큰 발급 실패")
+    except Exception as e:
+        return _err(f"KIS 토큰 오류: {e}")
 
-        if name == "scan_market":
+    if name == "scan_market":
+        try:
             rows = await kis_volume_rank_api(token)
-            result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
-                       "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt")} for r in rows[:15]]
+            return _ok([{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
+                         "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt")} for r in rows[:15]])
+        except Exception as e:
+            return _err(f"scan_market 오류: {e}")
 
-        elif name == "get_portfolio":
+    if name == "get_portfolio":
+        try:
             wl = load_watchlist()
             result = []
             for ticker, sname in list(wl.items())[:10]:
                 d = await kis_stock_price(ticker, token)
                 result.append({"ticker": ticker, "name": sname,
                                 "price": d.get("stck_prpr"), "chg": d.get("prdy_ctrt")})
+            return _ok(result)
+        except Exception as e:
+            return _err(f"get_portfolio 오류: {e}")
 
-        elif name == "get_stock_detail":
+    if name == "get_stock_detail":
+        try:
             ticker = arguments.get("ticker", "005930")
             price = await kis_stock_price(ticker, token)
             info  = await kis_stock_info(ticker, token)
             inv   = await kis_investor_trend(ticker, token)
-            result = {
+            return _ok({
                 "ticker": ticker,
                 "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
                 "vol": price.get("acml_vol"),
                 "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
                 "per": info.get("per"), "pbr": info.get("pbr"), "eps": info.get("eps"),
                 "investor": inv[:3] if isinstance(inv, list) else inv,
-            }
+            })
+        except Exception as e:
+            return _err(f"get_stock_detail 오류: {e}")
 
-        elif name == "get_foreign_rank":
+    if name == "get_foreign_rank":
+        try:
             rows = await kis_foreigner_trend(token)
-            result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
-                       "net_buy": r.get("frgn_ntby_qty")} for r in rows[:15]]
+            return _ok([{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
+                         "net_buy": r.get("frgn_ntby_qty")} for r in rows[:15]])
+        except Exception as e:
+            return _err(f"get_foreign_rank 오류: {e}")
 
-        elif name == "get_dart":
+    if name == "get_dart":
+        try:
             disclosures = await search_dart_disclosures(days_back=3)
             wl = load_watchlist()
-            wl_names = list(wl.values())
-            important = filter_important_disclosures(disclosures, wl_names)
-            result = [{"corp": d.get("corp_name"), "title": d.get("report_nm"),
-                       "date": d.get("rcept_dt")} for d in important[:10]]
+            important = filter_important_disclosures(disclosures, list(wl.values()))
+            return _ok([{"corp": d.get("corp_name"), "title": d.get("report_nm"),
+                         "date": d.get("rcept_dt")} for d in important[:10]])
+        except Exception as e:
+            return _err(f"get_dart 오류: {e}")
 
-        elif name == "get_macro":
+    if name == "get_macro":
+        try:
             kospi  = await get_kis_index(token, "0001")
             kosdaq = await get_kis_index(token, "1001")
             usd    = await get_yahoo_quote("USDKRW=X")
-            result = {
+            return _ok({
                 "kospi":  {"index": kospi.get("bstp_nmix_prpr"),  "chg": kospi.get("bstp_nmix_prdy_ctrt")},
                 "kosdaq": {"index": kosdaq.get("bstp_nmix_prpr"), "chg": kosdaq.get("bstp_nmix_prdy_ctrt")},
-                "usd_krw": {"price": usd.get("price") if usd else None, "chg_pct": usd.get("change_pct") if usd else None},
-            }
+                "usd_krw": {"price": usd.get("price") if usd else None,
+                            "chg_pct": usd.get("change_pct") if usd else None},
+            })
+        except Exception as e:
+            return _err(f"get_macro 오류: {e}")
 
-        else:
-            result = {"error": f"unknown tool: {name}"}
-
-    except Exception as e:
-        result = {"error": str(e)}
-
-    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+    return _err(f"unknown tool: {name}")
 
 
 def _build_mcp_starlette() -> Starlette:
     sse = SseServerTransport("/mcp/messages")
 
-    async def handle_sse(request: Request):
-        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+    # ASGI app으로 직접 처리 (Route endpoint 사용 시 None 반환 → TypeError 방지)
+    async def sse_asgi(scope, receive, send):
+        async with sse.connect_sse(scope, receive, send) as streams:
             await mcp_server.run(
                 streams[0], streams[1],
                 mcp_server.create_initialization_options(),
             )
 
     return Starlette(routes=[
-        Route("/mcp", endpoint=handle_sse),
+        Mount("/mcp", app=sse_asgi),
         Mount("/mcp/messages", app=sse.handle_post_message),
         Route("/health", endpoint=lambda r: JSONResponse({"status": "ok"})),
     ])
