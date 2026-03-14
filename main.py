@@ -431,37 +431,46 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 1: 한국 장 마감 수급 요약
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = False):
+async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    if not force and now.weekday() >= 5:
-        return
     try:
         token = await get_kis_token()
         if not token:
             return
 
-        # ── 1. 헤더: 지수 + 환율 ──────────────────────────────────────
+        # ── 1. 헤더: KOSPI / KOSDAQ / 환율 ───────────────────────────
         try:
             kospi  = await get_kis_index(token, "0001")
             kosdaq = await get_kis_index(token, "1001")
             usd    = await get_yahoo_quote("KRW=X")
-            ki = float(kospi.get("bstp_nmix_prpr", 0) or 0)
-            kc = float(kospi.get("bstp_nmix_prdy_ctrt", 0) or 0)
-            di = float(kosdaq.get("bstp_nmix_prpr", 0) or 0)
-            dc = float(kosdaq.get("bstp_nmix_prdy_ctrt", 0) or 0)
-            fx = float(usd.get("price", 0) or 0) if usd else 0
-            fxc = float(usd.get("change_pct", 0) or 0) if usd else 0
-            ks = "🔴" if kc < 0 else "🟢"
-            ds = "🔴" if dc < 0 else "🟢"
+            ki  = float(kospi.get("bstp_nmix_prpr", 0) or 0)
+            kc  = float(kospi.get("bstp_nmix_prdy_ctrt", 0) or 0)
+            di  = float(kosdaq.get("bstp_nmix_prpr", 0) or 0)
+            dc  = float(kosdaq.get("bstp_nmix_prdy_ctrt", 0) or 0)
+            fx  = float((usd or {}).get("price", 0) or 0)
+            fxc = float((usd or {}).get("change_pct", 0) or 0)
             msg = (
                 f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
-                f"{ks} KOSPI {ki:,.2f} ({kc:+.2f}%)  "
-                f"{ds} KOSDAQ {di:,.2f} ({dc:+.2f}%)\n"
+                f"{'🔴' if kc < 0 else '🟢'} KOSPI {ki:,.2f} ({kc:+.2f}%)  "
+                f"{'🔴' if dc < 0 else '🟢'} KOSDAQ {di:,.2f} ({dc:+.2f}%)\n"
                 f"💱 USD/KRW {fx:,.0f} ({fxc:+.2f}%)\n"
             )
         except Exception as e:
             msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
             print(f"지수 조회 오류: {e}")
+
+        # 가격 캐시 (중복 API 호출 방지)
+        price_cache: dict[str, int] = {}
+
+        async def _price(ticker: str) -> tuple[int, float]:
+            if ticker not in price_cache:
+                d = await kis_stock_price(ticker, token)
+                await asyncio.sleep(0.25)
+                price_cache[ticker] = (
+                    int(d.get("stck_prpr", 0) or 0),
+                    float(d.get("prdy_ctrt", 0) or 0),
+                )
+            return price_cache[ticker]
 
         # ── 2. 내 포트 ────────────────────────────────────────────────
         portfolio = load_json(PORTFOLIO_FILE, {})
@@ -471,25 +480,22 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
             total_eval = total_cost = 0
             for ticker, info in kr_port.items():
                 try:
-                    d = await kis_stock_price(ticker, token)
-                    await asyncio.sleep(0.3)
-                    cur = int(d.get("stck_prpr", 0) or 0)
-                    chg = float(d.get("prdy_ctrt", 0) or 0)
+                    cur, chg = await _price(ticker)
                     qty = info.get("qty", 0)
-                    avg = info.get("avg_price", 0)
+                    avg = int(info.get("avg_price", 0))
                     eval_amt = cur * qty
-                    cost_amt = int(avg) * qty
+                    cost_amt = avg * qty
                     pnl = eval_amt - cost_amt
                     total_eval += eval_amt
                     total_cost += cost_amt
                     em = "🟢" if chg >= 1 else "⚠️" if chg <= -1 else "⚪"
-                    msg += f"{em} *{info.get('name', ticker)}* {cur:,}원 ({chg:+.1f}%) | 평가 {eval_amt:,.0f}원 ({pnl:+,.0f})\n"
+                    msg += (f"{em} *{info.get('name', ticker)}* {cur:,}원 ({chg:+.1f}%)"
+                            f" | 평가 {eval_amt:,.0f}원 ({pnl:+,.0f})\n")
                 except Exception:
                     msg += f"⚪ *{info.get('name', ticker)}* 조회 실패\n"
             if total_cost > 0:
-                total_pnl = total_eval - total_cost
-                total_pnl_pct = total_pnl / total_cost * 100
-                msg += f"┄ 총평가 {total_eval:,.0f}원 | 손익 *{total_pnl:+,.0f}원* ({total_pnl_pct:+.1f}%)\n"
+                pnl_t = total_eval - total_cost
+                msg += f"┄ 총평가 *{total_eval:,.0f}원* | 손익 *{pnl_t:+,.0f}원* ({pnl_t/total_cost*100:+.1f}%)\n"
 
         # ── 3. 손절선 현황 ────────────────────────────────────────────
         stops = load_stoploss()
@@ -499,20 +505,18 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
             danger = []
             for ticker, info in kr_stops.items():
                 try:
-                    d = await kis_stock_price(ticker, token)
-                    await asyncio.sleep(0.2)
-                    cur = int(d.get("stck_prpr", 0) or 0)
+                    cur, _ = await _price(ticker)
                     sp = float(info.get("stop_price") or info.get("stop") or 0)
                     if cur > 0 and sp > 0:
                         gap = (sp - cur) / cur * 100
                         if gap >= -7:
-                            danger.append(f"⚠️ *{info.get('name', ticker)}* 손절 {sp:,.0f}원 ({gap:+.1f}%)")
+                            danger.append(
+                                f"⚠️ *{info.get('name', ticker)}* {cur:,}원 "
+                                f"(손절 {sp:,.0f}원까지 {gap:+.1f}%)"
+                            )
                 except Exception:
                     pass
-            if danger:
-                msg += "\n".join(danger) + "\n"
-            else:
-                msg += "전 종목 손절선 여유 있음\n"
+            msg += ("\n".join(danger) + "\n") if danger else "✅ 전 종목 손절선 여유\n"
 
         # ── 4. 섹터 흐름 ─────────────────────────────────────────────
         try:
@@ -522,13 +526,11 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
                 sectors.append({"sector": label, "total": frgn + orgn})
             sectors.sort(key=lambda x: x["total"], reverse=True)
             if any(s["total"] != 0 for s in sectors):
-                top = sectors[0]["sector"]
-                bot = sectors[-1]["sector"]
-                msg += f"\n📡 *섹터* 유입 {top} | 유출 {bot}\n"
+                msg += f"\n📡 *섹터* 유입 {sectors[0]['sector']} | 유출 {sectors[-1]['sector']}\n"
         except Exception:
             pass
 
-        # ── 5. 오늘 공시 ─────────────────────────────────────────────
+        # ── 5. 오늘 공시 (있을 때만) ─────────────────────────────────
         try:
             disclosures = await search_dart_disclosures(days_back=1)
             wl = load_watchlist()
@@ -536,20 +538,17 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
             if important:
                 msg += "\n📋 *오늘 공시*\n"
                 for d in important[:5]:
-                    msg += f"• *{d.get('corp_name')}* {d.get('report_nm', '')[:30]}\n"
+                    title = d.get("report_nm", "")[:28]
+                    msg += f"• *{d.get('corp_name')}* — {title}\n"
         except Exception:
             pass
 
-        # ── 6. 내일 할 일 ─────────────────────────────────────────────
-        action_lines = []
-        kr_stops2 = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
+        # ── 6. 내일 할 일 (손절선 가장 가까운 종목 1개) ──────────────
         closest = None
-        closest_gap = -999
-        for ticker, info in kr_stops2.items():
+        closest_gap = -999.0
+        for ticker, info in kr_stops.items():
             try:
-                d = await kis_stock_price(ticker, token)
-                await asyncio.sleep(0.2)
-                cur = int(d.get("stck_prpr", 0) or 0)
+                cur, _ = await _price(ticker)
                 sp = float(info.get("stop_price") or info.get("stop") or 0)
                 if cur > 0 and sp > 0:
                     gap = (sp - cur) / cur * 100
@@ -559,18 +558,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
             except Exception:
                 pass
         if closest:
-            action_lines.append(f"🎯 *{closest[0]}* 손절선 {closest[1]:,.0f}원 ({closest[2]:+.1f}%) 모니터링")
-        for ticker, info in kr_port.items():
-            try:
-                d = await kis_stock_price(ticker, token)
-                cur = int(d.get("stck_prpr", 0) or 0)
-                tgt = float(info.get("target_price") or 0)
-                if cur > 0 and tgt > 0 and (tgt - cur) / cur * 100 <= 5:
-                    action_lines.append(f"🏁 *{info.get('name', ticker)}* 목표가 {tgt:,.0f}원까지 {((tgt-cur)/cur*100):+.1f}%")
-            except Exception:
-                pass
-        if action_lines:
-            msg += "\n📌 *내일 할 일*\n" + "\n".join(action_lines) + "\n"
+            msg += f"\n📌 *내일 할 일*\n🎯 *{closest[0]}* 손절선 {closest[1]:,.0f}원 ({closest[2]:+.1f}%) 모니터링\n"
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
@@ -1323,7 +1311,7 @@ async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ 요약 생성 중...")
-    await daily_kr_summary(context, force=True)
+    await daily_kr_summary(context)
 
 
 async def setportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1936,7 +1924,7 @@ def main():
     jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
     jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
-    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), name="kr_summary")
+    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), days=(0,1,2,3,4), name="kr_summary")
     jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")
     jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
 
