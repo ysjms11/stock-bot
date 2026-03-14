@@ -233,7 +233,10 @@ async def kis_foreigner_trend(token):
         _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-foreigner-trend",
             "FHPTJ04060100", token,
             {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": "0000", "fid_input_date_1": today})
-        return d.get("output", [])
+        if not d:
+            return []
+        output = d.get("output") or []
+        return [r for r in output if r is not None]
 
 
 async def kis_sector_price(token):
@@ -1300,9 +1303,21 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             }
 
         elif name == "get_foreign_rank":
-            rows = await kis_foreigner_trend(token)
-            result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
-                       "net_buy": r.get("frgn_ntby_qty")} for r in rows[:15]]
+            try:
+                rows = await kis_foreigner_trend(token)
+                if not rows:
+                    result = {"error": "데이터 없음", "items": []}
+                else:
+                    result = [
+                        {
+                            "ticker": r.get("mksc_shrn_iscd", ""),
+                            "name": r.get("hts_kor_isnm", ""),
+                            "net_buy": r.get("frgn_ntby_qty", "0"),
+                        }
+                        for r in rows[:15]
+                    ]
+            except Exception as e:
+                result = {"error": str(e), "items": []}
 
         elif name == "get_dart":
             disclosures = await search_dart_disclosures(days_back=3)
