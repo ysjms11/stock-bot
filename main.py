@@ -441,14 +441,18 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         fx = await get_yahoo_quote("KRW=X") or {}
         krw = int(float(fx.get("price", 0)))
 
+        # 1. 헤더: KOSPI 소수점 2자리, 환율
+        kospi_c_f = round(float(kospi_c or 0), 2)
+        kospi_e = "🔴" if kospi_c_f < 0 else "🟢"
         msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
-        kospi_e = "🔴" if float(kospi_c or 0) < 0 else "🟢"
-        msg += f"{kospi_e} KOSPI {kospi_p} ({kospi_c}%)  💱 {krw:,}원\n\n"
+        msg += f"{kospi_e} KOSPI {kospi_p} ({kospi_c_f:.2f}%)  💱 {krw:,}원\n\n"
 
         # 2. 내 포트
         portfolio = load_json(PORTFOLIO_FILE, {})
         kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
         token = await get_kis_token()
+        # 가격 캐시 (손절선 섹션에서 재사용)
+        price_cache = {}
         msg += "💼 *내 포트*\n"
         total_eval = 0
         total_pnl = 0
@@ -458,6 +462,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(0.3)
                 price = int(pd.get("stck_prpr", 0))
                 chg = float(pd.get("prdy_ctrt", 0))
+                price_cache[ticker] = price
                 qty = info.get("qty", 0)
                 avg = info.get("avg_price", 0)
                 eval_amt = price * qty
@@ -472,16 +477,20 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         pnl_str = f"+{total_pnl:,}" if total_pnl >= 0 else f"{total_pnl:,}"
         msg += f"┄ 총평가 {total_eval:,}원 | 손익 {pnl_str}원\n\n"
 
-        # 3. 손절선 현황
+        # 3. 손절선 현황 (us_stocks 제외, isinstance 체크)
         stops = load_stoploss()
-        kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
+        kr_stops = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
         danger = []
         for ticker, info in kr_stops.items():
             try:
-                pd = await get_stock_price(ticker, token)
-                await asyncio.sleep(0.2)
-                cur = int(pd.get("stck_prpr", 0))
-                stop = info.get("stop_price", 0)
+                if ticker in price_cache:
+                    cur = price_cache[ticker]
+                else:
+                    pd = await get_stock_price(ticker, token)
+                    await asyncio.sleep(0.2)
+                    cur = int(pd.get("stck_prpr", 0))
+                    price_cache[ticker] = cur
+                stop = float(info.get("stop_price") or info.get("stop") or 0)
                 if stop > 0 and cur > 0:
                     gap = (cur - stop) / cur * 100
                     if gap <= 7:
@@ -496,23 +505,35 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         else:
             msg += "✅ 전 종목 손절선 여유\n\n"
 
-        # 4. 오늘 DART 공시
-        disclosures = await search_dart_disclosures(days_back=1)
-        watchlist = load_watchlist()
-        wl_names = list(watchlist.values())
-        important = filter_important_disclosures(disclosures, wl_names)
-        if important:
-            msg += "📢 *오늘 공시*\n"
-            for d in important[:3]:
-                corp = d.get("corp_name", "?")
-                title = d.get("report_nm", "?")
-                msg += f"• {corp} — {title}\n"
-            msg += "\n"
+        # 4. 섹터 흐름
+        try:
+            sectors = []
+            for code, label in WI26_SECTORS:
+                frgn, orgn = await _fetch_sector_flow(token, code)
+                sectors.append({"sector": label, "total": frgn + orgn})
+            sectors.sort(key=lambda x: x["total"], reverse=True)
+            if any(s["total"] != 0 for s in sectors):
+                msg += f"📡 *섹터* 유입 {sectors[0]['sector']} | 유출 {sectors[-1]['sector']}\n\n"
+        except:
+            pass
 
-        # 5. 내일 할 일
+        # 5. 오늘 DART 공시 (있을 때만)
+        try:
+            disclosures = await search_dart_disclosures(days_back=1)
+            watchlist = load_watchlist()
+            important = filter_important_disclosures(disclosures, list(watchlist.values()))
+            if important:
+                msg += "📢 *오늘 공시*\n"
+                for d in important[:3]:
+                    msg += f"• {d.get('corp_name', '?')} — {d.get('report_nm', '?')}\n"
+                msg += "\n"
+        except:
+            pass
+
+        # 6. 내일 할 일 (손절선 가장 가까운 종목 1개)
         if danger:
             top = sorted(danger, key=lambda x: x[3])[0]
-            msg += f"✅ *내일 체크*\n⚠️ {top[0]} 손절선 {top[3]:.1f}% 근접 주시"
+            msg += f"📌 *내일 체크*\n⚠️ {top[0]} 손절선 {top[3]:.1f}% 근접 주시"
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
