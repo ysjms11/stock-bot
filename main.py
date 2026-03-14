@@ -434,135 +434,90 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
 async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     try:
-        token = await get_kis_token()
-        if not token:
-            return
+        # 1. 매크로
+        macro = await get_yahoo_quote("^KS11") or {}
+        kospi_p = macro.get("price", "?")
+        kospi_c = macro.get("change_pct", "?")
+        fx = await get_yahoo_quote("KRW=X") or {}
+        krw = int(float(fx.get("price", 0)))
 
-        # ── 1. 헤더: KOSPI / KOSDAQ / 환율 ───────────────────────────
-        try:
-            kospi  = await get_kis_index(token, "0001")
-            kosdaq = await get_kis_index(token, "1001")
-            usd    = await get_yahoo_quote("KRW=X")
-            ki  = float(kospi.get("bstp_nmix_prpr", 0) or 0)
-            kc  = float(kospi.get("bstp_nmix_prdy_ctrt", 0) or 0)
-            di  = float(kosdaq.get("bstp_nmix_prpr", 0) or 0)
-            dc  = float(kosdaq.get("bstp_nmix_prdy_ctrt", 0) or 0)
-            fx  = float((usd or {}).get("price", 0) or 0)
-            fxc = float((usd or {}).get("change_pct", 0) or 0)
-            msg = (
-                f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
-                f"{'🔴' if kc < 0 else '🟢'} KOSPI {ki:,.2f} ({kc:+.2f}%)  "
-                f"{'🔴' if dc < 0 else '🟢'} KOSDAQ {di:,.2f} ({dc:+.2f}%)\n"
-                f"💱 USD/KRW {fx:,.0f} ({fxc:+.2f}%)\n"
-            )
-        except Exception as e:
-            msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
-            print(f"지수 조회 오류: {e}")
+        msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
+        kospi_e = "🔴" if float(kospi_c or 0) < 0 else "🟢"
+        msg += f"{kospi_e} KOSPI {kospi_p} ({kospi_c}%)  💱 {krw:,}원\n\n"
 
-        # 가격 캐시 (중복 API 호출 방지)
-        price_cache: dict[str, int] = {}
-
-        async def _price(ticker: str) -> tuple[int, float]:
-            if ticker not in price_cache:
-                d = await kis_stock_price(ticker, token)
-                await asyncio.sleep(0.25)
-                price_cache[ticker] = (
-                    int(d.get("stck_prpr", 0) or 0),
-                    float(d.get("prdy_ctrt", 0) or 0),
-                )
-            return price_cache[ticker]
-
-        # ── 2. 내 포트 ────────────────────────────────────────────────
+        # 2. 내 포트
         portfolio = load_json(PORTFOLIO_FILE, {})
-        kr_port = {k: v for k, v in portfolio.items() if k != "us_stocks"}
-        if kr_port:
-            msg += "\n💼 *내 포트*\n"
-            total_eval = total_cost = 0
-            for ticker, info in kr_port.items():
-                try:
-                    cur, chg = await _price(ticker)
-                    qty = info.get("qty", 0)
-                    avg = int(info.get("avg_price", 0))
-                    eval_amt = cur * qty
-                    cost_amt = avg * qty
-                    pnl = eval_amt - cost_amt
-                    total_eval += eval_amt
-                    total_cost += cost_amt
-                    em = "🟢" if chg >= 1 else "⚠️" if chg <= -1 else "⚪"
-                    msg += (f"{em} *{info.get('name', ticker)}* {cur:,}원 ({chg:+.1f}%)"
-                            f" | 평가 {eval_amt:,.0f}원 ({pnl:+,.0f})\n")
-                except Exception:
-                    msg += f"⚪ *{info.get('name', ticker)}* 조회 실패\n"
-            if total_cost > 0:
-                pnl_t = total_eval - total_cost
-                msg += f"┄ 총평가 *{total_eval:,.0f}원* | 손익 *{pnl_t:+,.0f}원* ({pnl_t/total_cost*100:+.1f}%)\n"
+        kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+        token = await get_kis_token()
+        msg += "💼 *내 포트*\n"
+        total_eval = 0
+        total_pnl = 0
+        for ticker, info in kr_stocks.items():
+            try:
+                pd = await get_stock_price(ticker, token)
+                await asyncio.sleep(0.3)
+                price = int(pd.get("stck_prpr", 0))
+                chg = float(pd.get("prdy_ctrt", 0))
+                qty = info.get("qty", 0)
+                avg = info.get("avg_price", 0)
+                eval_amt = price * qty
+                pnl = (price - avg) * qty
+                total_eval += eval_amt
+                total_pnl += pnl
+                e = "🟢" if chg >= 1 else ("⚠️" if chg <= -1 else "⚪")
+                pnl_str = f"+{pnl:,}" if pnl >= 0 else f"{pnl:,}"
+                msg += f"{e} {info.get('name', ticker)} {price:,}원 ({chg:+.1f}%) | {pnl_str}원\n"
+            except:
+                pass
+        pnl_str = f"+{total_pnl:,}" if total_pnl >= 0 else f"{total_pnl:,}"
+        msg += f"┄ 총평가 {total_eval:,}원 | 손익 {pnl_str}원\n\n"
 
-        # ── 3. 손절선 현황 ────────────────────────────────────────────
+        # 3. 손절선 현황
         stops = load_stoploss()
-        kr_stops = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
-        if kr_stops:
-            msg += "\n🛑 *손절선 현황*\n"
-            danger = []
-            for ticker, info in kr_stops.items():
-                try:
-                    cur, _ = await _price(ticker)
-                    sp = float(info.get("stop_price") or info.get("stop") or 0)
-                    if cur > 0 and sp > 0:
-                        gap = (sp - cur) / cur * 100
-                        if gap >= -7:
-                            danger.append(
-                                f"⚠️ *{info.get('name', ticker)}* {cur:,}원 "
-                                f"(손절 {sp:,.0f}원까지 {gap:+.1f}%)"
-                            )
-                except Exception:
-                    pass
-            msg += ("\n".join(danger) + "\n") if danger else "✅ 전 종목 손절선 여유\n"
-
-        # ── 4. 섹터 흐름 ─────────────────────────────────────────────
-        try:
-            sectors = []
-            for code, label in WI26_SECTORS:
-                frgn, orgn = await _fetch_sector_flow(token, code)
-                sectors.append({"sector": label, "total": frgn + orgn})
-            sectors.sort(key=lambda x: x["total"], reverse=True)
-            if any(s["total"] != 0 for s in sectors):
-                msg += f"\n📡 *섹터* 유입 {sectors[0]['sector']} | 유출 {sectors[-1]['sector']}\n"
-        except Exception:
-            pass
-
-        # ── 5. 오늘 공시 (있을 때만) ─────────────────────────────────
-        try:
-            disclosures = await search_dart_disclosures(days_back=1)
-            wl = load_watchlist()
-            important = filter_important_disclosures(disclosures, list(wl.values()))
-            if important:
-                msg += "\n📋 *오늘 공시*\n"
-                for d in important[:5]:
-                    title = d.get("report_nm", "")[:28]
-                    msg += f"• *{d.get('corp_name')}* — {title}\n"
-        except Exception:
-            pass
-
-        # ── 6. 내일 할 일 (손절선 가장 가까운 종목 1개) ──────────────
-        closest = None
-        closest_gap = -999.0
+        kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
+        danger = []
         for ticker, info in kr_stops.items():
             try:
-                cur, _ = await _price(ticker)
-                sp = float(info.get("stop_price") or info.get("stop") or 0)
-                if cur > 0 and sp > 0:
-                    gap = (sp - cur) / cur * 100
-                    if gap > closest_gap:
-                        closest_gap = gap
-                        closest = (info.get("name", ticker), sp, gap)
-            except Exception:
+                pd = await get_stock_price(ticker, token)
+                await asyncio.sleep(0.2)
+                cur = int(pd.get("stck_prpr", 0))
+                stop = info.get("stop_price", 0)
+                if stop > 0 and cur > 0:
+                    gap = (cur - stop) / cur * 100
+                    if gap <= 7:
+                        danger.append((info.get("name", ticker), cur, stop, gap))
+            except:
                 pass
-        if closest:
-            msg += f"\n📌 *내일 할 일*\n🎯 *{closest[0]}* 손절선 {closest[1]:,.0f}원 ({closest[2]:+.1f}%) 모니터링\n"
+        if danger:
+            msg += "🛑 *손절선 현황*\n"
+            for name, cur, stop, gap in sorted(danger, key=lambda x: x[3]):
+                msg += f"⚠️ {name} {cur:,}원 → 손절 {stop:,}원 ({gap:.1f}% 남음)\n"
+            msg += "\n"
+        else:
+            msg += "✅ 전 종목 손절선 여유\n\n"
+
+        # 4. 오늘 DART 공시
+        disclosures = await search_dart_disclosures(days_back=1)
+        watchlist = load_watchlist()
+        wl_names = list(watchlist.values())
+        important = filter_important_disclosures(disclosures, wl_names)
+        if important:
+            msg += "📢 *오늘 공시*\n"
+            for d in important[:3]:
+                corp = d.get("corp_name", "?")
+                title = d.get("report_nm", "?")
+                msg += f"• {corp} — {title}\n"
+            msg += "\n"
+
+        # 5. 내일 할 일
+        if danger:
+            top = sorted(danger, key=lambda x: x[3])[0]
+            msg += f"✅ *내일 체크*\n⚠️ {top[0]} 손절선 {top[3]:.1f}% 근접 주시"
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
     except Exception as e:
-        print(f"한국 요약 오류: {e}")
+        print(f"daily_kr_summary 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
