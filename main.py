@@ -249,6 +249,54 @@ async def kis_sector_price(token):
         return d.get("output", [])
 
 
+WI26_SECTORS = [
+    ("001", "반도체"), ("004", "조선"),   ("006", "전력기기"),
+    ("007", "방산"),   ("010", "2차전지"), ("012", "건설"),
+    ("021", "바이오"),
+]
+
+# 외국인 순매수 상위 fallback용 티커→업종 매핑
+_TICKER_SECTOR = {
+    "005930": "반도체", "000660": "반도체", "012510": "반도체", "042700": "반도체",
+    "009540": "조선",   "042660": "조선",   "010140": "조선",   "267250": "조선",
+    "012510": "전력기기","028260": "전력기기","267260": "전력기기","298040": "전력기기",
+    "012450": "방산",   "047810": "방산",   "329180": "방산",   "272210": "방산",
+    "006400": "2차전지","051910": "2차전지","373220": "2차전지","247540": "2차전지",
+    "000720": "건설",   "097950": "건설",   "047040": "건설",   "028260": "건설",
+    "207940": "바이오", "068270": "바이오", "196170": "바이오", "091990": "바이오",
+}
+
+
+async def _fetch_sector_flow(token: str, sector_code: str) -> tuple:
+    """업종 외국인+기관 순매수금액(백만원) 반환. 실패 시 (0, 0)."""
+    today = datetime.now().strftime("%Y%m%d")
+    params = {
+        "fid_cond_mrkt_div_code": "U",
+        "fid_input_iscd": sector_code,
+        "fid_input_date_1": today,
+        "fid_period_div_code": "D",
+    }
+    for path in [
+        "/uapi/domestic-stock/v1/quotations/inquire-member-daily-by-group",
+        "/uapi/domestic-stock/v1/quotations/inquire-daily-sector-price",
+    ]:
+        try:
+            async with aiohttp.ClientSession() as s:
+                _, d = await _kis_get(s, path, "FHKUP03500100", token, params)
+            if not d or d.get("rt_cd") != "0":
+                continue
+            out = d.get("output2") or d.get("output") or {}
+            if isinstance(out, list):
+                out = out[0] if out else {}
+            frgn = int(out.get("frgn_ntby_tr_pbmn", 0) or 0)
+            orgn = int(out.get("orgn_ntby_tr_pbmn", 0) or 0)
+            if frgn != 0 or orgn != 0:
+                return frgn, orgn
+        except Exception:
+            continue
+    return 0, 0
+
+
 async def kis_us_stock_price(symbol: str, token: str, excd: str = "NAS") -> dict:
     """KIS API 해외주식 현재가 (HHDFS00000300)"""
     async with aiohttp.ClientSession() as s:
@@ -1206,6 +1254,8 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",      "description": "KOSPI·KOSDAQ 지수 + USD/KRW 환율",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
+     "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 %",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "set_alert",      "description": "손절가/목표가 등록 및 수정",
@@ -1347,6 +1397,49 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 "usd_krw": {"price": usd.get("price") if usd else None,
                             "chg_pct": usd.get("change_pct") if usd else None},
             }
+
+        elif name == "get_sector_flow":
+            today = datetime.now().strftime("%Y%m%d")
+            sectors = []
+            for code, label in WI26_SECTORS:
+                frgn, orgn = await _fetch_sector_flow(token, code)
+                sectors.append({
+                    "sector": label, "code": code,
+                    "frgn": frgn, "orgn": orgn,
+                    "total": frgn + orgn,
+                })
+
+            has_data = any(s["total"] != 0 for s in sectors)
+            note = None
+
+            if not has_data:
+                # Fallback: 외국인 순매수 상위 기반 업종 근사치 (수량 기준)
+                frgn_rows = await kis_foreigner_trend(token)
+                sector_frgn = {label: 0 for _, label in WI26_SECTORS}
+                for r in frgn_rows:
+                    sect = _TICKER_SECTOR.get(r.get("mksc_shrn_iscd", ""))
+                    if sect:
+                        sector_frgn[sect] += int(r.get("frgn_ntby_qty", 0) or 0)
+                sectors = [
+                    {"sector": label, "code": code,
+                     "frgn": sector_frgn.get(label, 0), "orgn": 0,
+                     "total": sector_frgn.get(label, 0)}
+                    for code, label in WI26_SECTORS
+                ]
+                note = "업종별 투자자 API 미지원 — 외국인 순매수 상위 기반 근사치(수량)"
+
+            sorted_s = sorted(sectors, key=lambda x: x["total"], reverse=True)
+            result = {
+                "date": today,
+                "top_inflow":  [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                 for s in sorted_s[:3]],
+                "top_outflow": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                 for s in sorted_s[-3:][::-1]],
+                "all": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                        for s in sorted_s],
+            }
+            if note:
+                result["note"] = note
 
         elif name == "get_alerts":
             stops = load_stoploss()
