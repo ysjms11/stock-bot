@@ -23,10 +23,12 @@ KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
 DART_BASE_URL = "https://opendart.fss.or.kr/api"
 KST = timezone(timedelta(hours=9))
 
-WATCHLIST_FILE = "/app/watchlist.json"
-STOPLOSS_FILE = "/app/stoploss.json"
-US_WATCHLIST_FILE = "/app/us_watchlist.json"
-DART_SEEN_FILE = "/app/dart_seen.json"
+os.makedirs("/data", exist_ok=True)
+
+WATCHLIST_FILE = "/data/watchlist.json"
+STOPLOSS_FILE = "/data/stoploss.json"
+US_WATCHLIST_FILE = "/data/us_watchlist.json"
+DART_SEEN_FILE = "/data/dart_seen.json"
 PORTFOLIO_FILE = "/data/portfolio.json"
 
 _token_cache = {"token": None, "expires": None}
