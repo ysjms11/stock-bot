@@ -1260,7 +1260,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🔴 손절선: 장중 10분마다\n"
         "• 🔴 복합신호: 장중 30분마다\n"
         "• 📢 DART공시: 장중 30분마다\n"
-        "• 🎯 목표가변동: 평일 16:10\n"
         "• 📊 한국요약: 평일 15:40\n"
         "• 🇺🇸 미국요약: 평일 07:00\n"
         "• 💱 환율급변: 1시간마다\n"
