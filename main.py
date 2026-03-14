@@ -487,7 +487,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 pnl = (price - avg) * qty
                 total_eval += eval_amt
                 total_pnl += pnl
-                e = "🟢" if chg >= 1 else ("⚠️" if chg <= -1 else "⚪")
+                e = "🟢" if chg >= 1 else ("🔴" if chg <= -1 else "🟡")
                 pnl_str = f"+{pnl:,}" if pnl >= 0 else f"{pnl:,}"
                 # 목표가 달성률 (stoploss.json의 target)
                 tgt_str = ""
@@ -496,7 +496,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 if tgt > 0 and price > 0:
                     tgt_pct = (tgt - price) / price * 100
                     tgt_str = f" | 목표 {tgt:,.0f} ({tgt_pct:+.1f}%)"
-                msg += f"{e} {info.get('name', ticker)} {price:,}원 ({chg:+.1f}%) | {pnl_str}원{tgt_str}\n"
+                msg += f"{e} {info.get('name', ticker)} {price:,}원 ({chg:+.1f}%) | {pnl_str}원{tgt_str}\n\n"
             except:
                 pass
         pnl_str = f"+{total_pnl:,}" if total_pnl >= 0 else f"{total_pnl:,}"
@@ -505,6 +505,8 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         # 4. 손절선 현황
         danger = []
         for ticker, info in kr_stops.items():
+            if ticker == "us_stocks":
+                continue
             try:
                 if ticker in price_cache:
                     cur = price_cache[ticker]
