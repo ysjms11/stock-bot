@@ -447,10 +447,28 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
         msg += f"{kospi_e} KOSPI {kospi_p} ({kospi_c_f:.2f}%)  💱 {krw:,}원\n\n"
 
-        # 2. 내 포트
+        # 2. scan_market 미리 조회 (시장분위기 + 급등테마에 재사용)
         portfolio = load_json(PORTFOLIO_FILE, {})
         kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
         token = await get_kis_token()
+        stops = load_stoploss()
+        kr_stops = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
+
+        scan_rows = []
+        try:
+            scan_rows = await kis_volume_rank_api(token) or []
+        except:
+            pass
+
+        # 시장 분위기: 인버스 ETF 상위 2개 안에 있으면 경고
+        try:
+            top2_names = [r.get("hts_kor_isnm", "") for r in scan_rows[:2]]
+            if any("인버스" in n for n in top2_names):
+                msg += "⚡ 인버스 ETF 강세 → 기관 하락 헤지 중\n\n"
+        except:
+            pass
+
+        # 3. 내 포트
         # 가격 캐시 (손절선 섹션에서 재사용)
         price_cache = {}
         msg += "💼 *내 포트*\n"
@@ -471,15 +489,20 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 total_pnl += pnl
                 e = "🟢" if chg >= 1 else ("⚠️" if chg <= -1 else "⚪")
                 pnl_str = f"+{pnl:,}" if pnl >= 0 else f"{pnl:,}"
-                msg += f"{e} {info.get('name', ticker)} {price:,}원 ({chg:+.1f}%) | {pnl_str}원\n"
+                # 목표가 달성률 (stoploss.json의 target)
+                tgt_str = ""
+                stop_info = kr_stops.get(ticker, {})
+                tgt = float(stop_info.get("target_price") or stop_info.get("target") or 0)
+                if tgt > 0 and price > 0:
+                    tgt_pct = (tgt - price) / price * 100
+                    tgt_str = f" | 목표 {tgt:,.0f} ({tgt_pct:+.1f}%)"
+                msg += f"{e} {info.get('name', ticker)} {price:,}원 ({chg:+.1f}%) | {pnl_str}원{tgt_str}\n"
             except:
                 pass
         pnl_str = f"+{total_pnl:,}" if total_pnl >= 0 else f"{total_pnl:,}"
         msg += f"┄ 총평가 {total_eval:,}원 | 손익 {pnl_str}원\n\n"
 
-        # 3. 손절선 현황 (us_stocks 제외, isinstance 체크)
-        stops = load_stoploss()
-        kr_stops = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
+        # 4. 손절선 현황
         danger = []
         for ticker, info in kr_stops.items():
             try:
@@ -505,7 +528,21 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         else:
             msg += "✅ 전 종목 손절선 여유\n\n"
 
-        # 4. 섹터 흐름
+        # 5. 오늘 급등 테마 (ETF/인버스 제외, +10% 이상)
+        try:
+            surge = [
+                r for r in scan_rows
+                if "ETF" not in r.get("hts_kor_isnm", "")
+                and "인버스" not in r.get("hts_kor_isnm", "")
+                and float(r.get("prdy_ctrt", 0) or 0) >= 10
+            ]
+            if surge:
+                parts = [f"{r.get('hts_kor_isnm', '?')} {float(r.get('prdy_ctrt', 0)):+.0f}%" for r in surge[:3]]
+                msg += f"🔥 *오늘 급등* {' · '.join(parts)}\n\n"
+        except:
+            pass
+
+        # 6. 섹터 흐름
         try:
             sectors = []
             for code, label in WI26_SECTORS:
@@ -517,7 +554,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        # 5. 오늘 DART 공시 (있을 때만)
+        # 7. 오늘 DART 공시 (있을 때만)
         try:
             disclosures = await search_dart_disclosures(days_back=1)
             watchlist = load_watchlist()
@@ -530,7 +567,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        # 6. 내일 할 일 (손절선 가장 가까운 종목 1개)
+        # 8. 내일 할 일 (손절선 가장 가까운 종목 1개)
         if danger:
             top = sorted(danger, key=lambda x: x[3])[0]
             msg += f"📌 *내일 체크*\n⚠️ {top[0]} 손절선 {top[3]:.1f}% 근접 주시"
