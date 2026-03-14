@@ -431,9 +431,9 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 1: 한국 장 마감 수급 요약
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
+async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = False):
     now = datetime.now(KST)
-    if now.weekday() >= 5:
+    if not force and now.weekday() >= 5:
         return
     try:
         token = await get_kis_token()
@@ -1323,7 +1323,7 @@ async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ 요약 생성 중...")
-    await daily_kr_summary(context)
+    await daily_kr_summary(context, force=True)
 
 
 async def setportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
