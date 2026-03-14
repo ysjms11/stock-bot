@@ -31,6 +31,22 @@ PORTFOLIO_FILE = "/data/portfolio.json"
 
 _token_cache = {"token": None, "expires": None}
 
+
+def _is_us_ticker(ticker: str) -> bool:
+    """영문 티커면 미국 종목으로 판별 (숫자 포함 없으면 US)"""
+    return bool(ticker) and ticker.replace(".", "").replace("-", "").isalpha()
+
+
+def _is_us_market_hours_kst() -> bool:
+    """미국 장 시간 여부 (KST 기준: 월~금 23:30~06:00)"""
+    now = datetime.now(KST)
+    wd, h, m = now.weekday(), now.hour, now.minute
+    if h == 23 and m >= 30:
+        return wd < 5          # 월~금 밤 KST → 미국 장중
+    if h < 6:
+        return 1 <= wd <= 5    # 화~토 새벽 KST (전날 미국 장중)
+    return False
+
 # DART 중요 공시 키워드
 DART_KEYWORDS = [
     "수주", "계약", "공급계약", "납품", "유상증자", "무상증자",
@@ -522,41 +538,69 @@ async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    if now.weekday() >= 5 or now.hour < 9 or (now.hour >= 15 and now.minute > 30):
+    is_kr = not (now.weekday() >= 5 or now.hour < 9 or (now.hour >= 15 and now.minute > 30))
+    is_us = _is_us_market_hours_kst()
+    if not is_kr and not is_us:
         return
+
     stops = load_stoploss()
-    if not stops:
+    kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
+    us_stops = stops.get("us_stocks", {})
+    if not kr_stops and not us_stops:
         return
-    try:
-        token = await get_kis_token()
-        if not token:
-            return
-        alerts = []
-        for ticker, info in stops.items():
+
+    alerts = []
+
+    if is_kr and kr_stops:
+        try:
+            token = await get_kis_token()
+            if token:
+                for ticker, info in kr_stops.items():
+                    try:
+                        d = await get_stock_price(ticker, token)
+                        await asyncio.sleep(0.3)
+                        price = int(d.get("stck_prpr", 0))
+                        sp = info.get("stop_price", 0)
+                        if price > 0 and sp > 0 and price <= sp:
+                            ep = info.get("entry_price", 0)
+                            drop = ((price - ep) / ep * 100) if ep > 0 else 0
+                            alerts.append(
+                                f"🚨🚨 *{info['name']}* ({ticker})\n"
+                                f"  현재가: {price:,}원 ← 손절선 {sp:,}원 도달!\n"
+                                + (f"  손실: {drop:.1f}%\n" if ep > 0 else "")
+                                + "  → *즉시 매도 검토!*"
+                            )
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"KR 손절 체크 오류: {e}")
+
+    if is_us and us_stops:
+        for sym, info in us_stops.items():
             try:
-                d = await get_stock_price(ticker, token)
+                d = await get_yahoo_quote(sym)
                 await asyncio.sleep(0.3)
-                price = int(d.get("stck_prpr", 0))
+                if not d:
+                    continue
+                price = float(d.get("price", 0) or 0)
                 sp = info.get("stop_price", 0)
                 if price > 0 and sp > 0 and price <= sp:
-                    ep = info.get("entry_price", 0)
-                    drop = ((price - ep) / ep * 100) if ep > 0 else 0
+                    tp = info.get("target_price", 0)
                     alerts.append(
-                        f"🚨🚨 *{info['name']}* ({ticker})\n"
-                        f"  현재가: {price:,}원 ← 손절선 {sp:,}원 도달!\n"
-                        f"  {'손실: ' + f'{drop:.1f}%' if ep > 0 else ''}\n"
-                        f"  → *즉시 매도 검토!*"
+                        f"🚨🇺🇸 *{info['name']}* ({sym})\n"
+                        f"  현재가: ${price:,.2f} ← 손절선 ${sp:,.2f} 도달!\n"
+                        + (f"  목표가: ${tp:,.2f}\n" if tp else "")
+                        + "  → *즉시 매도 검토!*"
                     )
             except Exception:
                 pass
-        if alerts:
-            msg = "🔴🔴🔴 *손절선 도달!* 🔴🔴🔴\n\n"
-            for a in alerts:
-                msg += f"{a}\n\n"
-            msg += "⚠️ Thesis 붕괴 시 가격 무관 즉시 매도"
+
+    if alerts:
+        msg = "🔴🔴🔴 *손절선 도달!* 🔴🔴🔴\n\n" + "\n\n".join(alerts) + "\n\n⚠️ Thesis 붕괴 시 가격 무관 즉시 매도"
+        try:
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-    except Exception as e:
-        print(f"손절 체크 오류: {e}")
+        except Exception as e:
+            print(f"손절 알림 전송 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1030,46 +1074,80 @@ async def remus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def setstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 3:
         await update.message.reply_text(
-            "사용법: /setstop 코드 이름 손절가 [진입가]\n"
-            "예) /setstop 034020 두산에너빌리티 88000 98000"
+            "사용법: /setstop 코드 이름 손절가 [진입가/목표가]\n"
+            "KR: /setstop 034020 두산에너빌리티 88000 98000\n"
+            "US: /setstop TSLA TSLA 372 425"
         ); return
-    ticker, name = context.args[0], context.args[1]
+    ticker, name = context.args[0].upper(), context.args[1]
     try: stop = float(context.args[2])
     except: await update.message.reply_text("❌ 손절가는 숫자"); return
-    entry = 0
+    fourth = 0.0
     if len(context.args) >= 4:
-        try: entry = float(context.args[3])
+        try: fourth = float(context.args[3])
         except: pass
     stops = load_stoploss()
-    stops[ticker] = {"name": name, "stop_price": stop, "entry_price": entry}
-    save_json(STOPLOSS_FILE, stops)
-    lp = f" (진입가 대비 {((stop - entry) / entry * 100):.1f}%)" if entry > 0 else ""
-    await update.message.reply_text(f"🛑 *{name}* 손절선 {stop:,.0f}원{lp}\n장중 10분마다 체크", parse_mode="Markdown")
+    if _is_us_ticker(ticker):
+        us = stops.get("us_stocks", {})
+        us[ticker] = {"name": name, "stop_price": stop, "target_price": fourth}
+        stops["us_stocks"] = us
+        save_json(STOPLOSS_FILE, stops)
+        tp = f", 목표가 ${fourth:,.2f}" if fourth else ""
+        await update.message.reply_text(
+            f"🇺🇸 *{name}* 손절 ${stop:,.2f}{tp}\n장중 자동 체크", parse_mode="Markdown")
+    else:
+        stops[ticker] = {"name": name, "stop_price": stop, "entry_price": fourth}
+        save_json(STOPLOSS_FILE, stops)
+        lp = f" (진입가 대비 {((stop - fourth) / fourth * 100):.1f}%)" if fourth > 0 else ""
+        await update.message.reply_text(
+            f"🛑 *{name}* 손절선 {stop:,.0f}원{lp}\n장중 10분마다 체크", parse_mode="Markdown")
 
 
 async def delstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("사용법: /delstop 코드"); return
+    ticker = context.args[0].upper()
     stops = load_stoploss()
-    if context.args[0] in stops:
-        n = stops.pop(context.args[0])["name"]
-        save_json(STOPLOSS_FILE, stops)
-        await update.message.reply_text(f"🗑 *{n}* 손절선 삭제!", parse_mode="Markdown")
+    if _is_us_ticker(ticker):
+        us = stops.get("us_stocks", {})
+        if ticker in us:
+            n = us.pop(ticker)["name"]
+            stops["us_stocks"] = us
+            save_json(STOPLOSS_FILE, stops)
+            await update.message.reply_text(f"🗑 *{n}* 손절선 삭제!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ 없음")
     else:
-        await update.message.reply_text("❌ 없음")
+        if ticker in stops:
+            n = stops.pop(ticker)["name"]
+            save_json(STOPLOSS_FILE, stops)
+            await update.message.reply_text(f"🗑 *{n}* 손절선 삭제!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ 없음")
 
 
 async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stops = load_stoploss()
-    if not stops:
-        await update.message.reply_text("📭 손절선 없음\n/setstop 코드 이름 손절가 진입가"); return
+    kr = {k: v for k, v in stops.items() if k != "us_stocks"}
+    us = stops.get("us_stocks", {})
+    if not kr and not us:
+        await update.message.reply_text("📭 손절선 없음\n/setstop 코드 이름 손절가 [진입가/목표가]"); return
     msg = "🛑 *손절선 목록*\n\n"
-    for t, i in stops.items():
-        lp = ""
-        if i.get("entry_price", 0) > 0:
-            lp = f" | 진입 {i['entry_price']:,.0f} ({((i['stop_price']-i['entry_price'])/i['entry_price']*100):.1f}%)"
-        msg += f"• *{i['name']}* ({t}): {i['stop_price']:,.0f}원{lp}\n"
-    msg += "\n장중 10분마다 자동 체크"
+    if kr:
+        msg += "🇰🇷 *한국 종목*\n"
+        for t, i in kr.items():
+            lp = ""
+            if i.get("entry_price", 0) > 0:
+                lp = f" | 진입 {i['entry_price']:,.0f} ({((i['stop_price']-i['entry_price'])/i['entry_price']*100):.1f}%)"
+            tp = f" → 목표 {i['target_price']:,.0f}원" if i.get("target_price", 0) > 0 else ""
+            msg += f"• *{i['name']}* ({t}): {i['stop_price']:,.0f}원{lp}{tp}\n"
+        msg += "\n"
+    if us:
+        msg += "🇺🇸 *미국 종목*\n"
+        for sym, i in us.items():
+            tp = f" → 목표 ${i['target_price']:,.2f}" if i.get("target_price", 0) > 0 else ""
+            msg += f"• *{i['name']}* ({sym}): ${i['stop_price']:,.2f}{tp}\n"
+        msg += "\n"
+    msg += "장중 10분마다 자동 체크"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
@@ -1443,13 +1521,15 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
         elif name == "get_alerts":
             stops = load_stoploss()
-            if not stops:
+            kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
+            us_stops = stops.get("us_stocks", {})
+            if not kr_stops and not us_stops:
                 result = {"alerts": [], "message": "손절선 없음. /setstop 으로 등록하세요."}
             else:
                 alerts = []
-                for ticker, info in stops.items():
-                    stop  = info.get("stop_price", 0)
-                    entry = info.get("entry_price", 0)
+                for ticker, info in kr_stops.items():
+                    stop   = info.get("stop_price", 0)
+                    entry  = info.get("entry_price", 0)
                     target = info.get("target_price", 0)
                     cur = 0
                     try:
@@ -1459,12 +1539,28 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         pass
                     gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
                     item = {
-                        "ticker": ticker,
-                        "name":   info.get("name", ticker),
-                        "stop":   stop,
-                        "entry":  entry,
-                        "cur":    cur,
-                        "gap_pct": gap_pct,
+                        "ticker": ticker, "name": info.get("name", ticker),
+                        "market": "KR", "stop": stop, "entry": entry,
+                        "cur": cur, "gap_pct": gap_pct,
+                    }
+                    if target:
+                        item["target"] = target
+                        item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
+                    alerts.append(item)
+                for sym, info in us_stops.items():
+                    stop   = info.get("stop_price", 0)
+                    target = info.get("target_price", 0)
+                    cur = 0.0
+                    try:
+                        d = await get_yahoo_quote(sym)
+                        cur = float(d.get("price", 0) or 0) if d else 0.0
+                    except Exception:
+                        pass
+                    gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
+                    item = {
+                        "ticker": sym, "name": info.get("name", sym),
+                        "market": "US", "stop": stop,
+                        "cur": cur, "gap_pct": gap_pct,
                     }
                     if target:
                         item["target"] = target
@@ -1473,7 +1569,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = {"alerts": alerts}
 
         elif name == "set_alert":
-            ticker       = arguments.get("ticker", "").strip()
+            ticker       = arguments.get("ticker", "").strip().upper()
             aname        = arguments.get("name", ticker).strip()
             stop_price   = float(arguments.get("stop_price", 0))
             target_price = float(arguments.get("target_price", 0) or 0)
@@ -1481,18 +1577,29 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = {"error": "ticker와 stop_price는 필수입니다"}
             else:
                 stops = load_stoploss()
-                stops[ticker] = {
-                    "name":         aname,
-                    "stop_price":   stop_price,
-                    "entry_price":  stops.get(ticker, {}).get("entry_price", 0),
-                    "target_price": target_price,
-                }
-                save_json(STOPLOSS_FILE, stops)
-                result = {
-                    "ok": True,
-                    "message": f"{aname}({ticker}) 손절가 {stop_price:,.0f}원 저장됨"
-                               + (f", 목표가 {target_price:,.0f}원" if target_price else ""),
-                }
+                if _is_us_ticker(ticker):
+                    us = stops.get("us_stocks", {})
+                    us[ticker] = {"name": aname, "stop_price": stop_price, "target_price": target_price}
+                    stops["us_stocks"] = us
+                    save_json(STOPLOSS_FILE, stops)
+                    result = {
+                        "ok": True,
+                        "message": f"{aname}({ticker}) 손절가 ${stop_price:,.2f} 저장됨"
+                                   + (f", 목표가 ${target_price:,.2f}" if target_price else ""),
+                    }
+                else:
+                    stops[ticker] = {
+                        "name":         aname,
+                        "stop_price":   stop_price,
+                        "entry_price":  stops.get(ticker, {}).get("entry_price", 0),
+                        "target_price": target_price,
+                    }
+                    save_json(STOPLOSS_FILE, stops)
+                    result = {
+                        "ok": True,
+                        "message": f"{aname}({ticker}) 손절가 {stop_price:,.0f}원 저장됨"
+                                   + (f", 목표가 {target_price:,.0f}원" if target_price else ""),
+                    }
 
         else:
             result = {"error": f"unknown tool: {name}"}
