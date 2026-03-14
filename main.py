@@ -1343,6 +1343,19 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "add_watch",      "description": "한국 워치리스트에 종목 추가",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
+                         "name":   {"type": "string", "description": "종목명 (예: 삼성전자)"},
+                     },
+                     "required": ["ticker", "name"]}},
+    {"name": "remove_watch",   "description": "한국 워치리스트에서 종목 제거",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
+                     },
+                     "required": ["ticker"]}},
     {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 %",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "set_alert",      "description": "손절가/목표가 등록 및 수정",
@@ -1609,6 +1622,30 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "message": f"{aname}({ticker}) 손절가 {stop_price:,.0f}원 저장됨"
                                    + (f", 목표가 {target_price:,.0f}원" if target_price else ""),
                     }
+
+        elif name == "add_watch":
+            ticker = arguments.get("ticker", "").strip()
+            wname  = arguments.get("name", "").strip()
+            if not ticker or not wname:
+                result = {"error": "ticker와 name은 필수입니다"}
+            else:
+                wl = load_watchlist()
+                wl[ticker] = wname
+                save_json(WATCHLIST_FILE, wl)
+                result = {"ok": True, "message": f"{wname}({ticker}) 워치리스트 추가됨", "total": len(wl)}
+
+        elif name == "remove_watch":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                wl = load_watchlist()
+                if ticker in wl:
+                    removed = wl.pop(ticker)
+                    save_json(WATCHLIST_FILE, wl)
+                    result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
+                else:
+                    result = {"error": f"{ticker} 워치리스트에 없음"}
 
         else:
             result = {"error": f"unknown tool: {name}"}
