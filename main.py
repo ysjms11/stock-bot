@@ -1206,6 +1206,17 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",      "description": "KOSPI·KOSDAQ 지수 + USD/KRW 환율",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 %",
+     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "set_alert",      "description": "손절가/목표가 등록 및 수정",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker":       {"type": "string", "description": "종목코드 (예: 034020)"},
+                         "name":         {"type": "string", "description": "종목명"},
+                         "stop_price":   {"type": "number", "description": "손절가"},
+                         "target_price": {"type": "number", "description": "목표가 (선택)"},
+                     },
+                     "required": ["ticker", "name", "stop_price"]}},
 ]
 
 
@@ -1336,6 +1347,59 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 "usd_krw": {"price": usd.get("price") if usd else None,
                             "chg_pct": usd.get("change_pct") if usd else None},
             }
+
+        elif name == "get_alerts":
+            stops = load_stoploss()
+            if not stops:
+                result = {"alerts": [], "message": "손절선 없음. /setstop 으로 등록하세요."}
+            else:
+                alerts = []
+                for ticker, info in stops.items():
+                    stop  = info.get("stop_price", 0)
+                    entry = info.get("entry_price", 0)
+                    target = info.get("target_price", 0)
+                    cur = 0
+                    try:
+                        d = await kis_stock_price(ticker, token)
+                        cur = int(d.get("stck_prpr", 0) or 0)
+                    except Exception:
+                        pass
+                    gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
+                    item = {
+                        "ticker": ticker,
+                        "name":   info.get("name", ticker),
+                        "stop":   stop,
+                        "entry":  entry,
+                        "cur":    cur,
+                        "gap_pct": gap_pct,
+                    }
+                    if target:
+                        item["target"] = target
+                        item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
+                    alerts.append(item)
+                result = {"alerts": alerts}
+
+        elif name == "set_alert":
+            ticker       = arguments.get("ticker", "").strip()
+            aname        = arguments.get("name", ticker).strip()
+            stop_price   = float(arguments.get("stop_price", 0))
+            target_price = float(arguments.get("target_price", 0) or 0)
+            if not ticker or stop_price <= 0:
+                result = {"error": "ticker와 stop_price는 필수입니다"}
+            else:
+                stops = load_stoploss()
+                stops[ticker] = {
+                    "name":         aname,
+                    "stop_price":   stop_price,
+                    "entry_price":  stops.get(ticker, {}).get("entry_price", 0),
+                    "target_price": target_price,
+                }
+                save_json(STOPLOSS_FILE, stops)
+                result = {
+                    "ok": True,
+                    "message": f"{aname}({ticker}) 손절가 {stop_price:,.0f}원 저장됨"
+                               + (f", 목표가 {target_price:,.0f}원" if target_price else ""),
+                }
 
         else:
             result = {"error": f"unknown tool: {name}"}
