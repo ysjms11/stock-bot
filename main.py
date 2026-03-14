@@ -1127,25 +1127,34 @@ async def delstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stops = load_stoploss()
-    kr = {k: v for k, v in stops.items() if k != "us_stocks"}
-    us = stops.get("us_stocks", {})
+    kr = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
+    us = stops.get("us_stocks") or {}
     if not kr and not us:
         await update.message.reply_text("📭 손절선 없음\n/setstop 코드 이름 손절가 [진입가/목표가]"); return
     msg = "🛑 *손절선 목록*\n\n"
     if kr:
         msg += "🇰🇷 *한국 종목*\n"
         for t, i in kr.items():
-            lp = ""
-            if i.get("entry_price", 0) > 0:
-                lp = f" | 진입 {i['entry_price']:,.0f} ({((i['stop_price']-i['entry_price'])/i['entry_price']*100):.1f}%)"
-            tp = f" → 목표 {i['target_price']:,.0f}원" if i.get("target_price", 0) > 0 else ""
-            msg += f"• *{i['name']}* ({t}): {i['stop_price']:,.0f}원{lp}{tp}\n"
+            try:
+                sp = float(i.get("stop_price") or i.get("stop") or 0)
+                ep = float(i.get("entry_price") or 0)
+                tgt = float(i.get("target_price") or 0)
+                lp = f" | 진입 {ep:,.0f} ({((sp-ep)/ep*100):.1f}%)" if ep > 0 else ""
+                tp = f" → 목표 {tgt:,.0f}원" if tgt > 0 else ""
+                msg += f"• *{i.get('name', t)}* ({t}): {sp:,.0f}원{lp}{tp}\n"
+            except Exception as e:
+                msg += f"• ({t}): 읽기 오류 {e}\n"
         msg += "\n"
     if us:
         msg += "🇺🇸 *미국 종목*\n"
         for sym, i in us.items():
-            tp = f" → 목표 ${i['target_price']:,.2f}" if i.get("target_price", 0) > 0 else ""
-            msg += f"• *{i['name']}* ({sym}): ${i['stop_price']:,.2f}{tp}\n"
+            try:
+                sp = float(i.get("stop_price") or i.get("stop") or 0)
+                tgt = float(i.get("target_price") or i.get("target") or 0)
+                tp = f" → 목표 ${tgt:,.2f}" if tgt > 0 else ""
+                msg += f"• *{i.get('name', sym)}* ({sym}): ${sp:,.2f}{tp}\n"
+            except Exception as e:
+                msg += f"• ({sym}): 읽기 오류 {e}\n"
         msg += "\n"
     msg += "장중 10분마다 자동 체크"
     await update.message.reply_text(msg, parse_mode="Markdown")
