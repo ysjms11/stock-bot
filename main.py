@@ -30,6 +30,7 @@ STOPLOSS_FILE = "/data/stoploss.json"
 US_WATCHLIST_FILE = "/data/us_watchlist.json"
 DART_SEEN_FILE = "/data/dart_seen.json"
 PORTFOLIO_FILE = "/data/portfolio.json"
+WATCHALERT_FILE = "/data/watchalert.json"
 
 _token_cache = {"token": None, "expires": None}
 
@@ -37,6 +38,19 @@ _token_cache = {"token": None, "expires": None}
 def _is_us_ticker(ticker: str) -> bool:
     """영문 티커면 미국 종목으로 판별 (숫자 포함 없으면 US)"""
     return bool(ticker) and ticker.replace(".", "").replace("-", "").isalpha()
+
+
+# NYSE 대표 종목 (나머지는 NASDAQ 기본)
+_NYSE_TICKERS = {
+    "BRK.A", "BRK.B", "JNJ", "V", "WMT", "PG", "MA", "HD", "DIS", "BA",
+    "KO", "PFE", "MRK", "VZ", "T", "NKE", "MMM", "CAT", "GS", "JPM",
+    "BAC", "C", "WFC", "UNH", "CVX", "XOM", "CRM", "ORCL", "IBM", "GE",
+    "LMT", "RTX", "NOC", "PM", "MCD", "UPS", "FDX", "GM", "F",
+}
+
+def _guess_excd(symbol: str) -> str:
+    """미국 종목 거래소코드 추정 (NYS/NAS/AMS)"""
+    return "NYS" if symbol.upper() in _NYSE_TICKERS else "NAS"
 
 
 def _is_us_market_hours_kst() -> bool:
@@ -100,6 +114,10 @@ def load_us_watchlist():
 
 def load_dart_seen():
     return load_json(DART_SEEN_FILE, {"ids": []})
+
+
+def load_watchalert():
+    return load_json(WATCHALERT_FILE, {})
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -315,11 +333,24 @@ async def _fetch_sector_flow(token: str, sector_code: str) -> tuple:
     return 0, 0
 
 
-async def kis_us_stock_price(symbol: str, token: str, excd: str = "NAS") -> dict:
+async def kis_us_stock_price(symbol: str, token: str, excd: str = "") -> dict:
     """KIS API 해외주식 현재가 (HHDFS00000300)"""
+    if not excd:
+        excd = _guess_excd(symbol)
     async with aiohttp.ClientSession() as s:
         _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
             "HHDFS00000300", token,
+            {"AUTH": "", "EXCD": excd, "SYMB": symbol})
+        return d.get("output", {})
+
+
+async def kis_us_stock_detail(symbol: str, token: str, excd: str = "") -> dict:
+    """KIS API 해외주식 현재가상세 (HHDFS76200200) — PER/PBR/시총/52주 등"""
+    if not excd:
+        excd = _guess_excd(symbol)
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
+            "HHDFS76200200", token,
             {"AUTH": "", "EXCD": excd, "SYMB": symbol})
         return d.get("output", {})
 
@@ -712,7 +743,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     stops = load_stoploss()
     kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
     us_stops = stops.get("us_stocks", {})
-    if not kr_stops and not us_stops:
+    wa = load_watchalert()
+    if not kr_stops and not us_stops and not wa:
         return
 
     alerts = []
@@ -767,6 +799,56 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
         except Exception as e:
             print(f"손절 알림 전송 오류: {e}")
+
+    # ── 매수 희망가 감시 (watchalert) ──
+    try:
+        wa = load_watchalert()
+        if wa:
+            token_wa = await get_kis_token()
+            buy_alerts = []
+            for ticker, info in wa.items():
+                try:
+                    buy_price = info.get("buy_price", 0)
+                    if buy_price <= 0:
+                        continue
+                    cur = 0.0
+                    if _is_us_ticker(ticker):
+                        if not is_us:
+                            continue
+                        d = await kis_us_stock_price(ticker, token_wa)
+                        cur = float(d.get("last", 0) or 0)
+                    else:
+                        if not is_kr:
+                            continue
+                        d = await get_stock_price(ticker, token_wa)
+                        cur = int(d.get("stck_prpr", 0) or 0)
+                    await asyncio.sleep(0.3)
+                    if cur > 0 and cur <= buy_price:
+                        memo = info.get("memo", "")
+                        if _is_us_ticker(ticker):
+                            buy_alerts.append(
+                                f"🟢🇺🇸 *{info['name']}* ({ticker})\n"
+                                f"  현재가: ${cur:,.2f} ← 매수희망가 ${buy_price:,.2f} 도달!\n"
+                                + (f"  📝 {memo}\n" if memo else "")
+                                + "  → *매수 검토!*"
+                            )
+                        else:
+                            buy_alerts.append(
+                                f"🟢🇰🇷 *{info['name']}* ({ticker})\n"
+                                f"  현재가: {cur:,}원 ← 매수희망가 {buy_price:,.0f}원 도달!\n"
+                                + (f"  📝 {memo}\n" if memo else "")
+                                + "  → *매수 검토!*"
+                            )
+                except Exception:
+                    pass
+            if buy_alerts:
+                msg = "🟢🟢🟢 *매수 희망가 도달!* 🟢🟢🟢\n\n" + "\n\n".join(buy_alerts)
+                try:
+                    await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                except Exception as e:
+                    print(f"매수감시 알림 전송 오류: {e}")
+    except Exception as e:
+        print(f"매수감시 체크 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1532,6 +1614,27 @@ MCP_TOOLS = [
                          "target_price": {"type": "number", "description": "목표가 (선택)"},
                      },
                      "required": ["ticker", "name", "stop_price"]}},
+    {"name": "get_us_stock_detail", "description": "미국 개별 종목 상세: 현재가·등락률·PER·PBR·시총·52주·거래량",
+     "inputSchema": {"type": "object",
+                     "properties": {"ticker": {"type": "string", "description": "미국 티커 (예: TSLA, AAPL)"}},
+                     "required": ["ticker"]}},
+    {"name": "set_watch_alert",    "description": "미보유 종목 매수 희망가 감시 등록 (가격 도달 시 텔레그램 알림)",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker":    {"type": "string", "description": "종목코드 (한국: 012450, 미국: AAPL)"},
+                         "name":      {"type": "string", "description": "종목명"},
+                         "buy_price": {"type": "number", "description": "매수 희망가 (이 가격 이하일 때 알림)"},
+                         "memo":      {"type": "string", "description": "매수 근거 메모 (선택)"},
+                     },
+                     "required": ["ticker", "name", "buy_price"]}},
+    {"name": "get_watch_alerts",   "description": "매수 희망가 감시 목록 조회",
+     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "remove_watch_alert", "description": "매수 희망가 감시 제거",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "종목코드"},
+                     },
+                     "required": ["ticker"]}},
 ]
 
 
@@ -1592,7 +1695,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "ticker": symbol, "name": info.get("name", symbol),
                         "qty": qty, "avg_price": avg, "cur_price": cur,
                         "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                        "chg_today": d.get("diff_rate"),
+                        "chg_today": d.get("rate"),
                     })
 
                 result = {
@@ -1811,6 +1914,99 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
                 else:
                     result = {"error": f"{ticker} 워치리스트에 없음"}
+
+        elif name == "get_us_stock_detail":
+            symbol = arguments.get("ticker", "TSLA").strip().upper()
+            excd = _guess_excd(symbol)
+            price_d = await kis_us_stock_price(symbol, token, excd)
+            detail_d = await kis_us_stock_detail(symbol, token, excd)
+            cur = float(price_d.get("last", 0) or 0)
+            base = float(price_d.get("base", 0) or 0)
+            result = {
+                "ticker": symbol,
+                "price": cur,
+                "chg_pct": float(price_d.get("rate", 0) or 0),
+                "volume": int(price_d.get("tvol", 0) or 0),
+                "open": float(detail_d.get("open", 0) or 0),
+                "high": float(detail_d.get("high", 0) or 0),
+                "low": float(detail_d.get("low", 0) or 0),
+                "prev_close": base,
+                "w52h": float(detail_d.get("h52p", 0) or 0),
+                "w52l": float(detail_d.get("l52p", 0) or 0),
+                "per": float(detail_d.get("perx", 0) or 0) or None,
+                "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
+                "eps": float(detail_d.get("epsx", 0) or 0) or None,
+                "market_cap": detail_d.get("tomv", ""),
+                "sector": detail_d.get("e_icod", ""),
+            }
+
+        elif name == "set_watch_alert":
+            ticker    = arguments.get("ticker", "").strip().upper()
+            wname     = arguments.get("name", "").strip()
+            buy_price = float(arguments.get("buy_price", 0))
+            memo      = arguments.get("memo", "").strip()
+            if not ticker or not wname or buy_price <= 0:
+                result = {"error": "ticker, name, buy_price(>0) 필수"}
+            else:
+                wa = load_watchalert()
+                wa[ticker] = {
+                    "name": wname,
+                    "buy_price": buy_price,
+                    "memo": memo,
+                    "created": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+                }
+                save_json(WATCHALERT_FILE, wa)
+                if _is_us_ticker(ticker):
+                    msg = f"{wname}({ticker}) 매수감시 ${buy_price:,.2f} 등록됨"
+                else:
+                    msg = f"{wname}({ticker}) 매수감시 {buy_price:,.0f}원 등록됨"
+                if memo:
+                    msg += f" | 메모: {memo}"
+                result = {"ok": True, "message": msg, "total": len(wa)}
+
+        elif name == "get_watch_alerts":
+            wa = load_watchalert()
+            if not wa:
+                result = {"alerts": [], "message": "감시 종목 없음. set_watch_alert로 등록하세요."}
+            else:
+                alerts = []
+                for ticker, info in wa.items():
+                    buy_price = info.get("buy_price", 0)
+                    cur = 0.0
+                    try:
+                        if _is_us_ticker(ticker):
+                            d = await kis_us_stock_price(ticker, token)
+                            cur = float(d.get("last", 0) or 0)
+                        else:
+                            d = await kis_stock_price(ticker, token)
+                            cur = int(d.get("stck_prpr", 0) or 0)
+                    except Exception:
+                        pass
+                    gap_pct = round((cur - buy_price) / buy_price * 100, 2) if buy_price else None
+                    alerts.append({
+                        "ticker": ticker,
+                        "name": info.get("name", ticker),
+                        "buy_price": buy_price,
+                        "cur_price": cur,
+                        "gap_pct": gap_pct,
+                        "triggered": cur > 0 and cur <= buy_price,
+                        "memo": info.get("memo", ""),
+                        "created": info.get("created", ""),
+                    })
+                result = {"alerts": alerts}
+
+        elif name == "remove_watch_alert":
+            ticker = arguments.get("ticker", "").strip().upper()
+            if not ticker:
+                result = {"error": "ticker 필수"}
+            else:
+                wa = load_watchalert()
+                if ticker in wa:
+                    removed = wa.pop(ticker)
+                    save_json(WATCHALERT_FILE, wa)
+                    result = {"ok": True, "message": f"{removed['name']}({ticker}) 매수감시 제거됨", "total": len(wa)}
+                else:
+                    result = {"error": f"{ticker} 감시 목록에 없음"}
 
         else:
             result = {"error": f"unknown tool: {name}"}
