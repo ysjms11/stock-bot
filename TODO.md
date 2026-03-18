@@ -1,6 +1,7 @@
 # 주식봇 개선 TODO
 > 업데이트: 2026-03-19 | 레포: ysjms11/stock-bot | Railway: chic-ambition
 
+
 ---
 
 ## ✅ 완료된 항목
@@ -12,88 +13,11 @@
 - [x] compare_snapshot (set_alert log_type=compare)
 - [x] 복합 신호 분류 개선 (#11) — 보유종목 익절/손절/추세 분류 + 일일 중복 방지
 - [x] 환율 알림 비활성화 — 매크로 대시보드(#14)로 통합 예정
+- [x] #14 매크로 대시보드 — VIX/WTI/금/구리/DXY/US10Y/외인수급/이벤트 수집, 매일 18:00+06:00 자동발송, get_macro(mode=dashboard) MCP 지원
 
 ---
 
 ## 🟡 P1 — 이번 달
-
-### 14. 매크로 대시보드 (레짐 판정용 데이터 수집기)
-**영향도:** ★★★★★ | **난이도:** ★★★
-
-**핵심 원칙:** 봇은 판정하지 않는다. 데이터만 모아준다. 판정은 Claude가 한다.
-
-```
-수집 데이터:
-
-[1] 시장 심리/공포
-  - VIX (^VIX)                    ← Yahoo Finance
-  - KOSPI 일간 등락률              ← KIS API (이미 있음)
-  - 인버스 ETF 거래량 순위          ← scan_market (이미 있음)
-
-[2] 매크로 가격
-  - WTI 유가 (CL=F)              ← Yahoo Finance
-  - 금 (GC=F)                    ← Yahoo Finance
-  - 구리 (HG=F)                  ← Yahoo Finance ("Dr. Copper" 경기선행)
-  - USD/KRW 환율                  ← KIS API (이미 있음)
-  - DXY 달러 인덱스 (DX-Y.NYB)   ← Yahoo Finance
-  - 미국 10년물 국채 금리 (^TNX)   ← Yahoo Finance
-
-[3] 수급/자금 흐름
-  - 외국인 KOSPI 순매수 금액       ← KIS API (이미 있음)
-  - 외국인 연속 순매도 일수 카운트   ← 위 데이터에서 계산
-
-[4] 이벤트 캘린더 (수동 관리 or 하드코딩)
-  - FOMC 일정
-  - CPI/PPI 발표일
-  - 전쟁/지정학 상태 (수동 메모)
-
-[5] 크레딧 리스크 (P2에서 추가 가능)
-  - 하이일드 스프레드             ← FRED API
-```
-
-**텔레그램 출력 형태 (매일 18:00 한국장 마감 + 06:00 미국장 마감):**
-
-```
-📊 매크로 대시보드 (03/19 18:00)
-
-[시장심리]
-VIX: 28.5 (+12%) | KOSPI: +5.04%
-인버스 거래량 1위: ✅
-
-[가격지표]
-WTI: $102.3 (+4.2%) | 금: $5,010 (+1.2%)
-구리: $4.85 (-0.3%) | DXY: 104.2 (+0.5%)
-USD/KRW: 1,508 (+1.5%) | US10Y: 4.20% (-2bp)
-
-[수급]
-외인 KOSPI: -8,800억 | 연속매도: 0일
-
-[이벤트]
-다음 FOMC: 4/28-29 | 다음 CPI: 4/10
-
-→ Claude에서 레짐 점검하세요
-```
-
-**구현 방법:**
-1. `get_yahoo_quote()` 함수 확장 — VIX, WTI, 금, 구리, DXY, US10Y 추가
-2. 외인 연속 순매도 일수 — 기존 investor 데이터에서 계산
-3. 이벤트 캘린더 — JSON 파일로 수동 관리
-4. 텔레그램 자동 발송 — job_queue에 18:00, 06:00 스케줄 등록
-5. MCP 도구 추가 — `get_macro` 확장 또는 `get_macro_dashboard` 신규
-
-**Yahoo Finance 심볼 매핑:**
-```python
-MACRO_SYMBOLS = {
-    "VIX": "^VIX",
-    "WTI": "CL=F",
-    "GOLD": "GC=F",
-    "COPPER": "HG=F",
-    "DXY": "DX-Y.NYB",
-    "US10Y": "^TNX",
-    "KOSPI": "^KS11",
-    "USDKRW": "KRW=X",
-}
-```
 
 ### 12. 이평선 수렴 스크리너
 **영향도:** ★★★★☆ | **난이도:** ★★★
