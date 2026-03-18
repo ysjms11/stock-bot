@@ -9,6 +9,7 @@ from kis_api import *
 from kis_api import (
     _is_us_ticker, _guess_excd, _kis_get,
     _fetch_sector_flow, _TICKER_SECTOR,
+    ws_manager, get_ws_tickers,
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -243,6 +244,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "bps": price.get("bps"),
                     "investor": inv[:3] if isinstance(inv, list) else inv,
                 }
+                # 추정실적 (period 없을 때만)
+                try:
+                    result["earnings"] = await kis_estimate_perform(ticker, token)
+                except Exception:
+                    pass
 
         elif name == "get_foreign_rank":
             try:
@@ -506,6 +512,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "created": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
                 }
                 save_json(WATCHALERT_FILE, wa)
+                asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                 if _is_us_ticker(ticker):
                     msg = f"{aname}({ticker}) 매수감시 ${buy_price:,.2f} 등록됨"
                 else:
@@ -534,6 +541,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "target_price": target_price,
                     }
                     save_json(STOPLOSS_FILE, stops)
+                    asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                     result = {
                         "ok": True,
                         "message": f"{aname}({ticker}) 손절가 {stop_price:,.0f}원 저장됨"
@@ -551,6 +559,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 wl = load_watchlist()
                 wl[ticker] = wname
                 save_json(WATCHLIST_FILE, wl)
+                asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                 result = {"ok": True, "message": f"{wname}({ticker}) 워치리스트 추가됨", "total": len(wl)}
 
         elif name == "remove_watch":
@@ -564,6 +573,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 if ticker in wa:
                     removed = wa.pop(ticker)
                     save_json(WATCHALERT_FILE, wa)
+                    asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                     result = {"ok": True, "message": f"{removed['name']}({ticker}) 매수감시 제거됨", "total_watch": len(wa)}
                 else:
                     result = {"error": f"{ticker} 매수감시 목록에 없음"}
@@ -573,6 +583,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 if ticker in wl:
                     removed = wl.pop(ticker)
                     save_json(WATCHLIST_FILE, wl)
+                    asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                     result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
                 else:
                     result = {"error": f"{ticker} 워치리스트에 없음"}

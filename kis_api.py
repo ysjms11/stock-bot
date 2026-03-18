@@ -386,6 +386,202 @@ async def kis_us_stock_detail(symbol: str, token: str, excd: str = "") -> dict:
         return d.get("output", {})
 
 
+async def kis_estimate_perform(ticker: str, token: str) -> dict:
+    """국내주식 종목추정실적 (HHKST668300C0)
+    output2: 연간 추정실적 / output3: 분기 추정실적
+    필드: dt(결산년월) data1(매출액) data2(영업이익) data3(세전이익) data4(순이익) data5(EPS)
+    """
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/estimate-perform",
+            "HHKST668300C0", token, {"SHT_CD": ticker})
+
+    def _row(r):
+        return {
+            "dt":  r.get("dt", ""),
+            "rev": r.get("data1", ""),
+            "op":  r.get("data2", ""),
+            "ebt": r.get("data3", ""),
+            "np":  r.get("data4", ""),
+            "eps": r.get("data5", ""),
+        }
+
+    annual = d.get("output2") or []
+    qtly   = d.get("output3") or []
+    return {
+        "annual":    [_row(r) for r in (annual if isinstance(annual, list) else [annual])],
+        "quarterly": [_row(r) for r in (qtly   if isinstance(qtly,   list) else [qtly])],
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# KIS WebSocket 실시간 체결가 (국내주식 전용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_ws_key_cache: dict = {"key": None, "expires": 0.0}
+
+
+async def get_kis_ws_approval_key() -> str:
+    """WebSocket 접속키 발급 (23시간 캐시)"""
+    import time as _t
+    now = _t.time()
+    if _ws_key_cache["key"] and now < _ws_key_cache["expires"]:
+        return _ws_key_cache["key"]
+    url = f"{KIS_BASE_URL}/oauth2/Approval"
+    body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "secretkey": KIS_APP_SECRET}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=body) as r:
+                d = await r.json(content_type=None)
+                key = d.get("approval_key", "")
+                if key:
+                    _ws_key_cache["key"] = key
+                    _ws_key_cache["expires"] = now + 82800
+                return _ws_key_cache.get("key") or ""
+    except Exception as e:
+        print(f"[WS] 접속키 발급 오류: {e}")
+        return ""
+
+
+class KisRealtimeManager:
+    """KIS WebSocket 국내주식 실시간 체결가 매니저
+    평일 09:00~16:00 KST에만 연결. 끊김 시 30초 후 자동 재연결.
+    미국 주식은 _is_us_ticker() 로 걸러서 구독하지 않음.
+    """
+    _WS_URL = "wss://ops.koreainvestment.com:21000"
+
+    def __init__(self):
+        self._subscribed: set = set()
+        self._ws = None
+        self._alert_cb = None
+        self._running = False
+        self._task = None
+        self._fired: dict = {}  # {ticker: set(alert_types)} — 당일 발송 추적
+
+    async def start(self, alert_callback, tickers: set):
+        self._alert_cb = alert_callback
+        self._subscribed = {t for t in tickers if not _is_us_ticker(t)}
+        self._running = True
+        self._task = asyncio.create_task(self._run_loop())
+
+    async def stop(self):
+        self._running = False
+        if self._task:
+            self._task.cancel()
+
+    async def update_tickers(self, new_tickers: set):
+        """구독 종목 변경 (KR만 필터링)"""
+        kr_new    = {t for t in new_tickers if not _is_us_ticker(t)}
+        to_add    = kr_new - self._subscribed
+        to_remove = self._subscribed - kr_new
+        self._subscribed = kr_new
+        if self._ws and not self._ws.closed:
+            for t in to_add:
+                await self._send_sub(t, "1")
+            for t in to_remove:
+                await self._send_sub(t, "0")
+
+    def reset_fired(self):
+        self._fired = {}
+
+    async def _run_loop(self):
+        while self._running:
+            now = datetime.now(KST)
+            if now.weekday() < 5 and 9 <= now.hour < 16:
+                try:
+                    await self._connect_and_run()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    print(f"[WS] 오류: {e}, 30초 후 재연결...")
+                await asyncio.sleep(30)
+            else:
+                await asyncio.sleep(60)   # 장외: 1분마다 체크
+
+    async def _connect_and_run(self):
+        self.reset_fired()
+        key = await get_kis_ws_approval_key()
+        if not key:
+            print("[WS] 접속키 없음, 스킵")
+            return
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self._WS_URL, heartbeat=30,
+                timeout=aiohttp.ClientTimeout(total=None)
+            ) as ws:
+                self._ws = ws
+                print(f"[WS] 연결됨 ({len(self._subscribed)}개 구독)")
+                for t in list(self._subscribed):
+                    await self._send_sub_raw(ws, key, t, "1")
+                    await asyncio.sleep(0.05)
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await self._on_text(msg.data)
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        print("[WS] 연결 종료됨")
+                        break
+        self._ws = None
+
+    async def _send_sub_raw(self, ws, key, ticker, tr_type):
+        await ws.send_json({
+            "header": {
+                "approval_key": key, "custtype": "P",
+                "tr_type": tr_type, "content-type": "utf-8",
+            },
+            "body": {"input": {"tr_id": "H0STCNT0", "tr_key": ticker}},
+        })
+
+    async def _send_sub(self, ticker, tr_type):
+        if self._ws and not self._ws.closed:
+            key = await get_kis_ws_approval_key()
+            await self._send_sub_raw(self._ws, key, ticker, tr_type)
+
+    async def _on_text(self, raw: str):
+        # 포맷: "0|H0STCNT0|001|종목코드^체결시간^현재가^..."
+        if raw.startswith("{"):
+            return   # JSON ACK 무시
+        parts = raw.split("|")
+        if len(parts) < 4 or parts[1] != "H0STCNT0":
+            return
+        count = int(parts[2])
+        all_fields = parts[3].split("^")
+        if count == 0 or not all_fields:
+            return
+        per_rec = len(all_fields) // count
+        for i in range(count):
+            f = all_fields[i * per_rec: (i + 1) * per_rec]
+            if len(f) < 3:
+                continue
+            ticker = f[0]
+            try:
+                price = int(f[2])
+            except (ValueError, IndexError):
+                continue
+            if price > 0 and self._alert_cb:
+                await self._alert_cb(ticker, price)
+
+
+# KisRealtimeManager 싱글톤
+ws_manager = KisRealtimeManager()
+
+
+def get_ws_tickers() -> set:
+    """WebSocket 구독 대상 KR 종목 수집 (포트폴리오 + 손절 + 워치알러트 + 워치리스트)"""
+    tickers = set()
+    for t in load_json(PORTFOLIO_FILE, {}):
+        if t != "us_stocks" and not _is_us_ticker(t):
+            tickers.add(t)
+    for t in load_stoploss():
+        if t != "us_stocks" and not _is_us_ticker(t):
+            tickers.add(t)
+    for t in load_watchalert():
+        if not _is_us_ticker(t):
+            tickers.add(t)
+    for t in load_watchlist():
+        if not _is_us_ticker(t):
+            tickers.add(t)
+    return tickers
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Yahoo Finance
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
