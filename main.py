@@ -1578,9 +1578,12 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_portfolio",  "description": "워치리스트 전 종목 현재가·등락률",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급 (한국 종목코드 또는 미국 티커 자동 판별)",
+    {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환.",
      "inputSchema": {"type": "object",
-                     "properties": {"ticker": {"type": "string", "description": "한국 종목코드(예: 005930) 또는 미국 티커(예: TSLA, AAPL)"}},
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드(예: 005930) 또는 미국 티커(예: TSLA, AAPL)"},
+                         "period": {"type": "string", "description": "일봉 조회 시 지정 (예: D60=최근 60일, D30=30일, W20=20주). 생략 시 현재가 상세 반환"},
+                     },
                      "required": ["ticker"]}},
     {"name": "get_foreign_rank","description": "외국인 순매수 상위 종목",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
@@ -1631,8 +1634,12 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
         if name == "scan_market":
             rows = await kis_volume_rank_api(token)
+            await asyncio.sleep(0.05)
+            frgn_rows = await kis_foreigner_trend(token)
+            frgn_set = {r.get("mksc_shrn_iscd", "") for r in frgn_rows}
             result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
-                       "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt")} for r in rows[:15]]
+                       "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt"),
+                       "frgn_buy": r.get("mksc_shrn_iscd") in frgn_set} for r in rows[:15]]
 
         elif name == "get_portfolio":
             portfolio = load_json(PORTFOLIO_FILE, {})
@@ -1701,7 +1708,53 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
         elif name == "get_stock_detail":
             ticker = arguments.get("ticker", "005930").strip().upper()
-            if _is_us_ticker(ticker):
+            period = arguments.get("period", "").strip().upper()  # e.g. "D60", "W20"
+
+            if period:
+                # ── 일봉/주봉 조회 모드 ──
+                period_type = period[0] if period else "D"  # D/W/M
+                try:
+                    n = int(period[1:])
+                except ValueError:
+                    n = 60
+                today_str = datetime.now(KST).strftime("%Y%m%d")
+                buffer = {"D": 2, "W": 8, "M": 40}.get(period_type, 2)
+                start_dt = (datetime.now(KST) - timedelta(days=n * buffer)).strftime("%Y%m%d")
+
+                if _is_us_ticker(ticker):
+                    excd = _guess_excd(ticker)
+                    async with aiohttp.ClientSession() as s:
+                        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
+                            "HHDFS76240000", token,
+                            {"AUTH": "", "EXCD": excd, "SYMB": ticker,
+                             "GUBN": "0", "BYMD": today_str, "MODP": "0"})
+                    candles = d.get("output2", [])
+                    result = {
+                        "ticker": ticker, "market": "US", "period": period,
+                        "candles": [{"date": c.get("xymd"), "open": c.get("open"),
+                                     "high": c.get("high"), "low": c.get("low"),
+                                     "close": c.get("clos"), "vol": c.get("tvol")}
+                                    for c in candles[:n]],
+                    }
+                else:
+                    async with aiohttp.ClientSession() as s:
+                        _, d = await _kis_get(s,
+                            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                            "FHKST03010100", token,
+                            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                             "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": today_str,
+                             "FID_PERIOD_DIV_CODE": period_type, "FID_ORG_ADJ_PRC": "0"})
+                    candles = d.get("output2", [])
+                    result = {
+                        "ticker": ticker, "market": "KR", "period": period,
+                        "candles": [{"date": c.get("stck_bsop_date"),
+                                     "open": c.get("stck_oprc"), "high": c.get("stck_hgpr"),
+                                     "low": c.get("stck_lwpr"), "close": c.get("stck_clpr"),
+                                     "vol": c.get("acml_vol")}
+                                    for c in candles[:n]],
+                    }
+
+            elif _is_us_ticker(ticker):
                 # ── 미국 주식 ──
                 excd = _guess_excd(ticker)
                 price_d = await kis_us_stock_price(ticker, token, excd)
@@ -1760,8 +1813,18 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             disclosures = await search_dart_disclosures(days_back=3)
             wl = load_watchlist()
             important = filter_important_disclosures(disclosures, list(wl.values()))
+            def _dart_importance(title: str) -> str:
+                if any(k in title for k in ["유상증자", "전환사채", "신주인수권부사채", "분할", "합병", "공개매수"]):
+                    return "긴급"
+                if any(k in title for k in ["수주", "계약", "대규모", "공급계약", "납품"]):
+                    return "주의"
+                if any(k in title for k in ["임원", "지분", "자사주", "배당"]):
+                    return "참고"
+                return "일반"
             result = [{"corp": d.get("corp_name"), "title": d.get("report_nm"),
-                       "date": d.get("rcept_dt")} for d in important[:10]]
+                       "date": d.get("rcept_dt"),
+                       "importance": _dart_importance(d.get("report_nm", ""))}
+                      for d in important[:10]]
 
         elif name == "get_macro":
             kospi  = await get_kis_index(token, "0001")
@@ -1816,6 +1879,32 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             }
             if note:
                 result["note"] = note
+
+            # ── 섹터 ETF 시세 ──
+            SECTOR_ETFS = [
+                ("140710", "KODEX 조선"),
+                ("464520", "TIGER 방산"),
+                ("305720", "KODEX 2차전지"),
+                ("469150", "TIGER AI반도체"),
+                ("244580", "KODEX 바이오"),
+                ("261070", "KODEX 전력에너지"),
+            ]
+            etf_prices = []
+            for etf_code, etf_name in SECTOR_ETFS:
+                try:
+                    async with aiohttp.ClientSession() as s:
+                        _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
+                            "FHPST02400000", token,
+                            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
+                    out = ed.get("output", {})
+                    etf_prices.append({
+                        "code": etf_code, "name": etf_name,
+                        "price": out.get("stck_prpr"), "chg": out.get("prdy_ctrt"),
+                    })
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    pass
+            result["etf_prices"] = etf_prices
 
         elif name == "get_alerts":
             stops = load_stoploss()
