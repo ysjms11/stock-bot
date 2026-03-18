@@ -22,12 +22,36 @@ KST = timezone(timedelta(hours=9))
 
 os.makedirs("/data", exist_ok=True)
 
-WATCHLIST_FILE = "/data/watchlist.json"
-STOPLOSS_FILE = "/data/stoploss.json"
+WATCHLIST_FILE    = "/data/watchlist.json"
+STOPLOSS_FILE     = "/data/stoploss.json"
 US_WATCHLIST_FILE = "/data/us_watchlist.json"
-DART_SEEN_FILE = "/data/dart_seen.json"
-PORTFOLIO_FILE = "/data/portfolio.json"
-WATCHALERT_FILE = "/data/watchalert.json"
+DART_SEEN_FILE    = "/data/dart_seen.json"
+PORTFOLIO_FILE    = "/data/portfolio.json"
+WATCHALERT_FILE   = "/data/watchalert.json"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 환경변수 기반 데이터 복원 (Railway Volume 미마운트 시 fallback)
+# Railway Variables에 BACKUP_PORTFOLIO, BACKUP_STOPLOSS 등을 JSON 문자열로 설정하면
+# /data/ 파일이 없을 때 자동 복원됨
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_BACKUP_MAP = {
+    "BACKUP_PORTFOLIO":    PORTFOLIO_FILE,
+    "BACKUP_STOPLOSS":     STOPLOSS_FILE,
+    "BACKUP_WATCHLIST":    WATCHLIST_FILE,
+    "BACKUP_US_WATCHLIST": US_WATCHLIST_FILE,
+    "BACKUP_WATCHALERT":   WATCHALERT_FILE,
+}
+for _env_key, _filepath in _BACKUP_MAP.items():
+    if not os.path.exists(_filepath):
+        _backup_val = os.environ.get(_env_key, "")
+        if _backup_val:
+            try:
+                _data = json.loads(_backup_val)
+                with open(_filepath, "w", encoding="utf-8") as _f:
+                    json.dump(_data, _f, ensure_ascii=False, indent=2)
+                print(f"[복원] {_filepath} ← 환경변수 {_env_key}")
+            except Exception as _e:
+                print(f"[복원 실패] {_env_key}: {_e}")
 
 _token_cache = {"token": None, "expires": None}
 

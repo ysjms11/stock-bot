@@ -217,14 +217,14 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             else:
                 # ── 한국 주식 ──
                 price = await kis_stock_price(ticker, token)
-                info  = await kis_stock_info(ticker, token)
                 inv   = await kis_investor_trend(ticker, token)
                 result = {
                     "ticker": ticker, "market": "KR",
                     "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
                     "vol": price.get("acml_vol"),
                     "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
-                    "per": info.get("per"), "pbr": info.get("pbr"), "eps": info.get("eps"),
+                    "per": price.get("per"), "pbr": price.get("pbr"), "eps": price.get("eps"),
+                    "bps": price.get("bps"),
                     "investor": inv[:3] if isinstance(inv, list) else inv,
                 }
 

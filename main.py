@@ -164,9 +164,9 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 2: 미국 장 마감 요약
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE):
+async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = False):
     now = datetime.now(KST)
-    if now.weekday() in (0, 6):
+    if not force and now.weekday() in (0, 6):
         return
     try:
         # ── 1. 헤더: 나스닥 / S&P500 / VIX / 환율 ───────────────────
@@ -959,6 +959,7 @@ async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ 요약 생성 중...")
     await daily_kr_summary(context)
+    await daily_us_summary(context, force=True)
 
 
 async def setportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
