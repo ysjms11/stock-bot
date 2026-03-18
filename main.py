@@ -52,10 +52,9 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        # 3. 내 포트
-        # 가격 캐시 (손절선 섹션에서 재사용)
+        # 3. 내 포트 (두 패스: 합계 먼저 계산 → 비중 표시)
         price_cache = {}
-        msg += "💼 *내 포트*\n"
+        port_rows = []
         total_eval = 0
         total_pnl = 0
         for ticker, info in kr_stocks.items():
@@ -71,20 +70,42 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 pnl = (price - avg) * qty
                 total_eval += eval_amt
                 total_pnl += pnl
-                e = "🟢" if chg >= 1 else ("🔴" if chg <= -1 else "🟡")
-                pnl_str = f"+{pnl:,}" if pnl >= 0 else f"{pnl:,}"
-                # 목표가 달성률 (stoploss.json의 target)
                 tgt_str = ""
                 stop_info = kr_stops.get(ticker, {})
                 tgt = float(stop_info.get("target_price") or stop_info.get("target") or 0)
                 if tgt > 0 and price > 0:
                     tgt_pct = (tgt - price) / price * 100
                     tgt_str = f" | 목표 {tgt:,.0f} ({tgt_pct:+.1f}%)"
-                msg += f"{e} {info.get('name', ticker)} {price:,}원 ({chg:+.1f}%) | {pnl_str}원{tgt_str}\n\n"
+                port_rows.append({"ticker": ticker, "info": info, "price": price,
+                                  "chg": chg, "eval_amt": eval_amt, "pnl": pnl, "tgt_str": tgt_str})
             except:
                 pass
+        msg += "💼 *내 포트*\n"
+        for row in port_rows:
+            wt = round(row["eval_amt"] / total_eval * 100, 1) if total_eval else 0
+            e = "🟢" if row["chg"] >= 1 else ("🔴" if row["chg"] <= -1 else "🟡")
+            pnl_r = row["pnl"]
+            pnl_s = f"+{pnl_r:,}" if pnl_r >= 0 else f"{pnl_r:,}"
+            msg += f"{e} {row['info'].get('name', row['ticker'])} {row['price']:,}원 ({row['chg']:+.1f}%) | {pnl_s}원 | {wt}%{row['tgt_str']}\n\n"
         pnl_str = f"+{total_pnl:,}" if total_pnl >= 0 else f"{total_pnl:,}"
         msg += f"┄ 총평가 {total_eval:,}원 | 손익 {pnl_str}원\n\n"
+
+        # 3b. 등급 변화 (decision_log 최근 2건 비교)
+        try:
+            dec_log = load_decision_log()
+            if len(dec_log) >= 2:
+                dates = sorted(dec_log.keys())[-2:]
+                prev_grades = dec_log[dates[0]].get("grades", {})
+                curr_grades = dec_log[dates[1]].get("grades", {})
+                changes = []
+                for gname, grade in curr_grades.items():
+                    prev = prev_grades.get(gname)
+                    if prev and prev != grade:
+                        changes.append(f"{gname} {prev}→{grade}")
+                if changes:
+                    msg += f"📊 *등급 변화* ({dates[1]})\n" + " · ".join(changes) + "\n\n"
+        except:
+            pass
 
         # 4. 손절선 현황
         danger = []
@@ -146,9 +167,40 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
             watchlist = load_watchlist()
             important = filter_important_disclosures(disclosures, list(watchlist.values()))
             if important:
+                _SUPER_KW = {"유상증자", "무상증자", "합병", "분할", "상장폐지", "감자", "전환사채"}
                 msg += "📢 *오늘 공시*\n"
                 for d in important[:3]:
-                    msg += f"• {d.get('corp_name', '?')} — {d.get('report_nm', '?')}\n"
+                    nm = d.get("report_nm", "?")
+                    is_super = any(kw in nm for kw in _SUPER_KW) or d.get("pblntf_ty") in ("B", "C")
+                    pfx = "🔴" if is_super else "•"
+                    msg += f"{pfx} {d.get('corp_name', '?')} — {nm}\n"
+                msg += "\n"
+        except:
+            pass
+
+        # 7b. 매수감시 현재가
+        try:
+            wa = load_watchalert()
+            if wa:
+                msg += "👀 *매수감시*\n"
+                for wa_ticker, wa_info in list(wa.items())[:5]:
+                    buy_p = float(wa_info.get("buy_price", 0) or 0)
+                    try:
+                        if _is_us_ticker(wa_ticker):
+                            wd = await kis_us_stock_price(wa_ticker, token)
+                            cur_p = float(wd.get("last", 0) or 0)
+                            diff = round((cur_p - buy_p) / buy_p * 100, 1) if buy_p else 0
+                            sign = "✅" if cur_p <= buy_p and cur_p > 0 else "·"
+                            msg += f"{sign} {wa_info.get('name', wa_ticker)} ${cur_p:,.2f} | 감시 ${buy_p:,.2f} ({diff:+.1f}%)\n"
+                        else:
+                            wd = await kis_stock_price(wa_ticker, token)
+                            cur_p = int(wd.get("stck_prpr", 0) or 0)
+                            diff = round((cur_p - buy_p) / buy_p * 100, 1) if buy_p else 0
+                            sign = "✅" if cur_p <= buy_p and cur_p > 0 else "·"
+                            msg += f"{sign} {wa_info.get('name', wa_ticker)} {cur_p:,}원 | 감시 {buy_p:,.0f}원 ({diff:+.1f}%)\n"
+                        await asyncio.sleep(0.2)
+                    except:
+                        pass
                 msg += "\n"
         except:
             pass

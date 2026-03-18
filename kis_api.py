@@ -28,6 +28,8 @@ US_WATCHLIST_FILE = "/data/us_watchlist.json"
 DART_SEEN_FILE    = "/data/dart_seen.json"
 PORTFOLIO_FILE    = "/data/portfolio.json"
 WATCHALERT_FILE   = "/data/watchalert.json"
+DECISION_LOG_FILE = "/data/decision_log.json"
+COMPARE_LOG_FILE  = "/data/compare_log.json"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 기반 데이터 복원 (Railway Volume 미마운트 시 fallback)
@@ -40,6 +42,8 @@ _BACKUP_MAP = {
     "BACKUP_WATCHLIST":    WATCHLIST_FILE,
     "BACKUP_US_WATCHLIST": US_WATCHLIST_FILE,
     "BACKUP_WATCHALERT":   WATCHALERT_FILE,
+    "BACKUP_DECISION_LOG": DECISION_LOG_FILE,
+    "BACKUP_COMPARE_LOG":  COMPARE_LOG_FILE,
 }
 for _env_key, _filepath in _BACKUP_MAP.items():
     if not os.path.exists(_filepath):
@@ -139,6 +143,12 @@ def load_dart_seen():
 
 def load_watchalert():
     return load_json(WATCHALERT_FILE, {})
+
+def load_decision_log():
+    return load_json(DECISION_LOG_FILE, {})
+
+def load_compare_log():
+    return load_json(COMPARE_LOG_FILE, [])
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

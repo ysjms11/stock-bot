@@ -49,17 +49,29 @@ MCP_TOOLS = [
                      "required": ["ticker"]}},
     {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 % + 매수감시 목록",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "set_alert",      "description": "손절가/목표가 등록 및 수정. buy_price 입력 시 미보유 종목 매수감시 등록 (가격 도달 시 텔레그램 알림)",
+    {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단 기록, compare→보유vs후보 비교",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "ticker":       {"type": "string", "description": "종목코드 (예: 034020) 또는 미국 티커 (예: AAPL)"},
-                         "name":         {"type": "string", "description": "종목명"},
-                         "stop_price":   {"type": "number", "description": "손절가 (매수감시 시 생략 가능, 기본 0)"},
-                         "target_price": {"type": "number", "description": "목표가 (선택)"},
-                         "buy_price":    {"type": "number", "description": "매수 희망가 — 이 값이 >0이면 매수감시 모드 (이 가격 이하일 때 텔레그램 알림)"},
-                         "memo":         {"type": "string", "description": "매수 근거 메모 (매수감시 시 선택)"},
+                         "log_type":          {"type": "string", "description": "모드: 생략=stop/buy, 'decision'=투자판단, 'compare'=종목비교"},
+                         "ticker":            {"type": "string", "description": "종목코드 또는 미국 티커 (stop/buy 모드)"},
+                         "name":              {"type": "string", "description": "종목명 (stop/buy 모드)"},
+                         "stop_price":        {"type": "number", "description": "손절가"},
+                         "target_price":      {"type": "number", "description": "목표가"},
+                         "buy_price":         {"type": "number", "description": "매수 희망가 (이 가격 이하 시 텔레그램 알림)"},
+                         "memo":              {"type": "string", "description": "메모"},
+                         "date":              {"type": "string", "description": "[decision] 점검일 YYYY-MM-DD (생략시 오늘)"},
+                         "regime":            {"type": "string", "description": "[decision] 시장 국면 (예: 경계, 공격, 방어)"},
+                         "grades":            {"type": "object", "description": "[decision] 종목별 확신등급 {종목명: 등급} (예: {\"HD한국조선\": \"A\"})"},
+                         "actions":           {"type": "array",  "description": "[decision] 액션 목록 (예: [\"HD조선 6주 매도\"])"},
+                         "watchlist":         {"type": "array",  "description": "[decision] 관심 종목 목록 (예: [\"한화에어로 130만원대\"])"},
+                         "notes":             {"type": "string", "description": "[decision] 메모 (예: 이란전쟁 리스크)"},
+                         "held_ticker":       {"type": "string", "description": "[compare] 보유 종목코드"},
+                         "candidate_ticker":  {"type": "string", "description": "[compare] 교체 후보 종목코드"},
+                         "held_score":        {"type": "number", "description": "[compare] 보유 종목 점수"},
+                         "candidate_score":   {"type": "number", "description": "[compare] 후보 종목 점수"},
+                         "reasoning":         {"type": "string", "description": "[compare] 비교 근거"},
                      },
-                     "required": ["ticker", "name"]}},
+                     "required": []}},
 ]
 
 
@@ -417,9 +429,22 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "memo": wa_info.get("memo", ""),
                     "created": wa_info.get("created", ""),
                 })
-            result = {"alerts": alerts, "watch_alerts": watch_alerts}
+            # ── 투자판단/비교 최근 기록 ──
+            dec_log = load_decision_log()
+            recent_decisions = sorted(dec_log.values(), key=lambda x: x.get("date", ""), reverse=True)[:3]
+            cmp_log = load_compare_log()
+            if not isinstance(cmp_log, list):
+                cmp_log = []
+            recent_compares = cmp_log[-3:][::-1]
+            result = {
+                "alerts": alerts,
+                "watch_alerts": watch_alerts,
+                "recent_decisions": recent_decisions,
+                "recent_compares": recent_compares,
+            }
 
         elif name == "set_alert":
+            log_type     = arguments.get("log_type", "").strip().lower()
             ticker       = arguments.get("ticker", "").strip().upper()
             aname        = arguments.get("name", ticker).strip()
             stop_price   = float(arguments.get("stop_price", 0) or 0)
@@ -427,7 +452,49 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             buy_price    = float(arguments.get("buy_price", 0) or 0)
             memo         = arguments.get("memo", "").strip() if arguments.get("memo") else ""
 
-            if not ticker or not aname:
+            if log_type == "decision":
+                # ── 투자판단 기록 모드 ──
+                date   = (arguments.get("date") or datetime.now(KST).strftime("%Y-%m-%d")).strip()
+                regime = arguments.get("regime", "").strip()
+                grades = arguments.get("grades") or {}
+                actions  = arguments.get("actions") or []
+                watchlist_dec = arguments.get("watchlist") or []
+                notes  = arguments.get("notes", "").strip()
+                log = load_decision_log()
+                entry = {
+                    "date": date, "regime": regime,
+                    "grades": grades, "actions": actions,
+                    "watchlist": watchlist_dec, "notes": notes,
+                    "saved_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+                }
+                log[date] = entry
+                save_json(DECISION_LOG_FILE, log)
+                result = {"ok": True, "message": f"{date} 투자판단 저장됨", "date": date}
+
+            elif log_type == "compare":
+                # ── 종목비교 스냅샷 모드 ──
+                held_ticker      = arguments.get("held_ticker", "").strip().upper()
+                candidate_ticker = arguments.get("candidate_ticker", "").strip().upper()
+                held_score       = float(arguments.get("held_score", 0) or 0)
+                candidate_score  = float(arguments.get("candidate_score", 0) or 0)
+                reasoning        = arguments.get("reasoning", "").strip()
+                compare_memo     = arguments.get("memo", "").strip() if arguments.get("memo") else ""
+                log = load_compare_log()
+                if not isinstance(log, list):
+                    log = []
+                entry = {
+                    "date": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+                    "held": held_ticker, "candidate": candidate_ticker,
+                    "held_score": held_score, "candidate_score": candidate_score,
+                    "reasoning": reasoning, "memo": compare_memo,
+                }
+                log.append(entry)
+                log = log[-50:]   # 최대 50건 보관
+                save_json(COMPARE_LOG_FILE, log)
+                verdict = "교체 권장" if candidate_score > held_score else "보유 유지"
+                result = {"ok": True, "message": f"{held_ticker} vs {candidate_ticker} 비교 저장됨 ({verdict})", "verdict": verdict}
+
+            elif not ticker or not aname:
                 result = {"error": "ticker와 name은 필수입니다"}
             elif buy_price > 0:
                 # ── 매수감시 모드 ──
