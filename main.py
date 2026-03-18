@@ -8,7 +8,16 @@ from aiohttp import web
 from kis_api import *
 from kis_api import (
     _is_us_ticker, _is_us_market_hours_kst, _fetch_sector_flow,
+    ws_manager, get_ws_tickers,
 )
+
+
+async def _refresh_ws():
+    """WebSocket 구독 목록 갱신 헬퍼"""
+    try:
+        await ws_manager.update_tickers(get_ws_tickers())
+    except Exception as e:
+        print(f"[WS] refresh 오류: {e}")
 from mcp_tools import mcp_sse_handler, mcp_messages_handler
 
 
@@ -866,6 +875,7 @@ async def watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wl = load_watchlist()
     wl[context.args[0]] = context.args[1]
     save_json(WATCHLIST_FILE, wl)
+    await _refresh_ws()
     await update.message.reply_text(f"✅ *{context.args[1]}* 추가!", parse_mode="Markdown")
 
 
@@ -876,6 +886,7 @@ async def unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args[0] in wl:
         n = wl.pop(context.args[0])
         save_json(WATCHLIST_FILE, wl)
+        await _refresh_ws()
         await update.message.reply_text(f"🗑 *{n}* 삭제!", parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ 없음")
@@ -948,9 +959,10 @@ async def setstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         stops[ticker] = {"name": name, "stop_price": stop, "entry_price": fourth}
         save_json(STOPLOSS_FILE, stops)
+        await _refresh_ws()
         lp = f" (진입가 대비 {((stop - fourth) / fourth * 100):.1f}%)" if fourth > 0 else ""
         await update.message.reply_text(
-            f"🛑 *{name}* 손절선 {stop:,.0f}원{lp}\n장중 10분마다 체크", parse_mode="Markdown")
+            f"🛑 *{name}* 손절선 {stop:,.0f}원{lp}\n장중 실시간 체결가 감시 중", parse_mode="Markdown")
 
 
 async def delstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1048,6 +1060,7 @@ async def setportfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         added.append(f"✅ {name}({ticker}) {qty}주 @ {avg:,}원")
 
     save_json(PORTFOLIO_FILE, portfolio)
+    await _refresh_ws()
 
     lines = ["📁 *포트폴리오 저장 완료*\n"] + added + (errors or [])
     lines.append(f"\n총 {len(portfolio)}종목 저장됨")
@@ -1216,6 +1229,44 @@ async def _run_all(app, port):
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"MCP SSE 서버 시작: 0.0.0.0:{port}/mcp")
+
+    # KIS WebSocket 실시간 알림 시작 (KR 전용, 평일 09:00~16:00 KST)
+    async def _ws_alert_cb(ticker: str, price: int):
+        """체결가 → 손절선/목표가/매수감시 도달 시 텔레그램 알림"""
+        stops  = load_stoploss()
+        wa     = load_watchalert()
+        alerts = []
+
+        info = stops.get(ticker, {})
+        if info:
+            stop   = float(info.get("stop_price", 0) or 0)
+            target = float(info.get("target_price", 0) or 0)
+            name   = info.get("name", ticker)
+            fired  = ws_manager._fired.setdefault(ticker, set())
+            if stop > 0 and price <= stop and "stop" not in fired:
+                fired.add("stop")
+                alerts.append(f"⚠️ {name} 손절선 도달! {price:,}원 ≤ {stop:,}원")
+            if target > 0 and price >= target and "target" not in fired:
+                fired.add("target")
+                alerts.append(f"🎯 {name} 목표가 도달! {price:,}원 ≥ {target:,}원")
+
+        wa_info = wa.get(ticker, {})
+        if wa_info:
+            buy_p = float(wa_info.get("buy_price", 0) or 0)
+            name  = wa_info.get("name", ticker)
+            fired = ws_manager._fired.setdefault(ticker, set())
+            if buy_p > 0 and price <= buy_p and "buy" not in fired:
+                fired.add("buy")
+                alerts.append(f"📢 {name} 매수감시가 도달! {price:,}원 ≤ {buy_p:,}원")
+
+        for msg in alerts:
+            try:
+                await app.bot.send_message(chat_id=CHAT_ID, text=msg)
+            except Exception:
+                pass
+
+    await ws_manager.start(_ws_alert_cb, get_ws_tickers())
+    print(f"[WS] 실시간 매니저 시작 ({len(ws_manager._subscribed)}개 KR 종목)")
 
     # 텔레그램 봇 비동기 실행
     async with app:
