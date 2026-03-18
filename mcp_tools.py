@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 from aiohttp import web
 
 from kis_api import *
+from kis_api import (
+    _is_us_ticker, _guess_excd, _kis_get,
+    _fetch_sector_flow, _TICKER_SECTOR,
+)
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
 
