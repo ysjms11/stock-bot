@@ -1578,9 +1578,9 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_portfolio",  "description": "워치리스트 전 종목 현재가·등락률",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급",
+    {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급 (한국 종목코드 또는 미국 티커 자동 판별)",
      "inputSchema": {"type": "object",
-                     "properties": {"ticker": {"type": "string", "description": "종목코드 (예: 005930)"}},
+                     "properties": {"ticker": {"type": "string", "description": "한국 종목코드(예: 005930) 또는 미국 티커(예: TSLA, AAPL)"}},
                      "required": ["ticker"]}},
     {"name": "get_foreign_rank","description": "외국인 순매수 상위 종목",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
@@ -1597,44 +1597,26 @@ MCP_TOOLS = [
                          "name":   {"type": "string", "description": "종목명 (예: 삼성전자)"},
                      },
                      "required": ["ticker", "name"]}},
-    {"name": "remove_watch",   "description": "한국 워치리스트에서 종목 제거",
+    {"name": "remove_watch",   "description": "한국 워치리스트에서 종목 제거. alert_type='buy_alert' 시 매수감시 제거",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
+                         "ticker": {"type": "string", "description": "종목코드 (예: 005930) 또는 미국 티커"},
+                         "alert_type": {"type": "string", "description": "삭제 대상: 'watchlist'(기본) 또는 'buy_alert'(매수감시 제거)"},
                      },
                      "required": ["ticker"]}},
-    {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 %",
+    {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 % + 매수감시 목록",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "set_alert",      "description": "손절가/목표가 등록 및 수정",
+    {"name": "set_alert",      "description": "손절가/목표가 등록 및 수정. buy_price 입력 시 미보유 종목 매수감시 등록 (가격 도달 시 텔레그램 알림)",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "ticker":       {"type": "string", "description": "종목코드 (예: 034020)"},
+                         "ticker":       {"type": "string", "description": "종목코드 (예: 034020) 또는 미국 티커 (예: AAPL)"},
                          "name":         {"type": "string", "description": "종목명"},
-                         "stop_price":   {"type": "number", "description": "손절가"},
+                         "stop_price":   {"type": "number", "description": "손절가 (매수감시 시 생략 가능, 기본 0)"},
                          "target_price": {"type": "number", "description": "목표가 (선택)"},
+                         "buy_price":    {"type": "number", "description": "매수 희망가 — 이 값이 >0이면 매수감시 모드 (이 가격 이하일 때 텔레그램 알림)"},
+                         "memo":         {"type": "string", "description": "매수 근거 메모 (매수감시 시 선택)"},
                      },
-                     "required": ["ticker", "name", "stop_price"]}},
-    {"name": "get_us_stock_detail", "description": "미국 개별 종목 상세: 현재가·등락률·PER·PBR·시총·52주·거래량",
-     "inputSchema": {"type": "object",
-                     "properties": {"ticker": {"type": "string", "description": "미국 티커 (예: TSLA, AAPL)"}},
-                     "required": ["ticker"]}},
-    {"name": "set_watch_alert",    "description": "미보유 종목 매수 희망가 감시 등록 (가격 도달 시 텔레그램 알림)",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "ticker":    {"type": "string", "description": "종목코드 (한국: 012450, 미국: AAPL)"},
-                         "name":      {"type": "string", "description": "종목명"},
-                         "buy_price": {"type": "number", "description": "매수 희망가 (이 가격 이하일 때 알림)"},
-                         "memo":      {"type": "string", "description": "매수 근거 메모 (선택)"},
-                     },
-                     "required": ["ticker", "name", "buy_price"]}},
-    {"name": "get_watch_alerts",   "description": "매수 희망가 감시 목록 조회",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "remove_watch_alert", "description": "매수 희망가 감시 제거",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "ticker": {"type": "string", "description": "종목코드"},
-                     },
-                     "required": ["ticker"]}},
+                     "required": ["ticker", "name"]}},
 ]
 
 
@@ -1718,18 +1700,44 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 }
 
         elif name == "get_stock_detail":
-            ticker = arguments.get("ticker", "005930")
-            price = await kis_stock_price(ticker, token)
-            info  = await kis_stock_info(ticker, token)
-            inv   = await kis_investor_trend(ticker, token)
-            result = {
-                "ticker": ticker,
-                "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
-                "vol": price.get("acml_vol"),
-                "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
-                "per": info.get("per"), "pbr": info.get("pbr"), "eps": info.get("eps"),
-                "investor": inv[:3] if isinstance(inv, list) else inv,
-            }
+            ticker = arguments.get("ticker", "005930").strip().upper()
+            if _is_us_ticker(ticker):
+                # ── 미국 주식 ──
+                excd = _guess_excd(ticker)
+                price_d = await kis_us_stock_price(ticker, token, excd)
+                detail_d = await kis_us_stock_detail(ticker, token, excd)
+                cur = float(price_d.get("last", 0) or 0)
+                base = float(price_d.get("base", 0) or 0)
+                result = {
+                    "ticker": ticker, "market": "US",
+                    "price": cur,
+                    "chg_pct": float(price_d.get("rate", 0) or 0),
+                    "volume": int(price_d.get("tvol", 0) or 0),
+                    "open": float(detail_d.get("open", 0) or 0),
+                    "high": float(detail_d.get("high", 0) or 0),
+                    "low": float(detail_d.get("low", 0) or 0),
+                    "prev_close": base,
+                    "w52h": float(detail_d.get("h52p", 0) or 0),
+                    "w52l": float(detail_d.get("l52p", 0) or 0),
+                    "per": float(detail_d.get("perx", 0) or 0) or None,
+                    "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
+                    "eps": float(detail_d.get("epsx", 0) or 0) or None,
+                    "market_cap": detail_d.get("tomv", ""),
+                    "sector": detail_d.get("e_icod", ""),
+                }
+            else:
+                # ── 한국 주식 ──
+                price = await kis_stock_price(ticker, token)
+                info  = await kis_stock_info(ticker, token)
+                inv   = await kis_investor_trend(ticker, token)
+                result = {
+                    "ticker": ticker, "market": "KR",
+                    "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
+                    "vol": price.get("acml_vol"),
+                    "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
+                    "per": info.get("per"), "pbr": info.get("pbr"), "eps": info.get("eps"),
+                    "investor": inv[:3] if isinstance(inv, list) else inv,
+                }
 
         elif name == "get_foreign_rank":
             try:
@@ -1813,59 +1821,104 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             stops = load_stoploss()
             kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
             us_stops = stops.get("us_stocks", {})
-            if not kr_stops and not us_stops:
-                result = {"alerts": [], "message": "손절선 없음. /setstop 으로 등록하세요."}
-            else:
-                alerts = []
-                for ticker, info in kr_stops.items():
-                    stop   = info.get("stop_price", 0)
-                    entry  = info.get("entry_price", 0)
-                    target = info.get("target_price", 0)
-                    cur = 0
-                    try:
-                        d = await kis_stock_price(ticker, token)
+            alerts = []
+            for ticker, info in kr_stops.items():
+                stop   = info.get("stop_price", 0)
+                entry  = info.get("entry_price", 0)
+                target = info.get("target_price", 0)
+                cur = 0
+                try:
+                    d = await kis_stock_price(ticker, token)
+                    cur = int(d.get("stck_prpr", 0) or 0)
+                except Exception:
+                    pass
+                gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
+                item = {
+                    "ticker": ticker, "name": info.get("name", ticker),
+                    "market": "KR", "stop": stop, "entry": entry,
+                    "cur": cur, "gap_pct": gap_pct,
+                }
+                if target:
+                    item["target"] = target
+                    item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
+                alerts.append(item)
+            for sym, info in us_stops.items():
+                stop   = info.get("stop_price", 0)
+                target = info.get("target_price", 0)
+                cur = 0.0
+                try:
+                    d = await get_yahoo_quote(sym)
+                    cur = float(d.get("price", 0) or 0) if d else 0.0
+                except Exception:
+                    pass
+                gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
+                item = {
+                    "ticker": sym, "name": info.get("name", sym),
+                    "market": "US", "stop": stop,
+                    "cur": cur, "gap_pct": gap_pct,
+                }
+                if target:
+                    item["target"] = target
+                    item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
+                alerts.append(item)
+
+            # ── 매수감시 목록 통합 ──
+            wa = load_watchalert()
+            watch_alerts = []
+            for wa_ticker, wa_info in wa.items():
+                buy_price = wa_info.get("buy_price", 0)
+                cur = 0.0
+                try:
+                    if _is_us_ticker(wa_ticker):
+                        d = await kis_us_stock_price(wa_ticker, token)
+                        cur = float(d.get("last", 0) or 0)
+                    else:
+                        d = await kis_stock_price(wa_ticker, token)
                         cur = int(d.get("stck_prpr", 0) or 0)
-                    except Exception:
-                        pass
-                    gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
-                    item = {
-                        "ticker": ticker, "name": info.get("name", ticker),
-                        "market": "KR", "stop": stop, "entry": entry,
-                        "cur": cur, "gap_pct": gap_pct,
-                    }
-                    if target:
-                        item["target"] = target
-                        item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
-                    alerts.append(item)
-                for sym, info in us_stops.items():
-                    stop   = info.get("stop_price", 0)
-                    target = info.get("target_price", 0)
-                    cur = 0.0
-                    try:
-                        d = await get_yahoo_quote(sym)
-                        cur = float(d.get("price", 0) or 0) if d else 0.0
-                    except Exception:
-                        pass
-                    gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
-                    item = {
-                        "ticker": sym, "name": info.get("name", sym),
-                        "market": "US", "stop": stop,
-                        "cur": cur, "gap_pct": gap_pct,
-                    }
-                    if target:
-                        item["target"] = target
-                        item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
-                    alerts.append(item)
-                result = {"alerts": alerts}
+                except Exception:
+                    pass
+                gap_pct = round((cur - buy_price) / buy_price * 100, 2) if buy_price else None
+                watch_alerts.append({
+                    "ticker": wa_ticker,
+                    "name": wa_info.get("name", wa_ticker),
+                    "buy_price": buy_price,
+                    "cur_price": cur,
+                    "gap_pct": gap_pct,
+                    "triggered": cur > 0 and cur <= buy_price,
+                    "memo": wa_info.get("memo", ""),
+                    "created": wa_info.get("created", ""),
+                })
+            result = {"alerts": alerts, "watch_alerts": watch_alerts}
 
         elif name == "set_alert":
             ticker       = arguments.get("ticker", "").strip().upper()
             aname        = arguments.get("name", ticker).strip()
-            stop_price   = float(arguments.get("stop_price", 0))
+            stop_price   = float(arguments.get("stop_price", 0) or 0)
             target_price = float(arguments.get("target_price", 0) or 0)
-            if not ticker or stop_price <= 0:
-                result = {"error": "ticker와 stop_price는 필수입니다"}
-            else:
+            buy_price    = float(arguments.get("buy_price", 0) or 0)
+            memo         = arguments.get("memo", "").strip() if arguments.get("memo") else ""
+
+            if not ticker or not aname:
+                result = {"error": "ticker와 name은 필수입니다"}
+            elif buy_price > 0:
+                # ── 매수감시 모드 ──
+                wa = load_watchalert()
+                wa[ticker] = {
+                    "name": aname,
+                    "buy_price": buy_price,
+                    "memo": memo,
+                    "created": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+                }
+                save_json(WATCHALERT_FILE, wa)
+                if _is_us_ticker(ticker):
+                    msg = f"{aname}({ticker}) 매수감시 ${buy_price:,.2f} 등록됨"
+                else:
+                    msg = f"{aname}({ticker}) 매수감시 {buy_price:,.0f}원 등록됨"
+                if memo:
+                    msg += f" | 메모: {memo}"
+                result = {"ok": True, "message": msg, "total_watch": len(wa)}
+            elif stop_price > 0:
+                # ── 손절가 등록 모드 ──
                 stops = load_stoploss()
                 if _is_us_ticker(ticker):
                     us = stops.get("us_stocks", {})
@@ -1890,6 +1943,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "message": f"{aname}({ticker}) 손절가 {stop_price:,.0f}원 저장됨"
                                    + (f", 목표가 {target_price:,.0f}원" if target_price else ""),
                     }
+            else:
+                result = {"error": "stop_price 또는 buy_price 중 하나는 필수입니다"}
 
         elif name == "add_watch":
             ticker = arguments.get("ticker", "").strip()
@@ -1903,10 +1958,21 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = {"ok": True, "message": f"{wname}({ticker}) 워치리스트 추가됨", "total": len(wl)}
 
         elif name == "remove_watch":
-            ticker = arguments.get("ticker", "").strip()
+            ticker = arguments.get("ticker", "").strip().upper()
+            alert_type = arguments.get("alert_type", "watchlist").strip().lower()
             if not ticker:
                 result = {"error": "ticker는 필수입니다"}
+            elif alert_type == "buy_alert":
+                # ── 매수감시 제거 ──
+                wa = load_watchalert()
+                if ticker in wa:
+                    removed = wa.pop(ticker)
+                    save_json(WATCHALERT_FILE, wa)
+                    result = {"ok": True, "message": f"{removed['name']}({ticker}) 매수감시 제거됨", "total_watch": len(wa)}
+                else:
+                    result = {"error": f"{ticker} 매수감시 목록에 없음"}
             else:
+                # ── 워치리스트 제거 ──
                 wl = load_watchlist()
                 if ticker in wl:
                     removed = wl.pop(ticker)
@@ -1914,99 +1980,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
                 else:
                     result = {"error": f"{ticker} 워치리스트에 없음"}
-
-        elif name == "get_us_stock_detail":
-            symbol = arguments.get("ticker", "TSLA").strip().upper()
-            excd = _guess_excd(symbol)
-            price_d = await kis_us_stock_price(symbol, token, excd)
-            detail_d = await kis_us_stock_detail(symbol, token, excd)
-            cur = float(price_d.get("last", 0) or 0)
-            base = float(price_d.get("base", 0) or 0)
-            result = {
-                "ticker": symbol,
-                "price": cur,
-                "chg_pct": float(price_d.get("rate", 0) or 0),
-                "volume": int(price_d.get("tvol", 0) or 0),
-                "open": float(detail_d.get("open", 0) or 0),
-                "high": float(detail_d.get("high", 0) or 0),
-                "low": float(detail_d.get("low", 0) or 0),
-                "prev_close": base,
-                "w52h": float(detail_d.get("h52p", 0) or 0),
-                "w52l": float(detail_d.get("l52p", 0) or 0),
-                "per": float(detail_d.get("perx", 0) or 0) or None,
-                "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
-                "eps": float(detail_d.get("epsx", 0) or 0) or None,
-                "market_cap": detail_d.get("tomv", ""),
-                "sector": detail_d.get("e_icod", ""),
-            }
-
-        elif name == "set_watch_alert":
-            ticker    = arguments.get("ticker", "").strip().upper()
-            wname     = arguments.get("name", "").strip()
-            buy_price = float(arguments.get("buy_price", 0))
-            memo      = arguments.get("memo", "").strip()
-            if not ticker or not wname or buy_price <= 0:
-                result = {"error": "ticker, name, buy_price(>0) 필수"}
-            else:
-                wa = load_watchalert()
-                wa[ticker] = {
-                    "name": wname,
-                    "buy_price": buy_price,
-                    "memo": memo,
-                    "created": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
-                }
-                save_json(WATCHALERT_FILE, wa)
-                if _is_us_ticker(ticker):
-                    msg = f"{wname}({ticker}) 매수감시 ${buy_price:,.2f} 등록됨"
-                else:
-                    msg = f"{wname}({ticker}) 매수감시 {buy_price:,.0f}원 등록됨"
-                if memo:
-                    msg += f" | 메모: {memo}"
-                result = {"ok": True, "message": msg, "total": len(wa)}
-
-        elif name == "get_watch_alerts":
-            wa = load_watchalert()
-            if not wa:
-                result = {"alerts": [], "message": "감시 종목 없음. set_watch_alert로 등록하세요."}
-            else:
-                alerts = []
-                for ticker, info in wa.items():
-                    buy_price = info.get("buy_price", 0)
-                    cur = 0.0
-                    try:
-                        if _is_us_ticker(ticker):
-                            d = await kis_us_stock_price(ticker, token)
-                            cur = float(d.get("last", 0) or 0)
-                        else:
-                            d = await kis_stock_price(ticker, token)
-                            cur = int(d.get("stck_prpr", 0) or 0)
-                    except Exception:
-                        pass
-                    gap_pct = round((cur - buy_price) / buy_price * 100, 2) if buy_price else None
-                    alerts.append({
-                        "ticker": ticker,
-                        "name": info.get("name", ticker),
-                        "buy_price": buy_price,
-                        "cur_price": cur,
-                        "gap_pct": gap_pct,
-                        "triggered": cur > 0 and cur <= buy_price,
-                        "memo": info.get("memo", ""),
-                        "created": info.get("created", ""),
-                    })
-                result = {"alerts": alerts}
-
-        elif name == "remove_watch_alert":
-            ticker = arguments.get("ticker", "").strip().upper()
-            if not ticker:
-                result = {"error": "ticker 필수"}
-            else:
-                wa = load_watchalert()
-                if ticker in wa:
-                    removed = wa.pop(ticker)
-                    save_json(WATCHALERT_FILE, wa)
-                    result = {"ok": True, "message": f"{removed['name']}({ticker}) 매수감시 제거됨", "total": len(wa)}
-                else:
-                    result = {"error": f"{ticker} 감시 목록에 없음"}
 
         else:
             result = {"error": f"unknown tool: {name}"}
