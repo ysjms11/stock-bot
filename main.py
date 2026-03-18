@@ -483,6 +483,9 @@ async def check_fx_alert(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 5: 복합 이상 신호 (30분마다)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_anomaly_fired: dict = {}   # {"date": "YYYY-MM-DD", "sent": set()}
+
+
 async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5 or now.hour < 9 or (now.hour >= 15 and now.minute > 30):
@@ -491,7 +494,19 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
         token = await get_kis_token()
         if not token:
             return
+
+        # 일일 중복 방지 초기화
+        today = now.strftime("%Y-%m-%d")
+        global _anomaly_fired
+        if _anomaly_fired.get("date") != today:
+            _anomaly_fired = {"date": today, "sent": set()}
+        fired = _anomaly_fired["sent"]
+
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        kr_portfolio = {k for k in portfolio if k != "us_stocks"}
+        stops = load_stoploss()
         watchlist = load_watchlist()
+
         alerts = []
         for ticker, name in watchlist.items():
             try:
@@ -503,32 +518,55 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
                 mcap = int(pd.get("hts_avls", 0))
 
                 vol_ok = False
-                try: vol_ok = float(vol_rate) >= 150
-                except: pass
+                try:
+                    vol_ok = float(vol_rate) >= 150
+                except Exception:
+                    pass
 
                 inv = await get_investor_trend(ticker, token)
                 await asyncio.sleep(0.4)
-                fr, fn = 0.0, 0
+                fr = 0.0
                 if inv and len(inv) > 0:
                     t = inv[0] if isinstance(inv, list) else inv
                     fn = int(t.get("frgn_ntby_qty", 0))
                     if mcap > 0 and price > 0:
                         fr = (fn * price) / (mcap * 1e8) * 100
 
-                if vol_ok and fr > 0.03:
-                    alerts.append(
-                        f"🚨 *{name}* ({ticker})\n"
-                        f"  {price:,}원 ({change}%)\n"
-                        f"  거래량 {vol_rate}%↑ + 외국인 {fr:+.3f}%\n"
-                        f"  → *복합 매수 신호!*"
-                    )
+                if not (vol_ok and fr > 0.03):
+                    continue
+
+                # ── 보유 여부에 따라 신호 분류 ──
+                is_held = ticker in kr_portfolio
+                stop_info = stops.get(ticker, {})
+                stop_p   = float(stop_info.get("stop_price",   0) or 0)
+                target_p = float(stop_info.get("target_price", 0) or 0)
+
+                if is_held:
+                    if stop_p > 0 and price <= stop_p * 1.05:
+                        signal, icon = "손절 경고", "🛑"
+                    elif target_p > 0 and price >= target_p * 0.95:
+                        signal, icon = "익절 검토", "🎯"
+                    else:
+                        signal, icon = "추세 확인", "📊"
+                else:
+                    signal, icon = "매수 관심", "👀"
+
+                dedup_key = f"{ticker}:{signal}"
+                if dedup_key in fired:
+                    continue
+                fired.add(dedup_key)
+
+                alerts.append(
+                    f"{icon} *{name}* ({ticker}) — {signal}\n"
+                    f"  {price:,}원 ({change}%)\n"
+                    f"  거래량 {vol_rate}%↑ · 외국인 {fr:+.3f}%"
+                )
             except Exception:
                 pass
+
         if alerts:
             msg = f"🔔 *복합 신호* ({now.strftime('%H:%M')})\n\n"
-            for a in alerts:
-                msg += f"{a}\n\n"
-            msg += "💡 Claude에서 진입 분석하세요"
+            msg += "\n\n".join(alerts)
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"이상 신호 오류: {e}")
@@ -1207,7 +1245,8 @@ def main():
     jq = app.job_queue
     jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")
     jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
-    jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
+    # [2026-03-19] 환율 알림 비활성화 — 매크로 대시보드(#14)로 통합 예정
+    # jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
     jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), days=(0,1,2,3,4), name="kr_summary")
     jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")
