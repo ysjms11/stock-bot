@@ -17,8 +17,15 @@ _mcp_sessions: dict = {}   # session_id → asyncio.Queue
 MCP_TOOLS = [
     {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "get_portfolio",  "description": "워치리스트 전 종목 현재가·등락률",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_portfolio",
+     "description": "포트폴리오 조회 또는 수정. mode 생략 시 현재가·손익 조회. mode='set' 시 포트폴리오 저장.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode":     {"type": "string", "description": "'set' 이면 저장 모드. 생략 시 조회."},
+                         "market":   {"type": "string", "description": "[set] 'KR' 또는 'US'"},
+                         "holdings": {"type": "object", "description": "[set] KR: {종목코드: {name, qty, avg_price}}, US: {심볼: {name, qty, avg_price}}"},
+                     },
+                     "required": []}},
     {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환.",
      "inputSchema": {"type": "object",
                      "properties": {
@@ -95,69 +102,98 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                        "frgn_buy": r.get("mksc_shrn_iscd") in frgn_set} for r in rows[:15]]
 
         elif name == "get_portfolio":
-            portfolio = load_json(PORTFOLIO_FILE, {})
-            kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
-            us_stocks = portfolio.get("us_stocks", {})
-            if not kr_stocks and not us_stocks:
-                result = {"message": "포트폴리오가 비어있습니다. /setportfolio 또는 /setusportfolio 로 등록하세요."}
+            mode = arguments.get("mode", "").strip().lower()
+
+            if mode == "set":
+                # ── 포트폴리오 저장 모드 ──
+                market   = arguments.get("market", "KR").strip().upper()
+                holdings = arguments.get("holdings") or {}
+                if not holdings:
+                    result = {"error": "holdings가 비어있습니다"}
+                else:
+                    portfolio = load_json(PORTFOLIO_FILE, {})
+                    if market == "US":
+                        us = portfolio.get("us_stocks", {})
+                        us.update(holdings)
+                        portfolio["us_stocks"] = us
+                        save_json(PORTFOLIO_FILE, portfolio)
+                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                        result = {"ok": True, "message": f"US 포트폴리오 {len(holdings)}종목 저장됨",
+                                  "total_us": len(us)}
+                    else:
+                        for ticker, info in holdings.items():
+                            portfolio[ticker] = info
+                        save_json(PORTFOLIO_FILE, portfolio)
+                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                        kr_count = sum(1 for k in portfolio if k != "us_stocks")
+                        result = {"ok": True, "message": f"KR 포트폴리오 {len(holdings)}종목 저장됨",
+                                  "total_kr": kr_count}
+
             else:
-                kr_holdings, us_holdings = [], []
-                kr_eval = kr_cost = us_eval = us_cost = 0
+                # ── 조회 모드 (기존) ──
+                portfolio = load_json(PORTFOLIO_FILE, {})
+                kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+                us_stocks = portfolio.get("us_stocks", {})
+                if not kr_stocks and not us_stocks:
+                    result = {"message": "포트폴리오가 비어있습니다. /setportfolio 또는 /setusportfolio 로 등록하세요."}
+                else:
+                    kr_holdings, us_holdings = [], []
+                    kr_eval = kr_cost = us_eval = us_cost = 0
 
-                for ticker, info in kr_stocks.items():
-                    qty = info.get("qty", 0)
-                    avg = info.get("avg_price", 0)
-                    d = await kis_stock_price(ticker, token)
-                    cur = int(d.get("stck_prpr", 0) or 0)
-                    eval_amt = cur * qty
-                    cost_amt = int(avg) * qty
-                    pnl = eval_amt - cost_amt
-                    pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
-                    kr_eval += eval_amt
-                    kr_cost += cost_amt
-                    kr_holdings.append({
-                        "ticker": ticker, "name": info.get("name", ticker),
-                        "qty": qty, "avg_price": avg, "cur_price": cur,
-                        "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                        "chg_today": d.get("prdy_ctrt"),
-                    })
+                    for ticker, info in kr_stocks.items():
+                        qty = info.get("qty", 0)
+                        avg = info.get("avg_price", 0)
+                        d = await kis_stock_price(ticker, token)
+                        cur = int(d.get("stck_prpr", 0) or 0)
+                        eval_amt = cur * qty
+                        cost_amt = int(avg) * qty
+                        pnl = eval_amt - cost_amt
+                        pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                        kr_eval += eval_amt
+                        kr_cost += cost_amt
+                        kr_holdings.append({
+                            "ticker": ticker, "name": info.get("name", ticker),
+                            "qty": qty, "avg_price": avg, "cur_price": cur,
+                            "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                            "chg_today": d.get("prdy_ctrt"),
+                        })
 
-                for symbol, info in us_stocks.items():
-                    qty = info.get("qty", 0)
-                    avg = info.get("avg_price", 0)
-                    d = await kis_us_stock_price(symbol, token)
-                    cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
-                    eval_amt = round(cur * qty, 2)
-                    cost_amt = round(avg * qty, 2)
-                    pnl = round(eval_amt - cost_amt, 2)
-                    pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
-                    us_eval += eval_amt
-                    us_cost += cost_amt
-                    us_holdings.append({
-                        "ticker": symbol, "name": info.get("name", symbol),
-                        "qty": qty, "avg_price": avg, "cur_price": cur,
-                        "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                        "chg_today": d.get("rate"),
-                    })
+                    for symbol, info in us_stocks.items():
+                        qty = info.get("qty", 0)
+                        avg = info.get("avg_price", 0)
+                        d = await kis_us_stock_price(symbol, token)
+                        cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
+                        eval_amt = round(cur * qty, 2)
+                        cost_amt = round(avg * qty, 2)
+                        pnl = round(eval_amt - cost_amt, 2)
+                        pnl_pct = round((cur - avg) / avg * 100, 2) if avg else 0
+                        us_eval += eval_amt
+                        us_cost += cost_amt
+                        us_holdings.append({
+                            "ticker": symbol, "name": info.get("name", symbol),
+                            "qty": qty, "avg_price": avg, "cur_price": cur,
+                            "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
+                            "chg_today": d.get("rate"),
+                        })
 
-                result = {
-                    "kr": {
-                        "holdings": kr_holdings,
-                        "summary": {
-                            "total_eval": kr_eval, "total_cost": kr_cost,
-                            "total_pnl": kr_eval - kr_cost,
-                            "total_pnl_pct": round((kr_eval - kr_cost) / kr_cost * 100, 2) if kr_cost else 0,
+                    result = {
+                        "kr": {
+                            "holdings": kr_holdings,
+                            "summary": {
+                                "total_eval": kr_eval, "total_cost": kr_cost,
+                                "total_pnl": kr_eval - kr_cost,
+                                "total_pnl_pct": round((kr_eval - kr_cost) / kr_cost * 100, 2) if kr_cost else 0,
+                            },
                         },
-                    },
-                    "us": {
-                        "holdings": us_holdings,
-                        "summary": {
-                            "total_eval": round(us_eval, 2), "total_cost": round(us_cost, 2),
-                            "total_pnl": round(us_eval - us_cost, 2),
-                            "total_pnl_pct": round((us_eval - us_cost) / us_cost * 100, 2) if us_cost else 0,
+                        "us": {
+                            "holdings": us_holdings,
+                            "summary": {
+                                "total_eval": round(us_eval, 2), "total_cost": round(us_cost, 2),
+                                "total_pnl": round(us_eval - us_cost, 2),
+                                "total_pnl_pct": round((us_eval - us_cost) / us_cost * 100, 2) if us_cost else 0,
+                            },
                         },
-                    },
-                }
+                    }
 
         elif name == "get_stock_detail":
             ticker = arguments.get("ticker", "005930").strip().upper()
