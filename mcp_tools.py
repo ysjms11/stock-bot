@@ -39,10 +39,10 @@ MCP_TOOLS = [
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard' 시 VIX·WTI·금·구리·DXY·US10Y·외인수급·이벤트 전체 조회.",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard' 시 VIX·WTI·금·구리·DXY·US10Y·외인수급·이벤트 전체 조회. mode='sector_etf' 시 주요 섹터 ETF 현재가·등락률 조회.",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode": {"type": "string", "description": "'dashboard' 지정 시 전체 매크로 지표 반환. 생략 시 KOSPI/KOSDAQ/환율만."},
+                         "mode": {"type": "string", "description": "'dashboard'=전체 매크로 지표, 'sector_etf'=섹터 ETF 시세, 생략=KOSPI/KOSDAQ/환율"},
                      },
                      "required": []}},
     {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
@@ -102,10 +102,22 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             rows = await kis_volume_rank_api(token)
             await asyncio.sleep(0.05)
             frgn_rows = await kis_foreigner_trend(token)
-            frgn_set = {r.get("mksc_shrn_iscd", "") for r in frgn_rows}
-            result = [{"ticker": r.get("mksc_shrn_iscd"), "name": r.get("hts_kor_isnm"),
-                       "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt"),
-                       "frgn_buy": r.get("mksc_shrn_iscd") in frgn_set} for r in rows[:15]]
+            # 외국인 순매수량 dict (ticker → qty)
+            frgn_dict = {r.get("mksc_shrn_iscd", ""): int(r.get("frgn_ntby_qty", 0) or 0)
+                         for r in frgn_rows}
+            result = []
+            for r in rows[:15]:
+                ticker = r.get("mksc_shrn_iscd")
+                frgn_qty = frgn_dict.get(ticker, 0)
+                item = {
+                    "ticker": ticker, "name": r.get("hts_kor_isnm"),
+                    "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt"),
+                    "frgn_ntby_qty": frgn_qty,
+                    "frgn_buy": frgn_qty > 0,
+                }
+                if frgn_qty > 0:
+                    item["tag"] = "외인매수"
+                result.append(item)
 
         elif name == "get_portfolio":
             mode = arguments.get("mode", "").strip().lower()
@@ -313,18 +325,30 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             disclosures = await search_dart_disclosures(days_back=3)
             wl = load_watchlist()
             important = filter_important_disclosures(disclosures, list(wl.values()))
+            _DART_TAGS = {
+                "긴급": ["유상증자", "전환사채", "신주인수권부사채", "CB", "BW",
+                         "분할", "합병", "감자", "상장폐지", "회생", "공개매수"],
+                "주의": ["수주", "계약", "대규모", "공급계약", "납품", "MOU", "투자",
+                         "소송", "제재", "과징금", "조회공시"],
+                "참고": ["임원", "지분", "자기주식", "자사주", "배당",
+                         "주식매수선택권", "스톡옵션", "정관"],
+            }
             def _dart_importance(title: str) -> str:
-                if any(k in title for k in ["유상증자", "전환사채", "신주인수권부사채", "분할", "합병", "공개매수"]):
-                    return "긴급"
-                if any(k in title for k in ["수주", "계약", "대규모", "공급계약", "납품"]):
-                    return "주의"
-                if any(k in title for k in ["임원", "지분", "자사주", "배당"]):
-                    return "참고"
+                for level, keywords in _DART_TAGS.items():
+                    if any(k in title for k in keywords):
+                        return level
                 return "일반"
-            result = [{"corp": d.get("corp_name"), "title": d.get("report_nm"),
-                       "date": d.get("rcept_dt"),
-                       "importance": _dart_importance(d.get("report_nm", ""))}
-                      for d in important[:10]]
+            result = []
+            for d in important[:10]:
+                title = d.get("report_nm", "")
+                tag = _dart_importance(title)
+                tagged_title = f"[{tag}] {title}" if tag != "일반" else title
+                result.append({
+                    "corp": d.get("corp_name"),
+                    "title": tagged_title,
+                    "date": d.get("rcept_dt"),
+                    "importance": tag,
+                })
 
         elif name == "get_macro":
             mode = arguments.get("mode", "").strip().lower()
@@ -335,6 +359,36 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "data":    data,
                     "message": format_macro_msg(data),
                 }
+            elif mode == "sector_etf":
+                # ── 섹터 ETF 시세 ──
+                SECTOR_ETFS = [
+                    ("140710", "KODEX 조선"),
+                    ("464520", "TIGER 방산"),
+                    ("305720", "KODEX 2차전지"),
+                    ("469150", "TIGER AI반도체"),
+                    ("244580", "KODEX 바이오"),
+                    ("261070", "KODEX 전력에너지"),
+                    ("069500", "KODEX 200"),
+                    ("252670", "KODEX 200선물인버스2X"),
+                ]
+                etf_results = []
+                for etf_code, etf_name in SECTOR_ETFS:
+                    try:
+                        async with aiohttp.ClientSession() as s:
+                            _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
+                                "FHPST02400000", token,
+                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
+                        out = ed.get("output", {})
+                        etf_results.append({
+                            "code": etf_code, "name": etf_name,
+                            "price": out.get("stck_prpr"),
+                            "chg_pct": out.get("prdy_ctrt"),
+                            "volume": out.get("acml_vol"),
+                        })
+                        await asyncio.sleep(0.1)
+                    except Exception:
+                        pass
+                result = {"etfs": etf_results}
             else:
                 # ── 기본 모드: KOSPI/KOSDAQ/환율 ──
                 kospi  = await get_kis_index(token, "0001")
