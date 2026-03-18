@@ -10,6 +10,7 @@ from kis_api import (
     _is_us_ticker, _guess_excd, _kis_get,
     _fetch_sector_flow, _TICKER_SECTOR,
     ws_manager, get_ws_tickers,
+    collect_macro_data, format_macro_msg,
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -37,8 +38,13 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "get_macro",      "description": "KOSPI·KOSDAQ 지수 + USD/KRW 환율",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_macro",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard' 시 VIX·WTI·금·구리·DXY·US10Y·외인수급·이벤트 전체 조회.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode": {"type": "string", "description": "'dashboard' 지정 시 전체 매크로 지표 반환. 생략 시 KOSPI/KOSDAQ/환율만."},
+                     },
+                     "required": []}},
     {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "add_watch",      "description": "한국 워치리스트에 종목 추가",
@@ -321,15 +327,25 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                       for d in important[:10]]
 
         elif name == "get_macro":
-            kospi  = await get_kis_index(token, "0001")
-            kosdaq = await get_kis_index(token, "1001")
-            usd    = await get_yahoo_quote("USDKRW=X")
-            result = {
-                "kospi":  {"index": kospi.get("bstp_nmix_prpr"),  "chg": kospi.get("bstp_nmix_prdy_ctrt")},
-                "kosdaq": {"index": kosdaq.get("bstp_nmix_prpr"), "chg": kosdaq.get("bstp_nmix_prdy_ctrt")},
-                "usd_krw": {"price": usd.get("price") if usd else None,
-                            "chg_pct": usd.get("change_pct") if usd else None},
-            }
+            mode = arguments.get("mode", "").strip().lower()
+            if mode == "dashboard":
+                # ── 전체 매크로 대시보드 ──
+                data = await collect_macro_data()
+                result = {
+                    "data":    data,
+                    "message": format_macro_msg(data),
+                }
+            else:
+                # ── 기본 모드: KOSPI/KOSDAQ/환율 ──
+                kospi  = await get_kis_index(token, "0001")
+                kosdaq = await get_kis_index(token, "1001")
+                usd    = await get_yahoo_quote("USDKRW=X")
+                result = {
+                    "kospi":  {"index": kospi.get("bstp_nmix_prpr"),  "chg": kospi.get("bstp_nmix_prdy_ctrt")},
+                    "kosdaq": {"index": kosdaq.get("bstp_nmix_prpr"), "chg": kosdaq.get("bstp_nmix_prdy_ctrt")},
+                    "usd_krw": {"price": usd.get("price") if usd else None,
+                                "chg_pct": usd.get("change_pct") if usd else None},
+                }
 
         elif name == "get_sector_flow":
             today = datetime.now().strftime("%Y%m%d")

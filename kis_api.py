@@ -30,6 +30,16 @@ PORTFOLIO_FILE    = "/data/portfolio.json"
 WATCHALERT_FILE   = "/data/watchalert.json"
 DECISION_LOG_FILE = "/data/decision_log.json"
 COMPARE_LOG_FILE  = "/data/compare_log.json"
+EVENTS_FILE       = "/data/events.json"
+
+MACRO_SYMBOLS = {
+    "VIX":    "^VIX",
+    "WTI":    "CL=F",
+    "GOLD":   "GC=F",
+    "COPPER": "HG=F",
+    "DXY":    "DX-Y.NYB",
+    "US10Y":  "^TNX",
+}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 기반 데이터 복원 (Railway Volume 미마운트 시 fallback)
@@ -44,6 +54,7 @@ _BACKUP_MAP = {
     "BACKUP_WATCHALERT":   WATCHALERT_FILE,
     "BACKUP_DECISION_LOG": DECISION_LOG_FILE,
     "BACKUP_COMPARE_LOG":  COMPARE_LOG_FILE,
+    "BACKUP_EVENTS":       EVENTS_FILE,
 }
 for _env_key, _filepath in _BACKUP_MAP.items():
     if not os.path.exists(_filepath):
@@ -598,6 +609,152 @@ async def get_yahoo_quote(symbol):
     except Exception:
         pass
     return {"price": 0, "prev": 0, "change_pct": 0}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 매크로 대시보드
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_DEFAULT_EVENTS = {
+    "FOMC":    "2026-04-28",
+    "CPI":     "2026-04-10",
+    "PPI":     "2026-04-11",
+    "고용보고서": "2026-04-03",
+    "다음FOMC": "2026-06-16",
+    "이란":     "진행중",
+}
+
+
+def load_events() -> dict:
+    """이벤트 캘린더 로드 (/data/events.json, 없으면 기본값으로 초기화)"""
+    return load_json(EVENTS_FILE, _DEFAULT_EVENTS)
+
+
+async def collect_macro_data() -> dict:
+    """매크로 지표 전체 수집 — 텔레그램 자동발송 + MCP 공용"""
+    data = {}
+
+    # 1. Yahoo Finance 매크로 심볼
+    for key, symbol in MACRO_SYMBOLS.items():
+        try:
+            q = await get_yahoo_quote(symbol)
+            p = q.get("price", 0)
+            c = q.get("change_pct", 0)
+            data[key] = {
+                "price":      round(float(p), 2) if p else "?",
+                "change_pct": round(float(c), 2) if c is not None else "?",
+            }
+        except Exception:
+            data[key] = {"price": "?", "change_pct": "?"}
+        await asyncio.sleep(0.3)
+
+    # 2. KOSPI
+    try:
+        q = await get_yahoo_quote("^KS11")
+        data["KOSPI"] = {
+            "price":      round(float(q.get("price", 0)), 2),
+            "change_pct": round(float(q.get("change_pct", 0)), 2),
+        }
+    except Exception:
+        data["KOSPI"] = {"price": "?", "change_pct": "?"}
+
+    # 3. USD/KRW
+    try:
+        q = await get_yahoo_quote("KRW=X")
+        krw = float(q.get("price", 0) or 0)
+        data["USDKRW"] = {
+            "price":      f"{krw:.1f}" if krw else "?",
+            "change_pct": round(float(q.get("change_pct", 0)), 2),
+        }
+    except Exception:
+        data["USDKRW"] = {"price": "?", "change_pct": "?"}
+
+    # 4. 외국인 KOSPI 수급 (업종별 합산)
+    try:
+        token = await get_kis_token()
+        if token:
+            total_frgn = 0
+            for code, _ in WI26_SECTORS:
+                frgn, _ = await _fetch_sector_flow(token, code)
+                total_frgn += frgn
+                await asyncio.sleep(0.1)
+            data["FOREIGN_FLOW"] = {"amount_억": total_frgn}
+        else:
+            data["FOREIGN_FLOW"] = {"amount_억": "?"}
+    except Exception:
+        data["FOREIGN_FLOW"] = {"amount_억": "?"}
+
+    # 5. 이벤트 캘린더 (날짜 미래 항목만 포함)
+    events = load_events()
+    now = datetime.now(KST)
+    upcoming = {}
+    for key, val in events.items():
+        try:
+            evt = datetime.strptime(val, "%Y-%m-%d")
+            if evt.date() >= now.date():
+                upcoming[key] = val
+        except Exception:
+            upcoming[key] = val   # "진행중" 같은 비날짜 값도 포함
+    data["EVENTS"] = upcoming
+
+    return data
+
+
+def format_macro_msg(data: dict) -> str:
+    """매크로 데이터 → 텔레그램 메시지 포맷"""
+    def _p(d, prefix="", suffix=""):
+        v = d.get("price", "?")
+        return f"{prefix}{v}{suffix}" if v != "?" else "?"
+
+    def _c(d):
+        c = d.get("change_pct", "?")
+        if c == "?":
+            return "?"
+        try:
+            return f"{float(c):+.2f}%"
+        except Exception:
+            return str(c)
+
+    now = datetime.now(KST)
+    msg = f"📊 *매크로 대시보드* ({now.strftime('%m/%d %H:%M')} KST)\n\n"
+
+    # [시장심리]
+    vix   = data.get("VIX",   {})
+    kospi = data.get("KOSPI", {})
+    msg += "[시장심리]\n"
+    msg += f"VIX: {_p(vix)} ({_c(vix)}) | KOSPI: {_p(kospi)} ({_c(kospi)})\n\n"
+
+    # [가격지표]
+    wti    = data.get("WTI",    {})
+    gold   = data.get("GOLD",   {})
+    copper = data.get("COPPER", {})
+    dxy    = data.get("DXY",    {})
+    usdkrw = data.get("USDKRW",{})
+    us10y  = data.get("US10Y",  {})
+    msg += "[가격지표]\n"
+    msg += f"WTI: ${_p(wti)} ({_c(wti)}) | 금: ${_p(gold)} ({_c(gold)})\n"
+    msg += f"구리: ${_p(copper)} ({_c(copper)}) | DXY: {_p(dxy)} ({_c(dxy)})\n"
+    msg += f"USD/KRW: {_p(usdkrw)} ({_c(usdkrw)}) | US10Y: {_p(us10y)}% ({_c(us10y)})\n\n"
+
+    # [수급]
+    ff  = data.get("FOREIGN_FLOW", {})
+    amt = ff.get("amount_억", "?")
+    msg += "[수급]\n"
+    if isinstance(amt, (int, float)):
+        msg += f"외인 KOSPI: {amt:+,}억\n\n"
+    else:
+        msg += f"외인 KOSPI: {amt}\n\n"
+
+    # [이벤트]
+    events = data.get("EVENTS", {})
+    if events:
+        msg += "[이벤트]\n"
+        for k, v in list(events.items())[:5]:
+            msg += f"{k}: {v}\n"
+        msg += "\n"
+
+    msg += "→ Claude에서 레짐 점검하세요"
+    return msg
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

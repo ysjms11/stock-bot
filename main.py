@@ -593,6 +593,18 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        data = await collect_macro_data()
+        msg = format_macro_msg(data)
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"매크로 대시보드 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 7: DART 공시 체크 (30분마다)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
@@ -1251,6 +1263,9 @@ def main():
     jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), days=(0,1,2,3,4), name="kr_summary")
     jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")
     jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
+    # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
+    jq.run_daily(macro_dashboard, time=datetime.strptime("18:00", "%H:%M").time(), name="macro_pm")
+    jq.run_daily(macro_dashboard, time=datetime.strptime("06:00", "%H:%M").time(), name="macro_am")
 
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")
