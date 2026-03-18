@@ -1,5 +1,19 @@
 # CLAUDE.md — stock-bot 프로젝트 가이드
 
+## KIS API 참조
+
+**`kis-api-ref/` 폴더에 한투 공식 API 샘플이 있음. API 엔드포인트, TR_ID, 파라미터 확인 시 이 폴더 참조할 것.**
+
+| 파일/폴더 | 내용 |
+|-----------|------|
+| `kis-api-ref/examples_llm/domestic_stock/` | 국내주식 API 예제 (TR_ID, params, response 포함) |
+| `kis-api-ref/examples_llm/overseas_stock/` | 해외주식 API 예제 |
+| `kis-api-ref/examples_llm/etfetn/` | ETF/ETN API 예제 |
+| `kis-api-ref/data.csv` | KIS REST API 전체 목록 (6326행, category/TR_ID/URL/params/response) |
+| `kis-api-ref/data2.csv` | KIS API 확장 목록 (12437행) |
+
+새 API 엔드포인트 찾을 때: `grep "TR_ID명" kis-api-ref/data.csv` 또는 `kis-api-ref/examples_llm/` 서브폴더 참조.
+
 ## 인프라
 
 | 항목 | 내용 |
