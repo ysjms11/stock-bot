@@ -141,6 +141,66 @@ async def _scan_turnaround_one(ticker: str, name: str, token: str, sem: asyncio.
         return None
 
 
+async def _scan_dart_op_one(ticker: str, name: str, corp_code: str, sem: asyncio.Semaphore, min_growth: float, recent_year: int):
+    """dart_op_growth 스캔 단위 — 연간 영업이익 YoY 비교"""
+    try:
+        async with sem:
+            await asyncio.sleep(0.05)
+            r_recent = await dart_quarterly_op(corp_code, recent_year, 4)
+        async with sem:
+            await asyncio.sleep(0.05)
+            r_prev = await dart_quarterly_op(corp_code, recent_year - 1, 4)
+        if not r_recent or not r_prev:
+            return None
+        op_recent = r_recent["op_profit"]
+        op_prev   = r_prev["op_profit"]
+        if op_recent is None or op_prev is None or op_prev <= 0:
+            return None
+        growth_pct = (op_recent - op_prev) / abs(op_prev) * 100
+        if growth_pct < min_growth:
+            return None
+        rev_recent = r_recent.get("revenue")
+        rev_prev   = r_prev.get("revenue")
+        op_margin  = round(op_recent / rev_recent * 100, 1) if rev_recent and rev_recent > 0 else None
+        rev_growth = round((rev_recent - rev_prev) / abs(rev_prev) * 100, 1) if rev_recent and rev_prev and rev_prev != 0 else None
+        return {"ticker": ticker, "name": name,
+                "period": f"{recent_year}연간 vs {recent_year - 1}연간",
+                "op_recent": op_recent, "op_prev": op_prev,
+                "growth_pct": round(growth_pct, 1),
+                "op_margin": op_margin, "rev_recent": rev_recent, "rev_growth": rev_growth}
+    except Exception as e:
+        print(f"[dart_op_growth] {ticker} 오류: {e}")
+    return None
+
+
+async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem: asyncio.Semaphore, recent_year: int):
+    """dart_turnaround 스캔 단위 — 영업이익 적자→흑자 전환"""
+    try:
+        async with sem:
+            await asyncio.sleep(0.05)
+            r_recent = await dart_quarterly_op(corp_code, recent_year, 4)
+        async with sem:
+            await asyncio.sleep(0.05)
+            r_prev = await dart_quarterly_op(corp_code, recent_year - 1, 4)
+        if not r_recent or not r_prev:
+            return None
+        op_recent = r_recent["op_profit"]
+        op_prev   = r_prev["op_profit"]
+        if op_recent is None or op_prev is None:
+            return None
+        if not (op_prev < 0 and op_recent > 0):
+            return None
+        rev_recent = r_recent.get("revenue")
+        op_margin  = round(op_recent / rev_recent * 100, 1) if rev_recent and rev_recent > 0 else None
+        return {"ticker": ticker, "name": name,
+                "period": f"{recent_year}연간 vs {recent_year - 1}연간",
+                "op_recent": op_recent, "op_prev": op_prev,
+                "op_margin": op_margin, "rev_recent": rev_recent}
+    except Exception as e:
+        print(f"[dart_turnaround] {ticker} 오류: {e}")
+    return None
+
+
 MCP_TOOLS = [
     {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
@@ -165,12 +225,12 @@ MCP_TOOLS = [
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 코스피 위주 110종목 (spread 파라미터로 기준% 지정, 기본 5.0). mode='convergence2': 이평선 수렴 스크리너 코스닥 위주 111종목. mode='op_growth': 영업이익 증가율 스크리너 (min_growth 파라미터로 최소% 지정, 기본 50). mode='op_turnaround': 영업이익 적자→흑자 전환 종목 스크리너.",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 코스피 위주 110종목. mode='convergence2': 코스닥 위주 111종목. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|생략"},
+                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|'dart_op_growth'|'dart_turnaround'|생략"},
                          "spread":     {"type": "number", "description": "[convergence/convergence2] 이평 수렴 기준 % (기본 5.0)"},
-                         "min_growth": {"type": "number", "description": "[op_growth] 영업이익 최소 증가율 % (기본 50)"},
+                         "min_growth": {"type": "number", "description": "[op_growth/dart_op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
                      "required": []}},
     {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
@@ -587,6 +647,40 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     _tb = traceback.format_exc()
                     print(f"[get_macro/op_turnaround] 에러: {_te}\n{_tb}")
                     result = {"error": str(_te), "mode": "op_turnaround", "traceback": _tb}
+
+            elif mode in ("dart_op_growth", "dart_turnaround"):
+                # ── DART 기반 연간 영업이익 스크리너 ──
+                try:
+                    universe = get_stock_universe()
+                    if not universe:
+                        result = {"error": "stock_universe.json 로드 실패"}
+                    else:
+                        corp_map = await get_dart_corp_map(universe)
+                        if not corp_map:
+                            result = {"error": "dart_corp_map 로드 실패 — DART_API_KEY 확인"}
+                        else:
+                            recent_year = datetime.now().year - 1  # 2026 → 2025 사업보고서
+                            codes = [(t, n, corp_map[t]) for t, n in universe.items() if t in corp_map]
+                            sem_d = asyncio.Semaphore(5)
+                            if mode == "dart_op_growth":
+                                min_growth = float(arguments.get("min_growth", 50))
+                                print(f"[dart_op_growth] {len(codes)}종목 스캔 (최소 성장률: {min_growth}%)")
+                                items = await asyncio.gather(
+                                    *[_scan_dart_op_one(t, n, c, sem_d, min_growth, recent_year) for t, n, c in codes]
+                                )
+                                results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
+                                result = {"mode": "dart_op_growth", "count": len(results), "results": results}
+                            else:  # dart_turnaround
+                                print(f"[dart_turnaround] {len(codes)}종목 스캔")
+                                items = await asyncio.gather(
+                                    *[_scan_dart_turnaround_one(t, n, c, sem_d, recent_year) for t, n, c in codes]
+                                )
+                                results = sorted([x for x in items if x], key=lambda x: x["op_recent"], reverse=True)
+                                result = {"mode": "dart_turnaround", "count": len(results), "results": results}
+                except Exception as _de:
+                    _tb = traceback.format_exc()
+                    print(f"[get_macro/{mode}] 에러: {_de}\n{_tb}")
+                    result = {"error": str(_de), "mode": mode, "traceback": _tb}
 
             else:
                 # ── 기본 모드: KOSPI/KOSDAQ/환율 ──

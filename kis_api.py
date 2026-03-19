@@ -873,6 +873,103 @@ def filter_important_disclosures(disclosures, watchlist_names):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART corp_code 매핑 & 재무 조회
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+DART_CORP_MAP_FILE = "/data/dart_corp_map.json"
+
+
+async def build_dart_corp_map(universe: dict) -> dict:
+    """corpCode.xml zip 다운로드 → stock_code ↔ corp_code 매핑 생성 후 저장."""
+    import zipfile, io
+    from xml.etree import ElementTree as ET
+
+    if not DART_API_KEY:
+        return {}
+    url = f"{DART_BASE_URL}/corpCode.xml?crtfc_key={DART_API_KEY}"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
+            async with s.get(url) as resp:
+                raw = await resp.read()
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        xml_data = zf.read("CORPCODE.xml")
+        root = ET.fromstring(xml_data)
+
+        mapping = {}
+        for item in root.findall("list"):
+            stock_code = (item.findtext("stock_code") or "").strip()
+            corp_code  = (item.findtext("corp_code")  or "").strip()
+            if stock_code and stock_code in universe:
+                mapping[stock_code] = corp_code
+
+        with open(DART_CORP_MAP_FILE, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False)
+        print(f"[DART] corp_map 생성: {len(mapping)}개 종목")
+        return mapping
+    except Exception as e:
+        print(f"[DART] corp_map 생성 실패: {e}")
+        return {}
+
+
+async def get_dart_corp_map(universe: dict) -> dict:
+    """dart_corp_map.json 로드. 없으면 build_dart_corp_map() 자동 실행."""
+    import os
+    try:
+        if os.path.exists(DART_CORP_MAP_FILE):
+            with open(DART_CORP_MAP_FILE, encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return await build_dart_corp_map(universe)
+
+
+async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | None:
+    """DART fnlttSinglAcntAll로 연간/분기 영업이익·매출 조회.
+
+    quarter: 1=1분기, 2=반기, 3=3분기, 4=사업보고서(연간)
+    반환: {"year", "quarter", "op_profit"(억원), "revenue"(억원)} 또는 None
+    """
+    reprt_map = {1: "11013", 2: "11012", 3: "11014", 4: "11011"}
+    reprt_code = reprt_map.get(quarter, "11011")
+    url = f"{DART_BASE_URL}/fnlttSinglAcntAll.json"
+
+    async def _fetch(fs_div: str):
+        params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code,
+                  "bsns_year": str(year), "reprt_code": reprt_code, "fs_div": fs_div}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+            async with s.get(url, params=params) as resp:
+                return await resp.json()
+
+    try:
+        data = await _fetch("CFS")
+        if data.get("status") != "000":
+            data = await _fetch("OFS")
+        if data.get("status") != "000":
+            return None
+
+        op_profit = revenue = None
+        for item in data.get("list", []):
+            acct    = (item.get("account_nm") or "").strip()
+            amt_str = (item.get("thstrm_amount") or "").replace(",", "").replace(" ", "")
+            if not amt_str:
+                continue
+            try:
+                amt = int(amt_str) // 100_000_000  # 원 → 억원
+            except Exception:
+                continue
+            if acct in ("영업이익", "영업이익(손실)") and op_profit is None:
+                op_profit = amt
+            elif acct in ("매출액", "수익(매출액)") and revenue is None:
+                revenue = amt
+
+        if op_profit is None:
+            return None
+        return {"year": year, "quarter": quarter, "op_profit": op_profit, "revenue": revenue}
+    except Exception as e:
+        print(f"[DART] dart_quarterly_op {corp_code} {year}Q{quarter} 오류: {e}")
+        return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 뉴스 조회 (Google News RSS)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def fetch_news(query="주식 시장 한국", max_items=8):
