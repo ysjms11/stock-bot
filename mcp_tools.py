@@ -41,6 +41,29 @@ def _pf(val) -> float:
     except Exception:
         return 0.0
 
+
+async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore, min_growth: float):
+    """op_growth 스캔 단위 함수 (모듈 레벨 — closure 없이 파라미터 명시적 전달)"""
+    async with sem:
+        await asyncio.sleep(0.07)
+        try:
+            raw = await kis_estimate_perform(ticker, token)
+            qtly = raw.get("quarterly", [])
+            # 짝수 인덱스 = 실제값, 홀수 인덱스 = YoY 변화율(%)
+            # qtly[0].op = 최근 분기 실제 영업이익
+            # qtly[1].op = 최근 분기 YoY 변화율(%)
+            if len(qtly) < 2:
+                return None
+            op_rec     = _pf(qtly[0].get("op"))
+            growth_pct = _pf(qtly[1].get("op"))
+            if growth_pct >= min_growth:
+                return {"ticker": ticker, "name": name,
+                        "op_recent": round(op_rec),
+                        "growth_pct": round(growth_pct, 1)}
+        except Exception as e:
+            print(f"[op_growth] {ticker} 오류: {e}")
+        return None
+
 MCP_TOOLS = [
     {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
@@ -452,29 +475,9 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     codes = list(universe.items())
                     print(f"[op_growth] {len(codes)}종목 병렬 스캔 시작 (최소 증가율: {min_growth}%)")
                     sem_o = asyncio.Semaphore(5)
-
-                    async def _op_one(ok, on):
-                        async with sem_o:
-                            await asyncio.sleep(0.07)
-                            try:
-                                raw = await kis_estimate_perform(ok, token)
-                                qtly = raw.get("quarterly", [])
-                                # 짝수 인덱스 = 실제값, 홀수 인덱스 = YoY 변화율(%)
-                                # qtly[0].op = 최근 분기 실제 영업이익
-                                # qtly[1].op = 최근 분기 YoY 변화율 (%)
-                                if len(qtly) < 2:
-                                    return None
-                                op_rec    = _pf(qtly[0].get("op"))
-                                growth_pct = _pf(qtly[1].get("op"))
-                                if growth_pct >= min_growth:
-                                    return {"ticker": ok, "name": on,
-                                            "op_recent": round(op_rec),
-                                            "growth_pct": round(growth_pct, 1)}
-                            except Exception as oe:
-                                print(f"[op_growth] {ok} 오류: {oe}")
-                            return None
-
-                    items = await asyncio.gather(*[_op_one(t, n) for t, n in codes])
+                    items = await asyncio.gather(
+                        *[_scan_op_one(t, n, token, sem_o, min_growth) for t, n in codes]
+                    )
                     op_results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
                     print(f"[op_growth] 완료: {len(op_results)}개 기준충족 종목")
                     result = {
