@@ -21,11 +21,24 @@ async def _refresh_ws():
 from mcp_tools import mcp_sse_handler, mcp_messages_handler
 
 
+def _is_kr_trading_time(now=None):
+    """평일 08:00~18:00 KST 여부"""
+    if now is None:
+        now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return False
+    if not (8 <= now.hour < 18):
+        return False
+    return True
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 1: 한국 장 마감 요약 (15:40)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
     try:
         token = await get_kis_token()
 
@@ -174,7 +187,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = False):
     now = datetime.now(KST)
-    if not force and now.weekday() in (0, 6):
+    if not force and now.weekday() == 6:
         return
     try:
         # ── 1. 헤더: 나스닥 / S&P500 / VIX / 환율 ───────────────────
@@ -370,10 +383,10 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    is_kr = not (now.weekday() >= 5 or now.hour < 9 or (now.hour >= 15 and now.minute > 30))
-    is_us = _is_us_market_hours_kst()
-    if not is_kr and not is_us:
+    if not _is_kr_trading_time(now):
         return
+    is_kr = not (now.hour < 9 or (now.hour >= 15 and now.minute > 30))
+    is_us = _is_us_market_hours_kst()
 
     stops = load_stoploss()
     kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
@@ -518,7 +531,7 @@ _anomaly_fired: dict = {}   # {"date": "YYYY-MM-DD", "sent": set()}
 
 async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    if now.weekday() >= 5 or now.hour < 9 or (now.hour >= 15 and now.minute > 30):
+    if not _is_kr_trading_time(now):
         return
     try:
         token = await get_kis_token()
@@ -610,7 +623,7 @@ _drain_sent_today: dict = {}  # {"date": "YYYY-MM-DD", "sent": set()}
 
 async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    if now.weekday() >= 5:
+    if not _is_kr_trading_time(now):
         return
     try:
         token = await get_kis_token()
@@ -680,6 +693,12 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
 # 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    # 18:00 실행: 평일만 / 06:00 실행: 일요일 제외 (토요일은 금요일 결과)
+    if now.hour >= 12 and now.weekday() >= 5:
+        return
+    if now.hour < 12 and now.weekday() == 6:
+        return
     try:
         data = await collect_macro_data()
         msg = format_macro_msg(data)
@@ -695,8 +714,7 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
-    # 장중 + 전후 1시간 (08:00~16:30)
-    if now.hour < 8 or now.hour > 16:
+    if not (8 <= now.hour < 20):
         return
     if not DART_API_KEY:
         return
