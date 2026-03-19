@@ -1,5 +1,5 @@
 # 주식봇 개선 TODO
-> 업데이트: 2026-03-19 | 레포: ysjms11/stock-bot | Railway: chic-ambition (P1 3개 완료)
+> 업데이트: 2026-03-19 | 레포: ysjms11/stock-bot | Railway: chic-ambition
 
 
 ---
@@ -17,6 +17,11 @@
 - [x] #4 외국인 순매수 + scan_market 통합 — scan 결과에 frgn_ntby_qty + [외인매수] 태그
 - [x] #7 DART 공시 중요도 태깅 — [긴급]/[주의]/[참고] 키워드 확장 + 제목 앞 태그 표시
 - [x] #6 섹터 ETF 시세 조회 — get_macro(mode='sector_etf') 8개 ETF 현재가·등락률
+- [x] 한국 장마감 요약 개선 — 섹터ETF/포트변동/목표갭/감시접근 추가 (15:40)
+- [x] 미국 장마감 요약 신규 — S&P/나스닥/보유종목/손절경고/감시접근 (06:05)
+- [x] 수급 이탈 경고 — 외인 3일 연속 순매도 시 자동 경고 (15:40)
+- [x] 주간 손실 한도 경고 — -3%/-4% 자동 경고 (weekly_base.json 기준)
+- [x] 감시 알림 일일 중복 방지 (_watch_sent_today)
 
 ---
 
@@ -107,10 +112,6 @@ def check_convergence(closes, threshold=3.0):
 
 ```
 이번 달 (P1):
-  ✅ 14. 매크로 대시보드
-  ✅  4. 외국인 순매수 + scan 통합
-  ✅  7. DART 공시 태깅
-  ✅  6. 섹터 ETF 시세
   12. 이평선 수렴 스크리너 ← 종목 발굴 핵심
   16. 코스피200 배치 스캔 인프라 ← 12,13번 기반
 
