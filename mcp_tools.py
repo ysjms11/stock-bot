@@ -90,6 +90,26 @@ async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphor
             print(f"[op_growth] {ticker} 오류: {e}")
         return None
 
+async def _scan_turnaround_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore):
+    """op_turnaround 스캔 단위 함수 — 영업이익 적자→흑자 전환 종목 필터"""
+    async with sem:
+        await asyncio.sleep(0.07)
+        try:
+            raw = await kis_estimate_perform(ticker, token)
+            annual = raw.get("annual", [])
+            if len(annual) < 3:
+                return None
+            op_recent = _pf(annual[2].get("ebt"))
+            op_prev   = _pf(annual[2].get("op"))
+            if op_prev < 0 and op_recent > 0:
+                return {"ticker": ticker, "name": name,
+                        "op_recent": round(op_recent),
+                        "op_prev":   round(op_prev)}
+        except Exception as e:
+            print(f"[op_turnaround] {ticker} 오류: {e}")
+        return None
+
+
 MCP_TOOLS = [
     {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
@@ -114,10 +134,10 @@ MCP_TOOLS = [
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 코스피 위주 110종목 (spread 파라미터로 기준% 지정, 기본 5.0). mode='convergence2': 이평선 수렴 스크리너 코스닥 위주 111종목. mode='op_growth': 영업이익 증가율 스크리너 (min_growth 파라미터로 최소% 지정, 기본 50).",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 코스피 위주 110종목 (spread 파라미터로 기준% 지정, 기본 5.0). mode='convergence2': 이평선 수렴 스크리너 코스닥 위주 111종목. mode='op_growth': 영업이익 증가율 스크리너 (min_growth 파라미터로 최소% 지정, 기본 50). mode='op_turnaround': 영업이익 적자→흑자 전환 종목 스크리너.",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|생략"},
+                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|생략"},
                          "spread":     {"type": "number", "description": "[convergence/convergence2] 이평 수렴 기준 % (기본 5.0)"},
                          "min_growth": {"type": "number", "description": "[op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
@@ -511,6 +531,31 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     _tb = traceback.format_exc()
                     print(f"[get_macro/op_growth] 에러: {_oe}\n{_tb}")
                     result = {"error": str(_oe), "mode": "op_growth", "traceback": _tb}
+
+            elif mode == "op_turnaround":
+                # ── 영업이익 적자→흑자 전환 스크리너 ──
+                try:
+                    universe = get_stock_universe()
+                    if not universe:
+                        result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
+                    else:
+                        codes = list(universe.items())
+                        print(f"[op_turnaround] {len(codes)}종목 병렬 스캔 시작")
+                        sem_t = asyncio.Semaphore(5)
+                        items = await asyncio.gather(
+                            *[_scan_turnaround_one(t, n, token, sem_t) for t, n in codes]
+                        )
+                        ta_results = sorted([x for x in items if x], key=lambda x: x["op_recent"], reverse=True)
+                        print(f"[op_turnaround] 완료: {len(ta_results)}개 전환 종목")
+                        result = {
+                            "mode": "op_turnaround",
+                            "count": len(ta_results),
+                            "results": ta_results,
+                        }
+                except Exception as _te:
+                    _tb = traceback.format_exc()
+                    print(f"[get_macro/op_turnaround] 에러: {_te}\n{_tb}")
+                    result = {"error": str(_te), "mode": "op_turnaround", "traceback": _tb}
 
             else:
                 # ── 기본 모드: KOSPI/KOSDAQ/환율 ──
