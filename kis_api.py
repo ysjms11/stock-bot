@@ -920,15 +920,28 @@ async def build_dart_corp_map(universe: dict) -> dict:
 
 
 async def get_dart_corp_map(universe: dict) -> dict:
-    """dart_corp_map.json 로드. 없으면 build_dart_corp_map() 자동 실행."""
+    """dart_corp_map.json 로드. 파일 없으면 빈 dict 반환 (다운로드 시도 안 함).
+
+    파일 탐색 순서:
+      1. /data/dart_corp_map.json  (Railway Volume)
+      2. <kis_api.py 디렉토리>/dart_corp_map.json  (레포 커밋 파일)
+    """
     import os
-    try:
-        if os.path.exists(DART_CORP_MAP_FILE):
-            with open(DART_CORP_MAP_FILE, encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return await build_dart_corp_map(universe)
+    candidates = [
+        DART_CORP_MAP_FILE,
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "dart_corp_map.json"),
+    ]
+    for path in candidates:
+        try:
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                print(f"[DART] corp_map 로드: {path} ({len(data)}종목)")
+                return data
+        except Exception as e:
+            print(f"[DART] corp_map 로드 실패 ({path}): {e}")
+    print("[DART] dart_corp_map.json 없음 — dart_op_growth 사용 불가")
+    return {}
 
 
 async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | None:
