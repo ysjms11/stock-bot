@@ -418,6 +418,12 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
         if wa:
             token_wa = await get_kis_token()
             buy_alerts = []
+            # 일일 중복 방지 초기화
+            today_w = datetime.now(KST).strftime("%Y-%m-%d")
+            global _watch_sent_today
+            if _watch_sent_today.get("date") != today_w:
+                _watch_sent_today = {"date": today_w, "sent": set()}
+            watch_sent = _watch_sent_today["sent"]
             for ticker, info in wa.items():
                 try:
                     buy_price = info.get("buy_price", 0)
@@ -435,7 +441,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                         d = await get_stock_price(ticker, token_wa)
                         cur = int(d.get("stck_prpr", 0) or 0)
                     await asyncio.sleep(0.3)
-                    if cur > 0 and cur <= buy_price:
+                    if cur > 0 and cur <= buy_price and ticker not in watch_sent:
+                        watch_sent.add(ticker)
                         memo = info.get("memo", "")
                         if _is_us_ticker(ticker):
                             buy_alerts.append(
@@ -483,6 +490,7 @@ async def check_fx_alert(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 5: 복합 이상 신호 (30분마다)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_watch_sent_today: dict = {}  # {"date": "YYYY-MM-DD", "sent": set()}
 _anomaly_fired: dict = {}   # {"date": "YYYY-MM-DD", "sent": set()}
 
 
