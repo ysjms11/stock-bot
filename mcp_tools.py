@@ -655,11 +655,21 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     if not universe:
                         result = {"error": "stock_universe.json 로드 실패"}
                     else:
+                        from kis_api import DART_API_KEY as _DART_KEY
+                        print(f"[{mode}] DART_API_KEY 설정 여부: {bool(_DART_KEY)}")
                         corp_map = await get_dart_corp_map(universe)
+                        print(f"[{mode}] corp_map size: {len(corp_map)}")
                         if not corp_map:
-                            result = {"error": "dart_corp_map 로드 실패 — DART_API_KEY 확인"}
+                            result = {"error": "dart_corp_map 로드 실패",
+                                      "hint": "DART_API_KEY 미설정 또는 corpCode.xml 다운로드 실패. Railway 로그 확인."}
                         else:
-                            recent_year = datetime.now().year - 1  # 2026 → 2025 사업보고서
+                            now = datetime.now()
+                            # 사업보고서 제출 마감: 3월 말. 4월 이후부터 전년도 데이터 안정적.
+                            if now.month <= 3:
+                                recent_year = now.year - 2  # 3월 이전: 2년 전 사업보고서 비교
+                            else:
+                                recent_year = now.year - 1  # 4월~: 전년도 사업보고서 비교
+                            print(f"[{mode}] recent_year={recent_year} (month={now.month})")
                             codes = [(t, n, corp_map[t]) for t, n in universe.items() if t in corp_map]
                             sem_d = asyncio.Semaphore(5)
                             if mode == "dart_op_growth":

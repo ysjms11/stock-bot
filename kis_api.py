@@ -880,17 +880,22 @@ DART_CORP_MAP_FILE = "/data/dart_corp_map.json"
 
 async def build_dart_corp_map(universe: dict) -> dict:
     """corpCode.xml zip 다운로드 → stock_code ↔ corp_code 매핑 생성 후 저장."""
-    import zipfile, io
+    import zipfile, io, traceback as _tb
     from xml.etree import ElementTree as ET
 
     if not DART_API_KEY:
+        print("[DART] build_dart_corp_map: DART_API_KEY 미설정")
         return {}
     url = f"{DART_BASE_URL}/corpCode.xml?crtfc_key={DART_API_KEY}"
+    print(f"[DART] corpCode.xml 다운로드 시작: {url[:60]}...")
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
             async with s.get(url) as resp:
+                print(f"[DART] corpCode.xml HTTP {resp.status}")
                 raw = await resp.read()
+        print(f"[DART] 다운로드 완료: {len(raw)} bytes")
         zf = zipfile.ZipFile(io.BytesIO(raw))
+        print(f"[DART] zip 파일 목록: {zf.namelist()}")
         xml_data = zf.read("CORPCODE.xml")
         root = ET.fromstring(xml_data)
 
@@ -901,12 +906,16 @@ async def build_dart_corp_map(universe: dict) -> dict:
             if stock_code and stock_code in universe:
                 mapping[stock_code] = corp_code
 
-        with open(DART_CORP_MAP_FILE, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, ensure_ascii=False)
+        try:
+            with open(DART_CORP_MAP_FILE, "w", encoding="utf-8") as f:
+                json.dump(mapping, f, ensure_ascii=False)
+            print(f"[DART] corp_map 저장 완료: {DART_CORP_MAP_FILE}")
+        except Exception as save_e:
+            print(f"[DART] corp_map 저장 실패 (메모리에서 계속): {save_e}")
         print(f"[DART] corp_map 생성: {len(mapping)}개 종목")
         return mapping
     except Exception as e:
-        print(f"[DART] corp_map 생성 실패: {e}")
+        print(f"[DART] corp_map 생성 실패: {e}\n{_tb.format_exc()}")
         return {}
 
 
@@ -937,7 +946,7 @@ async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | N
                   "bsns_year": str(year), "reprt_code": reprt_code, "fs_div": fs_div}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
             async with s.get(url, params=params) as resp:
-                return await resp.json()
+                return await resp.json(content_type=None)
 
     try:
         data = await _fetch("CFS")
