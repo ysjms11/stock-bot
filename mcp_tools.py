@@ -393,13 +393,19 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
         elif name == "get_macro":
             mode = arguments.get("mode", "").strip().lower()
+            print(f"[get_macro] mode={repr(mode)}")
             if mode == "dashboard":
                 # ── 전체 매크로 대시보드 ──
-                data = await collect_macro_data()
-                result = {
-                    "data":    data,
-                    "message": format_macro_msg(data),
-                }
+                try:
+                    data = await collect_macro_data()
+                    result = {
+                        "data":    data,
+                        "message": format_macro_msg(data),
+                    }
+                except Exception as _me:
+                    _tb = traceback.format_exc()
+                    print(f"[get_macro/dashboard] 에러: {_me}\n{_tb}")
+                    result = {"error": str(_me), "mode": "dashboard", "traceback": _tb}
             elif mode == "sector_etf":
                 # ── 섹터 ETF 시세 ── (kis_stock_price 사용: ETF 코드도 일반 주식 API로 조회 가능)
                 SECTOR_ETFS = [
@@ -428,67 +434,77 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = {"etfs": etf_results}
             elif mode == "convergence":
                 # ── 이평선 수렴 스크리너 (병렬 스캔) ──
-                spread_threshold = float(arguments.get("spread", 5.0))
-                universe = get_stock_universe()
-                if not universe:
-                    result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
-                else:
-                    codes = list(universe.items())
-                    print(f"[convergence] {len(codes)}종목 병렬 스캔 시작 (기준 스프레드: {spread_threshold}%)")
-                    sem_c = asyncio.Semaphore(5)
+                try:
+                    spread_threshold = float(arguments.get("spread", 5.0))
+                    universe = get_stock_universe()
+                    if not universe:
+                        result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
+                    else:
+                        codes = list(universe.items())
+                        print(f"[convergence] {len(codes)}종목 병렬 스캔 시작 (기준 스프레드: {spread_threshold}%)")
+                        sem_c = asyncio.Semaphore(5)
 
-                    async def _conv_one(ck, cn):
-                        async with sem_c:
-                            await asyncio.sleep(0.07)
-                            try:
-                                closes = await kis_daily_closes(ck, token)
-                                valid = [c for c in closes[:60] if c > 0]
-                                if len(valid) < 60:
-                                    return None
-                                ma5  = sum(valid[:5])  / 5
-                                ma20 = sum(valid[:20]) / 20
-                                ma60 = sum(valid[:60]) / 60
-                                cur  = valid[0]
-                                sp = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
-                                if sp <= spread_threshold:
-                                    return {"ticker": ck, "name": cn, "price": cur,
-                                            "spread": round(sp, 2), "ma5": round(ma5),
-                                            "ma20": round(ma20), "ma60": round(ma60)}
-                            except Exception as ce:
-                                print(f"[convergence] {ck} 오류: {ce}")
-                            return None
+                        async def _conv_one(ck, cn):
+                            async with sem_c:
+                                await asyncio.sleep(0.07)
+                                try:
+                                    closes = await kis_daily_closes(ck, token)
+                                    valid = [c for c in closes[:60] if c > 0]
+                                    if len(valid) < 60:
+                                        return None
+                                    ma5  = sum(valid[:5])  / 5
+                                    ma20 = sum(valid[:20]) / 20
+                                    ma60 = sum(valid[:60]) / 60
+                                    cur  = valid[0]
+                                    sp = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
+                                    if sp <= spread_threshold:
+                                        return {"ticker": ck, "name": cn, "price": cur,
+                                                "spread": round(sp, 2), "ma5": round(ma5),
+                                                "ma20": round(ma20), "ma60": round(ma60)}
+                                except Exception as ce:
+                                    print(f"[convergence] {ck} 오류: {ce}")
+                                return None
 
-                    items = await asyncio.gather(*[_conv_one(t, n) for t, n in codes])
-                    conv_results = sorted([x for x in items if x], key=lambda x: x["spread"])
-                    print(f"[convergence] 완료: {len(conv_results)}개 수렴 종목")
-                    result = {
-                        "mode": "convergence",
-                        "spread_threshold": spread_threshold,
-                        "count": len(conv_results),
-                        "results": conv_results,
-                    }
+                        items = await asyncio.gather(*[_conv_one(t, n) for t, n in codes])
+                        conv_results = sorted([x for x in items if x], key=lambda x: x["spread"])
+                        print(f"[convergence] 완료: {len(conv_results)}개 수렴 종목")
+                        result = {
+                            "mode": "convergence",
+                            "spread_threshold": spread_threshold,
+                            "count": len(conv_results),
+                            "results": conv_results,
+                        }
+                except Exception as _ce:
+                    _tb = traceback.format_exc()
+                    print(f"[get_macro/convergence] 에러: {_ce}\n{_tb}")
+                    result = {"error": str(_ce), "mode": "convergence", "traceback": _tb}
 
             elif mode == "op_growth":
                 # ── 영업이익 증가율 스크리너 (병렬 스캔) ──
-                min_growth = float(arguments.get("min_growth", 50))
-                universe = get_stock_universe()
-                if not universe:
-                    result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
-                else:
-                    codes = list(universe.items())
-                    print(f"[op_growth] {len(codes)}종목 병렬 스캔 시작 (최소 증가율: {min_growth}%)")
-                    sem_o = asyncio.Semaphore(5)
-                    items = await asyncio.gather(
-                        *[_scan_op_one(t, n, token, sem_o, min_growth) for t, n in codes]
-                    )
-                    op_results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
-                    print(f"[op_growth] 완료: {len(op_results)}개 기준충족 종목")
-                    result = {
-                        "mode": "op_growth",
-                        "min_growth": min_growth,
-                        "count": len(op_results),
-                        "results": op_results,
-                    }
+                try:
+                    min_growth = float(arguments.get("min_growth", 50))
+                    universe = get_stock_universe()
+                    if not universe:
+                        result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
+                    else:
+                        codes = list(universe.items())
+                        print(f"[op_growth] {len(codes)}종목 병렬 스캔 시작 (최소 증가율: {min_growth}%)")
+                        sem_o = asyncio.Semaphore(5)
+                        items = await asyncio.gather(
+                            *[_scan_op_one(t, n, token, sem_o, min_growth) for t, n in codes]
+                        )
+                        op_results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
+                        print(f"[op_growth] 완료: {len(op_results)}개 기준충족 종목")
+                        result = {
+                            "mode": "op_growth",
+                            "min_growth": min_growth,
+                            "count": len(op_results),
+                            "results": op_results,
+                        }
+                except Exception as _oe:
+                    _tb = traceback.format_exc()
+                    print(f"[get_macro/op_growth] 에러: {_oe}\n{_tb}")
+                    result = {"error": str(_oe), "mode": "op_growth", "traceback": _tb}
 
             else:
                 # ── 기본 모드: KOSPI/KOSDAQ/환율 ──
