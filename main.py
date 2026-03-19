@@ -437,11 +437,14 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
 
     # ── 매수 희망가 감시 (watchalert) ──
     try:
+        _now_w = datetime.now(KST)
+        if _now_w.weekday() >= 5 or not (8 <= _now_w.hour < 18):
+            return  # 주말 또는 장외 시간(08:00~18:00)이면 스킵
         wa = load_watchalert()
         if wa:
             token_wa = await get_kis_token()
             buy_alerts = []
-            today_w = datetime.now(KST).strftime("%Y-%m-%d")
+            today_w = _now_w.strftime("%Y-%m-%d")
             watch_sent = load_json(WATCH_SENT_FILE, {})
             for ticker, info in wa.items():
                 try:
@@ -1386,7 +1389,9 @@ async def _run_all(app, port):
                 fired.add("target")
                 alerts.append(f"🎯 {name} 목표가 도달! {price:,}원 ≥ {target:,}원")
 
-        wa_info = wa.get(ticker, {})
+        _now_ws = datetime.now(KST)
+        _ws_time_ok = _now_ws.weekday() < 5 and (8 <= _now_ws.hour < 18)
+        wa_info = wa.get(ticker, {}) if _ws_time_ok else {}
         if wa_info:
             buy_p = float(wa_info.get("buy_price", 0) or 0)
             name  = wa_info.get("name", ticker)
