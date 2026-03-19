@@ -65,6 +65,34 @@ async def _scan_conv_one(ticker: str, name: str, token: str, sem: asyncio.Semaph
         return None
 
 
+def _op_extra_fields(annual: list) -> dict:
+    """annual 데이터에서 매출/영업이익률 보조 필드 계산. 실패 시 null 반환."""
+    rev_recent = rev_prev = op_margin = rev_growth = None
+    try:
+        rev_recent = _pf(annual[0].get("ebt")) if len(annual) > 0 else None
+        rev_prev   = _pf(annual[0].get("op"))  if len(annual) > 0 else None
+    except Exception:
+        pass
+    try:
+        if rev_recent is not None and rev_prev is not None and abs(rev_prev) > 0:
+            rev_growth = round((rev_recent - rev_prev) / abs(rev_prev) * 100, 1)
+    except Exception:
+        pass
+    try:
+        op_recent_val = _pf(annual[2].get("ebt")) if len(annual) > 2 else None
+        if op_recent_val is not None and rev_recent is not None and rev_recent > 0:
+            op_margin = round(op_recent_val / rev_recent * 100, 1)
+    except Exception:
+        pass
+    return {
+        "op_margin":  op_margin,
+        "rev_recent": round(rev_recent) if rev_recent is not None else None,
+        "rev_prev":   round(rev_prev)   if rev_prev   is not None else None,
+        "rev_growth": rev_growth,
+        "period":     "최근연도 vs 전년도",
+    }
+
+
 async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore, min_growth: float):
     """op_growth 스캔 단위 함수 (모듈 레벨 — closure 없이 파라미터 명시적 전달)"""
     async with sem:
@@ -85,10 +113,12 @@ async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphor
                 return {"ticker": ticker, "name": name,
                         "op_recent": round(op_recent),
                         "op_prev":   round(op_prev),
-                        "growth_pct": round(growth_pct, 1)}
+                        "growth_pct": round(growth_pct, 1),
+                        **_op_extra_fields(annual)}
         except Exception as e:
             print(f"[op_growth] {ticker} 오류: {e}")
         return None
+
 
 async def _scan_turnaround_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore):
     """op_turnaround 스캔 단위 함수 — 영업이익 적자→흑자 전환 종목 필터"""
@@ -104,7 +134,8 @@ async def _scan_turnaround_one(ticker: str, name: str, token: str, sem: asyncio.
             if op_prev < 0 and op_recent > 0:
                 return {"ticker": ticker, "name": name,
                         "op_recent": round(op_recent),
-                        "op_prev":   round(op_prev)}
+                        "op_prev":   round(op_prev),
+                        **_op_extra_fields(annual)}
         except Exception as e:
             print(f"[op_turnaround] {ticker} 오류: {e}")
         return None
