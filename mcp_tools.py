@@ -49,16 +49,19 @@ async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphor
         try:
             raw = await kis_estimate_perform(ticker, token)
             annual = raw.get("annual", [])
-            # 짝수 인덱스 = 실제값, 홀수 인덱스 = YoY 변화율(%)
-            # annual[0].op = 최근 연도 실제 영업이익
-            # annual[1].op = 최근 연도 YoY 변화율(%)
-            if len(annual) < 2:
+            # annual[2] = 영업이익 행 (행=지표, 열=연도)
+            # .op = 전년도, .ebt = 최근 연도 (열 매핑: rev<op<ebt<np<eps 순)
+            if len(annual) < 3:
                 return None
-            op_rec     = _pf(annual[0].get("op"))
-            growth_pct = _pf(annual[1].get("op"))
+            op_recent = _pf(annual[2].get("ebt"))
+            op_prev   = _pf(annual[2].get("op"))
+            if op_prev <= 0:
+                return None
+            growth_pct = (op_recent - op_prev) / abs(op_prev) * 100
             if growth_pct >= min_growth:
                 return {"ticker": ticker, "name": name,
-                        "op_recent": round(op_rec),
+                        "op_recent": round(op_recent),
+                        "op_prev":   round(op_prev),
                         "growth_pct": round(growth_pct, 1)}
         except Exception as e:
             print(f"[op_growth] {ticker} 오류: {e}")
