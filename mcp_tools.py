@@ -400,39 +400,40 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         pass
                 result = {"etfs": etf_results}
             elif mode == "convergence":
-                # ── 이평선 수렴 스크리너 ──
+                # ── 이평선 수렴 스크리너 (병렬 스캔) ──
                 spread_threshold = float(arguments.get("spread", 5.0))
                 universe = get_stock_universe()
                 if not universe:
                     result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
                 else:
                     codes = list(universe.items())
-                    print(f"[convergence] {len(codes)}종목 스캔 시작 (기준 스프레드: {spread_threshold}%)")
-                    conv_results = []
-                    for i, (ticker, uname) in enumerate(codes):
-                        try:
-                            closes = await kis_daily_closes(ticker, token)
-                            valid = [c for c in closes[:60] if c > 0]
-                            if len(valid) < 60:
-                                await asyncio.sleep(0.06)
-                                continue
-                            ma5  = sum(valid[:5])  / 5
-                            ma20 = sum(valid[:20]) / 20
-                            ma60 = sum(valid[:60]) / 60
-                            cur  = valid[0]
-                            spread = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
-                            if spread <= spread_threshold:
-                                conv_results.append({
-                                    "ticker": ticker, "name": uname, "price": cur,
-                                    "spread": round(spread, 2),
-                                    "ma5": round(ma5), "ma20": round(ma20), "ma60": round(ma60),
-                                })
-                        except Exception as ce:
-                            print(f"[convergence] {ticker} 오류: {ce}")
-                        if (i + 1) % 20 == 0:
-                            print(f"[convergence] {i+1}/{len(codes)} 완료, 수렴 {len(conv_results)}개")
-                        await asyncio.sleep(0.06)
-                    conv_results.sort(key=lambda x: x["spread"])
+                    print(f"[convergence] {len(codes)}종목 병렬 스캔 시작 (기준 스프레드: {spread_threshold}%)")
+                    sem_c = asyncio.Semaphore(5)
+
+                    async def _conv_one(ck, cn):
+                        async with sem_c:
+                            await asyncio.sleep(0.07)
+                            try:
+                                closes = await kis_daily_closes(ck, token)
+                                valid = [c for c in closes[:60] if c > 0]
+                                if len(valid) < 60:
+                                    return None
+                                ma5  = sum(valid[:5])  / 5
+                                ma20 = sum(valid[:20]) / 20
+                                ma60 = sum(valid[:60]) / 60
+                                cur  = valid[0]
+                                sp = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
+                                if sp <= spread_threshold:
+                                    return {"ticker": ck, "name": cn, "price": cur,
+                                            "spread": round(sp, 2), "ma5": round(ma5),
+                                            "ma20": round(ma20), "ma60": round(ma60)}
+                            except Exception as ce:
+                                print(f"[convergence] {ck} 오류: {ce}")
+                            return None
+
+                    items = await asyncio.gather(*[_conv_one(t, n) for t, n in codes])
+                    conv_results = sorted([x for x in items if x], key=lambda x: x["spread"])
+                    print(f"[convergence] 완료: {len(conv_results)}개 수렴 종목")
                     result = {
                         "mode": "convergence",
                         "spread_threshold": spread_threshold,
@@ -441,47 +442,46 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     }
 
             elif mode == "op_growth":
-                # ── 영업이익 증가율 스크리너 ──
+                # ── 영업이익 증가율 스크리너 (병렬 스캔) ──
                 min_growth = float(arguments.get("min_growth", 50))
                 universe = get_stock_universe()
                 if not universe:
                     result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
                 else:
                     codes = list(universe.items())
-                    print(f"[op_growth] {len(codes)}종목 스캔 시작 (최소 증가율: {min_growth}%)")
-                    op_results = []
-                    for i, (ticker, uname) in enumerate(codes):
-                        try:
-                            earnings = await kis_estimate_perform(ticker, token)
-                            qtly = earnings.get("quarterly", [])
-                            qtly_sorted = sorted(
-                                [q for q in qtly if q.get("dt")],
-                                key=lambda x: x["dt"], reverse=True
-                            )
-                            if len(qtly_sorted) < 5:
-                                await asyncio.sleep(0.06)
-                                continue
-                            op_recent = _pf(qtly_sorted[0].get("op"))
-                            op_yoy    = _pf(qtly_sorted[4].get("op"))
-                            if op_yoy <= 0:
-                                await asyncio.sleep(0.06)
-                                continue
-                            growth_pct = (op_recent - op_yoy) / op_yoy * 100
-                            if growth_pct >= min_growth:
-                                op_results.append({
-                                    "ticker": ticker, "name": uname,
-                                    "op_recent": round(op_recent),
-                                    "op_yoy":    round(op_yoy),
-                                    "growth_pct": round(growth_pct, 1),
-                                    "dt_recent":  qtly_sorted[0].get("dt"),
-                                    "dt_yoy":     qtly_sorted[4].get("dt"),
-                                })
-                        except Exception as oe:
-                            print(f"[op_growth] {ticker} 오류: {oe}")
-                        if (i + 1) % 20 == 0:
-                            print(f"[op_growth] {i+1}/{len(codes)} 완료, 기준충족 {len(op_results)}개")
-                        await asyncio.sleep(0.06)
-                    op_results.sort(key=lambda x: x["growth_pct"], reverse=True)
+                    print(f"[op_growth] {len(codes)}종목 병렬 스캔 시작 (최소 증가율: {min_growth}%)")
+                    sem_o = asyncio.Semaphore(5)
+
+                    async def _op_one(ok, on):
+                        async with sem_o:
+                            await asyncio.sleep(0.07)
+                            try:
+                                earnings = await kis_estimate_perform(ok, token)
+                                qtly = earnings.get("quarterly", [])
+                                qtly_s = sorted(
+                                    [q for q in qtly if q.get("dt")],
+                                    key=lambda x: x["dt"], reverse=True
+                                )
+                                if len(qtly_s) < 5:
+                                    return None
+                                op_rec = _pf(qtly_s[0].get("op"))
+                                op_yoy = _pf(qtly_s[4].get("op"))
+                                if op_yoy <= 0:
+                                    return None
+                                growth_pct = (op_rec - op_yoy) / op_yoy * 100
+                                if growth_pct >= min_growth:
+                                    return {"ticker": ok, "name": on,
+                                            "op_recent": round(op_rec), "op_yoy": round(op_yoy),
+                                            "growth_pct": round(growth_pct, 1),
+                                            "dt_recent": qtly_s[0].get("dt"),
+                                            "dt_yoy":    qtly_s[4].get("dt")}
+                            except Exception as oe:
+                                print(f"[op_growth] {ok} 오류: {oe}")
+                            return None
+
+                    items = await asyncio.gather(*[_op_one(t, n) for t, n in codes])
+                    op_results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
+                    print(f"[op_growth] 완료: {len(op_results)}개 기준충족 종목")
                     result = {
                         "mode": "op_growth",
                         "min_growth": min_growth,
