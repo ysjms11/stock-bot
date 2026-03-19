@@ -459,18 +459,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             try:
                                 raw = await kis_estimate_perform(ok, token)
                                 qtly = raw.get("quarterly", [])
-                                # dt 필드 무시, 배열 인덱스로 직접 비교
-                                # qtly[0] = 최근 분기, qtly[4] = 전년 동기
-                                if len(qtly) < 5:
+                                # 짝수 인덱스 = 실제값, 홀수 인덱스 = YoY 변화율(%)
+                                # qtly[0].op = 최근 분기 실제 영업이익
+                                # qtly[1].op = 최근 분기 YoY 변화율 (%)
+                                if len(qtly) < 2:
                                     return None
-                                op_rec = _pf(qtly[0].get("op"))
-                                op_yoy = _pf(qtly[4].get("op"))
-                                if op_yoy <= 0:
-                                    return None
-                                growth_pct = (op_rec - op_yoy) / abs(op_yoy) * 100
+                                op_rec    = _pf(qtly[0].get("op"))
+                                growth_pct = _pf(qtly[1].get("op"))
                                 if growth_pct >= min_growth:
                                     return {"ticker": ok, "name": on,
-                                            "op_recent": round(op_rec), "op_yoy": round(op_yoy),
+                                            "op_recent": round(op_rec),
                                             "growth_pct": round(growth_pct, 1)}
                             except Exception as oe:
                                 print(f"[op_growth] {ok} 오류: {oe}")
