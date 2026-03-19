@@ -91,6 +91,16 @@ def check_convergence(closes, threshold=3.0):
 - 포트 비중 변화
 - 당일 중요 공시 하이라이트
 
+### 18. GitHub API 연동
+**영향도:** ★★★★☆ | **난이도:** ★★★
+
+```
+목표: Claude가 MCP 도구로 직접 TODO.md/코드 파일 수정 + 커밋 + push 가능하게
+- Railway 환경변수에 GitHub PAT (GITHUB_PAT) 저장
+- update_file MCP 도구 추가: path/content/message 인자로 파일 수정+커밋
+- Claude가 코드 변경 후 바로 배포까지 자율 완결 가능
+```
+
 ---
 
 ## 구현 우선순위 요약
@@ -109,6 +119,7 @@ def check_convergence(closes, threshold=3.0):
   15. get_consensus
   13. 영업이익 스크리너
   10. summary 고도화
+  18. GitHub API 연동 (Claude 자율 커밋/push)
 ```
 
 ---
