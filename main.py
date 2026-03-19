@@ -22,203 +22,147 @@ from mcp_tools import mcp_sse_handler, mcp_messages_handler
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 1: 한국 장 마감 수급 요약
+# 🔔 자동알림 1: 한국 장 마감 요약 (15:40)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     try:
-        # 1. 매크로
+        token = await get_kis_token()
+
+        # ── [시장] KOSPI + 환율 ──
         macro = await get_yahoo_quote("^KS11") or {}
         kospi_p = macro.get("price", "?")
         kospi_c = macro.get("change_pct", "?")
-        fx = await get_yahoo_quote("KRW=X") or {}
-        krw = int(float(fx.get("price", 0)))
 
-        # 1. 헤더: KOSPI 소수점 2자리, 환율
+        fx = await get_yahoo_quote("KRW=X") or {}
+        krw = int(float(fx.get("price", 0) or 0))
         kospi_c_f = round(float(kospi_c or 0), 2)
         kospi_e = "🔴" if kospi_c_f < 0 else "🟢"
-        msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
-        msg += f"{kospi_e} KOSPI {kospi_p} ({kospi_c_f:.2f}%)  💱 {krw:,}원\n\n"
+        msg = f"📊 *한국 장 마감* ({now.strftime('%m/%d %H:%M')})\n\n"
+        msg += f"[시장] {kospi_e} KOSPI {kospi_p} ({kospi_c_f:+.2f}%) | 💱 {krw:,}원\n"
 
-        # 2. scan_market 미리 조회 (시장분위기 + 급등테마에 재사용)
+        # ── [섹터] ETF 4개 ──
+        SECTOR_ETF_4 = [
+            ("140710", "조선"), ("261070", "전력"),
+            ("464520", "방산"), ("469150", "AI반도체"),
+        ]
+        sector_parts = []
+        for code, label in SECTOR_ETF_4:
+            try:
+                d = await kis_stock_price(code, token)
+                chg = float(d.get("prdy_ctrt", 0) or 0)
+                sector_parts.append(f"{label}{chg:+.2f}%")
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        if sector_parts:
+            msg += f"[섹터] {' | '.join(sector_parts)}\n"
+
+        # ── 포트폴리오 데이터 수집 ──
         portfolio = load_json(PORTFOLIO_FILE, {})
         kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
-        token = await get_kis_token()
         stops = load_stoploss()
         kr_stops = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
-
-        scan_rows = []
-        try:
-            scan_rows = await kis_volume_rank_api(token) or []
-        except:
-            pass
-
-        # 시장 분위기: 인버스 ETF 상위 2개 안에 있으면 경고
-        try:
-            top2_names = [r.get("hts_kor_isnm", "") for r in scan_rows[:2]]
-            if any("인버스" in n for n in top2_names):
-                msg += "⚡ 인버스 ETF 강세 → 기관 하락 헤지 중\n\n"
-        except:
-            pass
-
-        # 3. 내 포트 (두 패스: 합계 먼저 계산 → 비중 표시)
-        price_cache = {}
         port_rows = []
-        total_eval = 0
-        total_pnl = 0
+        total_eval = 0.0
+        total_prev_eval = 0.0
         for ticker, info in kr_stocks.items():
             try:
-                pd = await get_stock_price(ticker, token)
+                d = await get_stock_price(ticker, token)
                 await asyncio.sleep(0.3)
-                price = int(pd.get("stck_prpr", 0))
-                chg = float(pd.get("prdy_ctrt", 0))
-                price_cache[ticker] = price
+                price = int(d.get("stck_prpr", 0) or 0)
+                chg = float(d.get("prdy_ctrt", 0) or 0)
                 qty = info.get("qty", 0)
-                avg = info.get("avg_price", 0)
                 eval_amt = price * qty
-                pnl = (price - avg) * qty
+                prev_price = price / (1 + chg / 100) if chg != -100 else price
                 total_eval += eval_amt
-                total_pnl += pnl
-                tgt_str = ""
+                total_prev_eval += prev_price * qty
+                # 외인 순매수 (오늘)
+                frgn_qty = 0
+                try:
+                    inv_rows = await kis_investor_trend(ticker, token)
+                    if inv_rows:
+                        frgn_qty = int(inv_rows[0].get("frgn_ntby_qty", 0) or 0)
+                    await asyncio.sleep(0.2)
+                except:
+                    pass
                 stop_info = kr_stops.get(ticker, {})
                 tgt = float(stop_info.get("target_price") or stop_info.get("target") or 0)
-                if tgt > 0 and price > 0:
-                    tgt_pct = (tgt - price) / price * 100
-                    tgt_str = f" | 목표 {tgt:,.0f} ({tgt_pct:+.1f}%)"
-                port_rows.append({"ticker": ticker, "info": info, "price": price,
-                                  "chg": chg, "eval_amt": eval_amt, "pnl": pnl, "tgt_str": tgt_str})
+                tgt_pct = (tgt - price) / price * 100 if tgt > 0 and price > 0 else None
+                port_rows.append({
+                    "ticker": ticker, "info": info,
+                    "price": price, "chg": chg,
+                    "frgn_qty": frgn_qty, "tgt": tgt, "tgt_pct": tgt_pct,
+                })
             except:
                 pass
-        msg += "💼 *내 포트*\n"
-        for row in port_rows:
-            wt = round(row["eval_amt"] / total_eval * 100, 1) if total_eval else 0
-            e = "🟢" if row["chg"] >= 1 else ("🔴" if row["chg"] <= -1 else "🟡")
-            pnl_r = row["pnl"]
-            pnl_s = f"+{pnl_r:,}" if pnl_r >= 0 else f"{pnl_r:,}"
-            msg += f"{e} {row['info'].get('name', row['ticker'])} {row['price']:,}원 ({row['chg']:+.1f}%) | {pnl_s}원 | {wt}%{row['tgt_str']}\n\n"
-        pnl_str = f"+{total_pnl:,}" if total_pnl >= 0 else f"{total_pnl:,}"
-        msg += f"┄ 총평가 {total_eval:,}원 | 손익 {pnl_str}원\n\n"
 
-        # 3b. 등급 변화 (decision_log 최근 2건 비교)
-        try:
-            dec_log = load_decision_log()
-            if len(dec_log) >= 2:
-                dates = sorted(dec_log.keys())[-2:]
-                prev_grades = dec_log[dates[0]].get("grades", {})
-                curr_grades = dec_log[dates[1]].get("grades", {})
-                changes = []
-                for gname, grade in curr_grades.items():
-                    prev = prev_grades.get(gname)
-                    if prev and prev != grade:
-                        changes.append(f"{gname} {prev}→{grade}")
-                if changes:
-                    msg += f"📊 *등급 변화* ({dates[1]})\n" + " · ".join(changes) + "\n\n"
-        except:
-            pass
+        # ── [포트] 오늘 변동 + 주간 수익률 ──
+        today_delta = int(total_eval - total_prev_eval)
+        weekly_base = load_json(WEEKLY_BASE_FILE, {})
+        base_amt = float(weekly_base.get("base_amt", 0))
+        week_pct = (total_eval - base_amt) / base_amt * 100 if base_amt > 0 else 0.0
+        # 월요일이면 weekly_base 갱신
+        if now.weekday() == 0 and total_eval > 0:
+            this_monday = now.strftime("%Y-%m-%d")
+            if weekly_base.get("date") != this_monday:
+                save_json(WEEKLY_BASE_FILE, {"date": this_monday, "base_amt": int(total_eval)})
+        today_str = f"+{today_delta:,}" if today_delta >= 0 else f"{today_delta:,}"
+        msg += f"[포트] 오늘 {today_str}원 | 이번 주 {week_pct:+.1f}%\n"
+        if week_pct <= -4:
+            msg += f"🔴 주간 {week_pct:.1f}% — 신규매수 금지 규칙 발동!\n"
+        elif week_pct <= -3:
+            msg += f"⚠️ 주간 {week_pct:.1f}% — 신규매수 주의\n"
 
-        # 4. 손절선 현황
-        danger = []
-        for ticker, info in kr_stops.items():
-            if ticker == "us_stocks":
-                continue
-            try:
-                if ticker in price_cache:
-                    cur = price_cache[ticker]
-                else:
-                    pd = await get_stock_price(ticker, token)
-                    await asyncio.sleep(0.2)
-                    cur = int(pd.get("stck_prpr", 0))
-                    price_cache[ticker] = cur
-                stop = float(info.get("stop_price") or info.get("stop") or 0)
-                if stop > 0 and cur > 0:
-                    gap = (cur - stop) / cur * 100
-                    if gap <= 7:
-                        danger.append((info.get("name", ticker), cur, stop, gap))
-            except:
-                pass
-        if danger:
-            msg += "🛑 *손절선 현황*\n"
-            for name, cur, stop, gap in sorted(danger, key=lambda x: x[3]):
-                msg += f"⚠️ {name} {cur:,}원 → 손절 {stop:,}원 ({gap:.1f}% 남음)\n"
-            msg += "\n"
-        else:
-            msg += "✅ 전 종목 손절선 여유\n\n"
+        # ── [보유] 종목별 ──
+        if port_rows:
+            msg += "\n[보유]\n"
+            for row in port_rows:
+                name = row["info"].get("name", row["ticker"])
+                price = row["price"]
+                chg = row["chg"]
+                frgn_qty = row["frgn_qty"]
+                fire = " 🔥" if chg >= 5 else (" ⚠️" if chg <= -3 else "")
+                frgn_abs = abs(frgn_qty)
+                frgn_k = frgn_abs // 1000
+                frgn_disp = (f"+{frgn_k}K" if frgn_qty >= 0 else f"-{frgn_k}K") if frgn_k > 0 else f"{frgn_qty:+}"
+                frgn_ok = " ✅" if frgn_qty > 0 else ""
+                tgt_str = f" | 목표{row['tgt']:,.0f} {row['tgt_pct']:+.1f}%" if row["tgt_pct"] is not None else ""
+                msg += f"{name} {price:,} ({chg:+.2f}%){fire} | 외인{frgn_disp}{frgn_ok}{tgt_str}\n"
 
-        # 5. 오늘 급등 테마 (ETF/인버스 제외, +10% 이상)
-        try:
-            surge = [
-                r for r in scan_rows
-                if "ETF" not in r.get("hts_kor_isnm", "")
-                and "인버스" not in r.get("hts_kor_isnm", "")
-                and float(r.get("prdy_ctrt", 0) or 0) >= 10
-            ]
-            if surge:
-                parts = [f"{r.get('hts_kor_isnm', '?')} {float(r.get('prdy_ctrt', 0)):+.0f}%" for r in surge[:3]]
-                msg += f"🔥 *오늘 급등* {' · '.join(parts)}\n\n"
-        except:
-            pass
-
-        # 6. 섹터 흐름
-        try:
-            sectors = []
-            for code, label in WI26_SECTORS:
-                frgn, orgn = await _fetch_sector_flow(token, code)
-                sectors.append({"sector": label, "total": frgn + orgn})
-            sectors.sort(key=lambda x: x["total"], reverse=True)
-            if any(s["total"] != 0 for s in sectors):
-                msg += f"📡 *섹터* 유입 {sectors[0]['sector']} | 유출 {sectors[-1]['sector']}\n\n"
-        except:
-            pass
-
-        # 7. 오늘 DART 공시 (있을 때만)
-        try:
-            disclosures = await search_dart_disclosures(days_back=1)
-            watchlist = load_watchlist()
-            important = filter_important_disclosures(disclosures, list(watchlist.values()))
-            if important:
-                _SUPER_KW = {"유상증자", "무상증자", "합병", "분할", "상장폐지", "감자", "전환사채"}
-                msg += "📢 *오늘 공시*\n"
-                for d in important[:3]:
-                    nm = d.get("report_nm", "?")
-                    is_super = any(kw in nm for kw in _SUPER_KW) or d.get("pblntf_ty") in ("B", "C")
-                    pfx = "🔴" if is_super else "•"
-                    msg += f"{pfx} {d.get('corp_name', '?')} — {nm}\n"
-                msg += "\n"
-        except:
-            pass
-
-        # 7b. 매수감시 현재가
+        # ── [감시 접근] gap_pct <= 5% ──
         try:
             wa = load_watchalert()
-            if wa:
-                msg += "👀 *매수감시*\n"
-                for wa_ticker, wa_info in list(wa.items())[:5]:
-                    buy_p = float(wa_info.get("buy_price", 0) or 0)
-                    try:
-                        if _is_us_ticker(wa_ticker):
-                            wd = await kis_us_stock_price(wa_ticker, token)
-                            cur_p = float(wd.get("last", 0) or 0)
-                            diff = round((cur_p - buy_p) / buy_p * 100, 1) if buy_p else 0
-                            sign = "✅" if cur_p <= buy_p and cur_p > 0 else "·"
-                            msg += f"{sign} {wa_info.get('name', wa_ticker)} ${cur_p:,.2f} | 감시 ${buy_p:,.2f} ({diff:+.1f}%)\n"
-                        else:
-                            wd = await kis_stock_price(wa_ticker, token)
-                            cur_p = int(wd.get("stck_prpr", 0) or 0)
-                            diff = round((cur_p - buy_p) / buy_p * 100, 1) if buy_p else 0
-                            sign = "✅" if cur_p <= buy_p and cur_p > 0 else "·"
-                            msg += f"{sign} {wa_info.get('name', wa_ticker)} {cur_p:,}원 | 감시 {buy_p:,.0f}원 ({diff:+.1f}%)\n"
-                        await asyncio.sleep(0.2)
-                    except:
-                        pass
-                msg += "\n"
+            near = []
+            for wa_ticker, wa_info in wa.items():
+                buy_p = float(wa_info.get("buy_price", 0) or 0)
+                if buy_p <= 0:
+                    continue
+                try:
+                    if _is_us_ticker(wa_ticker):
+                        wd = await kis_us_stock_price(wa_ticker, token)
+                        cur_p = float(wd.get("last", 0) or 0)
+                    else:
+                        wd = await kis_stock_price(wa_ticker, token)
+                        cur_p = int(wd.get("stck_prpr", 0) or 0)
+                    await asyncio.sleep(0.2)
+                    if cur_p > 0 and (cur_p - buy_p) / buy_p * 100 <= 5:
+                        near.append((wa_info.get("name", wa_ticker), cur_p, buy_p,
+                                     (cur_p - buy_p) / buy_p * 100, _is_us_ticker(wa_ticker)))
+                except:
+                    pass
+            if near:
+                msg += "\n[감시 접근]\n"
+                for name, cur, buy, gap, is_us in near:
+                    sign = "🟢" if cur <= buy else "·"
+                    if is_us:
+                        msg += f"{sign} {name}: ${cur:,.2f} ← 감시 ${buy:,.2f} ({gap:+.1f}%)\n"
+                    else:
+                        msg += f"{sign} {name}: {cur:,}원 ← 감시 {buy:,.0f}원 ({gap:+.1f}%)\n"
         except:
             pass
 
-        # 8. 내일 할 일 (손절선 가장 가까운 종목 1개)
-        if danger:
-            top = sorted(danger, key=lambda x: x[3])[0]
-            msg += f"📌 *내일 체크*\n⚠️ {top[0]} 손절선 {top[3]:.1f}% 근접 주시"
-
+        msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
     except Exception as e:
@@ -340,6 +284,85 @@ async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"미국 요약 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림 2b: 미국 장 마감 요약 (06:05)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        sp500 = await get_yahoo_quote("^GSPC")
+        nasdaq = await get_yahoo_quote("^IXIC")
+        vix = await get_yahoo_quote("^VIX")
+        fx = await get_yahoo_quote("KRW=X")
+        sp_p = float(sp500.get("price", 0) or 0) if sp500 else 0
+        sp_c = float(sp500.get("change_pct", 0) or 0) if sp500 else 0
+        nq_p = float(nasdaq.get("price", 0) or 0) if nasdaq else 0
+        nq_c = float(nasdaq.get("change_pct", 0) or 0) if nasdaq else 0
+        vix_p = float(vix.get("price", 0) or 0) if vix else 0
+        fx_rate = float(fx.get("price", 1300) or 1300) if fx else 1300
+
+        ss = "🔴" if sp_c < 0 else "🟢"
+        ns = "🔴" if nq_c < 0 else "🟢"
+        vix_label = "🔴 위기" if vix_p > 25 else "🟠 경계" if vix_p > 20 else "🟡 중립" if vix_p > 15 else "🟢 공격"
+        msg = (
+            f"🇺🇸 *미국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
+            f"{ss} S&P500 {sp_p:,.0f} ({sp_c:+.1f}%)  "
+            f"{ns} NASDAQ {nq_p:,.0f} ({nq_c:+.1f}%)\n"
+            f"😰 VIX {vix_p:.1f} — {vix_label} | 💱 {fx_rate:,.0f}원\n"
+        )
+
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        us_port = portfolio.get("us_stocks", {})
+        if us_port:
+            msg += "\n💼 *미국 포트*\n"
+            total_eval = total_cost = 0.0
+            for sym, info in us_port.items():
+                try:
+                    d = await get_yahoo_quote(sym)
+                    await asyncio.sleep(0.3)
+                    cur = float(d.get("price", 0) or 0) if d else 0
+                    chg = float(d.get("change_pct", 0) or 0) if d else 0
+                    qty = info.get("qty", 0)
+                    avg = float(info.get("avg_price", 0))
+                    eval_amt = round(cur * qty, 2)
+                    cost_amt = round(avg * qty, 2)
+                    pnl = round(eval_amt - cost_amt, 2)
+                    total_eval += eval_amt
+                    total_cost += cost_amt
+                    em = "🟢" if chg >= 1 else "⚠️" if chg <= -1 else "⚪"
+                    msg += f"{em} *{info.get('name', sym)}* ${cur:,.2f} ({chg:+.1f}%) | 손익 ${pnl:+,.2f}\n"
+                except Exception:
+                    msg += f"⚪ *{info.get('name', sym)}* 조회 실패\n"
+            if total_cost > 0:
+                total_pnl = round(total_eval - total_cost, 2)
+                total_pnl_pct = total_pnl / total_cost * 100
+                total_krw = total_eval * fx_rate
+                msg += f"┄ 총평가 ${total_eval:,.2f} (₩{total_krw:,.0f}) | 손익 *${total_pnl:+,.2f}* ({total_pnl_pct:+.1f}%)\n"
+
+        stops = load_stoploss()
+        us_stops = stops.get("us_stocks", {})
+        danger = []
+        for sym, info in us_stops.items():
+            try:
+                d = await get_yahoo_quote(sym)
+                await asyncio.sleep(0.2)
+                cur = float(d.get("price", 0) or 0) if d else 0
+                sp = float(info.get("stop_price") or info.get("stop") or 0)
+                if cur > 0 and sp > 0 and (sp - cur) / cur * 100 >= -7:
+                    danger.append(f"⚠️ *{info.get('name', sym)}* 손절 ${sp:,.2f} ({(sp-cur)/cur*100:+.1f}%)")
+            except Exception:
+                pass
+        if danger:
+            msg += "\n🛑 *손절선 근접*\n" + "\n".join(danger) + "\n"
+
+        msg += "\n→ Claude에서 점검하세요"
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"us_market_summary 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -581,7 +604,61 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 6: 주간 리뷰 리마인더 (일 10:00)
+# 🔔 자동알림 6: 수급이탈 경고 (15:40)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_drain_sent_today: dict = {}  # {"date": "YYYY-MM-DD", "sent": set()}
+
+
+async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        token = await get_kis_token()
+        if not token:
+            return
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+        if not kr_stocks:
+            return
+
+        today = now.strftime("%Y-%m-%d")
+        global _drain_sent_today
+        if _drain_sent_today.get("date") != today:
+            _drain_sent_today = {"date": today, "sent": set()}
+        drain_sent = _drain_sent_today["sent"]
+
+        alerts = []
+        for ticker, info in kr_stocks.items():
+            if ticker in drain_sent:
+                continue
+            try:
+                rows = await kis_investor_trend(ticker, token)
+                await asyncio.sleep(0.3)
+                if len(rows) < 3:
+                    continue
+                if all(int(rows[i].get("frgn_ntby_qty", 0) or 0) < 0 for i in range(3)):
+                    name = info.get("name", ticker)
+                    qty_3 = [int(rows[i].get("frgn_ntby_qty", 0) or 0) for i in range(3)]
+                    drain_sent.add(ticker)
+                    alerts.append(
+                        f"📉 *{name}* ({ticker}) 외인 3일 연속 순매도\n"
+                        f"  최근: {qty_3[0]:+,} / {qty_3[1]:+,} / {qty_3[2]:+,}주"
+                    )
+            except Exception:
+                pass
+
+        if alerts:
+            msg = ("⚠️ *수급이탈 경고* — 외인 3일 연속 순매도\n\n"
+                   + "\n\n".join(alerts)
+                   + "\n\n→ 매도 검토 또는 포지션 점검")
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"check_supply_drain 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림 7: 주간 리뷰 리마인더 (일 10:00)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
     msg = (
@@ -1268,8 +1345,9 @@ def main():
     # [2026-03-19] 환율 알림 비활성화 — 매크로 대시보드(#14)로 통합 예정
     # jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
-    jq.run_daily(daily_kr_summary, time=datetime.strptime("06:40", "%H:%M").time(), days=(0,1,2,3,4), name="kr_summary")
-    jq.run_daily(daily_us_summary, time=datetime.strptime("22:00", "%H:%M").time(), name="us_summary")
+    jq.run_daily(daily_kr_summary, time=datetime.strptime("15:40", "%H:%M").time(), days=(0,1,2,3,4), name="kr_summary")
+    jq.run_daily(us_market_summary, time=datetime.strptime("06:05", "%H:%M").time(), days=(0,1,2,3,4), name="us_summary")
+    jq.run_daily(check_supply_drain, time=datetime.strptime("15:40", "%H:%M").time(), days=(0,1,2,3,4), name="supply_drain")
     jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=datetime.strptime("18:00", "%H:%M").time(), name="macro_pm")
