@@ -1396,8 +1396,17 @@ async def _run_all(app, port):
             name  = wa_info.get("name", ticker)
             fired = ws_manager._fired.setdefault(ticker, set())
             if buy_p > 0 and price <= buy_p and "buy" not in fired:
-                fired.add("buy")
-                alerts.append(f"📢 {name} 매수감시가 도달! {price:,}원 ≤ {buy_p:,}원")
+                # check_stoploss와 공유하는 일일 중복 방지
+                global _watch_sent_today
+                _today_w = datetime.now(KST).strftime("%Y-%m-%d")
+                if _watch_sent_today.get("date") != _today_w:
+                    _watch_sent_today = {"date": _today_w, "sent": set()}
+                if ticker in _watch_sent_today["sent"]:
+                    fired.add("buy")  # WS fired 표시만 하고 알림은 스킵
+                else:
+                    fired.add("buy")
+                    _watch_sent_today["sent"].add(ticker)
+                    alerts.append(f"📢 {name} 매수감시가 도달! {price:,}원 ≤ {buy_p:,}원")
 
         for msg in alerts:
             try:
