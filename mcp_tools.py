@@ -114,11 +114,11 @@ MCP_TOOLS = [
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 (spread 파라미터로 기준% 지정, 기본 5.0). mode='op_growth': 영업이익 증가율 스크리너 (min_growth 파라미터로 최소% 지정, 기본 50).",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 코스피 위주 110종목 (spread 파라미터로 기준% 지정, 기본 5.0). mode='convergence2': 이평선 수렴 스크리너 코스닥 위주 111종목. mode='op_growth': 영업이익 증가율 스크리너 (min_growth 파라미터로 최소% 지정, 기본 50).",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'op_growth'|생략"},
-                         "spread":     {"type": "number", "description": "[convergence] 이평 수렴 기준 % (기본 5.0)"},
+                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|생략"},
+                         "spread":     {"type": "number", "description": "[convergence/convergence2] 이평 수렴 기준 % (기본 5.0)"},
                          "min_growth": {"type": "number", "description": "[op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
                      "required": []}},
@@ -455,32 +455,35 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     except Exception:
                         pass
                 result = {"etfs": etf_results}
-            elif mode == "convergence":
-                # ── 이평선 수렴 스크리너 (병렬 스캔) ──
+            elif mode in ("convergence", "convergence2"):
+                # ── 이평선 수렴 스크리너 (분할 스캔: 110 / 111종목) ──
                 try:
                     spread_threshold = float(arguments.get("spread", 5.0))
                     universe = get_stock_universe()
                     if not universe:
                         result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
                     else:
-                        codes = list(universe.items())
-                        print(f"[convergence] {len(codes)}종목 병렬 스캔 시작 (기준 스프레드: {spread_threshold}%)")
+                        all_codes = list(universe.items())
+                        half = len(all_codes) // 2 + len(all_codes) % 2  # 110 for 221
+                        codes = all_codes[:half] if mode == "convergence" else all_codes[half:]
+                        label = "코스피위주" if mode == "convergence" else "코스닥위주"
+                        print(f"[{mode}] {len(codes)}종목 병렬 스캔 시작 ({label}, 기준 스프레드: {spread_threshold}%)")
                         sem_c = asyncio.Semaphore(10)
                         items = await asyncio.gather(
                             *[_scan_conv_one(t, n, token, sem_c, spread_threshold) for t, n in codes]
                         )
                         conv_results = sorted([x for x in items if x], key=lambda x: x["spread"])
-                        print(f"[convergence] 완료: {len(conv_results)}개 수렴 종목")
+                        print(f"[{mode}] 완료: {len(conv_results)}개 수렴 종목")
                         result = {
-                            "mode": "convergence",
+                            "mode": mode,
                             "spread_threshold": spread_threshold,
                             "count": len(conv_results),
                             "results": conv_results,
                         }
                 except Exception as _ce:
                     _tb = traceback.format_exc()
-                    print(f"[get_macro/convergence] 에러: {_ce}\n{_tb}")
-                    result = {"error": str(_ce), "mode": "convergence", "traceback": _tb}
+                    print(f"[get_macro/{mode}] 에러: {_ce}\n{_tb}")
+                    result = {"error": str(_ce), "mode": mode, "traceback": _tb}
 
             elif mode == "op_growth":
                 # ── 영업이익 증가율 스크리너 (병렬 스캔) ──
