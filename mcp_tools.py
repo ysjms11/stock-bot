@@ -42,6 +42,29 @@ def _pf(val) -> float:
         return 0.0
 
 
+async def _scan_conv_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore, spread_threshold: float):
+    """convergence 스캔 단위 함수 (모듈 레벨 — closure 없이 파라미터 명시적 전달)"""
+    async with sem:
+        await asyncio.sleep(0.1)
+        try:
+            closes = await kis_daily_closes(ticker, token)
+            valid = [c for c in closes[:60] if c > 0]
+            if len(valid) < 60:
+                return None
+            ma5  = sum(valid[:5])  / 5
+            ma20 = sum(valid[:20]) / 20
+            ma60 = sum(valid[:60]) / 60
+            cur  = valid[0]
+            sp = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
+            if sp <= spread_threshold:
+                return {"ticker": ticker, "name": name, "price": cur,
+                        "spread": round(sp, 2), "ma5": round(ma5),
+                        "ma20": round(ma20), "ma60": round(ma60)}
+        except Exception as e:
+            print(f"[convergence] {ticker} 오류: {e}")
+        return None
+
+
 async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore, min_growth: float):
     """op_growth 스캔 단위 함수 (모듈 레벨 — closure 없이 파라미터 명시적 전달)"""
     async with sem:
@@ -442,30 +465,10 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     else:
                         codes = list(universe.items())
                         print(f"[convergence] {len(codes)}종목 병렬 스캔 시작 (기준 스프레드: {spread_threshold}%)")
-                        sem_c = asyncio.Semaphore(5)
-
-                        async def _conv_one(ck, cn):
-                            async with sem_c:
-                                await asyncio.sleep(0.07)
-                                try:
-                                    closes = await kis_daily_closes(ck, token)
-                                    valid = [c for c in closes[:60] if c > 0]
-                                    if len(valid) < 60:
-                                        return None
-                                    ma5  = sum(valid[:5])  / 5
-                                    ma20 = sum(valid[:20]) / 20
-                                    ma60 = sum(valid[:60]) / 60
-                                    cur  = valid[0]
-                                    sp = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
-                                    if sp <= spread_threshold:
-                                        return {"ticker": ck, "name": cn, "price": cur,
-                                                "spread": round(sp, 2), "ma5": round(ma5),
-                                                "ma20": round(ma20), "ma60": round(ma60)}
-                                except Exception as ce:
-                                    print(f"[convergence] {ck} 오류: {ce}")
-                                return None
-
-                        items = await asyncio.gather(*[_conv_one(t, n) for t, n in codes])
+                        sem_c = asyncio.Semaphore(10)
+                        items = await asyncio.gather(
+                            *[_scan_conv_one(t, n, token, sem_c, spread_threshold) for t, n in codes]
+                        )
                         conv_results = sorted([x for x in items if x], key=lambda x: x["spread"])
                         print(f"[convergence] 완료: {len(conv_results)}개 수렴 종목")
                         result = {
