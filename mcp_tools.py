@@ -452,22 +452,31 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     codes = list(universe.items())
                     print(f"[op_growth] {len(codes)}종목 병렬 스캔 시작 (최소 증가율: {min_growth}%)")
                     sem_o = asyncio.Semaphore(5)
+                    debug_samples = []   # 첫 3종목 raw earnings 캡처
+                    skip_log = []        # 첫 10종목 skip 이유
 
                     async def _op_one(ok, on):
                         async with sem_o:
                             await asyncio.sleep(0.07)
                             try:
-                                earnings = await kis_estimate_perform(ok, token)
-                                qtly = earnings.get("quarterly", [])
+                                raw = await kis_estimate_perform(ok, token)
+                                # debug: 첫 3종목은 raw 캡처
+                                if len(debug_samples) < 3:
+                                    debug_samples.append({"ticker": ok, "name": on, "raw": raw})
+                                qtly = raw.get("quarterly", [])
                                 qtly_s = sorted(
                                     [q for q in qtly if q.get("dt")],
                                     key=lambda x: x["dt"], reverse=True
                                 )
                                 if len(qtly_s) < 5:
+                                    if len(skip_log) < 10:
+                                        skip_log.append({"ticker": ok, "reason": f"qtly_len={len(qtly_s)}", "sample": qtly[:2]})
                                     return None
                                 op_rec = _pf(qtly_s[0].get("op"))
                                 op_yoy = _pf(qtly_s[4].get("op"))
                                 if op_yoy <= 0:
+                                    if len(skip_log) < 10:
+                                        skip_log.append({"ticker": ok, "reason": f"op_yoy={op_yoy}"})
                                     return None
                                 growth_pct = (op_rec - op_yoy) / op_yoy * 100
                                 if growth_pct >= min_growth:
@@ -478,16 +487,21 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                             "dt_yoy":    qtly_s[4].get("dt")}
                             except Exception as oe:
                                 print(f"[op_growth] {ok} 오류: {oe}")
+                                if len(skip_log) < 10:
+                                    skip_log.append({"ticker": ok, "reason": f"exception: {oe}"})
                             return None
 
                     items = await asyncio.gather(*[_op_one(t, n) for t, n in codes])
                     op_results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
                     print(f"[op_growth] 완료: {len(op_results)}개 기준충족 종목")
+                    print(f"[op_growth] debug_samples: {json.dumps(debug_samples, ensure_ascii=False)[:500]}")
                     result = {
                         "mode": "op_growth",
                         "min_growth": min_growth,
                         "count": len(op_results),
                         "results": op_results,
+                        "debug_samples": debug_samples,
+                        "skip_log": skip_log,
                     }
 
             else:
