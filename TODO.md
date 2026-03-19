@@ -22,12 +22,11 @@
 - [x] 수급 이탈 경고 — 외인 3일 연속 순매도 시 자동 경고 (15:40)
 - [x] 주간 손실 한도 경고 — -3%/-4% 자동 경고 (weekly_base.json 기준)
 - [x] 감시 알림 일일 중복 방지 (_watch_sent_today)
+- [x] #16 배치 스캔 인프라 — get_stock_universe() + batch_fetch() + kis_daily_closes(), stock_universe.json 221종목
+- [x] #12 이평선 수렴 스크리너 — get_macro(mode='convergence', spread=N), 221종목 배치 스캔
+- [x] #13 영업이익 증가율 스크리너 — get_macro(mode='op_growth', min_growth=N), YoY 분기 비교
 
 ---
-
-## 🟡 P1 — 이번 달
-
-*(현재 P1 잔여 없음 — 안정화 후 P2 착수)*
 
 ---
 
@@ -103,13 +102,7 @@ rate limit 관리(초당 20회, sleep 필수).
 ## 구현 우선순위 요약
 
 ```
-이번 달 (P1):
-  (없음 — 안정화 중)
-
 다음 달 (P2):
-  16. 배치 스캔 인프라 ← 12,13번 기반
-  12. 이평선 수렴 스크리너 (MCP 도구, 시총 3,000억+)
-  13. 영업이익 증가율 스크리너 (MCP 도구, 시총 3,000억+)
   17. 모멘텀 종료 감지
   15. get_consensus
   10. summary 고도화

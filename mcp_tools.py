@@ -56,10 +56,12 @@ MCP_TOOLS = [
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard' 시 VIX·WTI·금·구리·DXY·US10Y·외인수급·이벤트 전체 조회. mode='sector_etf' 시 주요 섹터 ETF 현재가·등락률 조회.",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 (spread 파라미터로 기준% 지정, 기본 5.0). mode='op_growth': 영업이익 증가율 스크리너 (min_growth 파라미터로 최소% 지정, 기본 50).",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode": {"type": "string", "description": "'dashboard'=전체 매크로 지표, 'sector_etf'=섹터 ETF 시세, 생략=KOSPI/KOSDAQ/환율"},
+                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'op_growth'|생략"},
+                         "spread":     {"type": "number", "description": "[convergence] 이평 수렴 기준 % (기본 5.0)"},
+                         "min_growth": {"type": "number", "description": "[op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
                      "required": []}},
     {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
@@ -389,6 +391,97 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     except Exception:
                         pass
                 result = {"etfs": etf_results}
+            elif mode == "convergence":
+                # ── 이평선 수렴 스크리너 ──
+                spread_threshold = float(arguments.get("spread", 5.0))
+                universe = get_stock_universe()
+                codes = list(universe.items())
+                print(f"[convergence] {len(codes)}종목 스캔 시작 (기준 스프레드: {spread_threshold}%)")
+                results = []
+                for i, (ticker, name) in enumerate(codes):
+                    try:
+                        closes = await kis_daily_closes(ticker, token)
+                        valid = [c for c in closes[:60] if c > 0]
+                        if len(valid) < 60:
+                            await asyncio.sleep(0.06)
+                            continue
+                        ma5  = sum(valid[:5])  / 5
+                        ma20 = sum(valid[:20]) / 20
+                        ma60 = sum(valid[:60]) / 60
+                        cur  = valid[0]
+                        spread = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
+                        if spread <= spread_threshold:
+                            results.append({
+                                "ticker": ticker, "name": name, "price": cur,
+                                "spread": round(spread, 2),
+                                "ma5": round(ma5), "ma20": round(ma20), "ma60": round(ma60),
+                            })
+                    except Exception:
+                        pass
+                    if (i + 1) % 20 == 0:
+                        print(f"[convergence] {i+1}/{len(codes)} 완료")
+                    await asyncio.sleep(0.06)
+                results.sort(key=lambda x: x["spread"])
+                result = {
+                    "mode": "convergence",
+                    "spread_threshold": spread_threshold,
+                    "count": len(results),
+                    "results": results,
+                }
+
+            elif mode == "op_growth":
+                # ── 영업이익 증가율 스크리너 ──
+                min_growth = float(arguments.get("min_growth", 50))
+                universe = get_stock_universe()
+                codes = list(universe.items())
+                print(f"[op_growth] {len(codes)}종목 스캔 시작 (최소 증가율: {min_growth}%)")
+
+                def _pf(val):
+                    try:
+                        return float(str(val).replace(",", "").strip() or "0")
+                    except Exception:
+                        return 0.0
+
+                results = []
+                for i, (ticker, name) in enumerate(codes):
+                    try:
+                        earnings = await kis_estimate_perform(ticker, token)
+                        qtly = earnings.get("quarterly", [])
+                        qtly_sorted = sorted(
+                            [q for q in qtly if q.get("dt")],
+                            key=lambda x: x["dt"], reverse=True
+                        )
+                        if len(qtly_sorted) < 5:
+                            await asyncio.sleep(0.06)
+                            continue
+                        op_recent = _pf(qtly_sorted[0].get("op"))
+                        op_yoy    = _pf(qtly_sorted[4].get("op"))
+                        if op_yoy <= 0:
+                            await asyncio.sleep(0.06)
+                            continue
+                        growth_pct = (op_recent - op_yoy) / op_yoy * 100
+                        if growth_pct >= min_growth:
+                            results.append({
+                                "ticker": ticker, "name": name,
+                                "op_recent": round(op_recent),
+                                "op_yoy":    round(op_yoy),
+                                "growth_pct": round(growth_pct, 1),
+                                "dt_recent":  qtly_sorted[0].get("dt"),
+                                "dt_yoy":     qtly_sorted[4].get("dt"),
+                            })
+                    except Exception:
+                        pass
+                    if (i + 1) % 20 == 0:
+                        print(f"[op_growth] {i+1}/{len(codes)} 완료")
+                    await asyncio.sleep(0.06)
+                results.sort(key=lambda x: x["growth_pct"], reverse=True)
+                result = {
+                    "mode": "op_growth",
+                    "min_growth": min_growth,
+                    "count": len(results),
+                    "results": results,
+                }
+
             else:
                 # ── 기본 모드: KOSPI/KOSDAQ/환율 ──
                 kospi  = await get_kis_index(token, "0001")
