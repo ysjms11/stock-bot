@@ -15,6 +15,23 @@ from kis_api import (
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
 
+# DART 공시 중요도 태그 키워드
+_DART_TAGS = {
+    "긴급": ["유상증자", "전환사채", "신주인수권부사채", "CB", "BW",
+             "분할", "합병", "감자", "상장폐지", "회생", "공개매수"],
+    "주의": ["수주", "계약", "대규모", "공급계약", "납품", "MOU", "투자",
+             "소송", "제재", "과징금", "조회공시"],
+    "참고": ["임원", "지분", "자기주식", "자사주", "배당",
+             "주식매수선택권", "스톡옵션", "정관"],
+}
+
+
+def _dart_tag(title: str) -> str:
+    for level, keywords in _DART_TAGS.items():
+        if any(k in title for k in keywords):
+            return level
+    return "일반"
+
 MCP_TOOLS = [
     {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
@@ -325,28 +342,15 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             disclosures = await search_dart_disclosures(days_back=3)
             wl = load_watchlist()
             important = filter_important_disclosures(disclosures, list(wl.values()))
-            _DART_TAGS = {
-                "긴급": ["유상증자", "전환사채", "신주인수권부사채", "CB", "BW",
-                         "분할", "합병", "감자", "상장폐지", "회생", "공개매수"],
-                "주의": ["수주", "계약", "대규모", "공급계약", "납품", "MOU", "투자",
-                         "소송", "제재", "과징금", "조회공시"],
-                "참고": ["임원", "지분", "자기주식", "자사주", "배당",
-                         "주식매수선택권", "스톡옵션", "정관"],
-            }
-            def _dart_importance(title: str) -> str:
-                for level, keywords in _DART_TAGS.items():
-                    if any(k in title for k in keywords):
-                        return level
-                return "일반"
             result = []
             for d in important[:10]:
-                title = d.get("report_nm", "")
-                tag = _dart_importance(title)
+                title = d.get("report_nm", "") or ""
+                tag = _dart_tag(title)
                 tagged_title = f"[{tag}] {title}" if tag != "일반" else title
                 result.append({
-                    "corp": d.get("corp_name"),
+                    "corp": d.get("corp_name", ""),
                     "title": tagged_title,
-                    "date": d.get("rcept_dt"),
+                    "date": d.get("rcept_dt", ""),
                     "importance": tag,
                 })
 
@@ -360,7 +364,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "message": format_macro_msg(data),
                 }
             elif mode == "sector_etf":
-                # ── 섹터 ETF 시세 ──
+                # ── 섹터 ETF 시세 ── (kis_stock_price 사용: ETF 코드도 일반 주식 API로 조회 가능)
                 SECTOR_ETFS = [
                     ("140710", "KODEX 조선"),
                     ("464520", "TIGER 방산"),
@@ -374,18 +378,14 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 etf_results = []
                 for etf_code, etf_name in SECTOR_ETFS:
                     try:
-                        async with aiohttp.ClientSession() as s:
-                            _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
-                                "FHPST02400000", token,
-                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
-                        out = ed.get("output", {})
+                        d = await kis_stock_price(etf_code, token)
                         etf_results.append({
                             "code": etf_code, "name": etf_name,
-                            "price": out.get("stck_prpr"),
-                            "chg_pct": out.get("prdy_ctrt"),
-                            "volume": out.get("acml_vol"),
+                            "price": d.get("stck_prpr"),
+                            "chg_pct": d.get("prdy_ctrt"),
+                            "volume": d.get("acml_vol"),
                         })
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.05)
                     except Exception:
                         pass
                 result = {"etfs": etf_results}
