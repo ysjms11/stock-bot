@@ -48,14 +48,14 @@ async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphor
         await asyncio.sleep(0.07)
         try:
             raw = await kis_estimate_perform(ticker, token)
-            qtly = raw.get("quarterly", [])
+            annual = raw.get("annual", [])
             # 짝수 인덱스 = 실제값, 홀수 인덱스 = YoY 변화율(%)
-            # qtly[0].op = 최근 분기 실제 영업이익
-            # qtly[1].op = 최근 분기 YoY 변화율(%)
-            if len(qtly) < 2:
+            # annual[0].op = 최근 연도 실제 영업이익
+            # annual[1].op = 최근 연도 YoY 변화율(%)
+            if len(annual) < 2:
                 return None
-            op_rec     = _pf(qtly[0].get("op"))
-            growth_pct = _pf(qtly[1].get("op"))
+            op_rec     = _pf(annual[0].get("op"))
+            growth_pct = _pf(annual[1].get("op"))
             if growth_pct >= min_growth:
                 return {"ticker": ticker, "name": name,
                         "op_recent": round(op_rec),
