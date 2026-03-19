@@ -429,15 +429,20 @@ async def kis_estimate_perform(ticker: str, token: str) -> dict:
 
 def get_stock_universe() -> dict:
     """stock_universe.json에서 종목 유니버스 로드. {ticker: name} 반환.
-    /data/stock_universe.json 없으면 repo 루트 stock_universe.json 시도.
+    /data/stock_universe.json 없으면 kis_api.py 위치 기준 절대경로로 시도.
     """
-    for path in [UNIVERSE_FILE, "stock_universe.json"]:
+    _repo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock_universe.json")
+    for path in [UNIVERSE_FILE, _repo_path, "stock_universe.json"]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("codes", {})
+                codes = data.get("codes", {})
+                if codes:
+                    print(f"[universe] {len(codes)}종목 로드 ({path})")
+                    return codes
         except Exception:
             pass
+    print("[universe] stock_universe.json 로드 실패 — 빈 유니버스 반환")
     return {}
 
 
@@ -459,11 +464,12 @@ async def batch_fetch(codes: list, fetch_fn, token: str, delay: float = 0.06) ->
 
 async def kis_daily_closes(ticker: str, token: str, n: int = 65) -> list:
     """최근 n거래일 종가 리스트 반환 (최신이 [0])
-    FHKST03010100 일봉 API 사용.
+    FHKST03010100 일봉 API 사용. 8초 timeout으로 hang 방지.
     """
     today_str = datetime.now(KST).strftime("%Y%m%d")
     start_dt = (datetime.now(KST) - timedelta(days=n * 2)).strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
+    timeout = aiohttp.ClientTimeout(total=8)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
         _, d = await _kis_get(s,
             "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
             "FHKST03010100", token,
