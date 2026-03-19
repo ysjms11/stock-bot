@@ -2,6 +2,7 @@ import json
 import asyncio
 import uuid
 import aiohttp
+import traceback
 from datetime import datetime, timedelta
 from aiohttp import web
 
@@ -798,8 +799,9 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             result = {"error": f"unknown tool: {name}"}
 
     except Exception as e:
-        result = {"error": str(e)}
-        print(f"에러: {name} → {e}")
+        tb = traceback.format_exc()
+        result = {"error": str(e), "traceback": tb}
+        print(f"에러: {name} → {e}\n{tb}")
 
     print(f"툴 결과: {name} → {json.dumps(result, ensure_ascii=False)[:200]}")
     return result
