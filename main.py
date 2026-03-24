@@ -382,6 +382,22 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 3: 손절선 도달 (10분마다)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _get_stoploss_sent_count(sent: dict, ticker: str, today: str) -> int:
+    """오늘 해당 ticker 손절 알림 발송 횟수 반환. 날짜가 다르면 0."""
+    entry = sent.get(ticker, {})
+    if entry.get("date") != today:
+        return 0
+    return entry.get("count", 0)
+
+def _increment_stoploss_sent(sent: dict, ticker: str, today: str):
+    """손절 알림 발송 횟수를 1 증가시키고 dict를 직접 수정."""
+    entry = sent.get(ticker, {})
+    if entry.get("date") != today:
+        entry = {"date": today, "count": 0}
+    entry["count"] = entry["count"] + 1
+    sent[ticker] = entry
+
+
 async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if not _is_kr_trading_time(now):
@@ -396,7 +412,10 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     if not kr_stops and not us_stops and not wa:
         return
 
-    alerts = []
+    today = now.strftime("%Y%m%d")
+    sent = load_json(STOPLOSS_SENT_FILE, {})
+    full_alerts = []   # count==0: 풀 알림
+    remind_alerts = [] # count==1: 리마인더
 
     if is_kr and kr_stops:
         try:
@@ -409,14 +428,22 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                         price = int(d.get("stck_prpr", 0))
                         sp = info.get("stop_price", 0)
                         if price > 0 and sp > 0 and price <= sp:
+                            cnt = _get_stoploss_sent_count(sent, ticker, today)
+                            if cnt >= 2:
+                                continue  # 하루 2회 초과 → 스킵
                             ep = info.get("entry_price", 0)
                             drop = ((price - ep) / ep * 100) if ep > 0 else 0
-                            alerts.append(
-                                f"🚨🚨 *{info['name']}* ({ticker})\n"
-                                f"  현재가: {price:,}원 ← 손절선 {sp:,}원 도달!\n"
-                                + (f"  손실: {drop:.1f}%\n" if ep > 0 else "")
-                                + "  → *즉시 매도 검토!*"
-                            )
+                            if cnt == 0:
+                                full_alerts.append(
+                                    (ticker, f"🚨🚨 *{info['name']}* ({ticker})\n"
+                                     f"  현재가: {price:,}원 ← 손절선 {sp:,}원 도달!\n"
+                                     + (f"  손실: {drop:.1f}%\n" if ep > 0 else "")
+                                     + "  → *즉시 매도 검토!*")
+                                )
+                            else:  # cnt == 1
+                                remind_alerts.append(
+                                    (ticker, f"⚠️ *{info['name']}* 여전히 손절 아래 {price:,}원 (손절선 {sp:,}원)")
+                                )
                     except Exception:
                         pass
         except Exception as e:
@@ -432,22 +459,46 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                 price = float(d.get("price", 0) or 0)
                 sp = info.get("stop_price", 0)
                 if price > 0 and sp > 0 and price <= sp:
+                    cnt = _get_stoploss_sent_count(sent, sym, today)
+                    if cnt >= 2:
+                        continue
                     tp = info.get("target_price", 0)
-                    alerts.append(
-                        f"🚨🇺🇸 *{info['name']}* ({sym})\n"
-                        f"  현재가: ${price:,.2f} ← 손절선 ${sp:,.2f} 도달!\n"
-                        + (f"  목표가: ${tp:,.2f}\n" if tp else "")
-                        + "  → *즉시 매도 검토!*"
-                    )
+                    if cnt == 0:
+                        full_alerts.append(
+                            (sym, f"🚨🇺🇸 *{info['name']}* ({sym})\n"
+                             f"  현재가: ${price:,.2f} ← 손절선 ${sp:,.2f} 도달!\n"
+                             + (f"  목표가: ${tp:,.2f}\n" if tp else "")
+                             + "  → *즉시 매도 검토!*")
+                        )
+                    else:
+                        remind_alerts.append(
+                            (sym, f"⚠️ *{info['name']}* 여전히 손절 아래 ${price:,.2f} (손절선 ${sp:,.2f})")
+                        )
             except Exception:
                 pass
 
-    if alerts:
-        msg = "🔴🔴🔴 *손절선 도달!* 🔴🔴🔴\n\n" + "\n\n".join(alerts) + "\n\n⚠️ Thesis 붕괴 시 가격 무관 즉시 매도"
+    if full_alerts:
+        lines = [text for _, text in full_alerts]
+        msg = "🔴🔴🔴 *손절선 도달!* 🔴🔴🔴\n\n" + "\n\n".join(lines) + "\n\n⚠️ Thesis 붕괴 시 가격 무관 즉시 매도"
         try:
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            for ticker, _ in full_alerts:
+                _increment_stoploss_sent(sent, ticker, today)
         except Exception as e:
             print(f"손절 알림 전송 오류: {e}")
+
+    if remind_alerts:
+        lines = [text for _, text in remind_alerts]
+        msg = "🔔 *손절선 리마인더*\n\n" + "\n".join(lines)
+        try:
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            for ticker, _ in remind_alerts:
+                _increment_stoploss_sent(sent, ticker, today)
+        except Exception as e:
+            print(f"손절 리마인더 전송 오류: {e}")
+
+    if full_alerts or remind_alerts:
+        save_json(STOPLOSS_SENT_FILE, sent)
 
     # ── 매수 희망가 감시 (watchalert) ──
     try:
