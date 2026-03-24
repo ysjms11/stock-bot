@@ -293,6 +293,30 @@ MCP_TOOLS = [
                          "ticker": {"type": "string", "description": "한국 종목코드 (예: 009540)"},
                      },
                      "required": ["ticker"]}},
+    {"name": "get_price_rank",
+     "description": "등락률 상위/하위 종목 순위. '오늘 상승률 상위 종목', '하락률 상위 코스닥' 등에 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "sort":   {"type": "string", "description": "'rise'=상승률 상위(기본), 'fall'=하락률 상위"},
+                         "market": {"type": "string", "description": "'all'=전체(기본), 'kospi', 'kosdaq'"},
+                         "n":      {"type": "integer", "description": "조회 종목 수 (기본 20, 최대 30)"},
+                     },
+                     "required": []}},
+    {"name": "get_investor_trend_history",
+     "description": "개별 종목의 투자자별 수급 일별 히스토리. 외국인·기관·개인 순매수 추이 (최근 N일). 'HD조선 외인 수급 5일 흐름' 등에 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 009540)"},
+                         "days":   {"type": "integer", "description": "조회 일수 (기본 5, 최대 10)"},
+                     },
+                     "required": ["ticker"]}},
+    {"name": "get_program_trade",
+     "description": "프로그램매매 투자자별 당일 동향. 외국인·기관·개인의 차익/비차익 프로그램매매 현황.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "market": {"type": "string", "description": "'kospi'(기본) 또는 'kosdaq'"},
+                     },
+                     "required": []}},
     {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단 기록, compare→보유vs후보 비교",
      "inputSchema": {"type": "object",
                      "properties": {
@@ -1088,6 +1112,43 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "net":  int(row.get("prsn_ntby_qty", 0) or 0),
                         },
                     }
+
+        elif name == "get_price_rank":
+            sort   = arguments.get("sort", "rise").strip().lower()
+            market = arguments.get("market", "all").strip().lower()
+            n      = int(arguments.get("n", 20) or 20)
+            n      = max(1, min(n, 30))
+            market_code = {"all": "0000", "kospi": "0001", "kosdaq": "1001"}.get(market, "0000")
+            items = await kis_fluctuation_rank(token, market=market_code, sort=sort, n=n)
+            result = {
+                "sort":   sort,
+                "market": market,
+                "count":  len(items),
+                "items":  items,
+            }
+
+        elif name == "get_investor_trend_history":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                days  = int(arguments.get("days", 5) or 5)
+                days  = max(1, min(days, 10))
+                rows  = await kis_investor_trend_history(ticker, token, n_days=days)
+                result = {
+                    "ticker": ticker,
+                    "days":   days,
+                    "history": rows,
+                }
+
+        elif name == "get_program_trade":
+            market = arguments.get("market", "kospi").strip().lower()
+            rows   = await kis_program_trade_today(token, market=market)
+            result = {
+                "market": market,
+                "count":  len(rows),
+                "items":  rows,
+            }
 
         else:
             result = {"error": f"unknown tool: {name}"}
