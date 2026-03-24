@@ -534,6 +534,274 @@ async def kis_program_trade_today(token: str, market: str = "kospi") -> list:
     return result
 
 
+async def kis_investor_trend_estimate(ticker: str, token: str) -> dict:
+    """장중 투자자 추정 수급 가집계 (HHPTJ04160200).
+    외국인·기관 추정 순매수 수량 (확정치 아님, 장중 업데이트).
+    Returns: {ticker, foreign_est_net, institution_est_net, sum_est_net, is_estimate: True}
+    """
+    try:
+        async with aiohttp.ClientSession() as s:
+            _, d = await _kis_get(s,
+                "/uapi/domestic-stock/v1/quotations/investor-trend-estimate",
+                "HHPTJ04160200", token,
+                {"MKSC_SHRN_ISCD": ticker})
+        rows = d.get("output2", [])
+        row = rows[-1] if isinstance(rows, list) and rows else (rows if isinstance(rows, dict) else {})
+        return {
+            "ticker":              ticker,
+            "foreign_est_net":     int(row.get("frgn_fake_ntby_qty", 0) or 0),
+            "institution_est_net": int(row.get("orgn_fake_ntby_qty", 0) or 0),
+            "sum_est_net":         int(row.get("sum_fake_ntby_qty",  0) or 0),
+            "is_estimate":         True,
+        }
+    except Exception as e:
+        print(f"[kis_investor_trend_estimate] 오류: {e}")
+        return {"ticker": ticker, "error": str(e)}
+
+
+async def kis_foreign_institution_total(token: str, sort: str = "buy", n: int = 20) -> list:
+    """외국인+기관 합산 순매수 상위 종목 가집계 (FHPTJ04400000).
+
+    sort: "buy"=순매수 상위, "sell"=순매도 상위
+    Returns: [{ticker, name, price, chg_pct, foreign_net, institution_net, fi_total_net}, ...]
+    """
+    rank_code = "0" if sort == "buy" else "1"
+    hdrs = _kis_headers(token, "FHPTJ04400000")
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "V",
+        "FID_COND_SCR_DIV_CODE":  "16449",
+        "FID_INPUT_ISCD":         "0000",
+        "FID_DIV_CLS_CODE":       "0",
+        "FID_RANK_SORT_CLS_CODE": rank_code,
+        "FID_ETC_CLS_CODE":       "0",
+    }
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            async with s.get(f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/foreign-institution-total",
+                             headers=hdrs, params=params) as r:
+                data = await r.json(content_type=None)
+    except Exception as e:
+        print(f"[kis_foreign_institution_total] 오류: {e}")
+        return []
+
+    result = []
+    for item in data.get("output", [])[:n]:
+        ticker = (item.get("mksc_shrn_iscd") or "").strip()
+        if not ticker:
+            continue
+        frgn = int(item.get("frgn_ntby_qty", 0) or 0)
+        orgn = int(item.get("orgn_ntby_qty", 0) or 0)
+        result.append({
+            "ticker":          ticker,
+            "name":            (item.get("hts_kor_isnm") or "").strip(),
+            "price":           int(item.get("stck_prpr", 0) or 0),
+            "chg_pct":         float(item.get("prdy_ctrt", 0) or 0),
+            "foreign_net":     frgn,
+            "institution_net": orgn,
+            "fi_total_net":    frgn + orgn,
+        })
+    return result
+
+
+async def kis_daily_short_sale(ticker: str, token: str, n: int = 10) -> list:
+    """국내주식 공매도 일별추이 (FHPST04830000).
+
+    Returns: [{date, short_vol, total_vol, short_ratio, close}, ...]
+    """
+    try:
+        async with aiohttp.ClientSession() as s:
+            _, d = await _kis_get(s,
+                "/uapi/domestic-stock/v1/quotations/daily-short-sale",
+                "FHPST04830000", token,
+                {
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD":         ticker,
+                    "FID_INPUT_DATE_1":       "",
+                    "FID_INPUT_DATE_2":       "",
+                })
+        result = []
+        for row in d.get("output2", [])[:n]:
+            result.append({
+                "date":        row.get("stck_bsop_date", ""),
+                "short_vol":   int(row.get("ssts_cntg_qty",  0) or 0),
+                "total_vol":   int(row.get("acml_vol",        0) or 0),
+                "short_ratio": float(row.get("ssts_vol_rlim", 0) or 0),
+                "close":       int(row.get("stck_clpr",       0) or 0),
+            })
+        return result
+    except Exception as e:
+        print(f"[kis_daily_short_sale] 오류: {e}")
+        return []
+
+
+async def kis_news_title(ticker: str, token: str, n: int = 10) -> list:
+    """종목 관련 뉴스 제목 조회 (FHKST01011800).
+
+    Returns: [{date, time, title, source}, ...]
+    """
+    try:
+        async with aiohttp.ClientSession() as s:
+            _, d = await _kis_get(s,
+                "/uapi/domestic-stock/v1/quotations/news-title",
+                "FHKST01011800", token,
+                {
+                    "FID_NEWS_OFER_ENTP_CODE": "",
+                    "FID_COND_MRKT_CLS_CODE":  "",
+                    "FID_INPUT_ISCD":          ticker,
+                    "FID_TITL_CNTT":           "",
+                    "FID_INPUT_DATE_1":        "",
+                    "FID_INPUT_HOUR_1":        "",
+                    "FID_RANK_SORT_CLS_CODE":  "0",
+                    "FID_INPUT_SRNO":          "",
+                })
+        result = []
+        for row in d.get("output", [])[:n]:
+            title = (row.get("hts_pbnt_titl_cntt") or "").strip()
+            if not title:
+                continue
+            result.append({
+                "date":   row.get("data_dt", ""),
+                "time":   row.get("data_tm", ""),
+                "title":  title,
+                "source": (row.get("dorg") or "").strip(),
+            })
+        return result
+    except Exception as e:
+        print(f"[kis_news_title] 오류: {e}")
+        return []
+
+
+async def kis_vi_status(token: str) -> list:
+    """변동성완화장치(VI) 발동 종목 현황 (FHPST01390000).
+
+    Returns: [{ticker, name, vi_type, vi_price, base_price, trigger_time, release_time, count}, ...]
+    """
+    today = datetime.now(KST).strftime("%Y%m%d")
+    try:
+        async with aiohttp.ClientSession() as s:
+            _, d = await _kis_get(s,
+                "/uapi/domestic-stock/v1/quotations/inquire-vi-status",
+                "FHPST01390000", token,
+                {
+                    "FID_DIV_CLS_CODE":       "0",
+                    "FID_COND_SCR_DIV_CODE":  "20139",
+                    "FID_MRKT_CLS_CODE":      "0",
+                    "FID_INPUT_ISCD":         "",
+                    "FID_RANK_SORT_CLS_CODE": "0",
+                    "FID_INPUT_DATE_1":       today,
+                    "FID_TRGT_CLS_CODE":      "",
+                    "FID_TRGT_EXLS_CLS_CODE": "",
+                })
+        result = []
+        for row in d.get("output", []):
+            ticker = (row.get("mksc_shrn_iscd") or "").strip()
+            if not ticker:
+                continue
+            vi_kind = row.get("vi_kind_code", "")
+            vi_type = {"1": "정적VI", "2": "동적VI", "3": "정적+동적VI"}.get(vi_kind, vi_kind)
+            result.append({
+                "ticker":       ticker,
+                "name":         (row.get("hts_kor_isnm") or "").strip(),
+                "vi_type":      vi_type,
+                "vi_price":     int(row.get("vi_prc",      0) or 0),
+                "base_price":   int(row.get("vi_stnd_prc", 0) or 0),
+                "trigger_time": row.get("cntg_vi_hour", ""),
+                "release_time": row.get("vi_cncl_hour", ""),
+                "count":        int(row.get("vi_count",    0) or 0),
+            })
+        return result
+    except Exception as e:
+        print(f"[kis_vi_status] 오류: {e}")
+        return []
+
+
+async def kis_volume_power_rank(token: str, market: str = "all", n: int = 20) -> list:
+    """체결강도 상위 종목 순위 (FHPST01680000).
+
+    market: "all"=전체, "kospi"=코스피, "kosdaq"=코스닥
+    Returns: [{ticker, name, price, chg_pct, volume_power_pct, buy_vol, sell_vol}, ...]
+    """
+    market_code = {"all": "0000", "kospi": "0001", "kosdaq": "1001"}.get(market.lower(), "0000")
+    hdrs = _kis_headers(token, "FHPST01680000")
+    params = {
+        "fid_trgt_exls_cls_code": "0",
+        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_scr_div_code":  "20168",
+        "fid_input_iscd":         market_code,
+        "fid_div_cls_code":       "0",
+        "fid_input_price_1":      "",
+        "fid_input_price_2":      "",
+        "fid_vol_cnt":            "",
+        "fid_trgt_cls_code":      "0",
+    }
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            async with s.get(f"{KIS_BASE_URL}/uapi/domestic-stock/v1/ranking/volume-power",
+                             headers=hdrs, params=params) as r:
+                data = await r.json(content_type=None)
+    except Exception as e:
+        print(f"[kis_volume_power_rank] 오류: {e}")
+        return []
+
+    result = []
+    for item in data.get("output", [])[:n]:
+        ticker = (item.get("stck_shrn_iscd") or "").strip()
+        if not ticker:
+            continue
+        result.append({
+            "ticker":           ticker,
+            "name":             (item.get("hts_kor_isnm") or "").strip(),
+            "price":            int(item.get("stck_prpr",      0) or 0),
+            "chg_pct":          float(item.get("prdy_ctrt",    0) or 0),
+            "volume_power_pct": float(item.get("tday_rltv",    0) or 0),
+            "buy_vol":          int(item.get("shnu_cnqn_smtn", 0) or 0),
+            "sell_vol":         int(item.get("seln_cnqn_smtn", 0) or 0),
+        })
+    return result
+
+
+async def kis_us_updown_rate(token: str, sort: str = "rise",
+                             exchange: str = "NAS", n: int = 20) -> list:
+    """해외주식 등락률 상위/하위 종목 순위 (HHDFS76290000).
+
+    sort: "rise"=상승률 상위, "fall"=하락률 상위
+    exchange: "NYS", "NAS", "AMS"
+    Returns: [{ticker, name, price, chg_pct, volume}, ...]
+    """
+    gubn = "1" if sort == "rise" else "0"
+    try:
+        async with aiohttp.ClientSession() as s:
+            _, d = await _kis_get(s,
+                "/uapi/overseas-stock/v1/ranking/updown-rate",
+                "HHDFS76290000", token,
+                {
+                    "AUTH":     "",
+                    "EXCD":     exchange.upper(),
+                    "NDAY":     "0",
+                    "GUBN":     gubn,
+                    "VOL_RANG": "0",
+                    "KEYB":     "",
+                })
+        result = []
+        for item in d.get("output2", [])[:n]:
+            symb = (item.get("symb") or "").strip()
+            if not symb:
+                continue
+            result.append({
+                "ticker":  symb,
+                "name":    (item.get("name") or item.get("ename") or "").strip(),
+                "price":   float(item.get("last", 0) or 0),
+                "chg_pct": float(item.get("rate", 0) or 0),
+                "volume":  int(item.get("tvol",  0) or 0),
+            })
+        if sort == "fall":
+            result.sort(key=lambda x: x["chg_pct"])
+        return result
+    except Exception as e:
+        print(f"[kis_us_updown_rate] 오류: {e}")
+        return []
+
+
 async def kis_estimate_perform(ticker: str, token: str) -> dict:
     """국내주식 종목추정실적 (HHKST668300C0)
     output2: 연간 추정실적 / output3: 분기 추정실적

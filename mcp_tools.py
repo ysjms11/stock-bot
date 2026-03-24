@@ -317,6 +317,57 @@ MCP_TOOLS = [
                          "market": {"type": "string", "description": "'kospi'(기본) 또는 'kosdaq'"},
                      },
                      "required": []}},
+    {"name": "get_investor_estimate",
+     "description": "장중 투자자 추정 수급 가집계. 외국인·기관 추정 순매수 수량 (확정치 아님). '지금 삼성전자 외인 추정 수급' 등에 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 005930)"},
+                     },
+                     "required": ["ticker"]}},
+    {"name": "get_foreign_institution",
+     "description": "외국인+기관 합산 순매수 상위 종목 (가집계). 외인과 기관이 동시에 매수하는 종목 파악에 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "sort": {"type": "string", "description": "'buy'=순매수 상위(기본), 'sell'=순매도 상위"},
+                         "n":    {"type": "integer", "description": "조회 종목 수 (기본 20)"},
+                     },
+                     "required": []}},
+    {"name": "get_short_sale",
+     "description": "국내주식 공매도 일별추이. 공매도 비율·수량 확인. 하락 원인 파악 시 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 005930)"},
+                         "n":      {"type": "integer", "description": "조회 일수 (기본 10)"},
+                     },
+                     "required": ["ticker"]}},
+    {"name": "get_news",
+     "description": "KIS 종목 관련 뉴스 헤드라인 목록. 종목명 언급 뉴스 최신순 조회.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 005930)"},
+                         "n":      {"type": "integer", "description": "뉴스 개수 (기본 10)"},
+                     },
+                     "required": ["ticker"]}},
+    {"name": "get_vi_status",
+     "description": "변동성완화장치(VI) 발동 종목 현황. 오늘 VI 발동된 전 종목 목록.",
+     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_volume_power",
+     "description": "체결강도 상위 종목 순위. 매수/매도 체결 비율. 120% 이상=매수 우위. '지금 체결강도 높은 종목' 등에 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "market": {"type": "string", "description": "'all'=전체(기본), 'kospi', 'kosdaq'"},
+                         "n":      {"type": "integer", "description": "조회 종목 수 (기본 20)"},
+                     },
+                     "required": []}},
+    {"name": "get_us_price_rank",
+     "description": "미국 주식 등락률 상위/하위 종목 순위. '나스닥 오늘 상승률 상위' 등에 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "sort":     {"type": "string", "description": "'rise'=상승률 상위(기본), 'fall'=하락률 상위"},
+                         "exchange": {"type": "string", "description": "'NAS'=나스닥(기본), 'NYS'=뉴욕, 'AMS'=아멕스"},
+                         "n":        {"type": "integer", "description": "조회 종목 수 (기본 20)"},
+                     },
+                     "required": []}},
     {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단 기록, compare→보유vs후보 비교",
      "inputSchema": {"type": "object",
                      "properties": {
@@ -1148,6 +1199,83 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 "market": market,
                 "count":  len(rows),
                 "items":  rows,
+            }
+
+        elif name == "get_investor_estimate":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                result = await kis_investor_trend_estimate(ticker, token)
+
+        elif name == "get_foreign_institution":
+            sort = arguments.get("sort", "buy").strip().lower()
+            n    = int(arguments.get("n", 20) or 20)
+            n    = max(1, min(n, 50))
+            items = await kis_foreign_institution_total(token, sort=sort, n=n)
+            result = {
+                "sort":  sort,
+                "count": len(items),
+                "items": items,
+            }
+
+        elif name == "get_short_sale":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                n     = int(arguments.get("n", 10) or 10)
+                n     = max(1, min(n, 30))
+                rows  = await kis_daily_short_sale(ticker, token, n=n)
+                result = {
+                    "ticker": ticker,
+                    "count":  len(rows),
+                    "items":  rows,
+                }
+
+        elif name == "get_news":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                n    = int(arguments.get("n", 10) or 10)
+                n    = max(1, min(n, 30))
+                rows = await kis_news_title(ticker, token, n=n)
+                result = {
+                    "ticker": ticker,
+                    "count":  len(rows),
+                    "items":  rows,
+                }
+
+        elif name == "get_vi_status":
+            rows   = await kis_vi_status(token)
+            result = {
+                "count": len(rows),
+                "items": rows,
+            }
+
+        elif name == "get_volume_power":
+            market = arguments.get("market", "all").strip().lower()
+            n      = int(arguments.get("n", 20) or 20)
+            n      = max(1, min(n, 50))
+            items  = await kis_volume_power_rank(token, market=market, n=n)
+            result = {
+                "market": market,
+                "count":  len(items),
+                "items":  items,
+            }
+
+        elif name == "get_us_price_rank":
+            sort     = arguments.get("sort", "rise").strip().lower()
+            exchange = arguments.get("exchange", "NAS").strip().upper()
+            n        = int(arguments.get("n", 20) or 20)
+            n        = max(1, min(n, 50))
+            items    = await kis_us_updown_rate(token, sort=sort, exchange=exchange, n=n)
+            result   = {
+                "sort":     sort,
+                "exchange": exchange,
+                "count":    len(items),
+                "items":    items,
             }
 
         else:
