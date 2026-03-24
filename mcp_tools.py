@@ -380,7 +380,7 @@ MCP_TOOLS = [
                          "memo":              {"type": "string", "description": "메모"},
                          "date":              {"type": "string", "description": "[decision] 점검일 YYYY-MM-DD (생략시 오늘)"},
                          "regime":            {"type": "string", "description": "[decision] 시장 국면 (예: 경계, 공격, 방어)"},
-                         "grades":            {"type": "object", "description": "[decision] 종목별 확신등급 {종목명: 등급} (예: {\"HD한국조선\": \"A\"})"},
+                         "grades":            {"type": "object", "description": "[decision] 종목별 확신등급. 값은 문자열(\"A\") 또는 객체({\"grade\":\"B\",\"change\":\"A→B\",\"reason\":\"사유\"})"},
                          "actions":           {"type": "array",  "description": "[decision] 액션 목록 (예: [\"HD조선 6주 매도\"])"},
                          "watchlist":         {"type": "array",  "description": "[decision] 관심 종목 목록 (예: [\"한화에어로 130만원대\"])"},
                          "notes":             {"type": "string", "description": "[decision] 메모 (예: 이란전쟁 리스크)"},
@@ -1002,7 +1002,20 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 # ── 투자판단 기록 모드 ──
                 date   = (arguments.get("date") or datetime.now(KST).strftime("%Y-%m-%d")).strip()
                 regime = arguments.get("regime", "").strip()
-                grades = arguments.get("grades") or {}
+                grades_raw = arguments.get("grades") or {}
+                grades = {}
+                for gk, gv in grades_raw.items():
+                    if isinstance(gv, str):
+                        grades[gk] = gv
+                    elif isinstance(gv, dict):
+                        obj = {"grade": gv.get("grade", "")}
+                        if gv.get("change"):
+                            obj["change"] = gv["change"]
+                        if gv.get("reason"):
+                            obj["reason"] = gv["reason"]
+                        grades[gk] = obj
+                    else:
+                        grades[gk] = gv
                 actions  = arguments.get("actions") or []
                 watchlist_dec = arguments.get("watchlist") or []
                 notes  = arguments.get("notes", "").strip()
