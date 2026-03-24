@@ -467,6 +467,70 @@ def get_stock_universe() -> dict:
     return {}
 
 
+async def fetch_universe_from_krx(token: str) -> dict:
+    """KIS 시가총액 상위 API로 유니버스 자동 조회.
+
+    - KOSPI200 구성종목 전체 (fid_input_iscd="2001")
+    - KOSDAQ 시총 상위 150종목 (fid_input_iscd="1001")
+    페이지네이션: 응답 헤더 tr_cont="M" 이면 다음 페이지 요청.
+
+    Returns: {ticker: name}
+    """
+    BASE_PATH = "/uapi/domestic-stock/v1/ranking/market-cap"
+    TR_ID     = "FHPST01740000"
+
+    async def _fetch_market(iscd: str, max_count: int) -> dict:
+        collected: dict = {}
+        tr_cont = ""
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            while len(collected) < max_count:
+                hdrs = {**_kis_headers(token, TR_ID), "tr_cont": tr_cont}
+                params = {
+                    "fid_input_price_2":       "",
+                    "fid_cond_mrkt_div_code":  "J",
+                    "fid_cond_scr_div_code":   "20174",
+                    "fid_div_cls_code":        "1",   # 보통주만 (우선주·ETF 제외)
+                    "fid_input_iscd":          iscd,
+                    "fid_trgt_cls_code":       "0",
+                    "fid_trgt_exls_cls_code":  "0",
+                    "fid_input_price_1":       "",
+                    "fid_vol_cnt":             "",
+                }
+                try:
+                    async with s.get(f"{KIS_BASE_URL}{BASE_PATH}",
+                                     headers=hdrs, params=params) as r:
+                        data           = await r.json(content_type=None)
+                        resp_tr_cont   = r.headers.get("tr_cont", "D")
+                except Exception as e:
+                    print(f"[fetch_universe] iscd={iscd} 요청 오류: {e}")
+                    break
+
+                items = data.get("output", [])
+                if not items:
+                    break
+                for item in items:
+                    ticker = (item.get("mksc_shrn_iscd") or "").strip()
+                    name   = (item.get("hts_kor_isnm")   or "").strip()
+                    if ticker and name:
+                        collected[ticker] = name
+                        if len(collected) >= max_count:
+                            break
+
+                if resp_tr_cont != "M":
+                    break
+                tr_cont = "N"
+                await asyncio.sleep(0.15)
+
+        return collected
+
+    kospi200  = await _fetch_market("2001", 250)  # KOSPI200 전체
+    await asyncio.sleep(0.3)
+    kosdaq150 = await _fetch_market("1001", 150)  # KOSDAQ 시총 상위 150
+    universe  = {**kospi200, **kosdaq150}
+    print(f"[fetch_universe] KOSPI200={len(kospi200)}, KOSDAQ={len(kosdaq150)}, 합계={len(universe)}")
+    return universe
+
+
 async def batch_fetch(codes: list, fetch_fn, token: str, delay: float = 0.06) -> dict:
     """종목 리스트에 대해 rate limit 지키면서 배치 조회.
     codes: list of tickers

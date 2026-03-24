@@ -742,6 +742,50 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📋 유니버스 자동 갱신 (매주 월요일 07:00 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
+    """매주 월요일 07:00 KST — KOSPI200 + KOSDAQ150 기준으로 stock_universe.json 자동 갱신."""
+    try:
+        token = await get_kis_token()
+        if not token:
+            print("[universe_update] KIS 토큰 발급 실패")
+            return
+
+        old = get_stock_universe()
+        new = await fetch_universe_from_krx(token)
+        if not new:
+            print("[universe_update] 종목 조회 결과 없음 — 갱신 스킵")
+            return
+
+        added   = sorted(set(new) - set(old))
+        removed = sorted(set(old) - set(new))
+
+        updated_data = {
+            "updated": datetime.now(KST).strftime("%Y-%m-%d"),
+            "note":    "KIS 시가총액 상위 자동 갱신 (KOSPI200 + KOSDAQ 상위 150)",
+            "codes":   new,
+        }
+        save_json(UNIVERSE_FILE, updated_data)
+        print(f"[universe_update] 저장 완료: {len(new)}종목 (추가 {len(added)}, 삭제 {len(removed)})")
+
+        if not added and not removed:
+            return  # 변경 없으면 텔레그램 알림 생략
+
+        msg = f"📋 *유니버스 갱신 완료* ({len(new)}종목)\n"
+        if added:
+            names = [new.get(t, t) for t in added]
+            msg += f"\n✅ 추가 {len(added)}종목: {', '.join(names)}"
+        if removed:
+            names = [old.get(t, t) for t in removed]
+            msg += f"\n❌ 삭제 {len(removed)}종목: {', '.join(names)}"
+
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[universe_update] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
@@ -1421,7 +1465,8 @@ def main():
     jq.run_daily(us_market_summary, time=dtime(5,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_dst")
     jq.run_daily(us_market_summary, time=dtime(6,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_std")
     jq.run_daily(check_supply_drain, time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="supply_drain")
-    jq.run_daily(weekly_review, time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
+    jq.run_daily(weekly_review,           time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
+    jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
     jq.run_daily(macro_dashboard, time=dtime(6,  0, tzinfo=KST), name="macro_am")
