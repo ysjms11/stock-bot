@@ -251,6 +251,12 @@ MCP_TOOLS = [
                      "required": ["ticker"]}},
     {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 % + 매수감시 목록",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_investor_flow", "description": "개별 종목 투자자별 수급: 외국인·기관·개인 매수/매도/순매수 수량. 장중이면 당일 누적, 장후면 최근 영업일 확정 데이터.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 009540)"},
+                     },
+                     "required": ["ticker"]}},
     {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단 기록, compare→보유vs후보 비교",
      "inputSchema": {"type": "object",
                      "properties": {
@@ -996,6 +1002,42 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
                 else:
                     result = {"error": f"{ticker} 워치리스트에 없음"}
+
+        elif name == "get_investor_flow":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                inv = await kis_investor_trend(ticker, token)
+                if not inv:
+                    result = {"error": f"{ticker} 수급 데이터 없음"}
+                else:
+                    row = inv[0]  # 가장 최근 영업일 (장중이면 당일 누적)
+                    # 장중 여부: 평일 09:00~15:30 KST
+                    now_kst = datetime.now(KST)
+                    wd = now_kst.weekday()
+                    tot_min = now_kst.hour * 60 + now_kst.minute
+                    is_live = (wd < 5 and 9 * 60 <= tot_min <= 15 * 60 + 30)
+                    result = {
+                        "ticker": ticker,
+                        "date": row.get("stck_bsop_date", ""),
+                        "is_live": is_live,
+                        "foreign":     {
+                            "buy":  int(row.get("frgn_shnu_vol", 0) or 0),
+                            "sell": int(row.get("frgn_seln_vol", 0) or 0),
+                            "net":  int(row.get("frgn_ntby_qty", 0) or 0),
+                        },
+                        "institution": {
+                            "buy":  int(row.get("orgn_shnu_vol", 0) or 0),
+                            "sell": int(row.get("orgn_seln_vol", 0) or 0),
+                            "net":  int(row.get("orgn_ntby_qty", 0) or 0),
+                        },
+                        "individual":  {
+                            "buy":  int(row.get("prsn_shnu_vol", 0) or 0),
+                            "sell": int(row.get("prsn_seln_vol", 0) or 0),
+                            "net":  int(row.get("prsn_ntby_qty", 0) or 0),
+                        },
+                    }
 
         else:
             result = {"error": f"unknown tool: {name}"}
