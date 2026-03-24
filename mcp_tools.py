@@ -1,4 +1,5 @@
 import json
+import os
 import asyncio
 import uuid
 import aiohttp
@@ -15,6 +16,45 @@ from kis_api import (
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 스크리너 당일 결과 캐시
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_DART_CACHE_FILE = "/data/dart_screener_cache.json"
+
+def _load_dart_screener_cache(mode: str, cache_key: str) -> dict | None:
+    """당일 mode+cache_key 에 해당하는 캐시 반환. 없으면 None."""
+    today = datetime.now().strftime("%Y%m%d")
+    try:
+        if os.path.exists(_DART_CACHE_FILE):
+            data = json.load(open(_DART_CACHE_FILE, encoding="utf-8"))
+            day = data.get(today, {})
+            entry = day.get(cache_key)
+            if entry:
+                print(f"[dart_cache] 캐시 히트: {cache_key}")
+                return entry
+    except Exception as e:
+        print(f"[dart_cache] 로드 오류: {e}")
+    return None
+
+def _save_dart_screener_cache(cache_key: str, result: dict):
+    """당일 캐시에 결과 저장. 오늘 날짜 외 항목은 자동 삭제."""
+    today = datetime.now().strftime("%Y%m%d")
+    try:
+        data = {}
+        if os.path.exists(_DART_CACHE_FILE):
+            try:
+                data = json.load(open(_DART_CACHE_FILE, encoding="utf-8"))
+            except Exception:
+                pass
+        today_map = data.get(today, {})
+        today_map[cache_key] = result
+        # 오늘 날짜 외 항목 제거 (캐시 파일 비대화 방지)
+        with open(_DART_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({today: today_map}, f, ensure_ascii=False)
+        print(f"[dart_cache] 저장: {cache_key} ({result.get('count', 0)}건)")
+    except Exception as e:
+        print(f"[dart_cache] 저장 오류: {e}")
 
 # DART 공시 중요도 태그 키워드
 _DART_TAGS = {
@@ -145,10 +185,8 @@ async def _scan_dart_op_one(ticker: str, name: str, corp_code: str, sem: asyncio
     """dart_op_growth 스캔 단위 — 연간 영업이익 YoY 비교"""
     try:
         async with sem:
-            await asyncio.sleep(0.05)
             r_recent = await dart_quarterly_op(corp_code, recent_year, 4)
         async with sem:
-            await asyncio.sleep(0.05)
             r_prev = await dart_quarterly_op(corp_code, recent_year - 1, 4)
         if not r_recent or not r_prev:
             return None
@@ -177,10 +215,8 @@ async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem:
     """dart_turnaround 스캔 단위 — 영업이익 적자→흑자 전환"""
     try:
         async with sem:
-            await asyncio.sleep(0.05)
             r_recent = await dart_quarterly_op(corp_code, recent_year, 4)
         async with sem:
-            await asyncio.sleep(0.05)
             r_prev = await dart_quarterly_op(corp_code, recent_year - 1, 4)
         if not r_recent or not r_prev:
             return None
@@ -677,22 +713,36 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                 recent_year = now.year - 1  # 4월~: 전년도 사업보고서 비교
                             print(f"[{mode}] recent_year={recent_year} (month={now.month})")
                             codes = [(t, n, corp_map[t]) for t, n in universe.items() if t in corp_map]
-                            sem_d = asyncio.Semaphore(5)
+                            # semaphore(15): 5→15로 확대, sleep 제거 → 첫 실행 속도 3배 향상
+                            sem_d = asyncio.Semaphore(15)
                             if mode == "dart_op_growth":
                                 min_growth = float(arguments.get("min_growth", 50))
-                                print(f"[dart_op_growth] {len(codes)}종목 스캔 (최소 성장률: {min_growth}%)")
-                                items = await asyncio.gather(
-                                    *[_scan_dart_op_one(t, n, c, sem_d, min_growth, recent_year) for t, n, c in codes]
-                                )
-                                results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
-                                result = {"mode": "dart_op_growth", "count": len(results), "results": results}
+                                # 당일 캐시 확인 (min_growth 포함해서 캐시 키 구성)
+                                _ckey = f"dart_op_growth_{int(min_growth)}_{recent_year}"
+                                cached = _load_dart_screener_cache(mode, _ckey)
+                                if cached:
+                                    result = cached
+                                else:
+                                    print(f"[dart_op_growth] {len(codes)}종목 스캔 (최소 성장률: {min_growth}%)")
+                                    items = await asyncio.gather(
+                                        *[_scan_dart_op_one(t, n, c, sem_d, min_growth, recent_year) for t, n, c in codes]
+                                    )
+                                    results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
+                                    result = {"mode": "dart_op_growth", "count": len(results), "results": results}
+                                    _save_dart_screener_cache(_ckey, result)
                             else:  # dart_turnaround
-                                print(f"[dart_turnaround] {len(codes)}종목 스캔")
-                                items = await asyncio.gather(
-                                    *[_scan_dart_turnaround_one(t, n, c, sem_d, recent_year) for t, n, c in codes]
-                                )
-                                results = sorted([x for x in items if x], key=lambda x: x["op_recent"], reverse=True)
-                                result = {"mode": "dart_turnaround", "count": len(results), "results": results}
+                                _ckey = f"dart_turnaround_{recent_year}"
+                                cached = _load_dart_screener_cache(mode, _ckey)
+                                if cached:
+                                    result = cached
+                                else:
+                                    print(f"[dart_turnaround] {len(codes)}종목 스캔")
+                                    items = await asyncio.gather(
+                                        *[_scan_dart_turnaround_one(t, n, c, sem_d, recent_year) for t, n, c in codes]
+                                    )
+                                    results = sorted([x for x in items if x], key=lambda x: x["op_recent"], reverse=True)
+                                    result = {"mode": "dart_turnaround", "count": len(results), "results": results}
+                                    _save_dart_screener_cache(_ckey, result)
                 except Exception as _de:
                     _tb = traceback.format_exc()
                     print(f"[get_macro/{mode}] 에러: {_de}\n{_tb}")
