@@ -6,6 +6,7 @@ import aiohttp
 import xml.etree.ElementTree as ET
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 & 설정
@@ -19,6 +20,7 @@ DART_API_KEY = os.environ.get("DART_API_KEY", "")
 KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
 DART_BASE_URL = "https://opendart.fss.or.kr/api"
 KST = timezone(timedelta(hours=9))
+ET  = ZoneInfo('America/New_York')  # DST 자동 감지 (서머타임 EDT/표준시 EST)
 
 os.makedirs("/data", exist_ok=True)
 
@@ -94,14 +96,31 @@ def _guess_excd(symbol: str) -> str:
 
 
 def _is_us_market_hours_kst() -> bool:
-    """미국 장 시간 여부 (KST 기준: 월~금 23:30~06:00)"""
-    now = datetime.now(KST)
-    wd, h, m = now.weekday(), now.hour, now.minute
-    if h == 23 and m >= 30:
-        return wd < 5          # 월~금 밤 KST → 미국 장중
-    if h < 6:
-        return 1 <= wd <= 5    # 화~토 새벽 KST (전날 미국 장중)
-    return False
+    """미국 장 시간 여부 (ET 09:30~16:00, DST 자동 감지)"""
+    now_et = datetime.now(ET)
+    wd = now_et.weekday()
+    if wd >= 5:
+        return False  # 토/일 ET → 미국 장 없음
+    h, m = now_et.hour, now_et.minute
+    if h < 9 or (h == 9 and m < 30):
+        return False  # ET 09:30 이전
+    if h >= 16:
+        return False  # ET 16:00 이후
+    return True
+
+
+def _is_us_market_closed() -> bool:
+    """미국 정규장 마감 후 30분 이내 여부 (DST 자동 감지)
+
+    DST(UTC-4) 시: KST 05:00~05:30
+    표준시(UTC-5) 시: KST 06:00~06:30
+    """
+    now_et = datetime.now(ET)
+    if now_et.weekday() >= 5:
+        return False  # 토/일 ET → 미국 장 없음
+    close_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    diff_sec = (now_et - close_et).total_seconds()
+    return 0 <= diff_sec <= 1800  # 마감 후 0~30분 이내
 
 # DART 중요 공시 키워드
 DART_KEYWORDS = [

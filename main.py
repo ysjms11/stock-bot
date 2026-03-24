@@ -1,13 +1,13 @@
 import os
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dtime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from aiohttp import web
 
 from kis_api import *
 from kis_api import (
-    _is_us_ticker, _is_us_market_hours_kst, _fetch_sector_flow,
+    _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _fetch_sector_flow,
     ws_manager, get_ws_tickers,
 )
 
@@ -303,9 +303,10 @@ async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 # 🔔 자동알림 2b: 미국 장 마감 요약 (06:05)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now(KST)
-    if now.weekday() >= 5:
+    # 미국 정규장 마감 후 30분 이내가 아니면 스킵 (DST 자동 감지)
+    if not _is_us_market_closed():
         return
+    now = datetime.now(KST)
     try:
         sp500 = await get_yahoo_quote("^GSPC")
         nasdaq = await get_yahoo_quote("^IXIC")
@@ -1362,13 +1363,17 @@ def main():
     # [2026-03-19] 환율 알림 비활성화 — 매크로 대시보드(#14)로 통합 예정
     # jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
-    jq.run_daily(daily_kr_summary, time=datetime.strptime("15:40", "%H:%M").time(), days=(0,1,2,3,4), name="kr_summary")
-    jq.run_daily(us_market_summary, time=datetime.strptime("06:05", "%H:%M").time(), days=(0,1,2,3,4), name="us_summary")
-    jq.run_daily(check_supply_drain, time=datetime.strptime("15:40", "%H:%M").time(), days=(0,1,2,3,4), name="supply_drain")
-    jq.run_daily(weekly_review, time=datetime.strptime("01:00", "%H:%M").time(), days=(6,), name="weekly")
+    # 모든 run_daily time은 KST-aware(tzinfo=KST)로 지정 → Railway(UTC 서버)에서도 정확한 시각에 실행됨
+    jq.run_daily(daily_kr_summary, time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="kr_summary")
+    # 미국 장 마감 요약: 서머타임(05:05 KST) + 표준시(06:05 KST) 두 시각 등록
+    # _is_us_market_closed() 가드로 실제 마감 30분 이내일 때만 발송, 이중 발송 없음
+    jq.run_daily(us_market_summary, time=dtime(5,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_dst")
+    jq.run_daily(us_market_summary, time=dtime(6,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_std")
+    jq.run_daily(check_supply_drain, time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="supply_drain")
+    jq.run_daily(weekly_review, time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
-    jq.run_daily(macro_dashboard, time=datetime.strptime("18:00", "%H:%M").time(), name="macro_pm")
-    jq.run_daily(macro_dashboard, time=datetime.strptime("06:00", "%H:%M").time(), name="macro_am")
+    jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
+    jq.run_daily(macro_dashboard, time=dtime(6,  0, tzinfo=KST), name="macro_am")
 
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")
