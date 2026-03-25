@@ -1436,8 +1436,65 @@ def format_macro_msg(data: dict) -> str:
             msg += f"{k}: {v}\n"
         msg += "\n"
 
-    msg += "→ Claude에서 레짐 점검하세요"
+    regime = judge_regime(data)
+    msg += f"→ 자동판정: {regime['regime']} {regime['label']} ({', '.join(regime['reasons'])})"
     return msg
+
+
+def judge_regime(data: dict) -> dict:
+    """매크로 데이터 기반 레짐 자동 판정 (RED > ORANGE > YELLOW > GREEN)"""
+    def _sf(d, key="price"):
+        v = d.get(key, "?")
+        if v == "?":
+            return None
+        try:
+            return float(str(v).replace(",", ""))
+        except Exception:
+            return None
+
+    vix       = _sf(data.get("VIX",   {}))
+    wti       = _sf(data.get("WTI",   {}))
+    kospi_chg = _sf(data.get("KOSPI", {}), "change_pct")
+    usdkrw    = _sf(data.get("USDKRW",{}))
+    ff_amt    = data.get("FOREIGN_FLOW", {}).get("amount_억", "?")
+    frgn_net  = ff_amt if isinstance(ff_amt, (int, float)) else None
+
+    # RED
+    red = []
+    if vix       is not None and vix       >= 30:  red.append(f"VIX {vix:.2f}")
+    if wti       is not None and wti       >= 100: red.append(f"WTI ${wti:.2f}")
+    if kospi_chg is not None and kospi_chg <= -5:  red.append(f"KOSPI {kospi_chg:+.2f}%")
+    if red:
+        return {"regime": "🔴", "label": "위기", "reasons": red}
+
+    # ORANGE
+    orange = []
+    if vix       is not None and vix       >= 25:   orange.append(f"VIX {vix:.2f}")
+    if wti       is not None and wti       >= 90:   orange.append(f"WTI ${wti:.2f}")
+    if kospi_chg is not None and kospi_chg <= -3:   orange.append(f"KOSPI {kospi_chg:+.2f}%")
+    if usdkrw    is not None and usdkrw    >= 1500: orange.append(f"USD/KRW {usdkrw:.1f}")
+    if orange:
+        return {"regime": "🟠", "label": "경계", "reasons": orange}
+
+    # GREEN (모든 조건 충족 시)
+    if (vix       is not None and vix       < 20 and
+        kospi_chg is not None and kospi_chg > 0  and
+        frgn_net  is not None and frgn_net  > 0  and
+        usdkrw    is not None and usdkrw    < 1400):
+        return {"regime": "🟢", "label": "공격", "reasons": [
+            f"VIX {vix:.2f}",
+            f"KOSPI {kospi_chg:+.2f}%",
+            f"외인 {frgn_net:+,}억",
+            f"USD/KRW {usdkrw:.1f}",
+        ]}
+
+    # YELLOW (기본)
+    yellow = []
+    if vix is not None and 20 <= vix < 25:
+        yellow.append(f"VIX {vix:.2f}")
+    if not yellow:
+        yellow.append("특이 신호 없음")
+    return {"regime": "🟡", "label": "중립", "reasons": yellow}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

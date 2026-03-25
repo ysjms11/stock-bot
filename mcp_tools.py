@@ -670,6 +670,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result = {
                         "data":    data,
                         "message": format_macro_msg(data),
+                        "regime":  judge_regime(data),
                     }
                 except Exception as _me:
                     _tb = traceback.format_exc()
