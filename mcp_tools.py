@@ -397,6 +397,13 @@ MCP_TOOLS = [
                          "reasoning":         {"type": "string", "description": "[compare] 비교 근거"},
                      },
                      "required": []}},
+    {"name": "delete_alert", "description": "매도 후 stoploss.json에서 해당 종목의 손절/목표가 알림을 완전히 삭제. watchlist_log에 delete_alert 기록.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "종목코드 또는 미국 티커 (예: 034020, TSLA)"},
+                         "market": {"type": "string", "description": "'KR'=한국(기본), 'US'=미국"},
+                     },
+                     "required": ["ticker"]}},
 ]
 
 
@@ -1326,6 +1333,46 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_fnguide_consensus, ticker
                 )
+
+        elif name == "delete_alert":
+            ticker = arguments.get("ticker", "").strip().upper()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                stops = load_stoploss()
+                if _is_us_ticker(ticker):
+                    us = stops.get("us_stocks", {})
+                    if ticker not in us:
+                        result = {"ok": False, "message": "해당 종목 알림이 없습니다"}
+                    else:
+                        entry = us.pop(ticker)
+                        stops["us_stocks"] = us
+                        save_json(STOPLOSS_FILE, stops)
+                        append_watchlist_log({
+                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "action": "delete_alert",
+                            "ticker": ticker,
+                            "name": entry.get("name", ticker),
+                            "stop_price": entry.get("stop_price"),
+                            "target_price": entry.get("target_price"),
+                        })
+                        result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
+                else:
+                    if ticker not in stops:
+                        result = {"ok": False, "message": "해당 종목 알림이 없습니다"}
+                    else:
+                        entry = stops.pop(ticker)
+                        save_json(STOPLOSS_FILE, stops)
+                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                        append_watchlist_log({
+                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "action": "delete_alert",
+                            "ticker": ticker,
+                            "name": entry.get("name", ticker),
+                            "stop_price": entry.get("stop_price"),
+                            "target_price": entry.get("target_price"),
+                        })
+                        result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
 
         else:
             result = {"error": f"unknown tool: {name}"}
