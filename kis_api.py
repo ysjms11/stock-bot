@@ -198,6 +198,154 @@ def append_watchlist_log(entry: dict):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# FnGuide 컨센서스
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _recom_label(code) -> str:
+    """RECOM_CD 숫자 → 투자의견 한글"""
+    try:
+        v = float(str(code).strip())
+        if v >= 4.0: return "매수"
+        if v >= 3.0: return "중립매수"
+        if v >= 2.0: return "중립"
+        return "매도"
+    except Exception:
+        return str(code)
+
+def fetch_fnguide_consensus(ticker: str) -> dict:
+    """
+    FnGuide 컨센서스 JSON API로 증권사 목표주가/투자의견 조회.
+    ticker: 6자리 한국 종목코드 (예: '009540')
+    반환: {ticker, name, consensus_target, opinion, reports, updated}
+    실패 시 빈 결과 반환 (예외 없음).
+    """
+    import requests as _req
+    import json as _json
+
+    empty = {
+        "ticker": ticker, "name": "", "error": "데이터 없음",
+        "consensus_target": {"avg": 0, "high": 0, "low": 0},
+        "opinion": {"buy": 0, "hold": 0, "sell": 0},
+        "reports": [], "updated": "",
+    }
+
+    try:
+        gicode = f"A{ticker}"
+        base   = "https://comp.fnguide.com"
+        referer = f"{base}/SVO2/ASP/SVD_Consensus.asp?pGB=1&gicode={gicode}"
+        hdrs = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+            "Referer": referer,
+        }
+
+        # 1. 세션 열기 (쿠키 획득)
+        sess = _req.Session()
+        sess.get(referer, headers=hdrs, timeout=10)
+
+        # 2. 증권사별 목표주가 JSON (03_A{ticker}.json)
+        r3 = sess.get(
+            f"{base}/SVO2/json/data/01_06/03_{gicode}.json",
+            headers=hdrs, timeout=10,
+        )
+        if r3.status_code != 200 or len(r3.content) < 50:
+            return empty
+
+        data3 = _json.loads(r3.content.decode("utf-8-sig"))
+        rows = data3.get("comp", [])
+        if not rows:
+            return empty
+
+        # 종목명 (04_ 파일에서 가져옴)
+        stock_name = ""
+
+        # 3. 최근 리포트 JSON (04_A{ticker}.json)
+        reports = []
+        r4 = sess.get(
+            f"{base}/SVO2/json/data/01_06/04_{gicode}.json",
+            headers=hdrs, timeout=10,
+        )
+        if r4.status_code == 200 and len(r4.content) > 50:
+            data4 = _json.loads(r4.content.decode("utf-8-sig"))
+            for item in data4.get("comp", []):
+                stock_name = stock_name or item.get("CO_NM", "")
+                tp_raw = item.get("TARGET_PRC", "").strip()
+                try:
+                    tp = int(tp_raw.replace(",", ""))
+                except Exception:
+                    tp = 0
+                rec = item.get("RECOMMEND", "").upper()
+                if rec in ("BUY", "STRONG BUY"):
+                    opinion_str = "매수"
+                elif rec in ("HOLD", "NEUTRAL", "OUTPERFORM"):
+                    opinion_str = "중립"
+                elif rec == "SELL":
+                    opinion_str = "매도"
+                else:
+                    opinion_str = rec
+                dt_raw = item.get("BULLET_DT", "")
+                dt = f"{dt_raw[:4]}-{dt_raw[4:6]}-{dt_raw[6:]}" if len(dt_raw) == 8 else dt_raw
+                reports.append({
+                    "broker":  item.get("OFFER_INST_NM", ""),
+                    "date":    dt,
+                    "target":  tp,
+                    "opinion": opinion_str,
+                    "title":   item.get("TITLE", ""),
+                })
+
+        # 4. 증권사별 최신 목표주가 집계 (03_ 기반)
+        inst_reports = []
+        prices = []
+        buy_cnt = hold_cnt = sell_cnt = 0
+        avg_prc = 0
+        updated = ""
+
+        for row in rows:
+            tp_raw = row.get("TARGET_PRC", "").strip()
+            try:
+                tp = int(tp_raw.replace(",", ""))
+            except Exception:
+                tp = 0
+            if not avg_prc:
+                try:
+                    avg_prc = int(row.get("AVG_PRC", "0").replace(",", ""))
+                except Exception:
+                    pass
+            recom = _recom_label(row.get("RECOM_CD", ""))
+            if recom == "매수":       buy_cnt  += 1
+            elif recom == "중립매수": hold_cnt += 1
+            elif recom == "중립":     hold_cnt += 1
+            else:                     sell_cnt += 1
+            dt = row.get("EST_DT", "").replace("/", "-")
+            if not updated or dt > updated:
+                updated = dt
+            if tp > 0:
+                prices.append(tp)
+            inst_reports.append({
+                "broker":  row.get("INST_NM", ""),
+                "date":    dt,
+                "target":  tp,
+                "opinion": recom,
+            })
+
+        high = max(prices) if prices else 0
+        low  = min(prices) if prices else 0
+        avg  = avg_prc or (sum(prices) // len(prices) if prices else 0)
+
+        return {
+            "ticker":           ticker,
+            "name":             stock_name,
+            "consensus_target": {"avg": avg, "high": high, "low": low},
+            "opinion":          {"buy": buy_cnt, "hold": hold_cnt, "sell": sell_cnt},
+            "reports":          reports,          # 04_: 최근 리포트 (제목+요약 포함)
+            "broker_targets":   inst_reports,     # 03_: 증권사별 최신 목표가
+            "updated":          updated,
+        }
+
+    except Exception as e:
+        empty["error"] = str(e)
+        return empty
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # KIS API
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def get_kis_token():

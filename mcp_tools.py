@@ -368,6 +368,12 @@ MCP_TOOLS = [
                          "n":        {"type": "integer", "description": "조회 종목 수 (기본 20)"},
                      },
                      "required": []}},
+    {"name": "get_consensus",  "description": "종목별 증권사 컨센서스 목표주가/투자의견 조회 (FnGuide 기반). 평균·최고·최저 목표주가, 매수/중립/매도 건수, 증권사별 최신 목표가 반환.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "한국 종목코드 6자리 (예: 009540)"},
+                     },
+                     "required": ["ticker"]}},
     {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단 기록, compare→보유vs후보 비교",
      "inputSchema": {"type": "object",
                      "properties": {
@@ -1311,6 +1317,15 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 "count":    len(items),
                 "items":    items,
             }
+
+        elif name == "get_consensus":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            else:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_fnguide_consensus, ticker
+                )
 
         else:
             result = {"error": f"unknown tool: {name}"}
