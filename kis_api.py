@@ -34,6 +34,7 @@ WATCH_SENT_FILE      = "/data/watch_sent.json"
 STOPLOSS_SENT_FILE   = "/data/stoploss_sent.json"
 DECISION_LOG_FILE = "/data/decision_log.json"
 COMPARE_LOG_FILE  = "/data/compare_log.json"
+WATCHLIST_LOG_FILE = "/data/watchlist_log.json"
 EVENTS_FILE       = "/data/events.json"
 WEEKLY_BASE_FILE  = "/data/weekly_base.json"
 UNIVERSE_FILE     = "/data/stock_universe.json"
@@ -184,6 +185,16 @@ def load_decision_log():
 
 def load_compare_log():
     return load_json(COMPARE_LOG_FILE, [])
+
+def load_watchlist_log() -> list:
+    return load_json(WATCHLIST_LOG_FILE, [])
+
+def append_watchlist_log(entry: dict):
+    log = load_watchlist_log()
+    log.append(entry)
+    if len(log) > 200:
+        log = log[-200:]
+    save_json(WATCHLIST_LOG_FILE, log)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

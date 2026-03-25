@@ -1,3 +1,6 @@
 .env
 __pycache__/
 *.pyc
+_check*.py
+_hankyung.html
+test_*.py
