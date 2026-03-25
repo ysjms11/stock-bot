@@ -652,7 +652,9 @@ async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5) -
                 "FID_ORG_ADJ_PRC":        "",
                 "FID_ETC_CLS_CODE":       "",
             })
-    rows = d.get("output1", [])
+    rows = d.get("output1") if d else None
+    if not isinstance(rows, list):
+        rows = []
     result = []
     for row in rows[:n_days]:
         result.append({
