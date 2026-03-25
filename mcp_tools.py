@@ -97,9 +97,12 @@ async def _scan_conv_one(ticker: str, name: str, token: str, sem: asyncio.Semaph
             cur  = valid[0]
             sp = (max(ma5, ma20, ma60) - min(ma5, ma20, ma60)) / cur * 100
             if sp <= spread_threshold:
+                disp_20 = round((cur - ma20) / ma20 * 100, 2)
+                disp_60 = round((cur - ma60) / ma60 * 100, 2)
                 return {"ticker": ticker, "name": name, "price": cur,
                         "spread": round(sp, 2), "ma5": round(ma5),
-                        "ma20": round(ma20), "ma60": round(ma60)}
+                        "ma20": round(ma20), "ma60": round(ma60),
+                        "disp_20": disp_20, "disp_60": disp_60}
         except Exception as e:
             print(f"[convergence] {ticker} 오류: {e}")
         return None
@@ -261,11 +264,13 @@ MCP_TOOLS = [
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 코스피 위주 110종목. mode='convergence2': 코스닥 위주 111종목. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도 포함, market/sort 지원). mode='convergence2': 코스닥 위주 하위호환. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|'dart_op_growth'|'dart_turnaround'|생략"},
-                         "spread":     {"type": "number", "description": "[convergence/convergence2] 이평 수렴 기준 % (기본 5.0)"},
+                         "spread":     {"type": "number", "description": "[convergence] 이평 수렴 기준 % (기본 5.0)"},
+                         "market":     {"type": "string", "description": "[convergence] 'all'=코스피+코스닥(기본), 'kospi'=코스피위주, 'kosdaq'=코스닥위주"},
+                         "sort":       {"type": "string", "description": "[convergence] 'spread'=수렴도순(기본), 'disp_20'=20일이격도순, 'disp_60'=60일이격도순"},
                          "min_growth": {"type": "number", "description": "[op_growth/dart_op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
                      "required": []}},
@@ -697,27 +702,51 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         pass
                 result = {"etfs": etf_results}
             elif mode in ("convergence", "convergence2"):
-                # ── 이평선 수렴 스크리너 (분할 스캔: 110 / 111종목) ──
+                # ── 이평선 수렴 스크리너 ──
                 try:
                     spread_threshold = float(arguments.get("spread", 5.0))
+                    sort_by = arguments.get("sort", "spread").strip().lower()
+                    if sort_by not in ("spread", "disp_20", "disp_60"):
+                        sort_by = "spread"
+                    # market 파라미터: convergence2는 'kosdaq'으로 고정
+                    if mode == "convergence2":
+                        market = "kosdaq"
+                    else:
+                        market = arguments.get("market", "all").strip().lower()
+                        if market not in ("kospi", "kosdaq", "all"):
+                            market = "all"
                     universe = get_stock_universe()
                     if not universe:
                         result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
                     else:
                         all_codes = list(universe.items())
                         half = len(all_codes) // 2 + len(all_codes) % 2  # 110 for 221
-                        codes = all_codes[:half] if mode == "convergence" else all_codes[half:]
-                        label = "코스피위주" if mode == "convergence" else "코스닥위주"
-                        print(f"[{mode}] {len(codes)}종목 병렬 스캔 시작 ({label}, 기준 스프레드: {spread_threshold}%)")
+                        kospi_codes  = all_codes[:half]
+                        kosdaq_codes = all_codes[half:]
+                        if market == "kospi":
+                            codes = kospi_codes
+                        elif market == "kosdaq":
+                            codes = kosdaq_codes
+                        else:  # all
+                            codes = all_codes
+                        print(f"[{mode}] {len(codes)}종목 병렬 스캔 시작 (market={market}, spread≤{spread_threshold}%, sort={sort_by})")
                         sem_c = asyncio.Semaphore(10)
                         items = await asyncio.gather(
                             *[_scan_conv_one(t, n, token, sem_c, spread_threshold) for t, n in codes]
                         )
-                        conv_results = sorted([x for x in items if x], key=lambda x: x["spread"])
+                        conv_results = [x for x in items if x]
+                        if sort_by == "disp_20":
+                            conv_results.sort(key=lambda x: abs(x["disp_20"]))
+                        elif sort_by == "disp_60":
+                            conv_results.sort(key=lambda x: abs(x["disp_60"]))
+                        else:
+                            conv_results.sort(key=lambda x: x["spread"])
                         print(f"[{mode}] 완료: {len(conv_results)}개 수렴 종목")
                         result = {
                             "mode": mode,
+                            "market": market,
                             "spread_threshold": spread_threshold,
+                            "sort": sort_by,
                             "count": len(conv_results),
                             "results": conv_results,
                         }
