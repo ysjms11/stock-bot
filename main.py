@@ -127,6 +127,25 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         elif week_pct <= -3:
             msg += f"⚠️ 주간 {week_pct:.1f}% — 신규매수 주의\n"
 
+        # ── 컨센서스 목표가 수집 (한국 보유종목만) ──
+        consensus_map = {}
+        loop = asyncio.get_event_loop()
+        for row in port_rows:
+            try:
+                c = await asyncio.wait_for(
+                    loop.run_in_executor(None, fetch_fnguide_consensus, row["ticker"]),
+                    timeout=5.0,
+                )
+                avg = c.get("consensus_target", {}).get("avg") if c else None
+                if avg:
+                    consensus_map[row["ticker"]] = {
+                        "avg": float(avg),
+                        "buy": (c.get("opinion") or {}).get("buy", 0),
+                    }
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
         # ── [보유] 종목별 ──
         if port_rows:
             msg += "\n[보유]\n"
@@ -141,7 +160,28 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 frgn_disp = (f"+{frgn_k}K" if frgn_qty >= 0 else f"-{frgn_k}K") if frgn_k > 0 else f"{frgn_qty:+}"
                 frgn_ok = " ✅" if frgn_qty > 0 else ""
                 tgt_str = f" | 목표{row['tgt']:,.0f} {row['tgt_pct']:+.1f}%" if row["tgt_pct"] is not None else ""
-                msg += f"{name} {price:,} ({chg:+.2f}%){fire} | 외인{frgn_disp}{frgn_ok}{tgt_str}\n"
+                # 컨센서스 비교
+                cons_str = ""
+                try:
+                    cdata = consensus_map.get(row["ticker"])
+                    if cdata:
+                        cavg = cdata["avg"]
+                        buy_cnt = cdata["buy"]
+                        our_tgt = row["tgt"]
+                        if our_tgt > 0 and cavg > 0:
+                            ratio = our_tgt / cavg
+                            diff_pct = (our_tgt - cavg) / cavg * 100
+                            if ratio < 0.8:
+                                cons_str = f" ⚠️목표{our_tgt:,.0f} vs 컨센{cavg:,.0f} (↑{abs(diff_pct):.0f}%)"
+                            elif ratio > 1.2:
+                                cons_str = f" ⚠️목표{our_tgt:,.0f} vs 컨센{cavg:,.0f} (↓{abs(diff_pct):.0f}%)"
+                            else:
+                                cons_str = f" 📊컨센{cavg:,.0f}(매수{buy_cnt})"
+                        elif cavg > 0:
+                            cons_str = f" 📊컨센{cavg:,.0f}(매수{buy_cnt})"
+                except Exception:
+                    pass
+                msg += f"{name} {price:,} ({chg:+.2f}%){fire} | 외인{frgn_disp}{frgn_ok}{tgt_str}{cons_str}\n"
 
         # ── [감시 접근] gap_pct <= 5% ──
         try:
