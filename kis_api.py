@@ -346,20 +346,52 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
 
 
 def get_us_consensus(ticker: str) -> dict | None:
-    """yfinance로 미국 주식 애널리스트 컨센서스 목표주가 조회.
+    """Yahoo Finance v10 quoteSummary API로 미국 주식 애널리스트 컨센서스 조회.
+    requests.Session으로 쿠키+crumb 획득 후 financialData/price 모듈 파싱.
     반환: {ticker, name, consensus_target:{avg,high,low}, analyst_count, recommendation}
     데이터 없거나 실패 시 None 반환.
     """
+    import requests as _req, json as _json
+    hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     try:
-        import yfinance as _yf
-        t = _yf.Ticker(ticker)
-        info = t.info or {}
-        avg  = info.get("targetMeanPrice")
-        high = info.get("targetHighPrice")
-        low  = info.get("targetLowPrice")
-        count = info.get("numberOfAnalystOpinions") or info.get("recommendationMean")
-        recom = info.get("recommendationKey", "").replace("_", " ").title()
-        name  = info.get("shortName") or info.get("longName") or ticker
+        sess = _req.Session()
+        sess.get("https://finance.yahoo.com", headers=hdrs, timeout=8)
+        r_crumb = sess.get(
+            "https://query2.finance.yahoo.com/v1/test/getcrumb",
+            headers=hdrs, timeout=8,
+        )
+        if r_crumb.status_code != 200:
+            return None
+        crumb = r_crumb.content.decode("utf-8", errors="replace").strip()
+        if not crumb or "{" in crumb:
+            return None
+
+        url = (
+            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+            f"?modules=financialData%2Cprice&crumb={crumb}"
+        )
+        r = sess.get(url, headers=hdrs, timeout=8)
+        if r.status_code != 200:
+            return None
+        data = _json.loads(r.content.decode("utf-8", errors="replace"))
+        result_list = data.get("quoteSummary", {}).get("result") or []
+        if not result_list:
+            return None
+        row = result_list[0]
+        fd  = row.get("financialData", {})
+        pr  = row.get("price", {})
+
+        avg   = (fd.get("targetMeanPrice") or {}).get("raw")
+        high  = (fd.get("targetHighPrice") or {}).get("raw")
+        low   = (fd.get("targetLowPrice")  or {}).get("raw")
+        count = (fd.get("numberOfAnalystOpinions") or {}).get("raw")
+        recom = fd.get("recommendationKey", "").replace("_", " ").title()
+        name  = pr.get("shortName") or pr.get("longName") or ticker.upper()
+
         if not avg:
             return None
         return {
@@ -370,7 +402,7 @@ def get_us_consensus(ticker: str) -> dict | None:
                 "high": round(float(high), 2) if high else 0,
                 "low":  round(float(low),  2) if low  else 0,
             },
-            "analyst_count":  int(count) if isinstance(count, (int, float)) else None,
+            "analyst_count":  int(count) if count else None,
             "recommendation": recom,
         }
     except Exception:

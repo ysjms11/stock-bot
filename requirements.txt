@@ -4,4 +4,3 @@ tzdata
 beautifulsoup4
 lxml
 requests
-yfinance>=0.2.40
