@@ -13,6 +13,7 @@ from kis_api import (
     _fetch_sector_flow, _TICKER_SECTOR,
     ws_manager, get_ws_tickers,
     collect_macro_data, format_macro_msg,
+    check_drawdown, PORTFOLIO_HISTORY_FILE,
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -304,12 +305,14 @@ MCP_TOOLS = [
     {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "get_portfolio",
-     "description": "포트폴리오 조회 또는 수정. mode 생략 시 현재가·손익 조회. mode='set' 시 포트폴리오 저장.",
+     "description": "포트폴리오 조회 또는 수정. mode 생략 시 현재가·손익 조회. mode='set' 시 포트폴리오 저장. cash_krw/cash_usd로 현금 잔고 업데이트 가능.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "mode":     {"type": "string", "description": "'set' 이면 저장 모드. 생략 시 조회."},
                          "market":   {"type": "string", "description": "[set] 'KR' 또는 'US'"},
                          "holdings": {"type": "object", "description": "[set] KR: {종목코드: {name, qty, avg_price}}, US: {심볼: {name, qty, avg_price}}"},
+                         "cash_krw": {"type": "number", "description": "[set] 원화 현금 잔고 (원)"},
+                         "cash_usd": {"type": "number", "description": "[set] 달러 현금 잔고 (USD)"},
                      },
                      "required": []}},
     {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환.",
@@ -469,6 +472,13 @@ MCP_TOOLS = [
                          "market": {"type": "string", "description": "'KR'=한국(기본), 'US'=미국"},
                      },
                      "required": ["ticker"]}},
+    {"name": "get_portfolio_history",
+     "description": "포트폴리오 스냅샷 히스토리 + 드로다운 분석. 주간/월간 수익률, 월간 최대 드로다운, 투자규칙 경고(주간-4%/월간-7%/연속손절3회) 포함.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "days": {"type": "integer", "description": "최근 N일 스냅샷 반환 (기본 30, 최대 365)"},
+                     },
+                     "required": []}},
     {"name": "get_batch_detail", "description": "여러 한국 종목을 한 번에 조회. 현재가·등락률·거래량·52주고저·PER·PBR·당일 외인/기관 순매수 반환. 최대 20종목.",
      "inputSchema": {"type": "object",
                      "properties": {
@@ -516,26 +526,32 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 # ── 포트폴리오 저장 모드 ──
                 market   = arguments.get("market", "KR").strip().upper()
                 holdings = arguments.get("holdings") or {}
-                if not holdings:
-                    result = {"error": "holdings가 비어있습니다"}
+                cash_krw = arguments.get("cash_krw")
+                cash_usd = arguments.get("cash_usd")
+                portfolio = load_json(PORTFOLIO_FILE, {})
+                # 현금 잔고 업데이트
+                if cash_krw is not None:
+                    portfolio["cash_krw"] = float(cash_krw)
+                if cash_usd is not None:
+                    portfolio["cash_usd"] = float(cash_usd)
+                if not holdings and cash_krw is None and cash_usd is None:
+                    result = {"error": "holdings, cash_krw, cash_usd 중 하나는 필요합니다"}
                 else:
-                    portfolio = load_json(PORTFOLIO_FILE, {})
-                    if market == "US":
+                    if market == "US" and holdings:
                         us = portfolio.get("us_stocks", {})
                         us.update(holdings)
                         portfolio["us_stocks"] = us
-                        save_json(PORTFOLIO_FILE, portfolio)
-                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
-                        result = {"ok": True, "message": f"US 포트폴리오 {len(holdings)}종목 저장됨",
-                                  "total_us": len(us)}
-                    else:
+                    elif holdings:
                         for ticker, info in holdings.items():
                             portfolio[ticker] = info
-                        save_json(PORTFOLIO_FILE, portfolio)
-                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
-                        kr_count = sum(1 for k in portfolio if k != "us_stocks")
-                        result = {"ok": True, "message": f"KR 포트폴리오 {len(holdings)}종목 저장됨",
-                                  "total_kr": kr_count}
+                    save_json(PORTFOLIO_FILE, portfolio)
+                    asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                    kr_count = sum(1 for k in portfolio if k not in ("us_stocks", "cash_krw", "cash_usd"))
+                    us_count = len(portfolio.get("us_stocks", {}))
+                    result = {"ok": True,
+                              "message": f"포트폴리오 저장됨 (KR {kr_count}종목, US {us_count}종목)",
+                              "cash_krw": portfolio.get("cash_krw"),
+                              "cash_usd": portfolio.get("cash_usd")}
 
             else:
                 # ── 조회 모드 (기존) ──
@@ -1510,6 +1526,20 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "target_price": entry.get("target_price"),
                         })
                         result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
+
+        elif name == "get_portfolio_history":
+            days = min(int(arguments.get("days", 30) or 30), 365)
+            history = load_json(PORTFOLIO_HISTORY_FILE, {"snapshots": []})
+            snaps = sorted(history.get("snapshots", []), key=lambda x: x.get("date", ""))
+            cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            recent = [s for s in snaps if s.get("date", "") >= cutoff]
+            dd = check_drawdown()
+            result = {
+                "days": days,
+                "snapshot_count": len(recent),
+                "snapshots": recent,
+                "drawdown": dd,
+            }
 
         elif name == "get_batch_detail":
             raw = arguments.get("tickers", "")

@@ -999,6 +999,49 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📸 포트 스냅샷 + 드로다운 감지 (15:50 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def snapshot_and_drawdown(context: ContextTypes.DEFAULT_TYPE):
+    """장마감 후 포트 스냅샷 저장 + 드로다운 경고 (규칙 위반 시에만 텔레그램 발송)"""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        token = await get_kis_token()
+        await save_portfolio_snapshot(token)
+    except Exception as e:
+        print(f"[snapshot] 스냅샷 저장 오류: {e}")
+    try:
+        dd = check_drawdown()
+        alerts = dd.get("alerts", [])
+        if not alerts:
+            return
+        lines = [f"⚠️ *리스크 한도 경고* ({now.strftime('%H:%M')})"]
+        wr  = dd.get("weekly_return_pct")
+        mdd = dd.get("monthly_max_drawdown_pct")
+        mr  = dd.get("monthly_return_pct")
+        cw  = dd.get("cash_weight_pct")
+        if wr is not None:
+            warn = " ⚠️ 한도 초과!" if wr <= -4 else ""
+            lines.append(f"\n📉 주간 수익률: {wr:+.1f}%{warn}")
+        if mdd is not None:
+            warn = " 🚨 한도 초과!" if mdd <= -7 else ""
+            lines.append(f"📉 월간 드로다운: {mdd:.1f}%{warn}")
+        elif mr is not None:
+            lines.append(f"📉 월간 수익률: {mr:+.1f}%")
+        if cw is not None:
+            lines.append(f"💰 현금비중: {cw:.1f}%")
+        for a in alerts:
+            lvl = "🚨" if a["level"] == "CRITICAL" else "⚠️"
+            lines.append(f"{lvl} {a['message']}")
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text="\n".join(lines), parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"[drawdown] 드로다운 체크 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📋 컨센서스 배치 캐시 (매주 월요일 07:05 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
@@ -1738,6 +1781,7 @@ def main():
     jq.run_daily(us_market_summary, time=dtime(6,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_std")
     jq.run_daily(check_supply_drain,   time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="supply_drain")
     jq.run_daily(momentum_exit_check,  time=dtime(15, 45, tzinfo=KST), days=(0,1,2,3,4), name="momentum_check")
+    jq.run_daily(snapshot_and_drawdown, time=dtime(15, 50, tzinfo=KST), days=(0,1,2,3,4), name="snapshot_dd")
     jq.run_daily(weekly_review,           time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
     jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(0,), name="consensus_update")
