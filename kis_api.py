@@ -346,64 +346,62 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
 
 
 def get_us_consensus(ticker: str) -> dict | None:
-    """Yahoo Finance v10 quoteSummary API로 미국 주식 애널리스트 컨센서스 조회.
-    requests.Session으로 쿠키+crumb 획득 후 financialData/price 모듈 파싱.
-    반환: {ticker, name, consensus_target:{avg,high,low}, analyst_count, recommendation}
+    """finviz 스크래핑으로 미국 주식 애널리스트 컨센서스 목표주가 조회.
+    반환: {ticker, name, consensus_target:{avg}, recommendation}
     데이터 없거나 실패 시 None 반환.
     """
-    import requests as _req, json as _json
-    hdrs = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
+    import requests as _req
+    from bs4 import BeautifulSoup as _BS
+
+    _RECOM_LABEL = [
+        (1.5, "Strong Buy"), (2.0, "Buy"), (3.0, "Hold"),
+        (4.0, "Underperform"), (5.1, "Sell"),
+    ]
+
     try:
-        sess = _req.Session()
-        sess.get("https://finance.yahoo.com", headers=hdrs, timeout=8)
-        r_crumb = sess.get(
-            "https://query2.finance.yahoo.com/v1/test/getcrumb",
+        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"}
+        r = _req.get(
+            f"https://finviz.com/quote.ashx?t={ticker}&p=d",
             headers=hdrs, timeout=8,
         )
-        if r_crumb.status_code != 200:
-            return None
-        crumb = r_crumb.content.decode("utf-8", errors="replace").strip()
-        if not crumb or "{" in crumb:
-            return None
-
-        url = (
-            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
-            f"?modules=financialData%2Cprice&crumb={crumb}"
-        )
-        r = sess.get(url, headers=hdrs, timeout=8)
         if r.status_code != 200:
             return None
-        data = _json.loads(r.content.decode("utf-8", errors="replace"))
-        result_list = data.get("quoteSummary", {}).get("result") or []
-        if not result_list:
-            return None
-        row = result_list[0]
-        fd  = row.get("financialData", {})
-        pr  = row.get("price", {})
+        soup = _BS(r.content, "lxml")
+        cells = soup.find_all("td")
 
-        avg   = (fd.get("targetMeanPrice") or {}).get("raw")
-        high  = (fd.get("targetHighPrice") or {}).get("raw")
-        low   = (fd.get("targetLowPrice")  or {}).get("raw")
-        count = (fd.get("numberOfAnalystOpinions") or {}).get("raw")
-        recom = fd.get("recommendationKey", "").replace("_", " ").title()
-        name  = pr.get("shortName") or pr.get("longName") or ticker.upper()
+        target_str = recom_str = name = None
+        for i, td in enumerate(cells):
+            txt = td.text.strip()
+            nxt = cells[i + 1].text.strip() if i + 1 < len(cells) else ""
+            if txt == "Target Price":
+                target_str = nxt
+            elif txt == "Recom":
+                recom_str = nxt
 
-        if not avg:
+        # 종목명
+        h1 = soup.find("h1", class_="fullview-title") or soup.find("a", class_="tab-link")
+        name = h1.text.strip() if h1 else ticker.upper()
+
+        if not target_str or target_str == "-":
             return None
+
+        avg = float(target_str.replace(",", ""))
+        recom_label = "N/A"
+        if recom_str:
+            try:
+                rv = float(recom_str)
+                for threshold, label in _RECOM_LABEL:
+                    if rv < threshold:
+                        recom_label = label
+                        break
+            except ValueError:
+                recom_label = recom_str
+
         return {
             "ticker":           ticker.upper(),
             "name":             name,
-            "consensus_target": {
-                "avg":  round(float(avg),  2),
-                "high": round(float(high), 2) if high else 0,
-                "low":  round(float(low),  2) if low  else 0,
-            },
-            "analyst_count":  int(count) if count else None,
-            "recommendation": recom,
+            "consensus_target": {"avg": avg, "high": 0, "low": 0},
+            "recommendation":   recom_label,
         }
     except Exception:
         return None
