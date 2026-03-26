@@ -765,6 +765,38 @@ async def check_momentum_exit(ticker: str, token: str) -> dict:
     }
 
 
+async def batch_stock_detail(tickers: list, token: str, delay: float = 0.3) -> list:
+    """여러 종목을 순차 조회해 간소화된 상세 정보 리스트 반환.
+
+    각 종목: {ticker, name, price, chg_pct, vol, w52h, w52l, per, pbr, frgn_net, inst_net}
+    실패 종목: {ticker, error: "..."}
+    """
+    results = []
+    for ticker in tickers:
+        row = {"ticker": ticker}
+        try:
+            p = await kis_stock_price(ticker, token)
+            await asyncio.sleep(delay * 0.6)
+            inv = await kis_investor_trend(ticker, token)
+            await asyncio.sleep(delay * 0.4)
+            row.update({
+                "name":     p.get("hts_kor_isnm", ticker),
+                "price":    int(p.get("stck_prpr", 0) or 0),
+                "chg_pct":  float(p.get("prdy_ctrt", 0) or 0),
+                "vol":      int(p.get("acml_vol", 0) or 0),
+                "w52h":     int(p.get("w52_hgpr", 0) or 0),
+                "w52l":     int(p.get("w52_lwpr", 0) or 0),
+                "per":      p.get("per"),
+                "pbr":      p.get("pbr"),
+                "frgn_net": int(inv[0].get("frgn_ntby_qty", 0) or 0) if inv else 0,
+                "inst_net": int(inv[0].get("orgn_ntby_qty", 0) or 0) if inv else 0,
+            })
+        except Exception as e:
+            row["error"] = str(e)
+        results.append(row)
+    return results
+
+
 async def kis_program_trade_today(token: str, market: str = "kospi") -> list:
     """프로그램매매 투자자별 당일 동향 (HHPPG046600C1).
 

@@ -409,6 +409,13 @@ MCP_TOOLS = [
                          "market": {"type": "string", "description": "'KR'=한국(기본), 'US'=미국"},
                      },
                      "required": ["ticker"]}},
+    {"name": "get_batch_detail", "description": "여러 한국 종목을 한 번에 조회. 현재가·등락률·거래량·52주고저·PER·PBR·당일 외인/기관 순매수 반환. 최대 20종목.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "tickers": {"type": "string", "description": "콤마 구분 종목코드 (예: '009540,298040,010120')"},
+                         "delay":   {"type": "number",  "description": "종목간 API 딜레이 초 (기본 0.3)"},
+                     },
+                     "required": ["tickers"]}},
 ]
 
 
@@ -1403,6 +1410,15 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "target_price": entry.get("target_price"),
                         })
                         result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
+
+        elif name == "get_batch_detail":
+            raw = arguments.get("tickers", "")
+            delay = float(arguments.get("delay", 0.3) or 0.3)
+            tickers = [t.strip().upper() for t in raw.split(",") if t.strip()][:20]
+            if not tickers:
+                result = {"error": "tickers는 필수입니다 (콤마 구분 종목코드)"}
+            else:
+                result = await batch_stock_detail(tickers, token, delay=delay)
 
         else:
             result = {"error": f"unknown tool: {name}"}

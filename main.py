@@ -71,7 +71,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         if sector_parts:
             msg += f"[섹터] {' | '.join(sector_parts)}\n"
 
-        # ── 포트폴리오 데이터 수집 ──
+        # ── 포트폴리오 데이터 수집 (배치 조회) ──
         portfolio = load_json(PORTFOLIO_FILE, {})
         kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
         stops = load_stoploss()
@@ -79,35 +79,35 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         port_rows = []
         total_eval = 0.0
         total_prev_eval = 0.0
+        batch = await batch_stock_detail(list(kr_stocks.keys()), token, delay=0.3)
+        batch_map = {r["ticker"]: r for r in batch}
         for ticker, info in kr_stocks.items():
+            d = batch_map.get(ticker, {})
+            if d.get("error"):
+                port_rows.append({
+                    "ticker": ticker, "info": info,
+                    "price": 0, "chg": 0.0,
+                    "frgn_qty": 0, "tgt": 0, "tgt_pct": None,
+                    "error": d["error"],
+                })
+                continue
             try:
-                d = await get_stock_price(ticker, token)
-                await asyncio.sleep(0.3)
-                price = int(d.get("stck_prpr", 0) or 0)
-                chg = float(d.get("prdy_ctrt", 0) or 0)
-                qty = info.get("qty", 0)
-                eval_amt = price * qty
+                price = d.get("price", 0)
+                chg   = d.get("chg_pct", 0.0)
+                qty   = info.get("qty", 0)
+                eval_amt   = price * qty
                 prev_price = price / (1 + chg / 100) if chg != -100 else price
-                total_eval += eval_amt
+                total_eval      += eval_amt
                 total_prev_eval += prev_price * qty
-                # 외인 순매수 (오늘)
-                frgn_qty = 0
-                try:
-                    inv_rows = await kis_investor_trend(ticker, token)
-                    if inv_rows:
-                        frgn_qty = int(inv_rows[0].get("frgn_ntby_qty", 0) or 0)
-                    await asyncio.sleep(0.2)
-                except:
-                    pass
                 stop_info = kr_stops.get(ticker, {})
                 tgt = float(stop_info.get("target_price") or stop_info.get("target") or 0)
                 tgt_pct = (tgt - price) / price * 100 if tgt > 0 and price > 0 else None
                 port_rows.append({
                     "ticker": ticker, "info": info,
                     "price": price, "chg": chg,
-                    "frgn_qty": frgn_qty, "tgt": tgt, "tgt_pct": tgt_pct,
+                    "frgn_qty": d.get("frgn_net", 0), "tgt": tgt, "tgt_pct": tgt_pct,
                 })
-            except:
+            except Exception:
                 pass
 
         # ── [포트] 오늘 변동 + 주간 수익률 ──
@@ -151,6 +151,9 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
             msg += "\n[보유]\n"
             for row in port_rows:
                 name = row["info"].get("name", row["ticker"])
+                if row.get("error"):
+                    msg += f"{name} ({row['ticker']}) — 조회실패\n"
+                    continue
                 price = row["price"]
                 chg = row["chg"]
                 frgn_qty = row["frgn_qty"]
