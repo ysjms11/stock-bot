@@ -25,7 +25,7 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 | 3 | `get_stock_detail` | 국내 개별 종목 상세 (현재가·PER·PBR·수급) |
 | 4 | `get_foreign_rank` | 외국인 순매수 상위 종목 |
 | 5 | `get_dart` | 워치리스트 최근 3일 DART 공시 |
-| 6 | `get_macro` | KOSPI·KOSDAQ 지수 + 환율. mode='dashboard': VIX/WTI/금/DXY/US10Y + **레짐 자동판정**. mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도, market/sort 옵션). mode='op_growth'/'op_turnaround'/'dart_op_growth'/'dart_turnaround': 재무 스크리너 |
+| 6 | `get_macro` | KOSPI·KOSDAQ 지수 + 환율. mode='dashboard': VIX/WTI/금/DXY/US10Y + **레짐 자동판정**. mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도, market/sort 옵션). mode='op_growth'/'op_turnaround'/'dart_op_growth'/'dart_turnaround': 재무 스크리너 (YoY+QoQ 분기추세, sort='yoy'/'qoq'/'trend' 지원) |
 | 7 | `get_sector_flow` | WI26 업종별 외국인+기관 순매수 상위/하위 3개 |
 | 8 | `add_watch` | 한국 워치리스트 종목 추가 (changelog 자동 기록) |
 | 9 | `remove_watch` | 한국 워치리스트 종목 제거 (changelog 자동 기록) |
@@ -120,8 +120,8 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 
 | # | 항목 |
 |---|------|
-| 17 | 모멘텀 종료 감지 |
-| 13 | 영업이익 스크리너 고도화 |
+| 17 | 모멘텀 종료 감지 (완료) |
+| 13 | 영업이익 스크리너 고도화 (완료: QoQ 분기추세·연속증가/감소전환/흑자전환/적자지속, sort='yoy'/'qoq'/'trend') |
 | 10 | summary 추가 고도화 |
 | — | 텔레그램 알림에 컨센서스 비교 포함 |
 | — | 컨센서스 자동 배치 (주 1회 전종목 업데이트) |

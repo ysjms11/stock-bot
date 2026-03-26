@@ -82,6 +82,46 @@ def _pf(val) -> float:
         return 0.0
 
 
+def _nf(val):
+    """재무 수치 문자열 → float 변환, 빈값이면 None"""
+    s = str(val).replace(",", "").strip()
+    try:
+        return float(s) if s else None
+    except Exception:
+        return None
+
+
+_TREND_PRIORITY = {"연속증가": 0, "흑자전환": 1, "감소": 2, "적자전환": 3, "적자지속": 4}
+
+
+def _calc_qoq(quarterly: list) -> dict:
+    """quarterly 데이터에서 QoQ 필드 계산.
+    quarterly[2] = 영업이익 분기 행, .op=전분기, .ebt=최근분기 (annual과 동일 패턴)"""
+    r = {"qoq_growth": None, "recent_quarter_op": None, "prev_quarter_op": None, "op_trend": None}
+    if len(quarterly) < 3:
+        return r
+    q_row = quarterly[2]
+    rq = _nf(q_row.get("ebt"))
+    pq = _nf(q_row.get("op"))
+    if rq is None or pq is None:
+        return r
+    r["recent_quarter_op"] = round(rq)
+    r["prev_quarter_op"]   = round(pq)
+    if abs(pq) > 0:
+        r["qoq_growth"] = round((rq - pq) / abs(pq) * 100, 1)
+    if pq < 0 and rq > 0:
+        r["op_trend"] = "흑자전환"
+    elif pq > 0 and rq < 0:
+        r["op_trend"] = "적자전환"
+    elif pq <= 0 and rq <= 0:
+        r["op_trend"] = "적자지속"
+    elif pq > 0 and rq > pq:
+        r["op_trend"] = "연속증가"
+    else:
+        r["op_trend"] = "감소"
+    return r
+
+
 async def _scan_conv_one(ticker: str, name: str, token: str, sem: asyncio.Semaphore, spread_threshold: float):
     """convergence 스캔 단위 함수 (모듈 레벨 — closure 없이 파라미터 명시적 전달)"""
     async with sem:
@@ -157,7 +197,8 @@ async def _scan_op_one(ticker: str, name: str, token: str, sem: asyncio.Semaphor
                         "op_recent": round(op_recent),
                         "op_prev":   round(op_prev),
                         "growth_pct": round(growth_pct, 1),
-                        **_op_extra_fields(annual)}
+                        **_op_extra_fields(annual),
+                        **_calc_qoq(raw.get("quarterly", []))}
         except Exception as e:
             print(f"[op_growth] {ticker} 오류: {e}")
         return None
@@ -178,14 +219,15 @@ async def _scan_turnaround_one(ticker: str, name: str, token: str, sem: asyncio.
                 return {"ticker": ticker, "name": name,
                         "op_recent": round(op_recent),
                         "op_prev":   round(op_prev),
-                        **_op_extra_fields(annual)}
+                        **_op_extra_fields(annual),
+                        **_calc_qoq(raw.get("quarterly", []))}
         except Exception as e:
             print(f"[op_turnaround] {ticker} 오류: {e}")
         return None
 
 
-async def _scan_dart_op_one(ticker: str, name: str, corp_code: str, sem: asyncio.Semaphore, min_growth: float, recent_year: int):
-    """dart_op_growth 스캔 단위 — 연간 영업이익 YoY 비교"""
+async def _scan_dart_op_one(ticker: str, name: str, corp_code: str, sem: asyncio.Semaphore, min_growth: float, recent_year: int, token: str = ""):
+    """dart_op_growth 스캔 단위 — 연간 영업이익 YoY 비교 + QoQ (KIS 분기 fallback)"""
     try:
         async with sem:
             r_recent = await dart_quarterly_op(corp_code, recent_year, 4)
@@ -204,18 +246,27 @@ async def _scan_dart_op_one(ticker: str, name: str, corp_code: str, sem: asyncio
         rev_prev   = r_prev.get("revenue")
         op_margin  = round(op_recent / rev_recent * 100, 1) if rev_recent and rev_recent > 0 else None
         rev_growth = round((rev_recent - rev_prev) / abs(rev_prev) * 100, 1) if rev_recent and rev_prev and rev_prev != 0 else None
+        # QoQ: KIS 분기 추정실적 활용 (DART 분기보고서 대신)
+        qoq_fields = {"qoq_growth": None, "recent_quarter_op": None, "prev_quarter_op": None, "op_trend": None}
+        if token:
+            try:
+                raw_q = await kis_estimate_perform(ticker, token)
+                qoq_fields = _calc_qoq(raw_q.get("quarterly", []))
+            except Exception:
+                pass
         return {"ticker": ticker, "name": name,
                 "period": f"{recent_year}연간 vs {recent_year - 1}연간",
                 "op_recent": op_recent, "op_prev": op_prev,
                 "growth_pct": round(growth_pct, 1),
-                "op_margin": op_margin, "rev_recent": rev_recent, "rev_growth": rev_growth}
+                "op_margin": op_margin, "rev_recent": rev_recent, "rev_growth": rev_growth,
+                **qoq_fields}
     except Exception as e:
         print(f"[dart_op_growth] {ticker} 오류: {e}")
     return None
 
 
-async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem: asyncio.Semaphore, recent_year: int):
-    """dart_turnaround 스캔 단위 — 영업이익 적자→흑자 전환"""
+async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem: asyncio.Semaphore, recent_year: int, token: str = ""):
+    """dart_turnaround 스캔 단위 — 영업이익 적자→흑자 전환 + QoQ (KIS 분기 fallback)"""
     try:
         async with sem:
             r_recent = await dart_quarterly_op(corp_code, recent_year, 4)
@@ -231,10 +282,19 @@ async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem:
             return None
         rev_recent = r_recent.get("revenue")
         op_margin  = round(op_recent / rev_recent * 100, 1) if rev_recent and rev_recent > 0 else None
+        # QoQ: KIS 분기 추정실적 활용
+        qoq_fields = {"qoq_growth": None, "recent_quarter_op": None, "prev_quarter_op": None, "op_trend": None}
+        if token:
+            try:
+                raw_q = await kis_estimate_perform(ticker, token)
+                qoq_fields = _calc_qoq(raw_q.get("quarterly", []))
+            except Exception:
+                pass
         return {"ticker": ticker, "name": name,
                 "period": f"{recent_year}연간 vs {recent_year - 1}연간",
                 "op_recent": op_recent, "op_prev": op_prev,
-                "op_margin": op_margin, "rev_recent": rev_recent}
+                "op_margin": op_margin, "rev_recent": rev_recent,
+                **qoq_fields}
     except Exception as e:
         print(f"[dart_turnaround] {ticker} 오류: {e}")
     return None
@@ -270,7 +330,7 @@ MCP_TOOLS = [
                          "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|'dart_op_growth'|'dart_turnaround'|생략"},
                          "spread":     {"type": "number", "description": "[convergence] 이평 수렴 기준 % (기본 5.0)"},
                          "market":     {"type": "string", "description": "[convergence] 'all'=코스피+코스닥(기본), 'kospi'=코스피위주, 'kosdaq'=코스닥위주"},
-                         "sort":       {"type": "string", "description": "[convergence] 'spread'=수렴도순(기본), 'disp_20'=20일이격도순, 'disp_60'=60일이격도순"},
+                         "sort":       {"type": "string", "description": "[convergence] 'spread'=수렴도순(기본), 'disp_20'=20일이격도순, 'disp_60'=60일이격도순. [op_growth/op_turnaround/dart_op_growth/dart_turnaround] 'yoy'=연간증가율순(기본), 'qoq'=분기증가율순, 'trend'=분기추세순(연속증가>흑자전환>감소>적자전환>적자지속)"},
                          "min_growth": {"type": "number", "description": "[op_growth/dart_op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
                      "required": []}},
@@ -767,6 +827,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 # ── 영업이익 증가율 스크리너 (병렬 스캔) ──
                 try:
                     min_growth = float(arguments.get("min_growth", 50))
+                    sort_by    = arguments.get("sort", "yoy")
                     universe = get_stock_universe()
                     if not universe:
                         result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
@@ -777,11 +838,18 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         items = await asyncio.gather(
                             *[_scan_op_one(t, n, token, sem_o, min_growth) for t, n in codes]
                         )
-                        op_results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
+                        filtered = [x for x in items if x]
+                        if sort_by == "qoq":
+                            op_results = sorted(filtered, key=lambda x: x.get("qoq_growth") if x.get("qoq_growth") is not None else -9999, reverse=True)
+                        elif sort_by == "trend":
+                            op_results = sorted(filtered, key=lambda x: _TREND_PRIORITY.get(x.get("op_trend", ""), 9))
+                        else:  # yoy (default)
+                            op_results = sorted(filtered, key=lambda x: x["growth_pct"], reverse=True)
                         print(f"[op_growth] 완료: {len(op_results)}개 기준충족 종목")
                         result = {
                             "mode": "op_growth",
                             "min_growth": min_growth,
+                            "sort": sort_by,
                             "count": len(op_results),
                             "results": op_results,
                         }
@@ -793,6 +861,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             elif mode == "op_turnaround":
                 # ── 영업이익 적자→흑자 전환 스크리너 ──
                 try:
+                    sort_by = arguments.get("sort", "yoy")
                     universe = get_stock_universe()
                     if not universe:
                         result = {"error": "stock_universe.json 로드 실패 — 파일 없음"}
@@ -803,10 +872,17 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         items = await asyncio.gather(
                             *[_scan_turnaround_one(t, n, token, sem_t) for t, n in codes]
                         )
-                        ta_results = sorted([x for x in items if x], key=lambda x: x["op_recent"], reverse=True)
+                        filtered = [x for x in items if x]
+                        if sort_by == "qoq":
+                            ta_results = sorted(filtered, key=lambda x: x.get("qoq_growth") if x.get("qoq_growth") is not None else -9999, reverse=True)
+                        elif sort_by == "trend":
+                            ta_results = sorted(filtered, key=lambda x: _TREND_PRIORITY.get(x.get("op_trend", ""), 9))
+                        else:  # yoy / default: 흑자전환이라 모두 op_recent 기준
+                            ta_results = sorted(filtered, key=lambda x: x["op_recent"], reverse=True)
                         print(f"[op_turnaround] 완료: {len(ta_results)}개 전환 종목")
                         result = {
                             "mode": "op_turnaround",
+                            "sort": sort_by,
                             "count": len(ta_results),
                             "results": ta_results,
                         }
@@ -840,34 +916,51 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             codes = [(t, n, corp_map[t]) for t, n in universe.items() if t in corp_map]
                             # semaphore(15): 5→15로 확대, sleep 제거 → 첫 실행 속도 3배 향상
                             sem_d = asyncio.Semaphore(15)
+                            sort_by = arguments.get("sort", "yoy")
                             if mode == "dart_op_growth":
                                 min_growth = float(arguments.get("min_growth", 50))
                                 # 당일 캐시 확인 (min_growth 포함해서 캐시 키 구성)
                                 _ckey = f"dart_op_growth_{int(min_growth)}_{recent_year}"
                                 cached = _load_dart_screener_cache(mode, _ckey)
                                 if cached:
-                                    result = cached
+                                    _raw_results = cached.get("results", [])
                                 else:
                                     print(f"[dart_op_growth] {len(codes)}종목 스캔 (최소 성장률: {min_growth}%)")
                                     items = await asyncio.gather(
-                                        *[_scan_dart_op_one(t, n, c, sem_d, min_growth, recent_year) for t, n, c in codes]
+                                        *[_scan_dart_op_one(t, n, c, sem_d, min_growth, recent_year, token) for t, n, c in codes]
                                     )
-                                    results = sorted([x for x in items if x], key=lambda x: x["growth_pct"], reverse=True)
-                                    result = {"mode": "dart_op_growth", "count": len(results), "results": results}
-                                    _save_dart_screener_cache(_ckey, result)
+                                    _raw_results = [x for x in items if x]
+                                    _cache_result = {"mode": "dart_op_growth", "count": len(_raw_results), "results": sorted(_raw_results, key=lambda x: x["growth_pct"], reverse=True)}
+                                    _save_dart_screener_cache(_ckey, _cache_result)
+                                # sort 적용 (캐시 히트 후에도 적용)
+                                if sort_by == "qoq":
+                                    _sorted = sorted(_raw_results, key=lambda x: x.get("qoq_growth") if x.get("qoq_growth") is not None else -9999, reverse=True)
+                                elif sort_by == "trend":
+                                    _sorted = sorted(_raw_results, key=lambda x: _TREND_PRIORITY.get(x.get("op_trend", ""), 9))
+                                else:
+                                    _sorted = sorted(_raw_results, key=lambda x: x["growth_pct"], reverse=True)
+                                result = {"mode": "dart_op_growth", "sort": sort_by, "count": len(_sorted), "results": _sorted}
                             else:  # dart_turnaround
                                 _ckey = f"dart_turnaround_{recent_year}"
                                 cached = _load_dart_screener_cache(mode, _ckey)
                                 if cached:
-                                    result = cached
+                                    _raw_results = cached.get("results", [])
                                 else:
                                     print(f"[dart_turnaround] {len(codes)}종목 스캔")
                                     items = await asyncio.gather(
-                                        *[_scan_dart_turnaround_one(t, n, c, sem_d, recent_year) for t, n, c in codes]
+                                        *[_scan_dart_turnaround_one(t, n, c, sem_d, recent_year, token) for t, n, c in codes]
                                     )
-                                    results = sorted([x for x in items if x], key=lambda x: x["op_recent"], reverse=True)
-                                    result = {"mode": "dart_turnaround", "count": len(results), "results": results}
-                                    _save_dart_screener_cache(_ckey, result)
+                                    _raw_results = [x for x in items if x]
+                                    _cache_result = {"mode": "dart_turnaround", "count": len(_raw_results), "results": sorted(_raw_results, key=lambda x: x["op_recent"], reverse=True)}
+                                    _save_dart_screener_cache(_ckey, _cache_result)
+                                # sort 적용
+                                if sort_by == "qoq":
+                                    _sorted = sorted(_raw_results, key=lambda x: x.get("qoq_growth") if x.get("qoq_growth") is not None else -9999, reverse=True)
+                                elif sort_by == "trend":
+                                    _sorted = sorted(_raw_results, key=lambda x: _TREND_PRIORITY.get(x.get("op_trend", ""), 9))
+                                else:
+                                    _sorted = sorted(_raw_results, key=lambda x: x["op_recent"], reverse=True)
+                                result = {"mode": "dart_turnaround", "sort": sort_by, "count": len(_sorted), "results": _sorted}
                 except Exception as _de:
                     _tb = traceback.format_exc()
                     print(f"[get_macro/{mode}] 에러: {_de}\n{_tb}")

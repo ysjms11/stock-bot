@@ -32,6 +32,39 @@ def _is_kr_trading_time(now=None):
     return True
 
 
+# ── 섹터 분류 (한국 포트 비중 경고용) ──
+_KR_SECTORS = {
+    "조선":   {"009540"},
+    "전력기기": {"298040", "010120", "267260"},
+}
+_SECTOR_LIMIT = 50   # 섹터 한도 %
+_STOCK_LIMIT  = 35   # 단일종목 한도 %
+
+
+def _extract_grade(entry: dict, ticker: str, name: str) -> str | None:
+    """decision_log entry에서 종목의 확신등급 추출"""
+    grades = entry.get("grades", {})
+    for key in [ticker, name]:
+        gv = grades.get(key)
+        if gv is None:
+            continue
+        if isinstance(gv, str):
+            return gv
+        elif isinstance(gv, dict):
+            return gv.get("grade")
+    return None
+
+
+def _grade_arrow(prev: str, cur: str) -> str:
+    """등급 변동 화살표 문자열. 변동 없거나 null이면 ''"""
+    if not prev or not cur or prev == cur:
+        return ""
+    order = {"S": -1, "A": 0, "B": 1, "C": 2, "D": 3}
+    if order.get(cur, 9) < order.get(prev, 9):
+        return f" ⬆️{prev}→{cur}"
+    return f" ⬇️{prev}→{cur}"
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 1: 한국 장 마감 요약 (15:40)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -146,6 +179,23 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+        # ── 확신등급 변동 수집 ──
+        grade_change_map: dict = {}  # ticker → grade_arrow string
+        try:
+            dec_log = load_decision_log()
+            dec_entries = sorted(dec_log.values(), key=lambda x: x.get("date", ""), reverse=True)
+            if len(dec_entries) >= 2:
+                cur_entry  = dec_entries[0]
+                prev_entry = dec_entries[1]
+                for row in port_rows:
+                    t = row["ticker"]
+                    n = row["info"].get("name", t)
+                    cur_g  = _extract_grade(cur_entry,  t, n)
+                    prev_g = _extract_grade(prev_entry, t, n)
+                    grade_change_map[t] = _grade_arrow(prev_g, cur_g)
+        except Exception:
+            pass
+
         # ── [보유] 종목별 ──
         if port_rows:
             msg += "\n[보유]\n"
@@ -156,6 +206,11 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                     continue
                 price = row["price"]
                 chg = row["chg"]
+                qty   = row["info"].get("qty", 0)
+                eval_amt = price * qty
+                w_pct = round(eval_amt / total_eval * 100) if total_eval > 0 else 0
+                limit_warn = f" ⚠️>{_STOCK_LIMIT}%한도" if w_pct > _STOCK_LIMIT else ""
+                grade_str = grade_change_map.get(row["ticker"], "")
                 frgn_qty = row["frgn_qty"]
                 fire = " 🔥" if chg >= 5 else (" ⚠️" if chg <= -3 else "")
                 frgn_abs = abs(frgn_qty)
@@ -184,7 +239,28 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                             cons_str = f" 📊컨센{cavg:,.0f}(매수{buy_cnt})"
                 except Exception:
                     pass
-                msg += f"{name} {price:,} ({chg:+.2f}%){fire} | 외인{frgn_disp}{frgn_ok}{tgt_str}{cons_str}\n"
+                msg += f"{name} {price:,} ({chg:+.2f}%){fire} 비중{w_pct}%{limit_warn} | 외인{frgn_disp}{frgn_ok}{tgt_str}{cons_str}{grade_str}\n"
+
+            # ── 섹터 비중 경고 ──
+            try:
+                sector_lines = []
+                for sector_name, sector_tickers in _KR_SECTORS.items():
+                    sector_eval = sum(
+                        row["price"] * row["info"].get("qty", 0)
+                        for row in port_rows
+                        if row["ticker"] in sector_tickers and not row.get("error")
+                    )
+                    if sector_eval <= 0 or total_eval <= 0:
+                        continue
+                    s_pct = round(sector_eval / total_eval * 100)
+                    if s_pct > _SECTOR_LIMIT:
+                        sector_lines.append(f"⚠️ {sector_name} 섹터 {s_pct}% (한도{_SECTOR_LIMIT}% 초과)")
+                    elif s_pct >= 30:
+                        sector_lines.append(f"📊 {sector_name} 섹터 {s_pct}% (한도{_SECTOR_LIMIT}% OK)")
+                if sector_lines:
+                    msg += "\n".join(sector_lines) + "\n"
+            except Exception:
+                pass
 
         # ── [감시 접근] gap_pct <= 5% ──
         try:
