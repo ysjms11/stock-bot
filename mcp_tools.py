@@ -14,6 +14,7 @@ from kis_api import (
     ws_manager, get_ws_tickers,
     collect_macro_data, format_macro_msg,
     check_drawdown, PORTFOLIO_HISTORY_FILE,
+    load_trade_log, save_trade_log, get_trade_stats, TRADE_LOG_FILE,
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -442,17 +443,17 @@ MCP_TOOLS = [
                          "ticker": {"type": "string", "description": "한국 종목코드 6자리 (예: 009540)"},
                      },
                      "required": ["ticker"]}},
-    {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단 기록, compare→보유vs후보 비교",
+    {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록, 매매기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단, compare→종목비교, trade→매매기록",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "log_type":          {"type": "string", "description": "모드: 생략=stop/buy, 'decision'=투자판단, 'compare'=종목비교"},
-                         "ticker":            {"type": "string", "description": "종목코드 또는 미국 티커 (stop/buy 모드)"},
-                         "name":              {"type": "string", "description": "종목명 (stop/buy 모드)"},
+                         "log_type":          {"type": "string", "description": "모드: 생략=stop/buy, 'decision'=투자판단, 'compare'=종목비교, 'trade'=매매기록"},
+                         "ticker":            {"type": "string", "description": "종목코드 또는 미국 티커"},
+                         "name":              {"type": "string", "description": "종목명"},
                          "stop_price":        {"type": "number", "description": "손절가"},
-                         "target_price":      {"type": "number", "description": "목표가"},
+                         "target_price":      {"type": "number", "description": "목표가 [trade:매수 시 목표가]"},
                          "buy_price":         {"type": "number", "description": "매수 희망가 (이 가격 이하 시 텔레그램 알림)"},
                          "memo":              {"type": "string", "description": "메모"},
-                         "date":              {"type": "string", "description": "[decision] 점검일 YYYY-MM-DD (생략시 오늘)"},
+                         "date":              {"type": "string", "description": "[decision/trade] YYYY-MM-DD (생략시 오늘)"},
                          "regime":            {"type": "string", "description": "[decision] 시장 국면 (예: 경계, 공격, 방어)"},
                          "grades":            {"type": "object", "description": "[decision] 종목별 확신등급. 값은 문자열(\"A\") 또는 객체({\"grade\":\"B\",\"change\":\"A→B\",\"reason\":\"사유\"})"},
                          "actions":           {"type": "array",  "description": "[decision] 액션 목록 (예: [\"HD조선 6주 매도\"])"},
@@ -463,6 +464,11 @@ MCP_TOOLS = [
                          "held_score":        {"type": "number", "description": "[compare] 보유 종목 점수"},
                          "candidate_score":   {"type": "number", "description": "[compare] 후보 종목 점수"},
                          "reasoning":         {"type": "string", "description": "[compare] 비교 근거"},
+                         "side":              {"type": "string", "description": "[trade] 'buy' 또는 'sell'"},
+                         "qty":               {"type": "integer","description": "[trade] 매매 수량"},
+                         "price":             {"type": "number", "description": "[trade] 매매 단가"},
+                         "grade":             {"type": "string", "description": "[trade] 매매 시점 확신등급 (A/B/C/D)"},
+                         "reason":            {"type": "string", "description": "[trade] 매매 사유"},
                      },
                      "required": []}},
     {"name": "delete_alert", "description": "매도 후 stoploss.json에서 해당 종목의 손절/목표가 알림을 완전히 삭제. watchlist_log에 delete_alert 기록.",
@@ -477,6 +483,13 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {
                          "days": {"type": "integer", "description": "최근 N일 스냅샷 반환 (기본 30, 최대 365)"},
+                     },
+                     "required": []}},
+    {"name": "get_trade_stats",
+     "description": "매매 기록 성과 분석. 승률·손익·평균보유기간·확신등급 정확도 등 반환. 월간 복기 시 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "period": {"type": "string", "description": "'month'=이번달(기본), 'quarter'=이번분기, 'year'=올해, 'all'=전체"},
                      },
                      "required": []}},
     {"name": "get_batch_detail", "description": "여러 한국 종목을 한 번에 조회. 현재가·등락률·거래량·52주고저·PER·PBR·당일 외인/기관 순매수 반환. 최대 20종목.",
@@ -1190,6 +1203,63 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 save_json(DECISION_LOG_FILE, log)
                 result = {"ok": True, "message": f"{date} 투자판단 저장됨", "date": date}
 
+            elif log_type == "trade":
+                # ── 매매 기록 모드 ──
+                side  = arguments.get("side", "").strip().lower()
+                qty   = int(arguments.get("qty", 0) or 0)
+                price = float(arguments.get("price", 0) or 0)
+                grade = arguments.get("grade", "").strip().upper()
+                reason = arguments.get("reason", "").strip()
+                date  = (arguments.get("date") or datetime.now(KST).strftime("%Y-%m-%d")).strip()
+                tgt_t = float(arguments.get("target_price", 0) or 0)
+                stp_t = float(arguments.get("stop_price", 0) or 0)
+                if not ticker or not side or qty <= 0 or price <= 0:
+                    result = {"error": "ticker, side, qty, price는 필수입니다"}
+                elif side not in ("buy", "sell"):
+                    result = {"error": "side는 'buy' 또는 'sell' 이어야 합니다"}
+                else:
+                    trades = load_trade_log()
+                    trade_id = f"T{len(trades) + 1:03d}"
+                    market = "US" if _is_us_ticker(ticker) else "KR"
+                    entry = {
+                        "id": trade_id, "ticker": ticker, "name": aname,
+                        "market": market, "side": side, "qty": qty,
+                        "price": price, "date": date,
+                        "grade_at_trade": grade, "reason": reason,
+                    }
+                    if side == "buy":
+                        if tgt_t: entry["target_price"] = tgt_t
+                        if stp_t: entry["stop_price"]   = stp_t
+                        entry["linked_buy_id"] = None
+                    else:  # sell
+                        linked_buy = next(
+                            (t for t in reversed(trades) if t["ticker"] == ticker and t["side"] == "buy"),
+                            None,
+                        )
+                        entry["linked_buy_id"] = linked_buy["id"] if linked_buy else None
+                        if linked_buy:
+                            buy_p = float(linked_buy["price"])
+                            calc_qty = min(qty, int(linked_buy.get("qty", qty)))
+                            pnl = round((price - buy_p) * calc_qty, 2)
+                            pnl_pct = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
+                            entry["pnl"]     = pnl
+                            entry["pnl_pct"] = pnl_pct
+                            entry["result"]  = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
+                            try:
+                                from datetime import datetime as _ddt
+                                bd = linked_buy.get("date", "")
+                                if bd:
+                                    entry["holding_days"] = (_ddt.strptime(date, "%Y-%m-%d") - _ddt.strptime(bd, "%Y-%m-%d")).days
+                            except Exception:
+                                pass
+                    trades.append(entry)
+                    save_trade_log(trades)
+                    pnl_str = f" | 손익 {entry.get('pnl', 0):+,.0f}" if "pnl" in entry else ""
+                    fmt_p = f"${price:,.2f}" if market == "US" else f"{price:,.0f}원"
+                    result = {"ok": True,
+                              "message": f"{aname}({ticker}) {side} {qty}주 @{fmt_p} 기록됨{pnl_str}",
+                              "trade_id": trade_id}
+
             elif log_type == "compare":
                 # ── 종목비교 스냅샷 모드 ──
                 held_ticker      = arguments.get("held_ticker", "").strip().upper()
@@ -1540,6 +1610,10 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 "snapshots": recent,
                 "drawdown": dd,
             }
+
+        elif name == "get_trade_stats":
+            period = arguments.get("period", "month").strip().lower()
+            result = get_trade_stats(period)
 
         elif name == "get_batch_detail":
             raw = arguments.get("tickers", "")

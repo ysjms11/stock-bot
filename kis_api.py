@@ -40,6 +40,7 @@ WEEKLY_BASE_FILE      = "/data/weekly_base.json"
 UNIVERSE_FILE         = "/data/stock_universe.json"
 CONSENSUS_CACHE_FILE      = "/data/consensus_cache.json"
 PORTFOLIO_HISTORY_FILE    = "/data/portfolio_history.json"
+TRADE_LOG_FILE            = "/data/trade_log.json"
 
 MACRO_SYMBOLS = {
     "VIX":    "^VIX",
@@ -184,6 +185,100 @@ def load_watchalert():
 
 def load_decision_log():
     return load_json(DECISION_LOG_FILE, {})
+
+def load_trade_log() -> list:
+    return load_json(TRADE_LOG_FILE, {"trades": []}).get("trades", [])
+
+def save_trade_log(trades: list):
+    if len(trades) > 1000:
+        trades = trades[-1000:]
+    save_json(TRADE_LOG_FILE, {"trades": trades})
+
+def get_trade_stats(period: str = "month") -> dict:
+    """매매 기록 성과 분석.
+    period: 'month'=이번달, 'quarter'=이번분기, 'year'=올해, 'all'=전체"""
+    from datetime import datetime as _dt
+    now = _dt.now()
+
+    if period == "month":
+        cutoff = now.strftime("%Y-%m")
+        label = now.strftime("%Y-%m")
+    elif period == "quarter":
+        q_start = ((now.month - 1) // 3) * 3 + 1
+        cutoff = f"{now.year}-{q_start:02d}-01"
+        label = f"{now.year}Q{(now.month - 1) // 3 + 1}"
+    elif period == "year":
+        cutoff = f"{now.year}-01-01"
+        label = str(now.year)
+    else:
+        cutoff = "0000"
+        label = "전체"
+
+    all_trades = load_trade_log()
+
+    if period == "month":
+        sells = [t for t in all_trades if t.get("side") == "sell" and t.get("date", "").startswith(cutoff)]
+    elif period == "all":
+        sells = [t for t in all_trades if t.get("side") == "sell"]
+    else:
+        sells = [t for t in all_trades if t.get("side") == "sell" and t.get("date", "") >= cutoff]
+
+    total  = len(sells)
+    wins   = sum(1 for t in sells if t.get("result") == "win")
+    losses = sum(1 for t in sells if t.get("result") == "loss")
+    total_pnl = sum(t.get("pnl", 0) or 0 for t in sells)
+    win_rate  = round(wins / total * 100, 1) if total > 0 else None
+    avg_pnl   = round(total_pnl / total)     if total > 0 else None
+
+    with_pnl = [t for t in sells if t.get("pnl_pct") is not None]
+    best  = max(with_pnl, key=lambda x: x.get("pnl_pct", 0), default=None)
+    worst = min(with_pnl, key=lambda x: x.get("pnl_pct", 0), default=None)
+
+    def _brief(t):
+        if not t:
+            return None
+        return {"id": t.get("id"), "ticker": t.get("ticker"), "name": t.get("name"),
+                "pnl": t.get("pnl"), "pnl_pct": t.get("pnl_pct"),
+                "holding_days": t.get("holding_days"), "date": t.get("date")}
+
+    hold_days = [t.get("holding_days") for t in sells if t.get("holding_days") is not None]
+    avg_hold  = round(sum(hold_days) / len(hold_days), 1) if hold_days else None
+
+    # 등급별 정확도
+    grade_acc: dict = {}
+    for t in sells:
+        g = (t.get("grade_at_trade") or "?").upper()
+        if g not in grade_acc:
+            grade_acc[g] = {"total": 0, "wins": 0, "win_rate": 0.0}
+        grade_acc[g]["total"] += 1
+        if t.get("result") == "win":
+            grade_acc[g]["wins"] += 1
+    for d in grade_acc.values():
+        d["win_rate"] = round(d["wins"] / d["total"] * 100, 1) if d["total"] > 0 else 0.0
+
+    # 연속 손실 (최근부터)
+    consecutive_losses = 0
+    for t in reversed(sells):
+        if t.get("result") == "loss":
+            consecutive_losses += 1
+        else:
+            break
+
+    return {
+        "period": label,
+        "total_trades": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": win_rate,
+        "total_pnl": round(total_pnl),
+        "avg_pnl_per_trade": avg_pnl,
+        "best_trade": _brief(best),
+        "worst_trade": _brief(worst),
+        "avg_holding_days": avg_hold,
+        "grade_accuracy": grade_acc,
+        "consecutive_losses": consecutive_losses,
+        "trades": sells,
+    }
 
 def load_consensus_cache() -> dict:
     """consensus_cache.json 로드. 없으면 {} 반환."""

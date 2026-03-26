@@ -992,6 +992,45 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
             msg += "\n\n📊 *컨센서스 변동*\n" + "\n".join(changes)
     except Exception:
         pass
+
+    # ── 이번 주 매매 요약 ──
+    try:
+        stats = get_trade_stats("month")
+        trades_this_week = [
+            t for t in stats.get("trades", [])
+            if t.get("side") == "sell" and t.get("date", "") >= (datetime.now(KST) - timedelta(days=7)).strftime("%Y-%m-%d")
+        ]
+        if trades_this_week:
+            total_pnl_w = sum(t.get("pnl", 0) or 0 for t in trades_this_week)
+            wins_w  = sum(1 for t in trades_this_week if t.get("result") == "win")
+            lines_w = [f"\n\n💼 *이번 주 매매* ({len(trades_this_week)}건, 승률 {wins_w}/{len(trades_this_week)}, 손익 {total_pnl_w:+,.0f})"]
+            for t in trades_this_week:
+                pnl_str = f"{t.get('pnl', 0):+,.0f}" if t.get("pnl") is not None else "?"
+                pnl_pct = f"{t.get('pnl_pct', 0):+.1f}%" if t.get("pnl_pct") is not None else ""
+                icon = "✅" if t.get("result") == "win" else ("❌" if t.get("result") == "loss" else "⚪")
+                lines_w.append(f"{icon} {t.get('name', t['ticker'])} {pnl_str}원 ({pnl_pct})")
+            msg += "\n".join(lines_w)
+        # 월말이면 이번 달 전체 성과 추가 (남은 날이 7일 이하)
+        now_dt = datetime.now(KST)
+        import calendar as _cal
+        last_day = _cal.monthrange(now_dt.year, now_dt.month)[1]
+        if now_dt.day >= last_day - 6:
+            ms = get_trade_stats("month")
+            if ms.get("total_trades", 0) > 0:
+                wr = ms.get("win_rate_pct")
+                msg += (
+                    f"\n\n📅 *{ms['period']} 월간 성과*"
+                    f"\n승률 {wr}% ({ms['wins']}승 {ms['losses']}패 / {ms['total_trades']}건)"
+                    f"\n총손익 {ms['total_pnl']:+,.0f}원 | 평균보유 {ms.get('avg_holding_days') or '?'}일"
+                )
+                if ms.get("best_trade"):
+                    b = ms["best_trade"]
+                    msg += f"\n🏆 최고: {b.get('name', b['ticker'])} {b.get('pnl_pct', 0):+.1f}%"
+                if ms.get("worst_trade"):
+                    w = ms["worst_trade"]
+                    msg += f"\n💀 최저: {w.get('name', w['ticker'])} {w.get('pnl_pct', 0):+.1f}%"
+    except Exception:
+        pass
     try:
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
