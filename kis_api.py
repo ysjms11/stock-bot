@@ -346,62 +346,47 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
 
 
 def get_us_consensus(ticker: str) -> dict | None:
-    """finviz 스크래핑으로 미국 주식 애널리스트 컨센서스 목표주가 조회.
+    """Nasdaq.com API로 미국 주식 애널리스트 1년 목표주가 조회.
     반환: {ticker, name, consensus_target:{avg}, recommendation}
     데이터 없거나 실패 시 None 반환.
     """
-    import requests as _req
-    from bs4 import BeautifulSoup as _BS
-
-    _RECOM_LABEL = [
-        (1.5, "Strong Buy"), (2.0, "Buy"), (3.0, "Hold"),
-        (4.0, "Underperform"), (5.1, "Sell"),
-    ]
-
+    import requests as _req, re as _re
+    hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.nasdaq.com/",
+    }
     try:
-        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"}
-        r = _req.get(
-            f"https://finviz.com/quote.ashx?t={ticker}&p=d",
+        ticker = ticker.upper()
+        # 1. summary: OneYrTarget (1년 목표주가)
+        rs = _req.get(
+            f"https://api.nasdaq.com/api/quote/{ticker}/summary?assetclass=stocks",
             headers=hdrs, timeout=8,
         )
-        if r.status_code != 200:
+        if rs.status_code != 200:
             return None
-        soup = _BS(r.content, "lxml")
-        cells = soup.find_all("td")
-
-        target_str = recom_str = name = None
-        for i, td in enumerate(cells):
-            txt = td.text.strip()
-            nxt = cells[i + 1].text.strip() if i + 1 < len(cells) else ""
-            if txt == "Target Price":
-                target_str = nxt
-            elif txt == "Recom":
-                recom_str = nxt
-
-        # 종목명
-        h1 = soup.find("h1", class_="fullview-title") or soup.find("a", class_="tab-link")
-        name = h1.text.strip() if h1 else ticker.upper()
-
-        if not target_str or target_str == "-":
+        summary = rs.json().get("data", {})
+        target_raw = (summary.get("summaryData") or {}).get("OneYrTarget", {}).get("value", "")
+        if not target_raw or target_raw == "N/A":
             return None
+        avg = float(_re.sub(r"[^\d.]", "", target_raw))
 
-        avg = float(target_str.replace(",", ""))
-        recom_label = "N/A"
-        if recom_str:
-            try:
-                rv = float(recom_str)
-                for threshold, label in _RECOM_LABEL:
-                    if rv < threshold:
-                        recom_label = label
-                        break
-            except ValueError:
-                recom_label = recom_str
+        # 2. info: companyName
+        ri = _req.get(
+            f"https://api.nasdaq.com/api/quote/{ticker}/info?assetclass=stocks",
+            headers=hdrs, timeout=8,
+        )
+        name = ticker
+        if ri.status_code == 200:
+            raw_name = (ri.json().get("data") or {}).get("companyName", ticker)
+            # " Common Stock" 등 suffix 제거
+            name = _re.sub(r"\s+(Common Stock|Common Shares?|Inc\.|Corp\.|Ltd\.?)\s*$", "", raw_name, flags=_re.I).strip() or raw_name
 
         return {
-            "ticker":           ticker.upper(),
+            "ticker":           ticker,
             "name":             name,
             "consensus_target": {"avg": avg, "high": 0, "low": 0},
-            "recommendation":   recom_label,
+            "recommendation":   "N/A",
         }
     except Exception:
         return None
