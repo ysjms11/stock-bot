@@ -1096,6 +1096,31 @@ async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 💾 /data/ 자동 백업 (매일 22:00 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
+    """매일 22:00 KST — /data/*.json GitHub Gist 자동 백업"""
+    try:
+        result = await backup_data_files()
+        if result.get("ok"):
+            files = result.get("files", [])
+            print(f"[backup] 완료: {len(files)}개 파일 — {result.get('action', '')}")
+        else:
+            err = result.get("error", "알 수 없는 오류")
+            print(f"[backup] 실패: {err}")
+            if GITHUB_TOKEN:  # 설정은 됐는데 오류면 텔레그램 알림
+                try:
+                    await context.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=f"⚠️ 자동 백업 실패: {err}"
+                    )
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[backup] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📋 유니버스 자동 갱신 (매주 월요일 07:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
@@ -1740,6 +1765,23 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 봇 시작
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def post_init(application: Application):
+    # ── 자동 복원 체크: 핵심 파일 없으면 Gist에서 복원 ──────────────────
+    _critical = [PORTFOLIO_FILE, STOPLOSS_FILE, WATCHLIST_FILE]
+    if GITHUB_TOKEN and any(not os.path.exists(f) for f in _critical):
+        try:
+            res = await restore_data_files(force=False)
+            if res.get("ok") and res.get("restored"):
+                print(f"[restore] 자동 복원 완료: {res['restored']}")
+                try:
+                    await application.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=f"♻️ 데이터 자동 복원 완료\n복원: {', '.join(res['restored'])}"
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[restore] 자동 복원 실패: {e}")
+
     dart_status = "✅ DART 활성" if DART_API_KEY else "❌ DART 미설정 (DART_API_KEY 필요)"
     try:
         await application.bot.send_message(
@@ -1824,6 +1866,7 @@ def main():
     jq.run_daily(weekly_review,           time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
     jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(0,), name="consensus_update")
+    jq.run_daily(auto_backup,            time=dtime(22, 0, tzinfo=KST), name="auto_backup")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
     jq.run_daily(macro_dashboard, time=dtime(6,  0, tzinfo=KST), name="macro_am")

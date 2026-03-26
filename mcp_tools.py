@@ -15,6 +15,7 @@ from kis_api import (
     collect_macro_data, format_macro_msg,
     check_drawdown, PORTFOLIO_HISTORY_FILE,
     load_trade_log, save_trade_log, get_trade_stats, TRADE_LOG_FILE,
+    backup_data_files, restore_data_files, get_backup_status,
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -499,6 +500,13 @@ MCP_TOOLS = [
                          "delay":   {"type": "number",  "description": "종목간 API 딜레이 초 (기본 0.3)"},
                      },
                      "required": ["tickers"]}},
+    {"name": "backup_data",
+     "description": "/data/*.json 파일 GitHub Gist 백업·복원·상태 조회. action='backup': Gist에 백업, 'restore': Gist에서 복원(기존 파일 보존), 'restore_force': 강제 덮어쓰기 복원, 'status': 최근 백업 정보 조회.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "action": {"type": "string", "description": "'backup' | 'restore' | 'restore_force' | 'status'"},
+                     },
+                     "required": ["action"]}},
 ]
 
 
@@ -1623,6 +1631,19 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = {"error": "tickers는 필수입니다 (콤마 구분 종목코드)"}
             else:
                 result = await batch_stock_detail(tickers, token, delay=delay)
+
+        elif name == "backup_data":
+            action = arguments.get("action", "status").strip().lower()
+            if action == "backup":
+                result = await backup_data_files()
+            elif action == "restore":
+                result = await restore_data_files(force=False)
+            elif action == "restore_force":
+                result = await restore_data_files(force=True)
+            elif action == "status":
+                result = await get_backup_status()
+            else:
+                result = {"error": f"알 수 없는 action: {action}. 'backup'|'restore'|'restore_force'|'status' 중 하나"}
 
         else:
             result = {"error": f"unknown tool: {name}"}

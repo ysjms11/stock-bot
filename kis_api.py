@@ -42,6 +42,14 @@ CONSENSUS_CACHE_FILE      = "/data/consensus_cache.json"
 PORTFOLIO_HISTORY_FILE    = "/data/portfolio_history.json"
 TRADE_LOG_FILE            = "/data/trade_log.json"
 
+GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
+_BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
+_BACKUP_FILES_LIST = [
+    STOPLOSS_FILE, PORTFOLIO_FILE, WATCHLIST_FILE, US_WATCHLIST_FILE,
+    WATCHALERT_FILE, WATCHLIST_LOG_FILE, PORTFOLIO_HISTORY_FILE,
+    TRADE_LOG_FILE, CONSENSUS_CACHE_FILE, DECISION_LOG_FILE,
+]
+
 MACRO_SYMBOLS = {
     "VIX":    "^VIX",
     "WTI":    "CL=F",
@@ -2217,6 +2225,148 @@ async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | N
     except Exception as e:
         print(f"[DART] dart_quarterly_op {corp_code} {year}Q{quarter} 오류: {e}")
         return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# GitHub Gist 백업/복원
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def backup_data_files() -> dict:
+    """GitHub Gist에 /data/*.json 백업 (PATCH 기존 Gist 또는 POST 신규 생성)"""
+    if not GITHUB_TOKEN:
+        return {"ok": False, "error": "GITHUB_TOKEN 미설정"}
+
+    gist_id = os.environ.get(_BACKUP_GIST_ENV, "")
+    files: dict = {}
+    backed_up: list = []
+
+    for fpath in _BACKUP_FILES_LIST:
+        fname = os.path.basename(fpath)
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content = f.read().strip() or "{}"
+                files[fname] = {"content": content}
+                backed_up.append(fname)
+            except Exception as e:
+                print(f"[backup] {fname} 읽기 실패: {e}")
+
+    if not files:
+        return {"ok": False, "error": "백업할 파일 없음"}
+
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    ts = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
+
+    try:
+        async with aiohttp.ClientSession() as s:
+            if gist_id:
+                url = f"https://api.github.com/gists/{gist_id}"
+                payload = {"description": f"stock-bot /data/ backup {ts}", "files": files}
+                async with s.patch(url, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        d = await resp.json()
+                        return {"ok": True, "action": "updated", "gist_id": d["id"],
+                                "files": backed_up, "updated_at": d.get("updated_at", "")}
+                    text = await resp.text()
+                    return {"ok": False, "error": f"PATCH {resp.status}: {text[:200]}"}
+            else:
+                url = "https://api.github.com/gists"
+                payload = {"description": f"stock-bot /data/ backup {ts}", "public": False, "files": files}
+                async with s.post(url, json=payload, headers=headers) as resp:
+                    if resp.status == 201:
+                        d = await resp.json()
+                        new_id = d["id"]
+                        print(f"[backup] 신규 Gist 생성: {new_id} — BACKUP_GIST_ID 환경변수 설정 필요")
+                        return {"ok": True, "action": "created", "gist_id": new_id,
+                                "files": backed_up, "note": f"BACKUP_GIST_ID={new_id} 환경변수 설정 필요"}
+                    text = await resp.text()
+                    return {"ok": False, "error": f"POST {resp.status}: {text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def restore_data_files(force: bool = False) -> dict:
+    """GitHub Gist에서 /data/*.json 복원. force=False이면 기존 파일 보존."""
+    if not GITHUB_TOKEN:
+        return {"ok": False, "error": "GITHUB_TOKEN 미설정"}
+
+    gist_id = os.environ.get(_BACKUP_GIST_ENV, "")
+    if not gist_id:
+        return {"ok": False, "error": "BACKUP_GIST_ID 환경변수 미설정"}
+
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://api.github.com/gists/{gist_id}", headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    return {"ok": False, "error": f"GET {resp.status}: {text[:200]}"}
+                data = await resp.json()
+
+        gist_files = data.get("files", {})
+        restored: list = []
+        skipped: list = []
+
+        for fpath in _BACKUP_FILES_LIST:
+            fname = os.path.basename(fpath)
+            if fname not in gist_files:
+                continue
+            if not force and os.path.exists(fpath):
+                skipped.append(fname)
+                continue
+            try:
+                content = gist_files[fname].get("content", "{}")
+                json.loads(content)  # 유효성 검사
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                restored.append(fname)
+            except Exception as e:
+                print(f"[restore] {fname} 복원 실패: {e}")
+
+        return {"ok": True, "restored": restored, "skipped": skipped,
+                "gist_id": gist_id, "updated_at": data.get("updated_at", "")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def get_backup_status() -> dict:
+    """백업 Gist 상태 조회 (최근 백업 시각, 파일 목록)"""
+    if not GITHUB_TOKEN:
+        return {"ok": False, "error": "GITHUB_TOKEN 미설정"}
+
+    gist_id = os.environ.get(_BACKUP_GIST_ENV, "")
+    if not gist_id:
+        return {"ok": False, "gist_id": None, "note": "BACKUP_GIST_ID 미설정 — 첫 백업 실행 후 자동 생성"}
+
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://api.github.com/gists/{gist_id}", headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    return {"ok": False, "error": f"GET {resp.status}: {text[:100]}"}
+                data = await resp.json()
+
+        return {
+            "ok": True,
+            "gist_id": gist_id,
+            "updated_at": data.get("updated_at", ""),
+            "description": data.get("description", ""),
+            "files": list(data.get("files", {}).keys()),
+            "file_count": len(data.get("files", {})),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
