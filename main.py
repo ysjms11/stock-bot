@@ -160,10 +160,34 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         elif week_pct <= -3:
             msg += f"⚠️ 주간 {week_pct:.1f}% — 신규매수 주의\n"
 
-        # ── 컨센서스 목표가 수집 (한국 보유종목만) ──
+        # ── 컨센서스 목표가 수집 (캐시 우선, 7일 초과 시 실시간 폴백) ──
         consensus_map = {}
+        try:
+            _cc = load_consensus_cache()
+            if _cc:
+                _upd = _cc.get("updated", "")
+                _cache_ok = False
+                if _upd:
+                    try:
+                        _age = (datetime.now(KST) - datetime.fromisoformat(_upd)).total_seconds() / 86400
+                        _cache_ok = _age < 7
+                    except Exception:
+                        pass
+                if _cache_ok:
+                    for row in port_rows:
+                        _cd = _cc.get("kr", {}).get(row["ticker"])
+                        if _cd and _cd.get("avg"):
+                            consensus_map[row["ticker"]] = {
+                                "avg": float(_cd["avg"]),
+                                "buy": int(_cd.get("buy", 0)),
+                            }
+        except Exception:
+            pass
+        # 캐시 미스 종목만 실시간 조회
         loop = asyncio.get_event_loop()
         for row in port_rows:
+            if row["ticker"] in consensus_map:
+                continue
             try:
                 c = await asyncio.wait_for(
                     loop.run_in_executor(None, fetch_fnguide_consensus, row["ticker"]),
@@ -942,10 +966,51 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
         "5️⃣ 현금 비중 적절?\n\n"
         "💡 스크린샷 + \"리뷰해줘\" 보내세요"
     )
+    # ── 컨센서스 변동 (전주 vs 이번주) ──
+    try:
+        _cc = load_consensus_cache()
+        changes = []
+        for ticker, cd in _cc.get("kr", {}).items():
+            prev_avg = cd.get("prev_avg")
+            cur_avg  = cd.get("avg")
+            if prev_avg and cur_avg and int(prev_avg) != int(cur_avg):
+                diff_pct = (cur_avg - prev_avg) / prev_avg * 100
+                name = cd.get("name", ticker)
+                k_p = f"{int(prev_avg/1000)}K" if prev_avg >= 1000 else str(int(prev_avg))
+                k_c = f"{int(cur_avg/1000)}K"  if cur_avg  >= 1000 else str(int(cur_avg))
+                arrow = "↑" if diff_pct > 0 else "↓"
+                changes.append(f"{name} {k_p}→{k_c} ({arrow}{abs(diff_pct):.1f}%)")
+        for ticker, cd in _cc.get("us", {}).items():
+            prev_avg = cd.get("prev_avg")
+            cur_avg  = cd.get("avg")
+            if prev_avg and cur_avg and round(float(prev_avg), 1) != round(float(cur_avg), 1):
+                diff_pct = (cur_avg - prev_avg) / prev_avg * 100
+                name = cd.get("name", ticker)
+                arrow = "↑" if diff_pct > 0 else "↓"
+                changes.append(f"{ticker}({name}) ${prev_avg:.0f}→${cur_avg:.0f} ({arrow}{abs(diff_pct):.1f}%)")
+        if changes:
+            msg += "\n\n📊 *컨센서스 변동*\n" + "\n".join(changes)
+    except Exception:
+        pass
     try:
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"주간 리뷰 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📋 컨센서스 배치 캐시 (매주 월요일 07:05 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
+    """매주 월요일 07:05 KST — 포트폴리오+워치리스트 컨센서스 배치 업데이트."""
+    try:
+        print("[consensus_update] 컨센서스 배치 업데이트 시작")
+        cache = await update_consensus_cache()
+        kr_cnt = len(cache.get("kr", {}))
+        us_cnt = len(cache.get("us", {}))
+        print(f"[consensus_update] 완료: KR {kr_cnt}종목, US {us_cnt}종목")
+    except Exception as e:
+        print(f"[consensus_update] 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1675,6 +1740,7 @@ def main():
     jq.run_daily(momentum_exit_check,  time=dtime(15, 45, tzinfo=KST), days=(0,1,2,3,4), name="momentum_check")
     jq.run_daily(weekly_review,           time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
+    jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(0,), name="consensus_update")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
     jq.run_daily(macro_dashboard, time=dtime(6,  0, tzinfo=KST), name="macro_am")

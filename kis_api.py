@@ -36,8 +36,9 @@ DECISION_LOG_FILE = "/data/decision_log.json"
 COMPARE_LOG_FILE  = "/data/compare_log.json"
 WATCHLIST_LOG_FILE = "/data/watchlist_log.json"
 EVENTS_FILE       = "/data/events.json"
-WEEKLY_BASE_FILE  = "/data/weekly_base.json"
-UNIVERSE_FILE     = "/data/stock_universe.json"
+WEEKLY_BASE_FILE      = "/data/weekly_base.json"
+UNIVERSE_FILE         = "/data/stock_universe.json"
+CONSENSUS_CACHE_FILE  = "/data/consensus_cache.json"
 
 MACRO_SYMBOLS = {
     "VIX":    "^VIX",
@@ -182,6 +183,10 @@ def load_watchalert():
 
 def load_decision_log():
     return load_json(DECISION_LOG_FILE, {})
+
+def load_consensus_cache() -> dict:
+    """consensus_cache.json 로드. 없으면 {} 반환."""
+    return load_json(CONSENSUS_CACHE_FILE, {})
 
 def load_compare_log():
     return load_json(COMPARE_LOG_FILE, [])
@@ -390,6 +395,110 @@ def get_us_consensus(ticker: str) -> dict | None:
         }
     except Exception:
         return None
+
+
+async def update_consensus_cache() -> dict:
+    """포트폴리오+워치리스트 전체 컨센서스를 배치 수집해 consensus_cache.json에 저장.
+    기존 avg는 prev_avg로 보존해 주간 변동 추적 가능.
+    실패 종목은 기존 캐시 유지."""
+    import asyncio as _aio
+    old_cache = load_json(CONSENSUS_CACHE_FILE, {})
+    old_kr = old_cache.get("kr", {})
+    old_us = old_cache.get("us", {})
+
+    # 수집 대상 티커
+    portfolio = load_json(PORTFOLIO_FILE, {})
+    kr_tickers: dict = {
+        t: (v.get("name", t) if isinstance(v, dict) else t)
+        for t, v in portfolio.items()
+        if t != "us_stocks" and not _is_us_ticker(t)
+    }
+    us_tickers: dict = {
+        t: (v.get("name", t) if isinstance(v, dict) else t)
+        for t, v in portfolio.get("us_stocks", {}).items()
+    }
+    # 한국 워치리스트 추가
+    for t, n in load_json(WATCHLIST_FILE, {}).items():
+        if t not in kr_tickers and not _is_us_ticker(t):
+            kr_tickers[t] = n
+    # 미국 워치리스트 추가
+    for t, v in load_json(US_WATCHLIST_FILE, {}).items():
+        if t not in us_tickers:
+            us_tickers[t] = v.get("name", t) if isinstance(v, dict) else str(v)
+
+    loop = _aio.get_event_loop()
+
+    # 한국 컨센서스 (FnGuide, 동기 → executor)
+    new_kr: dict = {}
+    for ticker in kr_tickers:
+        try:
+            c = await _aio.wait_for(
+                loop.run_in_executor(None, fetch_fnguide_consensus, ticker),
+                timeout=10.0,
+            )
+            avg = int((c.get("consensus_target") or {}).get("avg", 0)) if c else 0
+            if avg:
+                old_entry = old_kr.get(ticker, {})
+                old_avg   = old_entry.get("avg")
+                entry = {
+                    "name": c.get("name") or kr_tickers.get(ticker, ticker),
+                    "avg":  avg,
+                    "high": int((c.get("consensus_target") or {}).get("high", 0)),
+                    "low":  int((c.get("consensus_target") or {}).get("low",  0)),
+                    "buy":  int((c.get("opinion") or {}).get("buy",  0)),
+                    "hold": int((c.get("opinion") or {}).get("hold", 0)),
+                    "sell": int((c.get("opinion") or {}).get("sell", 0)),
+                }
+                if old_avg and int(old_avg) != avg:
+                    entry["prev_avg"] = old_avg
+                elif old_avg:
+                    entry["prev_avg"] = old_entry.get("prev_avg")
+                new_kr[ticker] = entry
+            elif ticker in old_kr:
+                new_kr[ticker] = old_kr[ticker]
+        except Exception as _e:
+            print(f"[consensus_cache] KR {ticker} 실패: {_e}")
+            if ticker in old_kr:
+                new_kr[ticker] = old_kr[ticker]
+        await _aio.sleep(0.5)
+
+    # 미국 컨센서스 (Nasdaq.com, 동기 → executor)
+    new_us: dict = {}
+    for ticker in us_tickers:
+        try:
+            c = await _aio.wait_for(
+                loop.run_in_executor(None, get_us_consensus, ticker),
+                timeout=10.0,
+            )
+            avg = float((c.get("consensus_target") or {}).get("avg", 0)) if c else 0.0
+            if avg:
+                old_entry = old_us.get(ticker, {})
+                old_avg   = old_entry.get("avg")
+                entry = {
+                    "name": c.get("name", ticker),
+                    "avg":  round(avg, 2),
+                }
+                if old_avg and round(float(old_avg), 2) != round(avg, 2):
+                    entry["prev_avg"] = old_avg
+                elif old_avg:
+                    entry["prev_avg"] = old_entry.get("prev_avg")
+                new_us[ticker] = entry
+            elif ticker in old_us:
+                new_us[ticker] = old_us[ticker]
+        except Exception as _e:
+            print(f"[consensus_cache] US {ticker} 실패: {_e}")
+            if ticker in old_us:
+                new_us[ticker] = old_us[ticker]
+        await _aio.sleep(0.5)
+
+    cache = {
+        "updated": datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "kr": new_kr,
+        "us": new_us,
+    }
+    save_json(CONSENSUS_CACHE_FILE, cache)
+    print(f"[consensus_cache] 저장 완료: KR {len(new_kr)}종목, US {len(new_us)}종목")
+    return cache
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
