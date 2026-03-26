@@ -377,6 +377,21 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
         if us_port:
             msg += "\n💼 *미국 포트*\n"
             total_eval = total_cost = 0.0
+            # 컨센서스 배치 수집
+            us_stops = load_stoploss().get("us_stocks", {})
+            us_consensus_map = {}
+            loop_c = asyncio.get_event_loop()
+            for sym in us_port:
+                try:
+                    c = await asyncio.wait_for(
+                        loop_c.run_in_executor(None, get_us_consensus, sym),
+                        timeout=5.0,
+                    )
+                    if c:
+                        us_consensus_map[sym] = c
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
             for sym, info in us_port.items():
                 try:
                     d = await get_yahoo_quote(sym)
@@ -391,7 +406,28 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
                     total_eval += eval_amt
                     total_cost += cost_amt
                     em = "🟢" if chg >= 1 else "⚠️" if chg <= -1 else "⚪"
-                    msg += f"{em} *{info.get('name', sym)}* ${cur:,.2f} ({chg:+.1f}%) | 손익 ${pnl:+,.2f}\n"
+                    # 컨센서스 비교
+                    cons_str = ""
+                    try:
+                        cdata = us_consensus_map.get(sym)
+                        if cdata:
+                            cavg = cdata["consensus_target"]["avg"]
+                            stop_info = us_stops.get(sym, {})
+                            our_tgt = float(stop_info.get("target_price") or 0)
+                            if our_tgt > 0 and cavg > 0:
+                                ratio = our_tgt / cavg
+                                diff_pct = (our_tgt - cavg) / cavg * 100
+                                if ratio < 0.8:
+                                    cons_str = f" ⚠️목표${our_tgt:.0f} vs 컨센${cavg:.0f}(↑{abs(diff_pct):.0f}%)"
+                                elif ratio > 1.2:
+                                    cons_str = f" ⚠️목표${our_tgt:.0f} vs 컨센${cavg:.0f}(↓{abs(diff_pct):.0f}%)"
+                                else:
+                                    cons_str = f" 📊컨센${cavg:.0f}"
+                            elif cavg > 0:
+                                cons_str = f" 📊컨센${cavg:.0f}"
+                    except Exception:
+                        pass
+                    msg += f"{em} *{info.get('name', sym)}* ${cur:,.2f} ({chg:+.1f}%) | 손익 ${pnl:+,.2f}{cons_str}\n"
                 except Exception:
                     msg += f"⚪ *{info.get('name', sym)}* 조회 실패\n"
             if total_cost > 0:

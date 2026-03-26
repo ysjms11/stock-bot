@@ -1363,13 +1363,20 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             }
 
         elif name == "get_consensus":
-            ticker = arguments.get("ticker", "").strip()
+            ticker = arguments.get("ticker", "").strip().upper()
             if not ticker:
                 result = {"error": "ticker는 필수입니다"}
-            else:
+            elif ticker.isdigit():
+                # 한국 종목 (6자리 숫자) → FnGuide
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_fnguide_consensus, ticker
                 )
+            else:
+                # 미국 종목 (영문 티커) → yfinance
+                r = await asyncio.get_event_loop().run_in_executor(
+                    None, get_us_consensus, ticker
+                )
+                result = r if r else {"error": f"{ticker} 컨센서스 데이터 없음"}
 
         elif name == "delete_alert":
             ticker = arguments.get("ticker", "").strip().upper()

@@ -345,6 +345,38 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
         return empty
 
 
+def get_us_consensus(ticker: str) -> dict | None:
+    """yfinance로 미국 주식 애널리스트 컨센서스 목표주가 조회.
+    반환: {ticker, name, consensus_target:{avg,high,low}, analyst_count, recommendation}
+    데이터 없거나 실패 시 None 반환.
+    """
+    try:
+        import yfinance as _yf
+        t = _yf.Ticker(ticker)
+        info = t.info or {}
+        avg  = info.get("targetMeanPrice")
+        high = info.get("targetHighPrice")
+        low  = info.get("targetLowPrice")
+        count = info.get("numberOfAnalystOpinions") or info.get("recommendationMean")
+        recom = info.get("recommendationKey", "").replace("_", " ").title()
+        name  = info.get("shortName") or info.get("longName") or ticker
+        if not avg:
+            return None
+        return {
+            "ticker":           ticker.upper(),
+            "name":             name,
+            "consensus_target": {
+                "avg":  round(float(avg),  2),
+                "high": round(float(high), 2) if high else 0,
+                "low":  round(float(low),  2) if low  else 0,
+            },
+            "analyst_count":  int(count) if isinstance(count, (int, float)) else None,
+            "recommendation": recom,
+        }
+    except Exception:
+        return None
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # KIS API
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
