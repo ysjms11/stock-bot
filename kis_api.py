@@ -668,6 +668,103 @@ async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5) -
     return result
 
 
+async def kis_daily_volumes(ticker: str, token: str, n: int = 21) -> list:
+    """최근 n거래일 거래량 리스트 반환 (최신이 [0]). FHKST03010100 일봉 API."""
+    today_str = datetime.now(KST).strftime("%Y%m%d")
+    start_dt = (datetime.now(KST) - timedelta(days=n * 2)).strftime("%Y%m%d")
+    timeout = aiohttp.ClientTimeout(total=8)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        _, d = await _kis_get(s,
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            "FHKST03010100", token,
+            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+             "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": today_str,
+             "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+    candles = d.get("output2") or []
+    return [int(c.get("acml_vol", 0) or 0) for c in candles[:n]]
+
+
+async def check_momentum_exit(ticker: str, token: str) -> dict:
+    """모멘텀 종료 복합 신호 체크 (5개 조건, 2개 이상 해당 시 warning=True).
+
+    Returns:
+        {"ticker", "conditions": [{"condition", "triggered", "detail"}],
+         "triggered": [...triggered conditions...], "count": int, "warning": bool}
+    """
+    conditions = []
+
+    # ── 조건 1·2·5: 수급 히스토리 ──
+    try:
+        hist = await kis_investor_trend_history(ticker, token, n_days=5)
+        await asyncio.sleep(0.3)
+
+        frgn_vals = [h["foreign_net"] for h in hist]
+        inst_vals  = [h["institution_net"] for h in hist]
+
+        # 조건 1: 외국인 3일 연속 순매도
+        f3 = frgn_vals[:3]
+        frgn_consec = len(f3) == 3 and all(x < 0 for x in f3)
+        frgn_detail = "/".join(f"{x:+,}" for x in frgn_vals[:5]) if frgn_vals else "-"
+        conditions.append({"condition": "외인3일연속매도", "triggered": frgn_consec, "detail": frgn_detail})
+
+        # 조건 2: 기관 3일 연속 순매도
+        i3 = inst_vals[:3]
+        inst_consec = len(i3) == 3 and all(x < 0 for x in i3)
+        inst_detail = "/".join(f"{x:+,}" for x in inst_vals[:5]) if inst_vals else "-"
+        conditions.append({"condition": "기관3일연속매도", "triggered": inst_consec, "detail": inst_detail})
+
+        # 조건 5: 당일 외인+기관 동시 순매도
+        if hist:
+            t = hist[0]
+            both = t["foreign_net"] < 0 and t["institution_net"] < 0
+            conditions.append({"condition": "당일외인+기관동시매도", "triggered": both,
+                                "detail": f"외인{t['foreign_net']:+,} 기관{t['institution_net']:+,}"})
+        else:
+            conditions.append({"condition": "당일외인+기관동시매도", "triggered": False, "detail": "데이터 없음"})
+    except Exception as e:
+        for cond in ["외인3일연속매도", "기관3일연속매도", "당일외인+기관동시매도"]:
+            conditions.append({"condition": cond, "triggered": False, "detail": f"오류: {e}"})
+
+    # ── 조건 3: 거래량 20일 평균 대비 50% 이하 ──
+    try:
+        vols = await kis_daily_volumes(ticker, token, n=21)
+        await asyncio.sleep(0.3)
+        if len(vols) >= 21:
+            today_vol = vols[0]
+            avg20 = sum(vols[1:21]) / 20
+            ratio = today_vol / avg20 * 100 if avg20 > 0 else 100
+            conditions.append({"condition": "거래량감소(20일평균50%이하)", "triggered": ratio <= 50,
+                                "detail": f"오늘{today_vol:,} 20일평균{int(avg20):,} ({ratio:.0f}%)"})
+        else:
+            conditions.append({"condition": "거래량감소(20일평균50%이하)", "triggered": False, "detail": "데이터 부족"})
+    except Exception as e:
+        conditions.append({"condition": "거래량감소(20일평균50%이하)", "triggered": False, "detail": f"오류: {e}"})
+
+    # ── 조건 4: 52주 고점 대비 -10% 이상 하락 ──
+    try:
+        p = await kis_stock_price(ticker, token)
+        await asyncio.sleep(0.3)
+        cur = int(p.get("stck_prpr", 0) or 0)
+        h52 = int(p.get("w52_hgpr", 0) or 0)
+        if cur > 0 and h52 > 0:
+            drop = (cur - h52) / h52 * 100
+            conditions.append({"condition": "52주고점대비-10%이상", "triggered": drop <= -10,
+                                "detail": f"현재{cur:,} 52주고{h52:,} ({drop:.1f}%)"})
+        else:
+            conditions.append({"condition": "52주고점대비-10%이상", "triggered": False, "detail": "데이터 없음"})
+    except Exception as e:
+        conditions.append({"condition": "52주고점대비-10%이상", "triggered": False, "detail": f"오류: {e}"})
+
+    triggered = [c for c in conditions if c["triggered"]]
+    return {
+        "ticker": ticker,
+        "conditions": conditions,
+        "triggered": triggered,
+        "count": len(triggered),
+        "warning": len(triggered) >= 2,
+    }
+
+
 async def kis_program_trade_today(token: str, market: str = "kospi") -> list:
     """프로그램매매 투자자별 당일 동향 (HHPPG046600C1).
 

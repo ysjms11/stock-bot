@@ -710,7 +710,8 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림 6: 수급이탈 경고 (15:40)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_drain_sent_today: dict = {}  # {"date": "YYYY-MM-DD", "sent": set()}
+_drain_sent_today: dict = {}      # {"date": "YYYY-MM-DD", "sent": set()}
+_momentum_sent_today: dict = {}   # {"date": "YYYY-MM-DD", "sent": set()}
 
 
 async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
@@ -762,7 +763,58 @@ async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 7: 주간 리뷰 리마인더 (일 10:00)
+# 🔔 자동알림 7: 모멘텀 종료 감지 (15:45)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def momentum_exit_check(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        token = await get_kis_token()
+        if not token:
+            return
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+        if not kr_stocks:
+            return
+
+        today = now.strftime("%Y-%m-%d")
+        global _momentum_sent_today
+        if _momentum_sent_today.get("date") != today:
+            _momentum_sent_today = {"date": today, "sent": set()}
+        sent = _momentum_sent_today["sent"]
+
+        alerts = []
+        for ticker, info in kr_stocks.items():
+            if ticker in sent:
+                continue
+            try:
+                result = await check_momentum_exit(ticker, token)
+                if not result["warning"]:
+                    continue
+                sent.add(ticker)
+                name = info.get("name", ticker)
+                total = len(result["conditions"])
+                count = result["count"]
+                lines = [f"🔴 *{name}* ({ticker}) — {count}/{total} 신호\n"]
+                for c in result["conditions"]:
+                    icon = "✅" if c["triggered"] else "❌"
+                    lines.append(f"{icon} {c['condition']}: {c['detail']}")
+                alerts.append("\n".join(lines))
+            except Exception as e:
+                print(f"[momentum] {ticker} 오류: {e}")
+
+        if alerts:
+            msg = ("⚠️ *모멘텀 종료 경고* (15:45)\n\n"
+                   + "\n\n".join(alerts)
+                   + "\n\n→ 등급 재평가 필요")
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"momentum_exit_check 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림 8: 주간 리뷰 리마인더 (일 10:00)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
     msg = (
@@ -1504,7 +1556,8 @@ def main():
     # _is_us_market_closed() 가드로 실제 마감 30분 이내일 때만 발송, 이중 발송 없음
     jq.run_daily(us_market_summary, time=dtime(5,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_dst")
     jq.run_daily(us_market_summary, time=dtime(6,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_std")
-    jq.run_daily(check_supply_drain, time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="supply_drain")
+    jq.run_daily(check_supply_drain,   time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="supply_drain")
+    jq.run_daily(momentum_exit_check,  time=dtime(15, 45, tzinfo=KST), days=(0,1,2,3,4), name="momentum_check")
     jq.run_daily(weekly_review,           time=dtime(1,  0, tzinfo=KST), days=(6,), name="weekly")
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
