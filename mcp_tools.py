@@ -559,10 +559,13 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result = {"error": "holdings, cash_krw, cash_usd 중 하나는 필요합니다"}
                 else:
                     if market == "US" and holdings:
-                        us = portfolio.get("us_stocks", {})
-                        us.update(holdings)
-                        portfolio["us_stocks"] = us
+                        portfolio["us_stocks"] = holdings
                     elif holdings:
+                        # 기존 KR 종목 제거 후 새로 설정
+                        _meta_keys = {"us_stocks", "cash_krw", "cash_usd"}
+                        old_kr = [k for k in portfolio if k not in _meta_keys]
+                        for k in old_kr:
+                            del portfolio[k]
                         for ticker, info in holdings.items():
                             portfolio[ticker] = info
                     save_json(PORTFOLIO_FILE, portfolio)
