@@ -577,7 +577,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             else:
                 # ── 조회 모드 (기존) ──
                 portfolio = load_json(PORTFOLIO_FILE, {})
-                kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+                _meta_keys = {"us_stocks", "cash_krw", "cash_usd"}
+                kr_stocks = {k: v for k, v in portfolio.items() if k not in _meta_keys}
                 us_stocks = portfolio.get("us_stocks", {})
                 if not kr_stocks and not us_stocks:
                     result = {"message": "포트폴리오가 비어있습니다. /setportfolio 또는 /setusportfolio 로 등록하세요."}
@@ -638,6 +639,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                 "total_pnl_pct": round((us_eval - us_cost) / us_cost * 100, 2) if us_cost else 0,
                             },
                         },
+                        "cash_krw": portfolio.get("cash_krw", 0),
+                        "cash_usd": portfolio.get("cash_usd", 0),
                     }
 
         elif name == "get_stock_detail":
