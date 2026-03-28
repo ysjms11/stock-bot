@@ -106,7 +106,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
 
         # ── 포트폴리오 데이터 수집 (배치 조회) ──
         portfolio = load_json(PORTFOLIO_FILE, {})
-        kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+        kr_stocks = {k: v for k, v in portfolio.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
         stops = load_stoploss()
         kr_stops = {k: v for k, v in stops.items() if k != "us_stocks" and isinstance(v, dict)}
         port_rows = []
@@ -777,7 +777,7 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
         fired = _anomaly_fired["sent"]
 
         portfolio = load_json(PORTFOLIO_FILE, {})
-        kr_portfolio = {k for k in portfolio if k != "us_stocks"}
+        kr_portfolio = {k for k in portfolio if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(portfolio[k], dict)}
         stops = load_stoploss()
         watchlist = load_watchlist()
 
@@ -862,7 +862,7 @@ async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
         if not token:
             return
         portfolio = load_json(PORTFOLIO_FILE, {})
-        kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+        kr_stocks = {k: v for k, v in portfolio.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
         if not kr_stocks:
             return
 
@@ -913,7 +913,7 @@ async def momentum_exit_check(context: ContextTypes.DEFAULT_TYPE):
         if not token:
             return
         portfolio = load_json(PORTFOLIO_FILE, {})
-        kr_stocks = {k: v for k, v in portfolio.items() if k != "us_stocks"}
+        kr_stocks = {k: v for k, v in portfolio.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
         if not kr_stocks:
             return
 
