@@ -41,6 +41,7 @@ UNIVERSE_FILE         = "/data/stock_universe.json"
 CONSENSUS_CACHE_FILE      = "/data/consensus_cache.json"
 PORTFOLIO_HISTORY_FILE    = "/data/portfolio_history.json"
 TRADE_LOG_FILE            = "/data/trade_log.json"
+SECTOR_FLOW_CACHE_FILE    = "/data/sector_flow_cache.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
@@ -291,6 +292,16 @@ def get_trade_stats(period: str = "month") -> dict:
 def load_consensus_cache() -> dict:
     """consensus_cache.json 로드. 없으면 {} 반환."""
     return load_json(CONSENSUS_CACHE_FILE, {})
+
+
+def load_sector_flow_cache() -> dict:
+    """sector_flow_cache.json 로드. 없으면 {} 반환."""
+    return load_json(SECTOR_FLOW_CACHE_FILE, {})
+
+
+def save_sector_flow_cache(data: dict):
+    save_json(SECTOR_FLOW_CACHE_FILE, data)
+
 
 def load_compare_log():
     return load_json(COMPARE_LOG_FILE, [])

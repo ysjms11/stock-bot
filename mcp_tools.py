@@ -1022,73 +1022,92 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 }
 
         elif name == "get_sector_flow":
-            today = datetime.now().strftime("%Y%m%d")
-            sectors = []
-            for code, label in WI26_SECTORS:
-                frgn, orgn = await _fetch_sector_flow(token, code)
-                sectors.append({
-                    "sector": label, "code": code,
-                    "frgn": frgn, "orgn": orgn,
-                    "total": frgn + orgn,
-                })
+            now_kst = datetime.now(KST)
+            today = now_kst.strftime("%Y%m%d")
+            market_closed = now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 30)
 
-            has_data = any(s["total"] != 0 for s in sectors)
-            note = None
-
-            if not has_data:
-                # Fallback: 외국인 순매수 상위 기반 업종 근사치 (수량 기준)
-                frgn_rows = await kis_foreigner_trend(token)
-                sector_frgn = {label: 0 for _, label in WI26_SECTORS}
-                for r in frgn_rows:
-                    sect = _TICKER_SECTOR.get(r.get("mksc_shrn_iscd", ""))
-                    if sect:
-                        sector_frgn[sect] += int(r.get("frgn_ntby_qty", 0) or 0)
-                sectors = [
-                    {"sector": label, "code": code,
-                     "frgn": sector_frgn.get(label, 0), "orgn": 0,
-                     "total": sector_frgn.get(label, 0)}
-                    for code, label in WI26_SECTORS
-                ]
-                note = "업종별 투자자 API 미지원 — 외국인 순매수 상위 기반 근사치(수량)"
-
-            sorted_s = sorted(sectors, key=lambda x: x["total"], reverse=True)
-            result = {
-                "date": today,
-                "top_inflow":  [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
-                                 for s in sorted_s[:3]],
-                "top_outflow": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
-                                 for s in sorted_s[-3:][::-1]],
-                "all": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
-                        for s in sorted_s],
-            }
-            if note:
-                result["note"] = note
-
-            # ── 섹터 ETF 시세 ──
-            SECTOR_ETFS = [
-                ("140710", "KODEX 조선"),
-                ("464520", "TIGER 방산"),
-                ("305720", "KODEX 2차전지"),
-                ("469150", "TIGER AI반도체"),
-                ("244580", "KODEX 바이오"),
-                ("261070", "KODEX 전력에너지"),
-            ]
-            etf_prices = []
-            for etf_code, etf_name in SECTOR_ETFS:
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
-                            "FHPST02400000", token,
-                            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
-                    out = ed.get("output", {})
-                    etf_prices.append({
-                        "code": etf_code, "name": etf_name,
-                        "price": out.get("stck_prpr"), "chg": out.get("prdy_ctrt"),
+            # ── 캐시 확인: 장마감 후 당일 캐시 있으면 즉시 반환 ──
+            cache = load_sector_flow_cache()
+            if market_closed and cache.get("date") == today and "data" in cache:
+                result = dict(cache["data"])
+                result["cached"] = True
+                result["cached_at"] = cache.get("cached_at", "")
+            else:
+                sectors = []
+                for code, label in WI26_SECTORS:
+                    frgn, orgn = await _fetch_sector_flow(token, code)
+                    sectors.append({
+                        "sector": label, "code": code,
+                        "frgn": frgn, "orgn": orgn,
+                        "total": frgn + orgn,
                     })
-                    await asyncio.sleep(0.05)
-                except Exception:
-                    pass
-            result["etf_prices"] = etf_prices
+
+                has_data = any(s["total"] != 0 for s in sectors)
+                note = None
+
+                if not has_data:
+                    # Fallback: 외국인 순매수 상위 기반 업종 근사치 (수량 기준)
+                    frgn_rows = await kis_foreigner_trend(token)
+                    sector_frgn = {label: 0 for _, label in WI26_SECTORS}
+                    for r in frgn_rows:
+                        sect = _TICKER_SECTOR.get(r.get("mksc_shrn_iscd", ""))
+                        if sect:
+                            sector_frgn[sect] += int(r.get("frgn_ntby_qty", 0) or 0)
+                    sectors = [
+                        {"sector": label, "code": code,
+                         "frgn": sector_frgn.get(label, 0), "orgn": 0,
+                         "total": sector_frgn.get(label, 0)}
+                        for code, label in WI26_SECTORS
+                    ]
+                    note = "업종별 투자자 API 미지원 — 외국인 순매수 상위 기반 근사치(수량)"
+
+                sorted_s = sorted(sectors, key=lambda x: x["total"], reverse=True)
+                result = {
+                    "date": today,
+                    "top_inflow":  [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                     for s in sorted_s[:3]],
+                    "top_outflow": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                     for s in sorted_s[-3:][::-1]],
+                    "all": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                            for s in sorted_s],
+                }
+                if note:
+                    result["note"] = note
+
+                # ── 섹터 ETF 시세 ──
+                SECTOR_ETFS = [
+                    ("140710", "KODEX 조선"),
+                    ("464520", "TIGER 방산"),
+                    ("305720", "KODEX 2차전지"),
+                    ("469150", "TIGER AI반도체"),
+                    ("244580", "KODEX 바이오"),
+                    ("261070", "KODEX 전력에너지"),
+                ]
+                etf_prices = []
+                for etf_code, etf_name in SECTOR_ETFS:
+                    try:
+                        async with aiohttp.ClientSession() as s:
+                            _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
+                                "FHPST02400000", token,
+                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
+                        out = ed.get("output", {})
+                        etf_prices.append({
+                            "code": etf_code, "name": etf_name,
+                            "price": out.get("stck_prpr"), "chg": out.get("prdy_ctrt"),
+                        })
+                        await asyncio.sleep(0.05)
+                    except Exception:
+                        pass
+                result["etf_prices"] = etf_prices
+
+                # ── 장마감 후 캐시 저장 (fallback 데이터는 캐시하지 않음) ──
+                if market_closed and has_data:
+                    save_sector_flow_cache({
+                        "date": today,
+                        "cached_at": now_kst.strftime("%H:%M:%S"),
+                        "data": result,
+                    })
+                result["cached"] = False
 
         elif name == "get_alerts":
             stops = load_stoploss()
