@@ -286,6 +286,31 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+        # ── [뉴스 감성] ──
+        try:
+            all_tickers = list(kr_stocks.keys())
+            wl = load_watchlist()
+            for t in wl:
+                if t not in all_tickers:
+                    all_tickers.append(t)
+            neg_alerts = []
+            for t in all_tickers:
+                try:
+                    news = await kis_news_title(t, token, n=5)
+                    sa = analyze_news_sentiment(news)
+                    neg_count = len(sa.get("negative", []))
+                    if neg_count >= 2:
+                        name = kr_stocks.get(t, {}).get("name") or wl.get(t, t)
+                        top_neg = sa["negative"][0]["title"] if sa["negative"] else ""
+                        neg_alerts.append(f"🔴 {name}: 부정 {neg_count}건 — {top_neg[:20]}")
+                    await asyncio.sleep(0.2)
+                except Exception:
+                    pass
+            if neg_alerts:
+                msg += "\n[뉴스 감성]\n" + "\n".join(neg_alerts[:5]) + "\n"
+        except Exception:
+            pass
+
         # ── [감시 접근] gap_pct <= 5% ──
         try:
             wa = load_watchalert()
@@ -320,6 +345,12 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
 
         msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+        # ── 수급 히스토리 축적 (백테스트용) ──
+        try:
+            await save_supply_snapshot(token)
+        except Exception:
+            pass
 
     except Exception as e:
         print(f"daily_kr_summary 오류: {e}")
@@ -1289,6 +1320,19 @@ async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
     try:
         data = await collect_macro_data()
         msg = format_macro_msg(data)
+
+        # 섹터 로테이션 추가
+        try:
+            token = await get_kis_token()
+            rot = await detect_sector_rotation(token)
+            if rot.get("rotations"):
+                msg += "\n[자금 이동] " + " | ".join(rot["rotations"])
+            elif rot.get("top_inflow"):
+                inflow_names = [s["name"] for s in rot["top_inflow"][:2]]
+                msg += f"\n[자금 유입] {', '.join(inflow_names)}"
+        except Exception:
+            pass
+
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"매크로 대시보드 오류: {e}")

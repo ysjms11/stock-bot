@@ -4,3 +4,5 @@ tzdata
 beautifulsoup4
 lxml
 requests
+finance-datareader>=0.9.50
+yfinance>=0.2.0

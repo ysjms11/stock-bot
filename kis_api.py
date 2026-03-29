@@ -42,6 +42,8 @@ CONSENSUS_CACHE_FILE      = "/data/consensus_cache.json"
 PORTFOLIO_HISTORY_FILE    = "/data/portfolio_history.json"
 TRADE_LOG_FILE            = "/data/trade_log.json"
 SECTOR_FLOW_CACHE_FILE    = "/data/sector_flow_cache.json"
+SECTOR_ROTATION_FILE      = "/data/sector_rotation.json"
+SUPPLY_HISTORY_FILE       = "/data/supply_history.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
@@ -142,6 +144,21 @@ DART_KEYWORDS = [
     "전환사채", "신주인수권", "자기주식", "배당", "합병",
     "분할", "영업양수", "영업양도", "소송", "상장폐지",
     "실적", "매출", "영업이익", "감자", "대규모",
+]
+
+# 뉴스 감성 키워드 사전
+_POSITIVE_KEYWORDS = [
+    "상승", "급등", "신고가", "호실적", "수주", "계약", "흑자", "성장",
+    "증가", "개선", "호재", "수혜", "기대", "목표가 상향", "매수",
+    "반등", "강세", "돌파", "최고", "확대", "회복", "낙관",
+    "상향", "호황", "투자확대", "수출증가", "영업이익 증가",
+]
+
+_NEGATIVE_KEYWORDS = [
+    "하락", "급락", "신저가", "적자", "감소", "악화", "하향",
+    "리스크", "우려", "경고", "매도", "약세", "손실", "부진",
+    "위기", "제재", "소송", "감자", "상폐", "폭락", "둔화",
+    "불확실", "위축", "수출감소", "영업이익 감소",
 ]
 
 
@@ -992,6 +1009,66 @@ async def _fetch_sector_flow(token: str, sector_code: str) -> tuple:
     return 0, 0
 
 
+async def detect_sector_rotation(token: str) -> dict:
+    """WI26 업종별 외인+기관 순매수 수집 → 전일 대비 자금 이동 감지.
+    Returns: {sectors: [{name, frgn, orgn, total, prev_total, change}],
+             rotations: ["반도체→전력기기", ...], date: str}
+    """
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+
+    # 오늘 업종별 수급 수집
+    today_data = {}
+    for code, name in WI26_SECTORS:
+        try:
+            frgn, orgn = await _fetch_sector_flow(token, code)
+            today_data[name] = {"frgn": frgn, "orgn": orgn, "total": frgn + orgn}
+            await asyncio.sleep(0.3)
+        except Exception:
+            today_data[name] = {"frgn": 0, "orgn": 0, "total": 0}
+
+    # 전일 데이터 로드
+    prev = load_json(SECTOR_ROTATION_FILE, {})
+    prev_data = prev.get("sectors", {})
+    prev_date = prev.get("date", "")
+
+    # 변화량 계산
+    sectors = []
+    for name, cur in today_data.items():
+        prev_total = prev_data.get(name, {}).get("total", 0)
+        change = cur["total"] - prev_total if prev_date and prev_date != today else 0
+        sectors.append({
+            "name": name,
+            "frgn": cur["frgn"],
+            "orgn": cur["orgn"],
+            "total": cur["total"],
+            "prev_total": prev_total,
+            "change": change,
+        })
+
+    # 유입/유출 상위 감지 → 로테이션 패턴
+    sectors.sort(key=lambda x: x["change"], reverse=True)
+    inflow = [s for s in sectors if s["change"] > 0]
+    outflow = [s for s in sectors if s["change"] < 0]
+
+    rotations = []
+    for out_s in outflow[:2]:
+        for in_s in inflow[:2]:
+            if abs(out_s["change"]) > 100 and abs(in_s["change"]) > 100:
+                rotations.append(f"{out_s['name']}→{in_s['name']}")
+
+    # 오늘 데이터 저장 (내일 비교용)
+    save_json(SECTOR_ROTATION_FILE, {"date": today, "sectors": today_data})
+
+    return {
+        "date": today,
+        "prev_date": prev_date,
+        "sectors": sectors,
+        "rotations": rotations,
+        "top_inflow": inflow[:3] if inflow else [],
+        "top_outflow": outflow[:3] if outflow else [],
+    }
+
+
 async def kis_us_stock_price(symbol: str, token: str, excd: str = "") -> dict:
     """KIS API 해외주식 현재가 (HHDFS00000300)"""
     if not excd:
@@ -1100,6 +1177,159 @@ async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5) -
             "foreign_sell":    int(row.get("frgn_seln_vol",  0) or 0),
         })
     return result
+
+
+async def save_supply_snapshot(token: str):
+    """보유+감시 종목의 외인/기관 수급을 /data/supply_history.json에 일별 저장.
+    구조: {ticker: [{date, foreign_net, institution_net}, ...]}
+    3개월 후 수급 기반 백테스트 정밀화 가능."""
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    history = load_json(SUPPLY_HISTORY_FILE, {})
+
+    portfolio = load_json(PORTFOLIO_FILE, {})
+    wl = load_json(WATCHLIST_FILE, {})
+    tickers = {}
+    for t, v in portfolio.items():
+        if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict):
+            tickers[t] = True
+    for t in wl:
+        tickers[t] = True
+
+    for ticker_code in tickers:
+        if _is_us_ticker(ticker_code):
+            continue  # 국내만
+        try:
+            hist = await kis_investor_trend_history(ticker_code, token, n_days=1)
+            if hist:
+                entry = {"date": today, "foreign_net": hist[0]["foreign_net"],
+                         "institution_net": hist[0]["institution_net"]}
+                if ticker_code not in history:
+                    history[ticker_code] = []
+                # 중복 방지
+                if not history[ticker_code] or history[ticker_code][-1].get("date") != today:
+                    history[ticker_code].append(entry)
+                    # 최대 180일 보관
+                    history[ticker_code] = history[ticker_code][-180:]
+            await asyncio.sleep(0.3)
+        except Exception:
+            pass
+
+    save_json(SUPPLY_HISTORY_FILE, history)
+    print(f"[supply_snapshot] {len(tickers)}종목 수급 저장 완료")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 장기 일봉 / 수급 데이터 (FDR · yfinance · KRX)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def get_historical_ohlcv(ticker: str, years: int = 3) -> list:
+    """FinanceDataReader(한국) / yfinance(미국)로 장기 일봉 OHLCV 조회.
+    Returns: [{"date": "YYYYMMDD", "open": ..., "high": ..., "low": ..., "close": ..., "vol": int}, ...]
+    시간순(오래된→최신) 정렬. 동기 함수 — run_in_executor로 호출할 것.
+    """
+    end_dt = datetime.now(KST)
+    start_dt = end_dt - timedelta(days=years * 365)
+    start_str = start_dt.strftime("%Y-%m-%d")
+    end_str = end_dt.strftime("%Y-%m-%d")
+
+    is_us = _is_us_ticker(ticker)
+
+    if is_us:
+        try:
+            import yfinance as yf
+            df = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True)
+            if df is None or df.empty:
+                return []
+            result = []
+            for idx, row in df.iterrows():
+                dt_str = idx.strftime("%Y%m%d")
+                result.append({
+                    "date": dt_str,
+                    "open": round(float(row["Open"]), 2),
+                    "high": round(float(row["High"]), 2),
+                    "low": round(float(row["Low"]), 2),
+                    "close": round(float(row["Close"]), 2),
+                    "vol": int(row["Volume"]),
+                })
+            return result
+        except Exception as e:
+            print(f"[get_historical_ohlcv] yfinance 오류 ({ticker}): {e}")
+            return []
+    else:
+        try:
+            import FinanceDataReader as fdr
+            df = fdr.DataReader(ticker, start_str, end_str)
+            if df is None or df.empty:
+                return []
+            result = []
+            for idx, row in df.iterrows():
+                dt_str = idx.strftime("%Y%m%d")
+                result.append({
+                    "date": dt_str,
+                    "open": int(row.get("Open", 0) or 0),
+                    "high": int(row.get("High", 0) or 0),
+                    "low": int(row.get("Low", 0) or 0),
+                    "close": int(row.get("Close", 0) or 0),
+                    "vol": int(row.get("Volume", 0) or 0),
+                })
+            return result
+        except Exception as e:
+            print(f"[get_historical_ohlcv] FDR 오류 ({ticker}): {e}")
+            return []
+
+
+def get_historical_supply(ticker: str, days: int = 365) -> list:
+    """KRX 크롤링으로 종목별 투자자 매매동향 (외인/기관) 조회.
+    Returns: [{"date": "YYYYMMDD", "foreign_net": int, "institution_net": int}, ...]
+    시간순 정렬. 국내 전용 — 미국 종목은 빈 리스트. 동기 함수.
+    """
+    if _is_us_ticker(ticker):
+        return []
+
+    import requests as _req
+    end_dt = datetime.now(KST)
+    start_dt = end_dt - timedelta(days=days)
+
+    url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd",
+    }
+    # KRX isuCd는 'A005930' 형식 (시장구분 접두사 + 6자리)
+    isu_cd = f"A{ticker}" if len(ticker) == 6 and ticker.isdigit() else ticker
+    payload = {
+        "bld": "dbms/MDC/STAT/standard/MDCSTAT02303",
+        "locale": "ko_KR",
+        "isuCd": isu_cd,
+        "isuCd2": isu_cd,
+        "strtDd": start_dt.strftime("%Y%m%d"),
+        "endDd": end_dt.strftime("%Y%m%d"),
+        "share": "1",
+        "money": "1",
+        "csvxls_isNo": "false",
+    }
+
+    try:
+        resp = _req.post(url, data=payload, headers=headers, timeout=30)
+        data = resp.json()
+        rows = data.get("output", [])
+        result = []
+        for row in rows:
+            dt = row.get("TRD_DD", "").replace("/", "").replace("-", "")
+            if len(dt) != 8:
+                continue
+            frgn = int(str(row.get("FORN_PURE_QTY", row.get("foreignNetBuy", 0)) or 0).replace(",", "") or 0)
+            inst = int(str(row.get("ORGN_PURE_QTY", row.get("organNetBuy", 0)) or 0).replace(",", "") or 0)
+            result.append({
+                "date": dt,
+                "foreign_net": frgn,
+                "institution_net": inst,
+            })
+        result.sort(key=lambda x: x["date"])
+        return result
+    except Exception as e:
+        print(f"[get_historical_supply] KRX 크롤링 오류 ({ticker}): {e}")
+        return []
 
 
 async def kis_daily_volumes(ticker: str, token: str, n: int = 21) -> list:
@@ -1393,6 +1623,33 @@ async def kis_news_title(ticker: str, token: str, n: int = 10) -> list:
     except Exception as e:
         print(f"[kis_news_title] 오류: {e}")
         return []
+
+
+def analyze_news_sentiment(news_items: list) -> dict:
+    """뉴스 헤드라인 감성 분석.
+
+    Returns: {positive: [...], negative: [...], neutral: [...], summary: str}
+    """
+    positive, negative, neutral = [], [], []
+    for item in news_items:
+        title = item.get("title", "")
+        pos_matched = [kw for kw in _POSITIVE_KEYWORDS if kw in title]
+        neg_matched = [kw for kw in _NEGATIVE_KEYWORDS if kw in title]
+        entry = {**item}
+        if len(pos_matched) > len(neg_matched):
+            entry["sentiment"] = "positive"
+            entry["matched_keywords"] = pos_matched
+            positive.append(entry)
+        elif len(neg_matched) > len(pos_matched):
+            entry["sentiment"] = "negative"
+            entry["matched_keywords"] = neg_matched
+            negative.append(entry)
+        else:
+            entry["sentiment"] = "neutral"
+            entry["matched_keywords"] = pos_matched + neg_matched
+            neutral.append(entry)
+    summary = f"🟢긍정 {len(positive)} / 🔴부정 {len(negative)} / ⚪중립 {len(neutral)}"
+    return {"positive": positive, "negative": negative, "neutral": neutral, "summary": summary}
 
 
 async def kis_vi_status(token: str) -> list:
