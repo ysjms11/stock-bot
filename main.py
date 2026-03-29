@@ -1165,6 +1165,118 @@ async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📅 실적 캘린더 알림 (매일 07:00 KST, 3일 전 알림)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
+    """포트폴리오+워치리스트 종목의 추정실적 분기 일정 확인.
+    KIS에 실적발표일 API가 없어 추정실적 데이터(분기 dt)로 대체.
+    다가올 분기 결산월 3일 전이면 알림."""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        token = await get_kis_token()
+        wl = load_watchlist()
+        pf = load_json(PORTFOLIO_FILE, {})
+        tickers = {}
+        for t, n in wl.items():
+            tickers[t] = n
+        for t, v in pf.items():
+            if t in ("cash_krw", "cash_usd", "us_stocks"):
+                continue
+            tickers[t] = v.get("name", t)
+
+        alerts = []
+        for ticker, name in tickers.items():
+            try:
+                est = await kis_estimate_perform(ticker, token)
+                for q in est.get("quarterly", []):
+                    dt_str = q.get("dt", "")
+                    if not dt_str or len(dt_str) < 6 or not dt_str[:6].isdigit():
+                        continue
+                    # dt 형식: "202603" → 해당 월 말일을 결산일로 추정
+                    yr = int(dt_str[:4])
+                    mo = int(dt_str[4:6])
+                    if not (1 <= mo <= 12):
+                        continue
+                    # 결산월 다음달 중순을 발표 예상일로 추정 (실제 일정과 다를 수 있음)
+                    announce_mo = mo + 1 if mo < 12 else 1
+                    announce_yr = yr if mo < 12 else yr + 1
+                    announce_date = datetime(announce_yr, announce_mo, 15, tzinfo=KST)
+                    diff = (announce_date - now).days
+                    if 0 <= diff <= 3:
+                        op = q.get("op", "?")
+                        eps = q.get("eps", "?")
+                        alerts.append(f"📊 *{name}*({ticker}) {dt_str} 실적발표 예상 ~{diff}일 전 (추정)\n  영업이익: {op} | EPS: {eps}")
+                        break  # 가장 가까운 분기 1건만 알림
+                await asyncio.sleep(0.3)
+            except Exception:
+                continue
+
+        if alerts:
+            msg = "📅 *실적 캘린더 알림*\n\n" + "\n\n".join(alerts)
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[earnings_calendar] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 💰 배당 캘린더 알림 (매일 07:00 KST, 7일 전 알림)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
+    """포트폴리오+워치리스트 종목의 배당기준일 7일 전 알림.
+    참고: 배당락일은 기준일 전 영업일."""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        token = await get_kis_token()
+        wl = load_watchlist()
+        pf = load_json(PORTFOLIO_FILE, {})
+        tickers = {}
+        for t, n in wl.items():
+            tickers[t] = n
+        for t, v in pf.items():
+            if t in ("cash_krw", "cash_usd", "us_stocks"):
+                continue
+            tickers[t] = v.get("name", t)
+
+        today_str = now.strftime("%Y%m%d")
+        end_str = (now + timedelta(days=30)).strftime("%Y%m%d")
+        alerts = []
+
+        for ticker, name in tickers.items():
+            try:
+                rows = await kis_dividend_schedule(token, from_dt=today_str,
+                                                    to_dt=end_str, ticker=ticker)
+                for r in (rows if isinstance(rows, list) else []):
+                    record_dt = r.get("record_date", "") or r.get("bass_dt", "")
+                    if not record_dt or len(record_dt) < 8:
+                        continue
+                    rec_date = datetime.strptime(record_dt, "%Y%m%d").replace(tzinfo=KST)
+                    diff = (rec_date - now).days
+                    if 0 <= diff <= 7:
+                        amt = r.get("per_sto_divi_amt", "?")
+                        rate = r.get("divi_rate", "?")
+                        pay_dt = r.get("divi_pay_dt", "?")
+                        alerts.append(
+                            f"💰 *{name}*({ticker}) 배당기준일 {record_dt} (~{diff}일 전)\n"
+                            f"  배당금: {amt}원 | 배당률: {rate}% | 지급일: {pay_dt}\n"
+                            f"  ※ 배당락일은 기준일 전 영업일 (매수 마감)"
+                        )
+                        break  # 종목당 1건만 알림
+                await asyncio.sleep(0.3)
+            except Exception:
+                continue
+
+        if alerts:
+            msg = "📅 *배당 캘린더 알림*\n\n" + "\n\n".join(alerts)
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[dividend_calendar] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
@@ -1870,6 +1982,9 @@ def main():
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
     jq.run_daily(macro_dashboard, time=dtime(6,  0, tzinfo=KST), name="macro_am")
+    # 실적/배당 캘린더: 매일 07:00 KST 평일만
+    jq.run_daily(check_earnings_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="earnings_cal")
+    jq.run_daily(check_dividend_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="dividend_cal")
 
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")

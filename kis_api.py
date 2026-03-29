@@ -1553,6 +1553,24 @@ async def kis_estimate_perform(ticker: str, token: str) -> dict:
     }
 
 
+async def kis_dividend_schedule(token: str, from_dt: str = "", to_dt: str = "",
+                                ticker: str = "", gb1: str = "0") -> list:
+    """예탁원정보 배당일정 (HHKDB669102C0)
+    gb1: 0=전체, 1=결산배당, 2=중간배당
+    반환: [{sht_cd, record_date, per_sto_divi_amt, divi_rate, divi_pay_dt, ...}, ...]
+    """
+    if not from_dt:
+        from_dt = datetime.now(KST).strftime("%Y%m%d")
+    if not to_dt:
+        to_dt = (datetime.now(KST) + timedelta(days=90)).strftime("%Y%m%d")
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ksdinfo/dividend",
+            "HHKDB669102C0", token,
+            {"CTS": " ", "GB1": gb1, "F_DT": from_dt, "T_DT": to_dt,
+             "SHT_CD": ticker or " ", "HIGH_GB": " "})
+    return d.get("output1") or d.get("output") or []
+
+
 def get_stock_universe() -> dict:
     """stock_universe.json에서 종목 유니버스 로드. {ticker: name} 반환.
     /data/stock_universe.json 없으면 kis_api.py 위치 기준 절대경로로 시도.
@@ -1980,7 +1998,18 @@ def format_macro_msg(data: dict) -> str:
     msg += "[가격지표]\n"
     msg += f"WTI: ${_p(wti)} ({_c(wti)}) | 금: ${_p(gold)} ({_c(gold)})\n"
     msg += f"구리: ${_p(copper)} ({_c(copper)}) | DXY: {_p(dxy)} ({_c(dxy)})\n"
-    msg += f"USD/KRW: {_p(usdkrw)} ({_c(usdkrw)}) | US10Y: {_p(us10y)}% ({_c(us10y)})\n\n"
+    # 환율 변동률 ±0.5% 이상 시 경고 이모지
+    _fx_chg = usdkrw.get("change_pct", "?")
+    _fx_warn = ""
+    try:
+        _fx_val = float(_fx_chg)
+        if _fx_val >= 0.5:
+            _fx_warn = " ⚠️📈"
+        elif _fx_val <= -0.5:
+            _fx_warn = " ⚠️📉"
+    except (TypeError, ValueError):
+        pass
+    msg += f"USD/KRW: {_p(usdkrw)} ({_c(usdkrw)}){_fx_warn} | US10Y: {_p(us10y)}% ({_c(us10y)})\n\n"
 
     # [수급]
     ff  = data.get("FOREIGN_FLOW", {})
