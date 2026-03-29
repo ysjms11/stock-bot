@@ -1240,6 +1240,9 @@ def get_historical_ohlcv(ticker: str, years: int = 3) -> list:
             df = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True)
             if df is None or df.empty:
                 return []
+            # yfinance >=1.2 returns MultiIndex columns for single ticker
+            if isinstance(df.columns, __import__('pandas').MultiIndex):
+                df.columns = df.columns.droplevel("Ticker")
             result = []
             for idx, row in df.iterrows():
                 dt_str = idx.strftime("%Y%m%d")
