@@ -258,9 +258,11 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 수집 대상 티커 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def get_collection_tickers() -> dict:
-    """watchlist.json + portfolio.json에서 한국 종목 티커->이름 딕셔너리 반환."""
-    from kis_api import load_watchlist, load_json, PORTFOLIO_FILE, _is_us_ticker
+    """watchlist + watchalert + stoploss + portfolio에서 한국 종목 티커→이름 딕셔너리 반환."""
+    from kis_api import (load_watchlist, load_watchalert, load_stoploss,
+                         load_json, PORTFOLIO_FILE, _is_us_ticker)
     tickers: dict[str, str] = {}
+    # 1) watchlist.json {ticker: name}
     try:
         wl = load_watchlist()
         for t, n in wl.items():
@@ -268,10 +270,31 @@ def get_collection_tickers() -> dict:
                 tickers[t] = n
     except Exception:
         pass
+    # 2) watchalert.json (매수감시) {ticker: {name, buy_price, ...}}
+    try:
+        wa = load_watchalert()
+        for t, v in wa.items():
+            if not _is_us_ticker(t) and t not in tickers:
+                tickers[t] = v.get("name", t) if isinstance(v, dict) else t
+    except Exception:
+        pass
+    # 3) stoploss.json (손절감시) {ticker: {name, stop_price, ...}}
+    try:
+        sl = load_stoploss()
+        for t, v in sl.items():
+            if t == "us_stocks" or not isinstance(v, dict):
+                continue
+            if not _is_us_ticker(t) and t not in tickers:
+                tickers[t] = v.get("name", t)
+    except Exception:
+        pass
+    # 4) portfolio.json {ticker: {name, qty, avg_price}}
     try:
         pf = load_json(PORTFOLIO_FILE, {})
         for t, v in pf.items():
-            if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict) and not _is_us_ticker(t):
+            if t in ("us_stocks", "cash_krw", "cash_usd") or not isinstance(v, dict):
+                continue
+            if not _is_us_ticker(t) and t not in tickers:
                 tickers[t] = v.get("name", t)
     except Exception:
         pass

@@ -310,12 +310,16 @@ class TestGetCollectionTickers(unittest.TestCase):
     """get_collection_tickers 테스트"""
 
     @patch("kis_api._is_us_ticker", return_value=False)
-    @patch("kis_api.load_json")
+    @patch("kis_api.load_json", return_value={})
+    @patch("kis_api.load_stoploss", return_value={})
+    @patch("kis_api.load_watchalert", return_value={})
     @patch("kis_api.load_watchlist")
-    def test_merge_watchlist_portfolio(self, mock_wl, mock_load_json, mock_is_us):
+    def test_merge_all_sources(self, mock_wl, mock_wa, mock_sl, mock_load_json, mock_is_us):
         from report_crawler import get_collection_tickers
 
-        mock_wl.return_value = {"005930": "삼성전자", "035720": "카카오"}
+        mock_wl.return_value = {"005930": "삼성전자"}
+        mock_wa.return_value = {"103140": {"name": "풍산", "buy_price": 50000}}
+        mock_sl.return_value = {"272210": {"name": "한화시스템", "stop_price": 20000}}
         mock_load_json.return_value = {
             "000660": {"name": "SK하이닉스", "qty": 10},
             "us_stocks": {},
@@ -324,17 +328,19 @@ class TestGetCollectionTickers(unittest.TestCase):
 
         result = get_collection_tickers()
 
-        self.assertIn("005930", result)
-        self.assertIn("035720", result)
-        self.assertIn("000660", result)
-        # us_stocks, cash_krw 키는 포함 안 됨
+        self.assertIn("005930", result)   # watchlist
+        self.assertIn("103140", result)   # watchalert
+        self.assertIn("272210", result)   # stoploss
+        self.assertIn("000660", result)   # portfolio
         self.assertNotIn("us_stocks", result)
         self.assertNotIn("cash_krw", result)
 
     @patch("kis_api._is_us_ticker", side_effect=lambda t: t == "AAPL")
     @patch("kis_api.load_json", return_value={})
+    @patch("kis_api.load_stoploss", return_value={})
+    @patch("kis_api.load_watchalert", return_value={})
     @patch("kis_api.load_watchlist")
-    def test_skip_us_tickers(self, mock_wl, mock_load_json, mock_is_us):
+    def test_skip_us_tickers(self, mock_wl, mock_wa, mock_sl, mock_load_json, mock_is_us):
         from report_crawler import get_collection_tickers
 
         mock_wl.return_value = {"005930": "삼성전자", "AAPL": "Apple"}
