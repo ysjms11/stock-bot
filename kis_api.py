@@ -44,6 +44,7 @@ TRADE_LOG_FILE            = "/data/trade_log.json"
 SECTOR_FLOW_CACHE_FILE    = "/data/sector_flow_cache.json"
 SECTOR_ROTATION_FILE      = "/data/sector_rotation.json"
 SUPPLY_HISTORY_FILE       = "/data/supply_history.json"
+REPORTS_FILE              = "/data/reports.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
@@ -51,6 +52,7 @@ _BACKUP_FILES_LIST = [
     STOPLOSS_FILE, PORTFOLIO_FILE, WATCHLIST_FILE, US_WATCHLIST_FILE,
     WATCHALERT_FILE, WATCHLIST_LOG_FILE, PORTFOLIO_HISTORY_FILE,
     TRADE_LOG_FILE, CONSENSUS_CACHE_FILE, DECISION_LOG_FILE,
+    REPORTS_FILE,
 ]
 
 MACRO_SYMBOLS = {

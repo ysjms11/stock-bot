@@ -20,6 +20,12 @@ async def _refresh_ws():
         print(f"[WS] refresh 오류: {e}")
 from mcp_tools import mcp_sse_handler, mcp_messages_handler
 
+try:
+    from report_crawler import collect_reports, get_collection_tickers
+    _REPORT_AVAILABLE = True
+except ImportError:
+    _REPORT_AVAILABLE = False
+
 
 def _is_kr_trading_time(now=None):
     """평일 08:00~18:00 KST 여부"""
@@ -1308,6 +1314,35 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📄 증권사 리포트 자동 수집 (매일 07:00 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
+    """매일 07:00 KST — 보유+감시 종목 증권사 리포트 수집"""
+    if not _REPORT_AVAILABLE:
+        return
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return  # 주말 스킵
+    try:
+        tickers = get_collection_tickers()
+        if not tickers:
+            return
+
+        loop = asyncio.get_running_loop()
+        new_reports = await loop.run_in_executor(None, collect_reports, tickers)
+
+        if new_reports:
+            msg = f"📄 *증권사 리포트 수집* ({len(new_reports)}건)\n\n"
+            for r in new_reports[:10]:  # 최대 10건 표시
+                msg += f"• {r.get('name', '')} - {r.get('source', '')} \"{r.get('title', '')}\" ({r.get('date', '')[-5:]})\n"
+            if len(new_reports) > 10:
+                msg += f"\n... 외 {len(new_reports) - 10}건"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[report_daily] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
@@ -2029,6 +2064,7 @@ def main():
     # 실적/배당 캘린더: 매일 07:00 KST 평일만
     jq.run_daily(check_earnings_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="earnings_cal")
     jq.run_daily(check_dividend_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="dividend_cal")
+    jq.run_daily(collect_reports_daily,    time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
 
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")

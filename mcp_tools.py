@@ -20,6 +20,15 @@ from kis_api import (
     get_historical_ohlcv, get_historical_supply,
 )
 
+try:
+    from report_crawler import (
+        load_reports, collect_reports, get_collection_tickers,
+    )
+    _REPORT_AVAILABLE = True
+except ImportError:
+    _REPORT_AVAILABLE = False
+    print("[mcp] report_crawler 미설치 — manage_report 비활성")
+
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -497,6 +506,16 @@ MCP_TOOLS = [
                          "strategy": {"type": "string", "description": "전략: 'ma_cross'(이평교차, 기본), 'momentum_exit'(모멘텀종료), 'supply_follow'(수급추종, 10일제한), 'bollinger'(볼린저밴드), 'hybrid'(복합)"},
                      },
                      "required": ["ticker"]}},
+    {"name": "manage_report",
+     "description": "증권사 리포트 관리. action별: list=수집된 리포트 조회(days/ticker 필터), collect=수동 수집 트리거, tickers=수집 대상 종목 목록",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "action": {"type": "string", "enum": ["list", "collect", "tickers"], "description": "list=조회, collect=수집, tickers=대상종목"},
+                         "days": {"type": "integer", "description": "list 시 최근 N일 (기본 7)"},
+                         "ticker": {"type": "string", "description": "list/collect 시 특정 종목 필터"},
+                         "brief": {"type": "boolean", "description": "list 시 true면 제목+증권사만 (full_text 제외)"},
+                     },
+                     "required": ["action"]}},
 ]
 
 
@@ -2253,6 +2272,67 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     }
                     if supply_warning:
                         result["supply_warning"] = supply_warning
+
+        elif name == "manage_report":
+            if not _REPORT_AVAILABLE:
+                result = {"error": "report_crawler 모듈 미설치"}
+            else:
+                action = arguments.get("action", "list").strip().lower()
+
+                if action == "list":
+                    days = int(arguments.get("days", 7) or 7)
+                    ticker_filter = arguments.get("ticker", "").strip()
+                    brief = arguments.get("brief", False)
+
+                    data = load_reports()
+                    cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+                    reports = [r for r in data.get("reports", []) if r.get("date", "") >= cutoff]
+
+                    if ticker_filter:
+                        reports = [r for r in reports if r.get("ticker") == ticker_filter]
+
+                    if brief:
+                        reports = [{"date": r.get("date"), "ticker": r.get("ticker"),
+                                    "name": r.get("name"), "source": r.get("source"),
+                                    "title": r.get("title")} for r in reports]
+                    else:
+                        # full_text 3000자 제한
+                        for r in reports:
+                            if r.get("full_text") and len(r["full_text"]) > 3000:
+                                r["full_text"] = r["full_text"][:3000] + "...(truncated)"
+
+                    result = {
+                        "count": len(reports),
+                        "days": days,
+                        "reports": reports,
+                        "last_collected": data.get("last_collected", ""),
+                    }
+
+                elif action == "collect":
+                    ticker_filter = arguments.get("ticker", "").strip()
+                    tickers = get_collection_tickers()
+                    if ticker_filter:
+                        name_for_ticker = tickers.get(ticker_filter, ticker_filter)
+                        tickers = {ticker_filter: name_for_ticker}
+
+                    loop = asyncio.get_running_loop()
+                    new_reports = await loop.run_in_executor(None, collect_reports, tickers)
+                    result = {
+                        "collected": len(new_reports),
+                        "reports": [{"date": r.get("date"), "ticker": r.get("ticker"),
+                                     "name": r.get("name"), "source": r.get("source"),
+                                     "title": r.get("title")} for r in new_reports],
+                    }
+
+                elif action == "tickers":
+                    tickers = get_collection_tickers()
+                    result = {
+                        "count": len(tickers),
+                        "tickers": [{"ticker": t, "name": n} for t, n in tickers.items()],
+                    }
+
+                else:
+                    result = {"error": f"알 수 없는 action: {action}. list|collect|tickers"}
 
         else:
             result = {"error": f"unknown tool: {name}"}
