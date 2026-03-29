@@ -6,3 +6,4 @@ lxml
 requests
 finance-datareader>=0.9.50
 yfinance>=0.2.0
+# force rebuild Sun Mar 29 23:25:30 KST 2026
