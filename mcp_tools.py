@@ -16,6 +16,8 @@ from kis_api import (
     check_drawdown, PORTFOLIO_HISTORY_FILE,
     load_trade_log, save_trade_log, get_trade_stats, TRADE_LOG_FILE,
     backup_data_files, restore_data_files, get_backup_status,
+    SUPPLY_HISTORY_FILE,
+    get_historical_ohlcv, get_historical_supply,
 )
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -304,8 +306,19 @@ async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem:
 
 
 MCP_TOOLS = [
-    {"name": "scan_market",    "description": "거래량 상위 종목 스캔",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    # 1. get_rank ← scan_market + get_price_rank + get_us_price_rank + get_volume_power
+    {"name": "get_rank",
+     "description": "순위 조회 통합. type별: price=한국등락률상위/하위, us_price=미국등락률상위/하위, volume=체결강도상위(120%이상=매수우위), scan=거래량상위종목",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "type": {"type": "string", "enum": ["price", "us_price", "volume", "scan"], "description": "순위 조회 유형"},
+                         "sort": {"type": "string", "description": "price/us_price용 (rise/fall, 기본 rise)"},
+                         "market": {"type": "string", "description": "price용 (all/kospi/kosdaq, 기본 all)"},
+                         "exchange": {"type": "string", "description": "us_price용 (NAS/NYS/AMS, 기본 NAS)"},
+                         "n": {"type": "integer", "description": "결과 수 (기본 20)"},
+                     },
+                     "required": ["type"]}},
+    # 2. get_portfolio (유지)
     {"name": "get_portfolio",
      "description": "포트폴리오 조회 또는 수정. mode 생략 시 현재가·손익 조회. mode='set' 시 포트폴리오 저장. cash_krw/cash_usd로 현금 잔고 업데이트 가능.",
      "inputSchema": {"type": "object",
@@ -317,17 +330,33 @@ MCP_TOOLS = [
                          "cash_usd": {"type": "number", "description": "[set] 달러 현금 잔고 (USD)"},
                      },
                      "required": []}},
-    {"name": "get_stock_detail","description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환.",
+    # 3. get_stock_detail (확장 ← + get_batch_detail)
+    {"name": "get_stock_detail",
+     "description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환. tickers 전달 시 여러 종목 일괄 조회 (최대 20종목).",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker": {"type": "string", "description": "한국 종목코드(예: 005930) 또는 미국 티커(예: TSLA, AAPL)"},
                          "period": {"type": "string", "description": "일봉 조회 시 지정 (예: D60=최근 60일, D30=30일, W20=20주). 생략 시 현재가 상세 반환"},
+                         "tickers": {"type": "string", "description": "콤마 구분 종목코드로 다종목 일괄 조회 (예: '005930,000660'). 최대 20종목."},
+                         "delay": {"type": "number", "description": "일괄조회 시 종목간 딜레이 (기본 0.3초)"},
                      },
-                     "required": ["ticker"]}},
-    {"name": "get_foreign_rank","description": "외국인 순매수 상위 종목",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+                     "required": []}},
+    # 4. get_supply ← get_investor_flow + get_investor_trend_history + get_investor_estimate + get_foreign_rank + get_foreign_institution
+    {"name": "get_supply",
+     "description": "수급 분석 통합. mode별: daily=당일확정수급(외인/기관/개인), history=N일수급추세(연속매수매도), estimate=장중추정수급(가집계), foreign_rank=외국인순매수상위, combined_rank=외인+기관합산순매수상위",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode": {"type": "string", "enum": ["daily", "history", "estimate", "foreign_rank", "combined_rank"], "description": "수급 조회 모드"},
+                         "ticker": {"type": "string", "description": "종목코드 (daily/history/estimate 시 필수)"},
+                         "days": {"type": "integer", "description": "history 시 조회 일수 (기본 5, 최대 10)"},
+                         "sort": {"type": "string", "description": "combined_rank 시 정렬 (buy/sell, 기본 buy)"},
+                         "n": {"type": "integer", "description": "foreign_rank/combined_rank 결과 수"},
+                     },
+                     "required": ["mode"]}},
+    # 5. get_dart (유지)
     {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    # 6. get_macro (유지)
     {"name": "get_macro",
      "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도 포함, market/sort 지원). mode='convergence2': 코스닥 위주 하위호환. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
      "inputSchema": {"type": "object",
@@ -339,115 +368,61 @@ MCP_TOOLS = [
                          "min_growth": {"type": "number", "description": "[op_growth/dart_op_growth] 영업이익 최소 증가율 % (기본 50)"},
                      },
                      "required": []}},
-    {"name": "get_sector_flow","description": "WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "add_watch",      "description": "한국 워치리스트에 종목 추가",
+    # 7. get_sector ← get_sector_flow + get_sector_rotation
+    {"name": "get_sector",
+     "description": "섹터 분석 통합. mode별: flow=WI26업종별외인+기관순매수(기본), rotation=섹터로테이션감지(전일대비자금이동)",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
-                         "name":   {"type": "string", "description": "종목명 (예: 삼성전자)"},
+                         "mode": {"type": "string", "description": "'flow'(기본) 또는 'rotation'"},
                      },
-                     "required": ["ticker", "name"]}},
-    {"name": "remove_watch",   "description": "한국 워치리스트에서 종목 제거. alert_type='buy_alert' 시 매수감시 제거",
+                     "required": []}},
+    # 8. manage_watch ← add_watch + remove_watch
+    {"name": "manage_watch",
+     "description": "워치리스트 관리. action별: add=종목추가(변동이력자동기록), remove=종목제거(변동이력자동기록)",
      "inputSchema": {"type": "object",
                      "properties": {
+                         "action": {"type": "string", "enum": ["add", "remove"], "description": "추가 또는 제거"},
                          "ticker": {"type": "string", "description": "종목코드 (예: 005930) 또는 미국 티커"},
-                         "alert_type": {"type": "string", "description": "삭제 대상: 'watchlist'(기본) 또는 'buy_alert'(매수감시 제거)"},
+                         "name": {"type": "string", "description": "종목명 (add 시 필수)"},
+                         "alert_type": {"type": "string", "description": "remove 시 삭제 대상: 'watchlist'(기본) 또는 'buy_alert'"},
                      },
-                     "required": ["ticker"]}},
+                     "required": ["action", "ticker"]}},
+    # 9. get_alerts (유지)
     {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 % + 매수감시 목록",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "get_investor_flow", "description": "개별 종목 투자자별 수급: 외국인·기관·개인 매수/매도/순매수 수량. 장중이면 당일 누적, 장후면 최근 영업일 확정 데이터.",
+    # 10. get_market_signal ← get_short_sale + get_vi_status + get_program_trade
+    {"name": "get_market_signal",
+     "description": "시장 시그널 통합. mode별: short_sale=공매도일별추이, vi=VI발동종목현황, program_trade=프로그램매매투자자별동향",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 009540)"},
+                         "mode": {"type": "string", "enum": ["short_sale", "vi", "program_trade"], "description": "시그널 조회 모드"},
+                         "ticker": {"type": "string", "description": "종목코드 (short_sale 시 필수)"},
+                         "days": {"type": "integer", "description": "short_sale 조회 일수 (기본 10)"},
+                         "market": {"type": "string", "description": "program_trade 시 시장 (kospi/kosdaq, 기본 kospi)"},
                      },
-                     "required": ["ticker"]}},
-    {"name": "get_price_rank",
-     "description": "등락률 상위/하위 종목 순위. '오늘 상승률 상위 종목', '하락률 상위 코스닥' 등에 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "sort":   {"type": "string", "description": "'rise'=상승률 상위(기본), 'fall'=하락률 상위"},
-                         "market": {"type": "string", "description": "'all'=전체(기본), 'kospi', 'kosdaq'"},
-                         "n":      {"type": "integer", "description": "조회 종목 수 (기본 20, 최대 30)"},
-                     },
-                     "required": []}},
-    {"name": "get_investor_trend_history",
-     "description": "개별 종목의 투자자별 수급 일별 히스토리. 외국인·기관·개인 순매수 추이 (최근 N일). 'HD조선 외인 수급 5일 흐름' 등에 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 009540)"},
-                         "days":   {"type": "integer", "description": "조회 일수 (기본 5, 최대 10)"},
-                     },
-                     "required": ["ticker"]}},
-    {"name": "get_program_trade",
-     "description": "프로그램매매 투자자별 당일 동향. 외국인·기관·개인의 차익/비차익 프로그램매매 현황.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "market": {"type": "string", "description": "'kospi'(기본) 또는 'kosdaq'"},
-                     },
-                     "required": []}},
-    {"name": "get_investor_estimate",
-     "description": "장중 투자자 추정 수급 가집계. 외국인·기관 추정 순매수 수량 (확정치 아님). '지금 삼성전자 외인 추정 수급' 등에 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 005930)"},
-                     },
-                     "required": ["ticker"]}},
-    {"name": "get_foreign_institution",
-     "description": "외국인+기관 합산 순매수 상위 종목 (가집계). 외인과 기관이 동시에 매수하는 종목 파악에 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "sort": {"type": "string", "description": "'buy'=순매수 상위(기본), 'sell'=순매도 상위"},
-                         "n":    {"type": "integer", "description": "조회 종목 수 (기본 20)"},
-                     },
-                     "required": []}},
-    {"name": "get_short_sale",
-     "description": "국내주식 공매도 일별추이. 공매도 비율·수량 확인. 하락 원인 파악 시 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 005930)"},
-                         "n":      {"type": "integer", "description": "조회 일수 (기본 10)"},
-                     },
-                     "required": ["ticker"]}},
+                     "required": ["mode"]}},
+    # 11. get_news (확장 ← + get_news_sentiment)
     {"name": "get_news",
-     "description": "KIS 종목 관련 뉴스 헤드라인 목록. 종목명 언급 뉴스 최신순 조회.",
+     "description": "KIS 종목 뉴스 헤드라인. sentiment=true 시 헤드라인 감성분석(긍정/부정/중립) 포함",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "ticker": {"type": "string", "description": "한국 종목코드 (예: 005930)"},
-                         "n":      {"type": "integer", "description": "뉴스 개수 (기본 10)"},
-                     },
-                     "required": ["ticker"]}},
-    {"name": "get_vi_status",
-     "description": "변동성완화장치(VI) 발동 종목 현황. 오늘 VI 발동된 전 종목 목록.",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "get_volume_power",
-     "description": "체결강도 상위 종목 순위. 매수/매도 체결 비율. 120% 이상=매수 우위. '지금 체결강도 높은 종목' 등에 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "market": {"type": "string", "description": "'all'=전체(기본), 'kospi', 'kosdaq'"},
-                         "n":      {"type": "integer", "description": "조회 종목 수 (기본 20)"},
+                         "ticker": {"type": "string", "description": "종목코드 (감성분석 전체조회 시 생략 가능)"},
+                         "n": {"type": "integer", "description": "뉴스 개수 (기본 10)"},
+                         "sentiment": {"type": "boolean", "description": "true 시 감성분석 포함 (기본 false)"},
                      },
                      "required": []}},
-    {"name": "get_us_price_rank",
-     "description": "미국 주식 등락률 상위/하위 종목 순위. '나스닥 오늘 상승률 상위' 등에 사용.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "sort":     {"type": "string", "description": "'rise'=상승률 상위(기본), 'fall'=하락률 상위"},
-                         "exchange": {"type": "string", "description": "'NAS'=나스닥(기본), 'NYS'=뉴욕, 'AMS'=아멕스"},
-                         "n":        {"type": "integer", "description": "조회 종목 수 (기본 20)"},
-                     },
-                     "required": []}},
+    # 12. get_consensus (유지)
     {"name": "get_consensus",  "description": "종목별 증권사 컨센서스 목표주가/투자의견 조회 (FnGuide 기반). 평균·최고·최저 목표주가, 매수/중립/매도 건수, 증권사별 최신 목표가 반환.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker": {"type": "string", "description": "한국 종목코드 6자리 (예: 009540)"},
                      },
                      "required": ["ticker"]}},
-    {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록, 매매기록. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단, compare→종목비교, trade→매매기록",
+    # 13. set_alert (확장 ← + delete_alert)
+    {"name": "set_alert",      "description": "손절가/목표가 등록, 매수감시, 투자판단 기록, 매매기록, 알림삭제. log_type으로 모드 선택: 생략→stop/buy, decision→투자판단, compare→종목비교, trade→매매기록, delete→매도 후 알림 완전 삭제 (ticker, market 필요)",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "log_type":          {"type": "string", "description": "모드: 생략=stop/buy, 'decision'=투자판단, 'compare'=종목비교, 'trade'=매매기록"},
+                         "log_type":          {"type": "string", "description": "모드: 생략=stop/buy, 'decision'=투자판단, 'compare'=종목비교, 'trade'=매매기록, 'delete'=알림삭제"},
                          "ticker":            {"type": "string", "description": "종목코드 또는 미국 티커"},
                          "name":              {"type": "string", "description": "종목명"},
                          "stop_price":        {"type": "number", "description": "손절가"},
@@ -470,15 +445,10 @@ MCP_TOOLS = [
                          "price":             {"type": "number", "description": "[trade] 매매 단가"},
                          "grade":             {"type": "string", "description": "[trade] 매매 시점 확신등급 (A/B/C/D)"},
                          "reason":            {"type": "string", "description": "[trade] 매매 사유"},
+                         "market":            {"type": "string", "description": "[delete] 'KR'=한국(기본), 'US'=미국"},
                      },
                      "required": []}},
-    {"name": "delete_alert", "description": "매도 후 stoploss.json에서 해당 종목의 손절/목표가 알림을 완전히 삭제. watchlist_log에 delete_alert 기록.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "ticker": {"type": "string", "description": "종목코드 또는 미국 티커 (예: 034020, TSLA)"},
-                         "market": {"type": "string", "description": "'KR'=한국(기본), 'US'=미국"},
-                     },
-                     "required": ["ticker"]}},
+    # 14. get_portfolio_history (유지)
     {"name": "get_portfolio_history",
      "description": "포트폴리오 스냅샷 히스토리 + 드로다운 분석. 주간/월간 수익률, 월간 최대 드로다운, 투자규칙 경고(주간-4%/월간-7%/연속손절3회) 포함.",
      "inputSchema": {"type": "object",
@@ -486,6 +456,7 @@ MCP_TOOLS = [
                          "days": {"type": "integer", "description": "최근 N일 스냅샷 반환 (기본 30, 최대 365)"},
                      },
                      "required": []}},
+    # 15. get_trade_stats (유지)
     {"name": "get_trade_stats",
      "description": "매매 기록 성과 분석. 승률·손익·평균보유기간·확신등급 정확도 등 반환. 월간 복기 시 사용.",
      "inputSchema": {"type": "object",
@@ -493,13 +464,7 @@ MCP_TOOLS = [
                          "period": {"type": "string", "description": "'month'=이번달(기본), 'quarter'=이번분기, 'year'=올해, 'all'=전체"},
                      },
                      "required": []}},
-    {"name": "get_batch_detail", "description": "여러 한국 종목을 한 번에 조회. 현재가·등락률·거래량·52주고저·PER·PBR·당일 외인/기관 순매수 반환. 최대 20종목.",
-     "inputSchema": {"type": "object",
-                     "properties": {
-                         "tickers": {"type": "string", "description": "콤마 구분 종목코드 (예: '009540,298040,010120')"},
-                         "delay":   {"type": "number",  "description": "종목간 API 딜레이 초 (기본 0.3)"},
-                     },
-                     "required": ["tickers"]}},
+    # 16. backup_data (유지)
     {"name": "backup_data",
      "description": "/data/*.json 파일 GitHub Gist 백업·복원·상태 조회. action='backup': Gist에 백업, 'restore': Gist에서 복원(기존 파일 보존), 'restore_force': 강제 덮어쓰기 복원, 'status': 최근 백업 정보 조회.",
      "inputSchema": {"type": "object",
@@ -507,6 +472,31 @@ MCP_TOOLS = [
                          "action": {"type": "string", "description": "'backup' | 'restore' | 'restore_force' | 'status'"},
                      },
                      "required": ["action"]}},
+    # 17. simulate_trade (유지)
+    {"name": "simulate_trade",
+     "description": "포트폴리오 매매 시뮬레이션. 매도/매수 후 비중·섹터·현금·RR비율 변화를 미리보기.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "sells": {"type": "array", "description": "매도 목록 [{ticker, qty, price(선택)}]",
+                                   "items": {"type": "object", "properties": {
+                                       "ticker": {"type": "string"}, "qty": {"type": "integer"},
+                                       "price": {"type": "number", "description": "매도가 (생략 시 현재가)"}}}},
+                         "buys": {"type": "array", "description": "매수 목록 [{ticker, qty, price(선택)}]",
+                                  "items": {"type": "object", "properties": {
+                                      "ticker": {"type": "string"}, "qty": {"type": "integer"},
+                                      "price": {"type": "number", "description": "매수가 (생략 시 현재가)"}}}},
+                     },
+                     "required": []}},
+    # 18. get_backtest (유지)
+    {"name": "get_backtest",
+     "description": "종목 백테스트. 52주 일봉 데이터로 전략별 시뮬레이션. 수익률·승률·MDD·매매내역 반환. Buy&Hold 벤치마크 비교 포함.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker":   {"type": "string", "description": "종목코드(예: 005930) 또는 미국 티커(예: AAPL)"},
+                         "period":   {"type": "string", "description": "일봉 기간. D250=52주(KIS API), D120=6개월, D60=3개월, Y1=1년/Y2=2년/Y3=3년(FDR/yfinance 사용)"},
+                         "strategy": {"type": "string", "description": "전략: 'ma_cross'(이평교차, 기본), 'momentum_exit'(모멘텀종료), 'supply_follow'(수급추종, 10일제한), 'bollinger'(볼린저밴드), 'hybrid'(복합)"},
+                     },
+                     "required": ["ticker"]}},
 ]
 
 
@@ -519,26 +509,74 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
         if not token:
             raise RuntimeError("KIS 토큰 발급 실패")
 
-        if name == "scan_market":
-            rows = await kis_volume_rank_api(token)
-            await asyncio.sleep(0.05)
-            frgn_rows = await kis_foreigner_trend(token)
-            # 외국인 순매수량 dict (ticker → qty)
-            frgn_dict = {r.get("mksc_shrn_iscd", ""): int(r.get("frgn_ntby_qty", 0) or 0)
-                         for r in frgn_rows}
-            result = []
-            for r in rows[:15]:
-                ticker = r.get("mksc_shrn_iscd")
-                frgn_qty = frgn_dict.get(ticker, 0)
-                item = {
-                    "ticker": ticker, "name": r.get("hts_kor_isnm"),
-                    "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt"),
-                    "frgn_ntby_qty": frgn_qty,
-                    "frgn_buy": frgn_qty > 0,
+        if name == "get_rank":
+            rank_type = arguments.get("type", "scan").strip().lower()
+
+            if rank_type == "price":
+                # ← 기존 get_price_rank 핸들러
+                sort   = arguments.get("sort", "rise").strip().lower()
+                market = arguments.get("market", "all").strip().lower()
+                n      = int(arguments.get("n", 20) or 20)
+                n      = max(1, min(n, 30))
+                market_code = {"all": "0000", "kospi": "0001", "kosdaq": "1001"}.get(market, "0000")
+                items = await kis_fluctuation_rank(token, market=market_code, sort=sort, n=n)
+                result = {
+                    "sort":   sort,
+                    "market": market,
+                    "count":  len(items),
+                    "items":  items,
                 }
-                if frgn_qty > 0:
-                    item["tag"] = "외인매수"
-                result.append(item)
+
+            elif rank_type == "us_price":
+                # ← 기존 get_us_price_rank 핸들러
+                sort     = arguments.get("sort", "rise").strip().lower()
+                exchange = arguments.get("exchange", "NAS").strip().upper()
+                n        = int(arguments.get("n", 20) or 20)
+                n        = max(1, min(n, 50))
+                items    = await kis_us_updown_rate(token, sort=sort, exchange=exchange, n=n)
+                result   = {
+                    "sort":     sort,
+                    "exchange": exchange,
+                    "count":    len(items),
+                    "items":    items,
+                }
+
+            elif rank_type == "volume":
+                # ← 기존 get_volume_power 핸들러
+                market = arguments.get("market", "all").strip().lower()
+                n      = int(arguments.get("n", 20) or 20)
+                n      = max(1, min(n, 50))
+                items  = await kis_volume_power_rank(token, market=market, n=n)
+                result = {
+                    "market": market,
+                    "count":  len(items),
+                    "items":  items,
+                }
+
+            elif rank_type == "scan":
+                # ← 기존 scan_market 핸들러
+                rows = await kis_volume_rank_api(token)
+                await asyncio.sleep(0.05)
+                frgn_rows = await kis_foreigner_trend(token)
+                # 외국인 순매수량 dict (ticker → qty)
+                frgn_dict = {r.get("mksc_shrn_iscd", ""): int(r.get("frgn_ntby_qty", 0) or 0)
+                             for r in frgn_rows}
+                result = []
+                for r in rows[:15]:
+                    ticker = r.get("mksc_shrn_iscd")
+                    frgn_qty = frgn_dict.get(ticker, 0)
+                    item = {
+                        "ticker": ticker, "name": r.get("hts_kor_isnm"),
+                        "vol": r.get("acml_vol"), "chg": r.get("prdy_ctrt"),
+                        "frgn_ntby_qty": frgn_qty,
+                        "frgn_buy": frgn_qty > 0,
+                    }
+                    if frgn_qty > 0:
+                        item["tag"] = "외인매수"
+                    result.append(item)
+
+            else:
+                result = {"error": f"알 수 없는 type: {rank_type}. price/us_price/volume/scan 중 하나"}
 
         elif name == "get_portfolio":
             mode = arguments.get("mode", "").strip().lower()
@@ -647,112 +685,204 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     }
 
         elif name == "get_stock_detail":
-            ticker = arguments.get("ticker", "005930").strip().upper()
-            period = arguments.get("period", "").strip().upper()  # e.g. "D60", "W20"
-
-            if period:
-                # ── 일봉/주봉 조회 모드 ──
-                period_type = period[0] if period else "D"  # D/W/M
-                try:
-                    n = int(period[1:])
-                except ValueError:
-                    n = 60
-                today_str = datetime.now(KST).strftime("%Y%m%d")
-                buffer = {"D": 2, "W": 8, "M": 40}.get(period_type, 2)
-                start_dt = (datetime.now(KST) - timedelta(days=n * buffer)).strftime("%Y%m%d")
-
-                if _is_us_ticker(ticker):
-                    excd = _guess_excd(ticker)
-                    async with aiohttp.ClientSession() as s:
-                        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
-                            "HHDFS76240000", token,
-                            {"AUTH": "", "EXCD": excd, "SYMB": ticker,
-                             "GUBN": "0", "BYMD": today_str, "MODP": "0"})
-                    candles = d.get("output2", [])
-                    result = {
-                        "ticker": ticker, "market": "US", "period": period,
-                        "candles": [{"date": c.get("xymd"), "open": c.get("open"),
-                                     "high": c.get("high"), "low": c.get("low"),
-                                     "close": c.get("clos"), "vol": c.get("tvol")}
-                                    for c in candles[:n]],
-                    }
+            # ── 다종목 일괄 조회 (tickers 파라미터) ──
+            batch_tickers_raw = arguments.get("tickers", "")
+            if batch_tickers_raw:
+                # ← 기존 get_batch_detail 핸들러
+                raw = batch_tickers_raw
+                delay = float(arguments.get("delay", 0.3) or 0.3)
+                tickers = [t.strip().upper() for t in raw.split(",") if t.strip()][:20]
+                if not tickers:
+                    result = {"error": "tickers는 필수입니다 (콤마 구분 종목코드)"}
                 else:
-                    async with aiohttp.ClientSession() as s:
-                        _, d = await _kis_get(s,
-                            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
-                            "FHKST03010100", token,
-                            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
-                             "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": today_str,
-                             "FID_PERIOD_DIV_CODE": period_type, "FID_ORG_ADJ_PRC": "0"})
-                    candles = d.get("output2", [])
-                    result = {
-                        "ticker": ticker, "market": "KR", "period": period,
-                        "candles": [{"date": c.get("stck_bsop_date"),
-                                     "open": c.get("stck_oprc"), "high": c.get("stck_hgpr"),
-                                     "low": c.get("stck_lwpr"), "close": c.get("stck_clpr"),
-                                     "vol": c.get("acml_vol")}
-                                    for c in candles[:n]],
-                    }
-
-            elif _is_us_ticker(ticker):
-                # ── 미국 주식 ──
-                excd = _guess_excd(ticker)
-                price_d = await kis_us_stock_price(ticker, token, excd)
-                detail_d = await kis_us_stock_detail(ticker, token, excd)
-                cur = float(price_d.get("last", 0) or 0)
-                base = float(price_d.get("base", 0) or 0)
-                result = {
-                    "ticker": ticker, "market": "US",
-                    "price": cur,
-                    "chg_pct": float(price_d.get("rate", 0) or 0),
-                    "volume": int(price_d.get("tvol", 0) or 0),
-                    "open": float(detail_d.get("open", 0) or 0),
-                    "high": float(detail_d.get("high", 0) or 0),
-                    "low": float(detail_d.get("low", 0) or 0),
-                    "prev_close": base,
-                    "w52h": float(detail_d.get("h52p", 0) or 0),
-                    "w52l": float(detail_d.get("l52p", 0) or 0),
-                    "per": float(detail_d.get("perx", 0) or 0) or None,
-                    "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
-                    "eps": float(detail_d.get("epsx", 0) or 0) or None,
-                    "market_cap": detail_d.get("tomv", ""),
-                    "sector": detail_d.get("e_icod", ""),
-                }
+                    result = await batch_stock_detail(tickers, token, delay=delay)
             else:
-                # ── 한국 주식 ──
-                price = await kis_stock_price(ticker, token)
-                inv   = await kis_investor_trend(ticker, token)
-                result = {
-                    "ticker": ticker, "market": "KR",
-                    "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
-                    "vol": price.get("acml_vol"),
-                    "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
-                    "per": price.get("per"), "pbr": price.get("pbr"), "eps": price.get("eps"),
-                    "bps": price.get("bps"),
-                    "investor": inv[:3] if isinstance(inv, list) else inv,
-                }
-                # 추정실적 (period 없을 때만)
-                try:
-                    result["earnings"] = await kis_estimate_perform(ticker, token)
-                except Exception:
-                    pass
+                # ── 단일 종목 조회 (기존 로직) ──
+                ticker = arguments.get("ticker", "005930").strip().upper()
+                period = arguments.get("period", "").strip().upper()  # e.g. "D60", "W20"
 
-        elif name == "get_foreign_rank":
-            try:
-                rows = await kis_foreigner_trend(token)
-                if not rows:
-                    result = {"error": "데이터 없음", "items": []}
-                else:
-                    result = [
-                        {
-                            "ticker": r.get("mksc_shrn_iscd", ""),
-                            "name": r.get("hts_kor_isnm", ""),
-                            "net_buy": r.get("frgn_ntby_qty", "0"),
+                if period:
+                    # ── 일봉/주봉 조회 모드 ──
+                    period_type = period[0] if period else "D"  # D/W/M
+                    try:
+                        n = int(period[1:])
+                    except ValueError:
+                        n = 60
+                    today_str = datetime.now(KST).strftime("%Y%m%d")
+                    buffer = {"D": 2, "W": 8, "M": 40}.get(period_type, 2)
+                    start_dt = (datetime.now(KST) - timedelta(days=n * buffer)).strftime("%Y%m%d")
+
+                    if _is_us_ticker(ticker):
+                        excd = _guess_excd(ticker)
+                        async with aiohttp.ClientSession() as s:
+                            _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
+                                "HHDFS76240000", token,
+                                {"AUTH": "", "EXCD": excd, "SYMB": ticker,
+                                 "GUBN": "0", "BYMD": today_str, "MODP": "0"})
+                        candles = d.get("output2", [])
+                        result = {
+                            "ticker": ticker, "market": "US", "period": period,
+                            "candles": [{"date": c.get("xymd"), "open": c.get("open"),
+                                         "high": c.get("high"), "low": c.get("low"),
+                                         "close": c.get("clos"), "vol": c.get("tvol")}
+                                        for c in candles[:n]],
                         }
-                        for r in rows[:15]
-                    ]
-            except Exception as e:
-                result = {"error": str(e), "items": []}
+                    else:
+                        async with aiohttp.ClientSession() as s:
+                            _, d = await _kis_get(s,
+                                "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                "FHKST03010100", token,
+                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                                 "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": today_str,
+                                 "FID_PERIOD_DIV_CODE": period_type, "FID_ORG_ADJ_PRC": "0"})
+                        candles = d.get("output2", [])
+                        result = {
+                            "ticker": ticker, "market": "KR", "period": period,
+                            "candles": [{"date": c.get("stck_bsop_date"),
+                                         "open": c.get("stck_oprc"), "high": c.get("stck_hgpr"),
+                                         "low": c.get("stck_lwpr"), "close": c.get("stck_clpr"),
+                                         "vol": c.get("acml_vol")}
+                                        for c in candles[:n]],
+                        }
+
+                elif _is_us_ticker(ticker):
+                    # ── 미국 주식 ──
+                    excd = _guess_excd(ticker)
+                    price_d = await kis_us_stock_price(ticker, token, excd)
+                    detail_d = await kis_us_stock_detail(ticker, token, excd)
+                    cur = float(price_d.get("last", 0) or 0)
+                    base = float(price_d.get("base", 0) or 0)
+                    result = {
+                        "ticker": ticker, "market": "US",
+                        "price": cur,
+                        "chg_pct": float(price_d.get("rate", 0) or 0),
+                        "volume": int(price_d.get("tvol", 0) or 0),
+                        "open": float(detail_d.get("open", 0) or 0),
+                        "high": float(detail_d.get("high", 0) or 0),
+                        "low": float(detail_d.get("low", 0) or 0),
+                        "prev_close": base,
+                        "w52h": float(detail_d.get("h52p", 0) or 0),
+                        "w52l": float(detail_d.get("l52p", 0) or 0),
+                        "per": float(detail_d.get("perx", 0) or 0) or None,
+                        "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
+                        "eps": float(detail_d.get("epsx", 0) or 0) or None,
+                        "market_cap": detail_d.get("tomv", ""),
+                        "sector": detail_d.get("e_icod", ""),
+                    }
+                else:
+                    # ── 한국 주식 ──
+                    price = await kis_stock_price(ticker, token)
+                    inv   = await kis_investor_trend(ticker, token)
+                    result = {
+                        "ticker": ticker, "market": "KR",
+                        "price": price.get("stck_prpr"), "chg": price.get("prdy_ctrt"),
+                        "vol": price.get("acml_vol"),
+                        "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
+                        "per": price.get("per"), "pbr": price.get("pbr"), "eps": price.get("eps"),
+                        "bps": price.get("bps"),
+                        "investor": inv[:3] if isinstance(inv, list) else inv,
+                    }
+                    # 추정실적 (period 없을 때만)
+                    try:
+                        result["earnings"] = await kis_estimate_perform(ticker, token)
+                    except Exception:
+                        pass
+
+        elif name == "get_supply":
+            supply_mode = arguments.get("mode", "daily").strip().lower()
+
+            if supply_mode == "daily":
+                # ← 기존 get_investor_flow 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    inv = await kis_investor_trend(ticker, token)
+                    if not inv:
+                        result = {"error": f"{ticker} 수급 데이터 없음"}
+                    else:
+                        row = inv[0]  # 가장 최근 영업일 (장중이면 당일 누적)
+                        # 장중 여부: 평일 09:00~15:30 KST
+                        now_kst = datetime.now(KST)
+                        wd = now_kst.weekday()
+                        tot_min = now_kst.hour * 60 + now_kst.minute
+                        is_live = (wd < 5 and 9 * 60 <= tot_min <= 15 * 60 + 30)
+                        result = {
+                            "ticker": ticker,
+                            "date": row.get("stck_bsop_date", ""),
+                            "is_live": is_live,
+                            "foreign":     {
+                                "buy":  int(row.get("frgn_shnu_vol", 0) or 0),
+                                "sell": int(row.get("frgn_seln_vol", 0) or 0),
+                                "net":  int(row.get("frgn_ntby_qty", 0) or 0),
+                            },
+                            "institution": {
+                                "buy":  int(row.get("orgn_shnu_vol", 0) or 0),
+                                "sell": int(row.get("orgn_seln_vol", 0) or 0),
+                                "net":  int(row.get("orgn_ntby_qty", 0) or 0),
+                            },
+                            "individual":  {
+                                "buy":  int(row.get("prsn_shnu_vol", 0) or 0),
+                                "sell": int(row.get("prsn_seln_vol", 0) or 0),
+                                "net":  int(row.get("prsn_ntby_qty", 0) or 0),
+                            },
+                        }
+
+            elif supply_mode == "history":
+                # ← 기존 get_investor_trend_history 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    days  = int(arguments.get("days", 5) or 5)
+                    days  = max(1, min(days, 10))
+                    rows  = await kis_investor_trend_history(ticker, token, n_days=days)
+                    result = {
+                        "ticker": ticker,
+                        "days":   days,
+                        "history": rows,
+                    }
+
+            elif supply_mode == "estimate":
+                # ← 기존 get_investor_estimate 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    result = await kis_investor_trend_estimate(ticker, token)
+
+            elif supply_mode == "foreign_rank":
+                # ← 기존 get_foreign_rank 핸들러
+                try:
+                    rows = await kis_foreigner_trend(token)
+                    if not rows:
+                        result = {"error": "데이터 없음", "items": []}
+                    else:
+                        result = [
+                            {
+                                "ticker": r.get("mksc_shrn_iscd", ""),
+                                "name": r.get("hts_kor_isnm", ""),
+                                "net_buy": r.get("frgn_ntby_qty", "0"),
+                            }
+                            for r in rows[:15]
+                        ]
+                except Exception as e:
+                    result = {"error": str(e), "items": []}
+
+            elif supply_mode == "combined_rank":
+                # ← 기존 get_foreign_institution 핸들러
+                sort = arguments.get("sort", "buy").strip().lower()
+                n    = int(arguments.get("n", 20) or 20)
+                n    = max(1, min(n, 50))
+                items = await kis_foreign_institution_total(token, sort=sort, n=n)
+                result = {
+                    "sort":  sort,
+                    "count": len(items),
+                    "items": items,
+                }
+
+            else:
+                result = {"error": f"알 수 없는 mode: {supply_mode}. daily/history/estimate/foreign_rank/combined_rank 중 하나"}
 
         elif name == "get_dart":
             disclosures = await search_dart_disclosures(days_back=3)
@@ -1021,93 +1151,106 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                 "chg_pct": usd.get("change_pct") if usd else None},
                 }
 
-        elif name == "get_sector_flow":
-            now_kst = datetime.now(KST)
-            today = now_kst.strftime("%Y%m%d")
-            market_closed = now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 30)
+        elif name == "get_sector":
+            sector_mode = arguments.get("mode", "flow").strip().lower()
+            if not sector_mode:
+                sector_mode = "flow"
 
-            # ── 캐시 확인: 장마감 후 당일 캐시 있으면 즉시 반환 ──
-            cache = load_sector_flow_cache()
-            if market_closed and cache.get("date") == today and "data" in cache:
-                result = dict(cache["data"])
-                result["cached"] = True
-                result["cached_at"] = cache.get("cached_at", "")
-            else:
-                sectors = []
-                for code, label in WI26_SECTORS:
-                    frgn, orgn = await _fetch_sector_flow(token, code)
-                    sectors.append({
-                        "sector": label, "code": code,
-                        "frgn": frgn, "orgn": orgn,
-                        "total": frgn + orgn,
-                    })
+            if sector_mode == "rotation":
+                # ← 기존 get_sector_rotation 핸들러
+                rot = await detect_sector_rotation(token)
+                result = rot
+            elif sector_mode == "flow":
+                # ← 기존 get_sector_flow 핸들러 (mode="flow" 기본)
+                now_kst = datetime.now(KST)
+                today = now_kst.strftime("%Y%m%d")
+                market_closed = now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 30)
 
-                has_data = any(s["total"] != 0 for s in sectors)
-                note = None
-
-                if not has_data:
-                    # Fallback: 외국인 순매수 상위 기반 업종 근사치 (수량 기준)
-                    frgn_rows = await kis_foreigner_trend(token)
-                    sector_frgn = {label: 0 for _, label in WI26_SECTORS}
-                    for r in frgn_rows:
-                        sect = _TICKER_SECTOR.get(r.get("mksc_shrn_iscd", ""))
-                        if sect:
-                            sector_frgn[sect] += int(r.get("frgn_ntby_qty", 0) or 0)
-                    sectors = [
-                        {"sector": label, "code": code,
-                         "frgn": sector_frgn.get(label, 0), "orgn": 0,
-                         "total": sector_frgn.get(label, 0)}
-                        for code, label in WI26_SECTORS
-                    ]
-                    note = "업종별 투자자 API 미지원 — 외국인 순매수 상위 기반 근사치(수량)"
-
-                sorted_s = sorted(sectors, key=lambda x: x["total"], reverse=True)
-                result = {
-                    "date": today,
-                    "top_inflow":  [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
-                                     for s in sorted_s[:3]],
-                    "top_outflow": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
-                                     for s in sorted_s[-3:][::-1]],
-                    "all": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
-                            for s in sorted_s],
-                }
-                if note:
-                    result["note"] = note
-
-                # ── 섹터 ETF 시세 ──
-                SECTOR_ETFS = [
-                    ("140710", "KODEX 조선"),
-                    ("464520", "TIGER 방산"),
-                    ("305720", "KODEX 2차전지"),
-                    ("469150", "TIGER AI반도체"),
-                    ("244580", "KODEX 바이오"),
-                    ("261070", "KODEX 전력에너지"),
-                ]
-                etf_prices = []
-                for etf_code, etf_name in SECTOR_ETFS:
-                    try:
-                        async with aiohttp.ClientSession() as s:
-                            _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
-                                "FHPST02400000", token,
-                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
-                        out = ed.get("output", {})
-                        etf_prices.append({
-                            "code": etf_code, "name": etf_name,
-                            "price": out.get("stck_prpr"), "chg": out.get("prdy_ctrt"),
+                # ── 캐시 확인: 장마감 후 당일 캐시 있으면 즉시 반환 ──
+                cache = load_sector_flow_cache()
+                if market_closed and cache.get("date") == today and "data" in cache:
+                    result = dict(cache["data"])
+                    result["cached"] = True
+                    result["cached_at"] = cache.get("cached_at", "")
+                else:
+                    sectors = []
+                    for code, label in WI26_SECTORS:
+                        frgn, orgn = await _fetch_sector_flow(token, code)
+                        sectors.append({
+                            "sector": label, "code": code,
+                            "frgn": frgn, "orgn": orgn,
+                            "total": frgn + orgn,
                         })
-                        await asyncio.sleep(0.05)
-                    except Exception:
-                        pass
-                result["etf_prices"] = etf_prices
 
-                # ── 장마감 후 캐시 저장 (fallback 데이터는 캐시하지 않음) ──
-                if market_closed and has_data:
-                    save_sector_flow_cache({
+                    has_data = any(s["total"] != 0 for s in sectors)
+                    note = None
+
+                    if not has_data:
+                        # Fallback: 외국인 순매수 상위 기반 업종 근사치 (수량 기준)
+                        frgn_rows = await kis_foreigner_trend(token)
+                        sector_frgn = {label: 0 for _, label in WI26_SECTORS}
+                        for r in frgn_rows:
+                            sect = _TICKER_SECTOR.get(r.get("mksc_shrn_iscd", ""))
+                            if sect:
+                                sector_frgn[sect] += int(r.get("frgn_ntby_qty", 0) or 0)
+                        sectors = [
+                            {"sector": label, "code": code,
+                             "frgn": sector_frgn.get(label, 0), "orgn": 0,
+                             "total": sector_frgn.get(label, 0)}
+                            for code, label in WI26_SECTORS
+                        ]
+                        note = "업종별 투자자 API 미지원 — 외국인 순매수 상위 기반 근사치(수량)"
+
+                    sorted_s = sorted(sectors, key=lambda x: x["total"], reverse=True)
+                    result = {
                         "date": today,
-                        "cached_at": now_kst.strftime("%H:%M:%S"),
-                        "data": result,
-                    })
-                result["cached"] = False
+                        "top_inflow":  [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                         for s in sorted_s[:3]],
+                        "top_outflow": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                         for s in sorted_s[-3:][::-1]],
+                        "all": [{"sector": s["sector"], "frgn": s["frgn"], "orgn": s["orgn"]}
+                                for s in sorted_s],
+                    }
+                    if note:
+                        result["note"] = note
+
+                    # ── 섹터 ETF 시세 ──
+                    SECTOR_ETFS = [
+                        ("140710", "KODEX 조선"),
+                        ("464520", "TIGER 방산"),
+                        ("305720", "KODEX 2차전지"),
+                        ("469150", "TIGER AI반도체"),
+                        ("244580", "KODEX 바이오"),
+                        ("261070", "KODEX 전력에너지"),
+                    ]
+                    etf_prices = []
+                    for etf_code, etf_name in SECTOR_ETFS:
+                        try:
+                            async with aiohttp.ClientSession() as s:
+                                _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
+                                    "FHPST02400000", token,
+                                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
+                            out = ed.get("output", {})
+                            etf_prices.append({
+                                "code": etf_code, "name": etf_name,
+                                "price": out.get("stck_prpr"), "chg": out.get("prdy_ctrt"),
+                            })
+                            await asyncio.sleep(0.05)
+                        except Exception:
+                            pass
+                    result["etf_prices"] = etf_prices
+
+                    # ── 장마감 후 캐시 저장 (fallback 데이터는 캐시하지 않음) ──
+                    if market_closed and has_data:
+                        save_sector_flow_cache({
+                            "date": today,
+                            "cached_at": now_kst.strftime("%H:%M:%S"),
+                            "data": result,
+                        })
+                    result["cached"] = False
+
+            else:
+                result = {"error": f"알 수 없는 mode: {sector_mode}. flow/rotation 중 하나"}
 
         elif name == "get_alerts":
             stops = load_stoploss()
@@ -1316,6 +1459,46 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 verdict = "교체 권장" if candidate_score > held_score else "보유 유지"
                 result = {"ok": True, "message": f"{held_ticker} vs {candidate_ticker} 비교 저장됨 ({verdict})", "verdict": verdict}
 
+            elif log_type == "delete":
+                # ← 기존 delete_alert 핸들러
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    stops = load_stoploss()
+                    if _is_us_ticker(ticker):
+                        us = stops.get("us_stocks", {})
+                        if ticker not in us:
+                            result = {"ok": False, "message": "해당 종목 알림이 없습니다"}
+                        else:
+                            entry = us.pop(ticker)
+                            stops["us_stocks"] = us
+                            save_json(STOPLOSS_FILE, stops)
+                            append_watchlist_log({
+                                "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                                "action": "delete_alert",
+                                "ticker": ticker,
+                                "name": entry.get("name", ticker),
+                                "stop_price": entry.get("stop_price"),
+                                "target_price": entry.get("target_price"),
+                            })
+                            result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
+                    else:
+                        if ticker not in stops:
+                            result = {"ok": False, "message": "해당 종목 알림이 없습니다"}
+                        else:
+                            entry = stops.pop(ticker)
+                            save_json(STOPLOSS_FILE, stops)
+                            asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                            append_watchlist_log({
+                                "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                                "action": "delete_alert",
+                                "ticker": ticker,
+                                "name": entry.get("name", ticker),
+                                "stop_price": entry.get("stop_price"),
+                                "target_price": entry.get("target_price"),
+                            })
+                            result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
+
             elif not ticker or not aname:
                 result = {"error": "ticker와 name은 필수입니다"}
             elif buy_price > 0:
@@ -1374,205 +1557,156 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             else:
                 result = {"error": "stop_price 또는 buy_price 중 하나는 필수입니다"}
 
-        elif name == "add_watch":
-            ticker = arguments.get("ticker", "").strip()
-            wname  = arguments.get("name", "").strip()
-            if not ticker or not wname:
-                result = {"error": "ticker와 name은 필수입니다"}
-            else:
-                wl = load_watchlist()
-                wl[ticker] = wname
-                save_json(WATCHLIST_FILE, wl)
-                asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
-                append_watchlist_log({
-                    "date": datetime.now(KST).strftime("%Y-%m-%d"),
-                    "action": "add",
-                    "ticker": ticker, "name": wname,
-                    "buy_price": None, "old_price": None, "reason": "",
-                })
-                result = {"ok": True, "message": f"{wname}({ticker}) 워치리스트 추가됨", "total": len(wl)}
+        elif name == "manage_watch":
+            watch_action = arguments.get("action", "").strip().lower()
 
-        elif name == "remove_watch":
-            ticker = arguments.get("ticker", "").strip().upper()
-            alert_type = arguments.get("alert_type", "watchlist").strip().lower()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
-            elif alert_type == "buy_alert":
-                # ── 매수감시 제거 ──
-                wa = load_watchalert()
-                if ticker in wa:
-                    removed = wa.pop(ticker)
-                    save_json(WATCHALERT_FILE, wa)
-                    asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
-                    result = {"ok": True, "message": f"{removed['name']}({ticker}) 매수감시 제거됨", "total_watch": len(wa)}
+            if watch_action == "add":
+                # ← 기존 add_watch 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                wname  = arguments.get("name", "").strip()
+                if not ticker or not wname:
+                    result = {"error": "ticker와 name은 필수입니다"}
                 else:
-                    result = {"error": f"{ticker} 매수감시 목록에 없음"}
-            else:
-                # ── 워치리스트 제거 ──
-                wl = load_watchlist()
-                if ticker in wl:
-                    removed = wl.pop(ticker)
+                    wl = load_watchlist()
+                    wl[ticker] = wname
                     save_json(WATCHLIST_FILE, wl)
                     asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                     append_watchlist_log({
                         "date": datetime.now(KST).strftime("%Y-%m-%d"),
-                        "action": "remove",
-                        "ticker": ticker, "name": removed,
+                        "action": "add",
+                        "ticker": ticker, "name": wname,
                         "buy_price": None, "old_price": None, "reason": "",
                     })
-                    result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
-                else:
-                    result = {"error": f"{ticker} 워치리스트에 없음"}
+                    result = {"ok": True, "message": f"{wname}({ticker}) 워치리스트 추가됨", "total": len(wl)}
 
-        elif name == "get_investor_flow":
-            ticker = arguments.get("ticker", "").strip()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
-            else:
-                inv = await kis_investor_trend(ticker, token)
-                if not inv:
-                    result = {"error": f"{ticker} 수급 데이터 없음"}
+            elif watch_action == "remove":
+                # ← 기존 remove_watch 핸들러
+                ticker = arguments.get("ticker", "").strip().upper()
+                alert_type = arguments.get("alert_type", "watchlist").strip().lower()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                elif alert_type == "buy_alert":
+                    # ── 매수감시 제거 ──
+                    wa = load_watchalert()
+                    if ticker in wa:
+                        removed = wa.pop(ticker)
+                        save_json(WATCHALERT_FILE, wa)
+                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                        result = {"ok": True, "message": f"{removed['name']}({ticker}) 매수감시 제거됨", "total_watch": len(wa)}
+                    else:
+                        result = {"error": f"{ticker} 매수감시 목록에 없음"}
                 else:
-                    row = inv[0]  # 가장 최근 영업일 (장중이면 당일 누적)
-                    # 장중 여부: 평일 09:00~15:30 KST
-                    now_kst = datetime.now(KST)
-                    wd = now_kst.weekday()
-                    tot_min = now_kst.hour * 60 + now_kst.minute
-                    is_live = (wd < 5 and 9 * 60 <= tot_min <= 15 * 60 + 30)
+                    # ── 워치리스트 제거 ──
+                    wl = load_watchlist()
+                    if ticker in wl:
+                        removed = wl.pop(ticker)
+                        save_json(WATCHLIST_FILE, wl)
+                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                        append_watchlist_log({
+                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "action": "remove",
+                            "ticker": ticker, "name": removed,
+                            "buy_price": None, "old_price": None, "reason": "",
+                        })
+                        result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
+                    else:
+                        result = {"error": f"{ticker} 워치리스트에 없음"}
+
+            else:
+                result = {"error": "action은 'add' 또는 'remove' 이어야 합니다"}
+
+        elif name == "get_market_signal":
+            signal_mode = arguments.get("mode", "").strip().lower()
+
+            if signal_mode == "short_sale":
+                # ← 기존 get_short_sale 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    n     = int(arguments.get("days", 10) or 10)
+                    n     = max(1, min(n, 30))
+                    rows  = await kis_daily_short_sale(ticker, token, n=n)
                     result = {
                         "ticker": ticker,
-                        "date": row.get("stck_bsop_date", ""),
-                        "is_live": is_live,
-                        "foreign":     {
-                            "buy":  int(row.get("frgn_shnu_vol", 0) or 0),
-                            "sell": int(row.get("frgn_seln_vol", 0) or 0),
-                            "net":  int(row.get("frgn_ntby_qty", 0) or 0),
-                        },
-                        "institution": {
-                            "buy":  int(row.get("orgn_shnu_vol", 0) or 0),
-                            "sell": int(row.get("orgn_seln_vol", 0) or 0),
-                            "net":  int(row.get("orgn_ntby_qty", 0) or 0),
-                        },
-                        "individual":  {
-                            "buy":  int(row.get("prsn_shnu_vol", 0) or 0),
-                            "sell": int(row.get("prsn_seln_vol", 0) or 0),
-                            "net":  int(row.get("prsn_ntby_qty", 0) or 0),
-                        },
+                        "count":  len(rows),
+                        "items":  rows,
                     }
 
-        elif name == "get_price_rank":
-            sort   = arguments.get("sort", "rise").strip().lower()
-            market = arguments.get("market", "all").strip().lower()
-            n      = int(arguments.get("n", 20) or 20)
-            n      = max(1, min(n, 30))
-            market_code = {"all": "0000", "kospi": "0001", "kosdaq": "1001"}.get(market, "0000")
-            items = await kis_fluctuation_rank(token, market=market_code, sort=sort, n=n)
-            result = {
-                "sort":   sort,
-                "market": market,
-                "count":  len(items),
-                "items":  items,
-            }
-
-        elif name == "get_investor_trend_history":
-            ticker = arguments.get("ticker", "").strip()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
-            else:
-                days  = int(arguments.get("days", 5) or 5)
-                days  = max(1, min(days, 10))
-                rows  = await kis_investor_trend_history(ticker, token, n_days=days)
+            elif signal_mode == "vi":
+                # ← 기존 get_vi_status 핸들러
+                rows   = await kis_vi_status(token)
                 result = {
-                    "ticker": ticker,
-                    "days":   days,
-                    "history": rows,
+                    "count": len(rows),
+                    "items": rows,
                 }
 
-        elif name == "get_program_trade":
-            market = arguments.get("market", "kospi").strip().lower()
-            rows   = await kis_program_trade_today(token, market=market)
-            result = {
-                "market": market,
-                "count":  len(rows),
-                "items":  rows,
-            }
-
-        elif name == "get_investor_estimate":
-            ticker = arguments.get("ticker", "").strip()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
-            else:
-                result = await kis_investor_trend_estimate(ticker, token)
-
-        elif name == "get_foreign_institution":
-            sort = arguments.get("sort", "buy").strip().lower()
-            n    = int(arguments.get("n", 20) or 20)
-            n    = max(1, min(n, 50))
-            items = await kis_foreign_institution_total(token, sort=sort, n=n)
-            result = {
-                "sort":  sort,
-                "count": len(items),
-                "items": items,
-            }
-
-        elif name == "get_short_sale":
-            ticker = arguments.get("ticker", "").strip()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
-            else:
-                n     = int(arguments.get("n", 10) or 10)
-                n     = max(1, min(n, 30))
-                rows  = await kis_daily_short_sale(ticker, token, n=n)
+            elif signal_mode == "program_trade":
+                # ← 기존 get_program_trade 핸들러
+                market = arguments.get("market", "kospi").strip().lower()
+                rows   = await kis_program_trade_today(token, market=market)
                 result = {
-                    "ticker": ticker,
+                    "market": market,
                     "count":  len(rows),
                     "items":  rows,
                 }
+
+            else:
+                result = {"error": f"알 수 없는 mode: {signal_mode}. short_sale/vi/program_trade 중 하나"}
 
         elif name == "get_news":
-            ticker = arguments.get("ticker", "").strip()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
+            sentiment = arguments.get("sentiment", False)
+            if isinstance(sentiment, str):
+                sentiment = sentiment.lower() in ("true", "1", "yes")
+
+            if sentiment:
+                # ← 기존 get_news_sentiment 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                if ticker:
+                    news = await kis_news_title(ticker, token, n=15)
+                    analysis = analyze_news_sentiment(news)
+                    result = {"ticker": ticker, **analysis}
+                else:
+                    portfolio = load_json(PORTFOLIO_FILE, {})
+                    watchlist = load_watchlist()
+                    tickers = {}
+                    for t, v in portfolio.items():
+                        if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict):
+                            tickers[t] = v.get("name", t)
+                    for t, n in watchlist.items():
+                        if t not in tickers:
+                            tickers[t] = n
+                    all_results = []
+                    for t, nm in tickers.items():
+                        try:
+                            news = await kis_news_title(t, token, n=10)
+                            analysis = analyze_news_sentiment(news)
+                            all_results.append({"ticker": t, "name": nm, **analysis})
+                            await asyncio.sleep(0.3)
+                        except Exception:
+                            pass
+                    all_results.sort(key=lambda x: len(x.get("negative", [])), reverse=True)
+                    total_pos = sum(len(r.get("positive", [])) for r in all_results)
+                    total_neg = sum(len(r.get("negative", [])) for r in all_results)
+                    total_neu = sum(len(r.get("neutral", [])) for r in all_results)
+                    result = {
+                        "stocks": all_results,
+                        "total_summary": f"긍정 {total_pos} / 부정 {total_neg} / 중립 {total_neu}",
+                    }
             else:
-                n    = int(arguments.get("n", 10) or 10)
-                n    = max(1, min(n, 30))
-                rows = await kis_news_title(ticker, token, n=n)
-                result = {
-                    "ticker": ticker,
-                    "count":  len(rows),
-                    "items":  rows,
-                }
-
-        elif name == "get_vi_status":
-            rows   = await kis_vi_status(token)
-            result = {
-                "count": len(rows),
-                "items": rows,
-            }
-
-        elif name == "get_volume_power":
-            market = arguments.get("market", "all").strip().lower()
-            n      = int(arguments.get("n", 20) or 20)
-            n      = max(1, min(n, 50))
-            items  = await kis_volume_power_rank(token, market=market, n=n)
-            result = {
-                "market": market,
-                "count":  len(items),
-                "items":  items,
-            }
-
-        elif name == "get_us_price_rank":
-            sort     = arguments.get("sort", "rise").strip().lower()
-            exchange = arguments.get("exchange", "NAS").strip().upper()
-            n        = int(arguments.get("n", 20) or 20)
-            n        = max(1, min(n, 50))
-            items    = await kis_us_updown_rate(token, sort=sort, exchange=exchange, n=n)
-            result   = {
-                "sort":     sort,
-                "exchange": exchange,
-                "count":    len(items),
-                "items":    items,
-            }
+                # ← 기존 get_news 핸들러
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    n    = int(arguments.get("n", 10) or 10)
+                    n    = max(1, min(n, 30))
+                    rows = await kis_news_title(ticker, token, n=n)
+                    result = {
+                        "ticker": ticker,
+                        "count":  len(rows),
+                        "items":  rows,
+                    }
 
         elif name == "get_consensus":
             ticker = arguments.get("ticker", "").strip().upper()
@@ -1589,46 +1723,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     None, get_us_consensus, ticker
                 )
                 result = r if r else {"error": f"{ticker} 컨센서스 데이터 없음"}
-
-        elif name == "delete_alert":
-            ticker = arguments.get("ticker", "").strip().upper()
-            if not ticker:
-                result = {"error": "ticker는 필수입니다"}
-            else:
-                stops = load_stoploss()
-                if _is_us_ticker(ticker):
-                    us = stops.get("us_stocks", {})
-                    if ticker not in us:
-                        result = {"ok": False, "message": "해당 종목 알림이 없습니다"}
-                    else:
-                        entry = us.pop(ticker)
-                        stops["us_stocks"] = us
-                        save_json(STOPLOSS_FILE, stops)
-                        append_watchlist_log({
-                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
-                            "action": "delete_alert",
-                            "ticker": ticker,
-                            "name": entry.get("name", ticker),
-                            "stop_price": entry.get("stop_price"),
-                            "target_price": entry.get("target_price"),
-                        })
-                        result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
-                else:
-                    if ticker not in stops:
-                        result = {"ok": False, "message": "해당 종목 알림이 없습니다"}
-                    else:
-                        entry = stops.pop(ticker)
-                        save_json(STOPLOSS_FILE, stops)
-                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
-                        append_watchlist_log({
-                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
-                            "action": "delete_alert",
-                            "ticker": ticker,
-                            "name": entry.get("name", ticker),
-                            "stop_price": entry.get("stop_price"),
-                            "target_price": entry.get("target_price"),
-                        })
-                        result = {"ok": True, "message": f"{entry.get('name', ticker)}({ticker}) 알림 삭제됨"}
 
         elif name == "get_portfolio_history":
             days = min(int(arguments.get("days", 30) or 30), 365)
@@ -1648,15 +1742,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             period = arguments.get("period", "month").strip().lower()
             result = get_trade_stats(period)
 
-        elif name == "get_batch_detail":
-            raw = arguments.get("tickers", "")
-            delay = float(arguments.get("delay", 0.3) or 0.3)
-            tickers = [t.strip().upper() for t in raw.split(",") if t.strip()][:20]
-            if not tickers:
-                result = {"error": "tickers는 필수입니다 (콤마 구분 종목코드)"}
-            else:
-                result = await batch_stock_detail(tickers, token, delay=delay)
-
         elif name == "backup_data":
             action = arguments.get("action", "status").strip().lower()
             if action == "backup":
@@ -1669,6 +1754,505 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = await get_backup_status()
             else:
                 result = {"error": f"알 수 없는 action: {action}. 'backup'|'restore'|'restore_force'|'status' 중 하나"}
+
+        elif name == "simulate_trade":
+            sells = arguments.get("sells") or []
+            buys = arguments.get("buys") or []
+            if not sells and not buys:
+                result = {"error": "sells 또는 buys 중 하나는 필요합니다"}
+            else:
+                portfolio = load_json(PORTFOLIO_FILE, {})
+                _meta_keys = {"us_stocks", "cash_krw", "cash_usd"}
+                kr_stocks = {k: dict(v) for k, v in portfolio.items() if k not in _meta_keys and isinstance(v, dict)}
+                us_stocks = {k: dict(v) for k, v in portfolio.get("us_stocks", {}).items()}
+                cash_krw = float(portfolio.get("cash_krw", 0) or 0)
+                cash_usd = float(portfolio.get("cash_usd", 0) or 0)
+                stops = load_stoploss()
+
+                # 환율 조회 (fallback 1400)
+                _fx = await get_yahoo_quote("USDKRW=X")
+                _usd_krw = float(_fx.get("price", 1400)) if _fx else 1400
+
+                # 현재가 캐시
+                price_cache = {}
+
+                async def get_cur_price(ticker):
+                    if ticker in price_cache:
+                        return price_cache[ticker]
+                    if _is_us_ticker(ticker):
+                        d = await kis_us_stock_price(ticker, token)
+                        p = float(d.get("last", 0) or 0)
+                    else:
+                        d = await kis_stock_price(ticker, token)
+                        p = int(d.get("stck_prpr", 0) or 0)
+                    price_cache[ticker] = p
+                    await asyncio.sleep(0.3)
+                    return p
+
+                # 시뮬레이션: 매도 적용
+                sim_kr = {k: dict(v) for k, v in kr_stocks.items()}
+                sim_us = {k: dict(v) for k, v in us_stocks.items()}
+                sim_cash_krw = cash_krw
+                sim_cash_usd = cash_usd
+                trade_log = []
+
+                for s in sells:
+                    t = s.get("ticker", "").strip().upper()
+                    q = int(s.get("qty", 0))
+                    p = s.get("price")
+                    if not t or q <= 0:
+                        continue
+                    if p is None or p <= 0:
+                        p = await get_cur_price(t)
+                    if _is_us_ticker(t):
+                        if t in sim_us:
+                            sim_us[t]["qty"] = max(0, sim_us[t].get("qty", 0) - q)
+                            if sim_us[t]["qty"] == 0:
+                                del sim_us[t]
+                            sim_cash_usd += p * q
+                            trade_log.append(f"매도 {t} {q}주 @${p:,.2f}")
+                    else:
+                        if t in sim_kr:
+                            sim_kr[t]["qty"] = max(0, sim_kr[t].get("qty", 0) - q)
+                            if sim_kr[t]["qty"] == 0:
+                                del sim_kr[t]
+                            sim_cash_krw += p * q
+                            trade_log.append(f"매도 {t} {q}주 @{p:,.0f}원")
+
+                # 시뮬레이션: 매수 적용
+                for b in buys:
+                    t = b.get("ticker", "").strip().upper()
+                    q = int(b.get("qty", 0))
+                    p = b.get("price")
+                    if not t or q <= 0:
+                        continue
+                    if p is None or p <= 0:
+                        p = await get_cur_price(t)
+                    if _is_us_ticker(t):
+                        cost = p * q
+                        sim_cash_usd -= cost
+                        if t in sim_us:
+                            old_qty = sim_us[t].get("qty", 0)
+                            old_avg = sim_us[t].get("avg_price", 0)
+                            new_qty = old_qty + q
+                            sim_us[t]["qty"] = new_qty
+                            sim_us[t]["avg_price"] = round((old_avg * old_qty + p * q) / new_qty, 2)
+                        else:
+                            sim_us[t] = {"name": t, "qty": q, "avg_price": round(p, 2)}
+                        trade_log.append(f"매수 {t} {q}주 @${p:,.2f}")
+                    else:
+                        cost = p * q
+                        sim_cash_krw -= cost
+                        if t in sim_kr:
+                            old_qty = sim_kr[t].get("qty", 0)
+                            old_avg = sim_kr[t].get("avg_price", 0)
+                            new_qty = old_qty + q
+                            sim_kr[t]["qty"] = new_qty
+                            sim_kr[t]["avg_price"] = round((old_avg * old_qty + p * q) / new_qty)
+                        else:
+                            sim_kr[t] = {"name": t, "qty": q, "avg_price": round(p)}
+                        trade_log.append(f"매수 {t} {q}주 @{p:,.0f}원")
+
+                # 시뮬레이션 결과 계산
+                # 1) 종목별 비중
+                sim_eval_kr = 0
+                sim_holdings_kr = []
+                for t, info in sim_kr.items():
+                    p = await get_cur_price(t)
+                    ev = p * info.get("qty", 0)
+                    sim_eval_kr += ev
+                    sim_holdings_kr.append({"ticker": t, "name": info.get("name", t), "qty": info["qty"], "eval": ev})
+
+                sim_eval_us = 0
+                sim_holdings_us = []
+                for t, info in sim_us.items():
+                    p = await get_cur_price(t)
+                    ev = p * info.get("qty", 0)
+                    sim_eval_us += ev
+                    sim_holdings_us.append({"ticker": t, "name": info.get("name", t), "qty": info["qty"], "eval": ev})
+
+                total_eval = sim_eval_kr + sim_eval_us * _usd_krw + sim_cash_krw + sim_cash_usd * _usd_krw
+
+                # 2) 비중 계산
+                for h in sim_holdings_kr:
+                    h["weight_pct"] = round(h["eval"] / total_eval * 100, 1) if total_eval > 0 else 0
+                for h in sim_holdings_us:
+                    h["weight_pct"] = round(h["eval"] * _usd_krw / total_eval * 100, 1) if total_eval > 0 else 0
+
+                # 3) 섹터 비중 (국내만, _TICKER_SECTOR 사용)
+                sector_eval = {}
+                for h in sim_holdings_kr:
+                    sec = _TICKER_SECTOR.get(h["ticker"], "기타")
+                    sector_eval[sec] = sector_eval.get(sec, 0) + h["eval"]
+                sector_weights = {s: round(v / total_eval * 100, 1) for s, v in sector_eval.items() if total_eval > 0}
+
+                # 4) 현금 비중
+                cash_total_krw = sim_cash_krw + sim_cash_usd * _usd_krw
+                cash_pct = round(cash_total_krw / total_eval * 100, 1) if total_eval > 0 else 0
+
+                # 5) RR 비율 (목표수익/손절손실)
+                rr_items = []
+                for h in sim_holdings_kr:
+                    t = h["ticker"]
+                    stop_info = stops.get(t, {})
+                    stop_p = float(stop_info.get("stop_price", 0) or 0)
+                    target_p = float(stop_info.get("target_price") or stop_info.get("target", 0) or 0)
+                    cur_p = await get_cur_price(t)
+                    if stop_p > 0 and target_p > 0 and cur_p > 0:
+                        risk = (cur_p - stop_p) / cur_p * 100
+                        reward = (target_p - cur_p) / cur_p * 100
+                        rr = round(reward / risk, 2) if risk > 0 else 0
+                        rr_items.append({"ticker": t, "risk_pct": round(risk, 1), "reward_pct": round(reward, 1), "rr": rr})
+
+                result = {
+                    "trades": trade_log,
+                    "kr_holdings": sorted(sim_holdings_kr, key=lambda x: x["eval"], reverse=True),
+                    "us_holdings": sorted(sim_holdings_us, key=lambda x: x["eval"], reverse=True),
+                    "sector_weights": dict(sorted(sector_weights.items(), key=lambda x: x[1], reverse=True)),
+                    "cash": {"krw": round(sim_cash_krw), "usd": round(sim_cash_usd, 2), "pct": cash_pct},
+                    "total_eval_krw": round(total_eval),
+                    "rr_ratios": rr_items,
+                }
+
+        elif name == "get_backtest":
+            ticker = arguments.get("ticker", "").strip().upper()
+            period = arguments.get("period", "D250").strip().upper()
+            strategy = arguments.get("strategy", "ma_cross").strip().lower()
+
+            if not ticker:
+                result = {"error": "ticker는 필수입니다"}
+            elif strategy not in ("ma_cross", "momentum_exit", "supply_follow", "bollinger", "hybrid"):
+                result = {"error": f"지원 전략: ma_cross, momentum_exit, supply_follow, bollinger, hybrid"}
+            else:
+                is_us = _is_us_ticker(ticker)
+
+                # ── 일봉 데이터 조회 ──
+                period_type = period[0] if period else "D"
+                try:
+                    n = int(period[1:])
+                except ValueError:
+                    n = 250
+
+                _krx_supply_map = {}   # Y모드 supply_follow용
+                _data_error = None     # 데이터 조회 실패 시 에러 메시지
+
+                if period_type == "Y":
+                    # ── 장기 데이터: FDR/yfinance ──
+                    years = max(1, min(n, 5))  # 1~5년 제한
+                    loop = asyncio.get_running_loop()
+                    candles = await loop.run_in_executor(None, get_historical_ohlcv, ticker, years)
+                    if not candles:
+                        _data_error = f"장기 데이터 조회 실패 ({ticker}, {years}년). FDR/yfinance 설치 확인: pip install finance-datareader yfinance"
+                    else:
+                        # supply_follow 전략 시 KRX 수급도 로드
+                        if strategy == "supply_follow" and not is_us:
+                            krx_supply = await loop.run_in_executor(None, get_historical_supply, ticker, years * 365)
+                            if krx_supply:
+                                _krx_supply_map = {s["date"]: s for s in krx_supply}
+                else:
+                    # ── 기존: KIS API 일봉 ──
+                    today_str = datetime.now(KST).strftime("%Y%m%d")
+                    buf = {"D": 2, "W": 8, "M": 40}.get(period_type, 2)
+                    start_dt = (datetime.now(KST) - timedelta(days=n * buf)).strftime("%Y%m%d")
+
+                    if is_us:
+                        excd = _guess_excd(ticker)
+                        async with aiohttp.ClientSession() as s:
+                            _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
+                                "HHDFS76240000", token,
+                                {"AUTH": "", "EXCD": excd, "SYMB": ticker,
+                                 "GUBN": "0", "BYMD": today_str, "MODP": "0"})
+                        raw_candles = d.get("output2", [])
+                        candles = []
+                        for c in raw_candles[:n]:
+                            candles.append({
+                                "date": c.get("xymd", ""),
+                                "open": float(c.get("open", 0) or 0),
+                                "high": float(c.get("high", 0) or 0),
+                                "low": float(c.get("low", 0) or 0),
+                                "close": float(c.get("clos", 0) or 0),
+                                "vol": int(c.get("tvol", 0) or 0),
+                            })
+                    else:
+                        # 국내 일봉 API 1회 최대 100건 → 분할 호출
+                        candles = []
+                        _chunk = 100
+                        _end = today_str
+                        _remaining = n
+                        _seen_dates = set()
+                        async with aiohttp.ClientSession() as s:
+                            while _remaining > 0:
+                                _start = (datetime.strptime(_end, "%Y%m%d") - timedelta(days=_chunk * 2)).strftime("%Y%m%d")
+                                _, d = await _kis_get(s,
+                                    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                    "FHKST03010100", token,
+                                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                                     "FID_INPUT_DATE_1": _start, "FID_INPUT_DATE_2": _end,
+                                     "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+                                batch = d.get("output2", [])
+                                if not batch:
+                                    break
+                                added = 0
+                                for c in batch:
+                                    dt = c.get("stck_bsop_date", "")
+                                    if not dt or dt in _seen_dates:
+                                        continue
+                                    _seen_dates.add(dt)
+                                    candles.append({
+                                        "date": dt,
+                                        "open": int(c.get("stck_oprc", 0) or 0),
+                                        "high": int(c.get("stck_hgpr", 0) or 0),
+                                        "low": int(c.get("stck_lwpr", 0) or 0),
+                                        "close": int(c.get("stck_clpr", 0) or 0),
+                                        "vol": int(c.get("acml_vol", 0) or 0),
+                                    })
+                                    added += 1
+                                _remaining -= added
+                                if added < 10:
+                                    break  # 더 이상 데이터 없음
+                                # 다음 구간: 가장 오래된 날짜 전일부터
+                                oldest = min(_seen_dates)
+                                _end = (datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+                                await asyncio.sleep(0.3)
+
+                # 시간순 정렬 (API는 최신순, Y모드는 이미 정렬)
+                if candles:
+                    candles.sort(key=lambda x: x["date"])
+
+                if _data_error:
+                    result = {"error": _data_error}
+                elif len(candles) < 20:
+                    result = {"error": f"일봉 데이터 부족 ({len(candles)}개). 최소 20개 필요."}
+                else:
+                    # ── 비용 설정 ──
+                    if is_us:
+                        buy_cost_pct = 0.15 + 0.1    # 환전 0.15% + 슬리피지 0.1%
+                        sell_cost_pct = 0.15 + 0.1
+                    else:
+                        buy_cost_pct = 0.015 + 0.1   # 수수료 0.015% + 슬리피지 0.1%
+                        sell_cost_pct = 0.015 + 0.18 + 0.1  # +거래세 0.18%
+
+                    # ── 이동평균 / 표준편차 헬퍼 ──
+                    closes = [c["close"] for c in candles]
+                    volumes = [c["vol"] for c in candles]
+
+                    def _ma(arr, period_len, idx):
+                        if idx < period_len - 1:
+                            return None
+                        return sum(arr[idx - period_len + 1:idx + 1]) / period_len
+
+                    def _std(arr, period_len, idx):
+                        if idx < period_len - 1:
+                            return None
+                        subset = arr[idx - period_len + 1:idx + 1]
+                        avg = sum(subset) / period_len
+                        return (sum((x - avg) ** 2 for x in subset) / period_len) ** 0.5
+
+                    # ── 신호 생성 (look-ahead bias 방지: i일 종가 신호 → i+1일 시가 체결) ──
+                    signals = [None] * len(candles)
+
+                    if strategy == "ma_cross":
+                        for i in range(20, len(candles)):
+                            ma5p = _ma(closes, 5, i - 1)
+                            ma20p = _ma(closes, 20, i - 1)
+                            ma5c = _ma(closes, 5, i)
+                            ma20c = _ma(closes, 20, i)
+                            if ma5p and ma20p and ma5c and ma20c:
+                                if ma5p <= ma20p and ma5c > ma20c:
+                                    signals[i] = "buy"
+                                elif ma5p >= ma20p and ma5c < ma20c:
+                                    signals[i] = "sell"
+
+                    elif strategy == "momentum_exit":
+                        for i in range(20, len(candles)):
+                            lookback = min(i, 250)
+                            high_max = max(c["high"] for c in candles[i - lookback:i])
+                            if candles[i]["close"] > high_max:
+                                signals[i] = "buy"
+                            recent_high = max(c["high"] for c in candles[max(0, i - 20):i + 1])
+                            drop_pct = (recent_high - candles[i]["close"]) / recent_high * 100 if recent_high > 0 else 0
+                            vol_ma20 = _ma(volumes, 20, i)
+                            vol_ratio = candles[i]["vol"] / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 1
+                            if drop_pct >= 10 and vol_ratio <= 0.5:
+                                signals[i] = "sell"
+
+                    elif strategy == "supply_follow":
+                        supply_by_date = {}
+
+                        # 1순위: KRX 크롤링 데이터 (Y 모드에서 조회했으면)
+                        if _krx_supply_map:
+                            supply_by_date = _krx_supply_map
+
+                        # 2순위: 기존 축적 데이터
+                        if not supply_by_date:
+                            supply_hist = load_json(SUPPLY_HISTORY_FILE, {})
+                            ticker_supply = supply_hist.get(ticker, [])
+                            supply_by_date = {s["date"].replace("-", ""): s for s in ticker_supply}
+
+                        # 3순위: KIS API 10일
+                        if not supply_by_date:
+                            try:
+                                api_hist = await kis_investor_trend_history(ticker, token, n_days=10)
+                                api_hist.reverse()
+                                ticker_supply = [{"date": h["date"][:4]+"-"+h["date"][4:6]+"-"+h["date"][6:],
+                                                  "foreign_net": h["foreign_net"],
+                                                  "institution_net": h["institution_net"]} for h in api_hist]
+                                supply_by_date = {s["date"].replace("-", ""): s for s in ticker_supply}
+                            except Exception:
+                                pass
+                        for i in range(2, len(candles)):
+                            dates_3 = [candles[j]["date"] for j in range(i - 2, i + 1)]
+                            frgn_3 = []
+                            for dt in dates_3:
+                                s_data = supply_by_date.get(dt)
+                                if s_data:
+                                    frgn_3.append(s_data.get("foreign_net", 0))
+                            if len(frgn_3) == 3:
+                                if all(f > 0 for f in frgn_3):
+                                    signals[i] = "buy"
+                                elif all(f < 0 for f in frgn_3):
+                                    signals[i] = "sell"
+
+                    elif strategy == "bollinger":
+                        for i in range(19, len(candles)):
+                            ma20 = _ma(closes, 20, i)
+                            sd = _std(closes, 20, i)
+                            if ma20 is not None and sd is not None:
+                                upper = ma20 + 2 * sd
+                                lower = ma20 - 2 * sd
+                                if candles[i]["close"] <= lower:
+                                    signals[i] = "buy"
+                                elif candles[i]["close"] >= upper:
+                                    signals[i] = "sell"
+
+                    elif strategy == "hybrid":
+                        for i in range(60, len(candles)):
+                            ma5 = _ma(closes, 5, i)
+                            ma20 = _ma(closes, 20, i)
+                            ma60 = _ma(closes, 60, i)
+                            vol_ma20 = _ma(volumes, 20, i)
+                            if ma5 and ma20 and ma60 and vol_ma20:
+                                aligned = ma5 > ma20 > ma60
+                                vol_up = candles[i]["vol"] > vol_ma20
+                                above_ma5 = candles[i]["close"] > ma5
+                                if aligned and vol_up and above_ma5:
+                                    signals[i] = "buy"
+                                if ma5 < ma20:
+                                    signals[i] = "sell"
+                            recent_high = max(c["high"] for c in candles[max(0, i - 20):i + 1])
+                            drop_pct = (recent_high - candles[i]["close"]) / recent_high * 100 if recent_high > 0 else 0
+                            if drop_pct >= 10:
+                                signals[i] = "sell"
+
+                    # ── 매매 시뮬레이션 (익일 시가 체결) ──
+                    trades = []
+                    position = None
+
+                    for i in range(len(candles) - 1):
+                        sig = signals[i]
+                        next_open = candles[i + 1]["open"]
+                        next_date = candles[i + 1]["date"]
+
+                        if next_open <= 0:
+                            continue
+
+                        if sig == "buy" and position is None:
+                            entry_price = next_open * (1 + buy_cost_pct / 100)
+                            position = {"entry_date": next_date, "entry_price": entry_price, "entry_idx": i + 1}
+
+                        elif sig == "sell" and position is not None:
+                            exit_price = next_open * (1 - sell_cost_pct / 100)
+                            pnl_pct = (exit_price - position["entry_price"]) / position["entry_price"] * 100
+                            hold_days = i + 1 - position["entry_idx"]
+                            trades.append({
+                                "entry_date": position["entry_date"],
+                                "entry_price": round(position["entry_price"], 2),
+                                "exit_date": next_date,
+                                "exit_price": round(exit_price, 2),
+                                "pnl_pct": round(pnl_pct, 2),
+                                "hold_days": hold_days,
+                            })
+                            position = None
+
+                    # 미청산 포지션 (마지막 종가로 평가)
+                    if position is not None:
+                        last = candles[-1]
+                        exit_price = last["close"] * (1 - sell_cost_pct / 100)
+                        pnl_pct = (exit_price - position["entry_price"]) / position["entry_price"] * 100
+                        hold_days = len(candles) - 1 - position["entry_idx"]
+                        trades.append({
+                            "entry_date": position["entry_date"],
+                            "entry_price": round(position["entry_price"], 2),
+                            "exit_date": last["date"] + "(미청산)",
+                            "exit_price": round(exit_price, 2),
+                            "pnl_pct": round(pnl_pct, 2),
+                            "hold_days": hold_days,
+                            "open_position": True,
+                        })
+
+                    # ── 성과 계산 ──
+                    wins = [t for t in trades if t["pnl_pct"] > 0]
+                    losses = [t for t in trades if t["pnl_pct"] <= 0]
+                    total_return = 1.0
+                    for t in trades:
+                        total_return *= (1 + t["pnl_pct"] / 100)
+                    total_return_pct = round((total_return - 1) * 100, 2)
+
+                    # MDD
+                    peak = 1.0
+                    mdd = 0.0
+                    cumulative = 1.0
+                    for t in trades:
+                        cumulative *= (1 + t["pnl_pct"] / 100)
+                        if cumulative > peak:
+                            peak = cumulative
+                        dd = (peak - cumulative) / peak * 100
+                        if dd > mdd:
+                            mdd = dd
+
+                    # Buy & Hold 벤치마크
+                    bh_entry = candles[0]["close"]
+                    bh_exit = candles[-1]["close"]
+                    bh_cost = buy_cost_pct + sell_cost_pct
+                    bh_return = (bh_exit - bh_entry) / bh_entry * 100 - bh_cost if bh_entry > 0 else 0
+
+                    avg_hold = round(sum(t["hold_days"] for t in trades) / len(trades), 1) if trades else 0
+
+                    # supply_follow 경고
+                    supply_warning = None
+                    if strategy == "supply_follow":
+                        if _krx_supply_map:
+                            krx_days = len(_krx_supply_map)
+                            if krx_days < 60:
+                                supply_warning = f"KRX 수급 데이터 {krx_days}일분 조회됨. 데이터가 적어 신호 정밀도가 낮을 수 있음."
+                        else:
+                            supply_hist_data = load_json(SUPPLY_HISTORY_FILE, {})
+                            ticker_days = len(supply_hist_data.get(ticker, []))
+                            if ticker_days < 60:
+                                supply_warning = f"수급 데이터 {ticker_days}일분만 축적됨 (KIS API 최대 10일). Y모드(FDR+KRX) 또는 3개월 축적 후 정밀화 가능."
+
+                    result = {
+                        "ticker": ticker,
+                        "market": "US" if is_us else "KR",
+                        "strategy": strategy,
+                        "period": period,
+                        "candle_count": len(candles),
+                        "date_range": f"{candles[0]['date']}~{candles[-1]['date']}",
+                        "total_return_pct": total_return_pct,
+                        "benchmark_bh_pct": round(bh_return, 2),
+                        "alpha_pct": round(total_return_pct - bh_return, 2),
+                        "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
+                        "trade_count": len(trades),
+                        "wins": len(wins),
+                        "losses": len(losses),
+                        "max_drawdown_pct": round(mdd, 2),
+                        "avg_hold_days": avg_hold,
+                        "costs": {"buy_pct": buy_cost_pct, "sell_pct": sell_cost_pct,
+                                  "note": "한국: 수수료+거래세+슬리피지" if not is_us else "미국: 환전스프레드+슬리피지"},
+                        "trades": trades,
+                    }
+                    if supply_warning:
+                        result["supply_warning"] = supply_warning
 
         else:
             result = {"error": f"unknown tool: {name}"}
