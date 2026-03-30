@@ -1332,9 +1332,18 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
         new_reports = await loop.run_in_executor(None, collect_reports, tickers)
 
         if new_reports:
-            msg = f"📄 *증권사 리포트 수집* ({len(new_reports)}건)\n\n"
+            failed = sum(1 for r in new_reports if r.get("extraction_status") == "failed")
+            msg = f"📄 *증권사 리포트 수집* ({len(new_reports)}건"
+            if failed:
+                msg += f", 추출실패 {failed}건"
+            msg += ")\n\n"
+            def _esc(s: str) -> str:
+                """Telegram Markdown v1 특수문자 이스케이프"""
+                for ch in ("*", "_", "`", "["):
+                    s = s.replace(ch, "\\" + ch)
+                return s
             for r in new_reports[:10]:  # 최대 10건 표시
-                msg += f"• {r.get('name', '')} - {r.get('source', '')} \"{r.get('title', '')}\" ({r.get('date', '')[-5:]})\n"
+                msg += f"• {_esc(r.get('name', ''))} - {_esc(r.get('source', ''))} \"{_esc(r.get('title', ''))}\" ({r.get('date', '')[-5:]})\n"
             if len(new_reports) > 10:
                 msg += f"\n... 외 {len(new_reports) - 10}건"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")

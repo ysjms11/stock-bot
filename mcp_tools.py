@@ -2294,10 +2294,13 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     if brief:
                         reports = [{"date": r.get("date"), "ticker": r.get("ticker"),
                                     "name": r.get("name"), "source": r.get("source"),
-                                    "title": r.get("title")} for r in reports]
+                                    "title": r.get("title"),
+                                    "extraction_status": r.get("extraction_status", "unknown")} for r in reports]
                     else:
-                        # full_text 3000자 제한
+                        # full_text 3000자 제한 + extraction_status 하위호환
                         for r in reports:
+                            if "extraction_status" not in r:
+                                r["extraction_status"] = "unknown"
                             if r.get("full_text") and len(r["full_text"]) > 3000:
                                 r["full_text"] = r["full_text"][:3000] + "...(truncated)"
 
@@ -2321,7 +2324,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "collected": len(new_reports),
                         "reports": [{"date": r.get("date"), "ticker": r.get("ticker"),
                                      "name": r.get("name"), "source": r.get("source"),
-                                     "title": r.get("title")} for r in new_reports],
+                                     "title": r.get("title"),
+                                     "extraction_status": r.get("extraction_status", "unknown")} for r in new_reports],
                     }
 
                 elif action == "tickers":

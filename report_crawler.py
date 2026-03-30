@@ -138,38 +138,46 @@ def _parse_date(raw: str) -> str:
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ PDF 텍스트 추출 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def extract_pdf_text(pdf_url: str) -> str:
+def _validate_korean_text(text: str) -> bool:
+    """추출 텍스트에 한글이 10% 이상 포함되어 있는지 검증."""
+    if not text:
+        return False
+    korean_chars = sum(1 for c in text if '\uac00' <= c <= '\ud7a3')
+    return korean_chars / len(text) >= 0.10
+
+
+def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
     """PDF 다운로드 후 pdfplumber로 텍스트 추출.
-    최대 _MAX_TEXT(10000)자. 실패 시 빈 문자열.
-    임시 파일은 처리 후 삭제.
+    Returns: (text, status) — status: 'success'|'failed'|'partial'
+    최대 _MAX_TEXT(10000)자. 임시 파일은 처리 후 삭제.
     """
     try:
         import pdfplumber
     except ImportError:
         print("[report] pdfplumber 미설치")
-        return ""
+        return ("", "failed")
 
     # URL 도메인 검증 — 허용된 네이버 도메인만 다운로드
     try:
         host = urlparse(pdf_url).hostname or ""
         if host not in _ALLOWED_PDF_DOMAINS:
             print(f"[report] 허용되지 않은 PDF 도메인: {host}")
-            return ""
+            return ("", "failed")
     except Exception:
-        return ""
+        return ("", "failed")
 
     tmp_path = None
     try:
         resp = requests.get(pdf_url, headers=_HEADERS, timeout=30, stream=True)
         if resp.status_code != 200:
-            return ""
+            return ("", "failed")
 
         # Content-Length 사전 검사
         content_len = resp.headers.get("Content-Length")
         if content_len and int(content_len) > _MAX_PDF_BYTES:
             print(f"[report] PDF 크기 초과 ({int(content_len)//1024//1024}MB): {pdf_url}")
             resp.close()
-            return ""
+            return ("", "failed")
 
         downloaded = 0
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -182,21 +190,34 @@ def extract_pdf_text(pdf_url: str) -> str:
                 tmp.write(chunk)
 
         if downloaded > _MAX_PDF_BYTES:
-            return ""
+            return ("", "failed")
 
         text = ""
+        truncated = False
         with pdfplumber.open(tmp_path) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
                 if len(text) >= _MAX_TEXT:
+                    truncated = True
                     break
 
-        return text[:_MAX_TEXT].strip()
+        text = text[:_MAX_TEXT].strip()
+
+        if not text:
+            return ("", "failed")
+
+        if not _validate_korean_text(text):
+            return ("[PDF 텍스트 추출 실패 - 이미지 기반 PDF]", "failed")
+
+        if truncated:
+            return (text, "partial")
+
+        return (text, "success")
     except Exception as e:
         print(f"[report] PDF 추출 실패 ({pdf_url}): {e}")
-        return ""
+        return ("", "failed")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -223,8 +244,9 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
                 if count >= max_count:
                     break
                 # PDF 텍스트 추출
-                full_text = extract_pdf_text(r["pdf_url"])
+                full_text, status = extract_pdf_text(r["pdf_url"])
                 r["full_text"] = full_text
+                r["extraction_status"] = status
                 r["collected_at"] = datetime.now(KST).isoformat()
                 new_reports.append(r)
                 existing_urls.add(r["pdf_url"])

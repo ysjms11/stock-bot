@@ -96,93 +96,146 @@ class TestCrawlNaverReports(unittest.TestCase):
         self.assertEqual(results, [])
 
 
+class TestValidateKoreanText(unittest.TestCase):
+    """_validate_korean_text 테스트"""
+
+    def test_korean_above_threshold(self):
+        from report_crawler import _validate_korean_text
+        # 한글 비율 10% 이상 → True
+        text = "가나다라마바사아자차" + "A" * 50  # 10/60 ≈ 16.7%
+        self.assertTrue(_validate_korean_text(text))
+
+    def test_korean_below_threshold(self):
+        from report_crawler import _validate_korean_text
+        # 한글 비율 10% 미만 → False
+        text = "가" + "A" * 100  # 1/101 ≈ 0.99%
+        self.assertFalse(_validate_korean_text(text))
+
+    def test_empty_text(self):
+        from report_crawler import _validate_korean_text
+        self.assertFalse(_validate_korean_text(""))
+
+    def test_english_only(self):
+        from report_crawler import _validate_korean_text
+        self.assertFalse(_validate_korean_text("Hello World This is English only text"))
+
+
 class TestExtractPdfText(unittest.TestCase):
     """extract_pdf_text 테스트"""
+
+    def _make_mock_pdf(self, page_text):
+        """pdfplumber mock 생성 헬퍼."""
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = page_text
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_plumber_mod = MagicMock()
+        mock_plumber_mod.open.return_value = mock_pdf
+        return mock_plumber_mod
+
+    def _make_mock_response(self, status_code=200):
+        """HTTP response mock 생성 헬퍼."""
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.headers = {}
+        resp.iter_content = MagicMock(return_value=[b"fake pdf content"])
+        return resp
 
     @patch("report_crawler.requests.get")
     def test_extract_text(self, mock_get):
         from report_crawler import extract_pdf_text
 
-        # mock HTTP response (PDF bytes)
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        resp.iter_content = MagicMock(return_value=[b"fake pdf content"])
-        mock_get.return_value = resp
-
-        # mock pdfplumber
-        mock_page = MagicMock()
-        mock_page.extract_text.return_value = "PDF 본문 텍스트입니다."
-        mock_pdf = MagicMock()
-        mock_pdf.pages = [mock_page]
-        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
-        mock_pdf.__exit__ = MagicMock(return_value=False)
-
-        mock_plumber_mod = MagicMock()
-        mock_plumber_mod.open.return_value = mock_pdf
+        mock_get.return_value = self._make_mock_response()
+        mock_plumber_mod = self._make_mock_pdf("PDF 본문 텍스트입니다.")
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            result = extract_pdf_text("https://stock.pstatic.net/test.pdf")
+            text, status = extract_pdf_text("https://stock.pstatic.net/test.pdf")
 
-        self.assertIn("PDF 본문 텍스트", result)
+        self.assertIn("PDF 본문 텍스트", text)
+        self.assertIn(status, ("success", "partial"))
 
     @patch("report_crawler.requests.get")
     def test_text_truncation(self, mock_get):
         from report_crawler import extract_pdf_text, _MAX_TEXT
 
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        resp.iter_content = MagicMock(return_value=[b"fake"])
-        mock_get.return_value = resp
-
-        # 긴 텍스트 생성 (10000자 초과)
-        long_text = "A" * 15000
-        mock_page = MagicMock()
-        mock_page.extract_text.return_value = long_text
-        mock_pdf = MagicMock()
-        mock_pdf.pages = [mock_page]
-        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
-        mock_pdf.__exit__ = MagicMock(return_value=False)
-
-        mock_plumber_mod = MagicMock()
-        mock_plumber_mod.open.return_value = mock_pdf
+        mock_get.return_value = self._make_mock_response()
+        # 긴 한글 텍스트 생성 (10000자 초과, 한글 비율 충분)
+        long_text = "가나다라마바사아자차" * 1500  # 15000자, 100% 한글
+        mock_plumber_mod = self._make_mock_pdf(long_text)
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            result = extract_pdf_text("https://stock.pstatic.net/big.pdf")
+            text, status = extract_pdf_text("https://stock.pstatic.net/big.pdf")
 
-        self.assertLessEqual(len(result), _MAX_TEXT)
+        self.assertLessEqual(len(text), _MAX_TEXT)
 
     @patch("report_crawler.requests.get")
     def test_download_failure(self, mock_get):
         from report_crawler import extract_pdf_text
 
-        resp = MagicMock()
-        resp.status_code = 500
-        resp.headers = {}
-        mock_get.return_value = resp
+        mock_get.return_value = self._make_mock_response(status_code=500)
 
-        result = extract_pdf_text("https://stock.pstatic.net/fail.pdf")
-        self.assertEqual(result, "")
+        text, status = extract_pdf_text("https://stock.pstatic.net/fail.pdf")
+        self.assertEqual(text, "")
+        self.assertEqual(status, "failed")
 
     @patch("report_crawler.requests.get")
     def test_cleanup_temp_file(self, mock_get):
         from report_crawler import extract_pdf_text
 
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        resp.iter_content = MagicMock(return_value=[b"fake"])
-        mock_get.return_value = resp
+        mock_get.return_value = self._make_mock_response()
 
         # pdfplumber.open에서 예외 발생 -> finally에서 임시파일 삭제 확인
         mock_plumber_mod = MagicMock()
         mock_plumber_mod.open.side_effect = Exception("corrupt PDF")
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            result = extract_pdf_text("https://stock.pstatic.net/corrupt.pdf")
+            text, status = extract_pdf_text("https://stock.pstatic.net/corrupt.pdf")
 
-        self.assertEqual(result, "")
-        # 임시파일이 남아있지 않은지 확인 (tmp 디렉토리에 .pdf 파일 없어야)
-        # extract_pdf_text의 finally 블록이 os.unlink 호출하므로 파일은 삭제됨
-        # 직접 확인하려면 tempfile 디렉토리를 스캔해야 하지만, 코드 동작 자체가 검증 대상
+        self.assertEqual(text, "")
+        self.assertEqual(status, "failed")
+
+    @patch("report_crawler.requests.get")
+    def test_image_pdf_returns_failed(self, mock_get):
+        """텍스트 추출됐지만 한글 없음 → 이미지 기반 PDF 판정."""
+        from report_crawler import extract_pdf_text
+
+        mock_get.return_value = self._make_mock_response()
+        # 영문만 있는 텍스트 → 한글 비율 0%
+        mock_plumber_mod = self._make_mock_pdf("This is all English text from scanned image PDF.")
+        with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
+            text, status = extract_pdf_text("https://stock.pstatic.net/image.pdf")
+
+        self.assertIn("이미지 기반 PDF", text)
+        self.assertEqual(status, "failed")
+
+    @patch("report_crawler.requests.get")
+    def test_success_status(self, mock_get):
+        """한글 충분한 짧은 텍스트 → success 상태."""
+        from report_crawler import extract_pdf_text
+
+        mock_get.return_value = self._make_mock_response()
+        # 한글 비율 높은 텍스트 (10000자 미만)
+        korean_text = "삼성전자 반도체 사업부 실적이 크게 개선되었습니다. 매출액은 전분기 대비 증가하였습니다."
+        mock_plumber_mod = self._make_mock_pdf(korean_text)
+        with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
+            text, status = extract_pdf_text("https://stock.pstatic.net/good.pdf")
+
+        self.assertEqual(status, "success")
+        self.assertIn("삼성전자", text)
+
+    @patch("report_crawler.requests.get")
+    def test_partial_status(self, mock_get):
+        """10000자 초과 한글 텍스트 → partial 상태."""
+        from report_crawler import extract_pdf_text, _MAX_TEXT
+
+        mock_get.return_value = self._make_mock_response()
+        # 15000자 한글 텍스트
+        long_korean = "가나다라마바사아자차" * 1500
+        mock_plumber_mod = self._make_mock_pdf(long_korean)
+        with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
+            text, status = extract_pdf_text("https://stock.pstatic.net/long.pdf")
+
+        self.assertEqual(status, "partial")
+        self.assertLessEqual(len(text), _MAX_TEXT)
 
 
 class TestCollectReports(unittest.TestCase):
@@ -201,7 +254,7 @@ class TestCollectReports(unittest.TestCase):
         }
 
     @patch("report_crawler.save_reports")
-    @patch("report_crawler.extract_pdf_text", return_value="extracted text")
+    @patch("report_crawler.extract_pdf_text", return_value=("extracted text", "success"))
     @patch("report_crawler.crawl_naver_reports")
     @patch("report_crawler.load_reports")
     @patch("report_crawler.time.sleep")
@@ -228,7 +281,7 @@ class TestCollectReports(unittest.TestCase):
         self.assertIn("https://example.com/dup.pdf", call_args[0][2])
 
     @patch("report_crawler.save_reports")
-    @patch("report_crawler.extract_pdf_text", return_value="text")
+    @patch("report_crawler.extract_pdf_text", return_value=("text", "success"))
     @patch("report_crawler.crawl_naver_reports")
     @patch("report_crawler.load_reports")
     @patch("report_crawler.time.sleep")
@@ -254,7 +307,7 @@ class TestCollectReports(unittest.TestCase):
         self.assertNotIn(old_date, dates)
 
     @patch("report_crawler.save_reports")
-    @patch("report_crawler.extract_pdf_text", return_value="text")
+    @patch("report_crawler.extract_pdf_text", return_value=("text", "success"))
     @patch("report_crawler.crawl_naver_reports")
     @patch("report_crawler.load_reports")
     @patch("report_crawler.time.sleep")
@@ -284,7 +337,7 @@ class TestCollectReports(unittest.TestCase):
         self.assertLessEqual(len(ticker_reports), _MAX_PER_TICKER)
 
     @patch("report_crawler.save_reports")
-    @patch("report_crawler.extract_pdf_text", return_value="text")
+    @patch("report_crawler.extract_pdf_text", return_value=("text", "success"))
     @patch("report_crawler.crawl_naver_reports")
     @patch("report_crawler.load_reports")
     @patch("report_crawler.time.sleep")
@@ -304,6 +357,28 @@ class TestCollectReports(unittest.TestCase):
 
         result = collect_reports({"005930": "삼성전자"}, max_count=3)
         self.assertEqual(len(result), 3)
+
+    @patch("report_crawler.save_reports")
+    @patch("report_crawler.extract_pdf_text", return_value=("extracted text", "success"))
+    @patch("report_crawler.crawl_naver_reports")
+    @patch("report_crawler.load_reports")
+    @patch("report_crawler.time.sleep")
+    def test_extraction_status_in_result(self, mock_sleep, mock_load, mock_crawl, mock_extract, mock_save):
+        """수집된 리포트에 extraction_status 필드가 포함되는지 확인."""
+        from report_crawler import collect_reports
+
+        mock_load.return_value = {"reports": [], "last_collected": ""}
+        mock_crawl.return_value = [
+            {"date": "2026-03-29", "ticker": "005930", "name": "삼성전자",
+             "source": "미래에셋", "title": "리포트",
+             "pdf_url": "https://example.com/status.pdf"},
+        ]
+
+        result = collect_reports({"005930": "삼성전자"})
+
+        self.assertEqual(len(result), 1)
+        self.assertIn("extraction_status", result[0])
+        self.assertEqual(result[0]["extraction_status"], "success")
 
 
 class TestGetCollectionTickers(unittest.TestCase):
