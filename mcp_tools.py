@@ -18,6 +18,8 @@ from kis_api import (
     backup_data_files, restore_data_files, get_backup_status,
     SUPPLY_HISTORY_FILE,
     get_historical_ohlcv, get_historical_supply,
+    fetch_us_news, analyze_us_news_sentiment,
+    fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
 
 try:
@@ -367,10 +369,10 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     # 6. get_macro (유지)
     {"name": "get_macro",
-     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도 포함, market/sort 지원). mode='convergence2': 코스닥 위주 하위호환. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
+     "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='us_sector': 미국 섹터 ETF 등락률 (SPY/QQQ/XLK 등). mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도 포함, market/sort 지원). mode='convergence2': 코스닥 위주 하위호환. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|'dart_op_growth'|'dart_turnaround'|생략"},
+                         "mode":       {"type": "string", "description": "'dashboard'|'sector_etf'|'us_sector'|'convergence'|'convergence2'|'op_growth'|'op_turnaround'|'dart_op_growth'|'dart_turnaround'|생략"},
                          "spread":     {"type": "number", "description": "[convergence] 이평 수렴 기준 % (기본 5.0)"},
                          "market":     {"type": "string", "description": "[convergence] 'all'=코스피+코스닥(기본), 'kospi'=코스피위주, 'kosdaq'=코스닥위주"},
                          "sort":       {"type": "string", "description": "[convergence] 'spread'=수렴도순(기본), 'disp_20'=20일이격도순, 'disp_60'=60일이격도순. [op_growth/op_turnaround/dart_op_growth/dart_turnaround] 'yoy'=연간증가율순(기본), 'qoq'=분기증가율순, 'trend'=분기추세순(연속증가>흑자전환>감소>적자전환>적자지속)"},
@@ -412,7 +414,7 @@ MCP_TOOLS = [
                      "required": ["mode"]}},
     # 11. get_news (확장 ← + get_news_sentiment)
     {"name": "get_news",
-     "description": "KIS 종목 뉴스 헤드라인. sentiment=true 시 헤드라인 감성분석(긍정/부정/중립) 포함",
+     "description": "종목 뉴스 헤드라인. 한국(KIS)/미국(yfinance) 자동 판별. sentiment=true 시 헤드라인 감성분석(긍정/부정/중립) 포함",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker": {"type": "string", "description": "종목코드 (감성분석 전체조회 시 생략 가능)"},
@@ -1158,6 +1160,22 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     print(f"[get_macro/{mode}] 에러: {_de}\n{_tb}")
                     result = {"error": str(_de), "mode": mode, "traceback": _tb}
 
+            elif mode == "us_sector":
+                # ── 미국 섹터 ETF 등락률 ──
+                loop = asyncio.get_running_loop()
+                etfs = await loop.run_in_executor(None, fetch_us_sector_etf)
+                if not etfs:
+                    result = {"error": "미국 섹터 ETF 데이터 조회 실패 (yfinance)"}
+                else:
+                    sorted_etfs = sorted(etfs, key=lambda x: x["chg_1d"], reverse=True)
+                    result = {
+                        "mode": "us_sector",
+                        "count": len(sorted_etfs),
+                        "top3": sorted_etfs[:3],
+                        "bottom3": sorted_etfs[-3:][::-1],
+                        "all": sorted_etfs,
+                    }
+
             else:
                 # ── 기본 모드: KOSPI/KOSDAQ/환율 ──
                 kospi  = await get_kis_index(token, "0001")
@@ -1680,9 +1698,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 sentiment = sentiment.lower() in ("true", "1", "yes")
 
             if sentiment:
-                # ← 기존 get_news_sentiment 핸들러
+                # ← 감성분석 모드
                 ticker = arguments.get("ticker", "").strip()
-                if ticker:
+                if ticker and _is_us_ticker(ticker):
+                    # 미국 종목 감성분석
+                    loop = asyncio.get_running_loop()
+                    news = await loop.run_in_executor(None, fetch_us_news, ticker, 15)
+                    analysis = analyze_us_news_sentiment(news)
+                    result = {"ticker": ticker, "market": "US", **analysis}
+                elif ticker:
+                    # 한국 종목 감성분석
                     news = await kis_news_title(ticker, token, n=15)
                     analysis = analyze_news_sentiment(news)
                     result = {"ticker": ticker, **analysis}
@@ -1714,11 +1739,24 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "total_summary": f"긍정 {total_pos} / 부정 {total_neg} / 중립 {total_neu}",
                     }
             else:
-                # ← 기존 get_news 핸들러
+                # ← 뉴스 헤드라인 모드
                 ticker = arguments.get("ticker", "").strip()
                 if not ticker:
                     result = {"error": "ticker는 필수입니다"}
+                elif _is_us_ticker(ticker):
+                    # 미국 종목 뉴스
+                    n    = int(arguments.get("n", 10) or 10)
+                    n    = max(1, min(n, 30))
+                    loop = asyncio.get_running_loop()
+                    rows = await loop.run_in_executor(None, fetch_us_news, ticker, n)
+                    result = {
+                        "ticker": ticker,
+                        "market": "US",
+                        "count":  len(rows),
+                        "items":  rows,
+                    }
                 else:
+                    # 한국 종목 뉴스
                     n    = int(arguments.get("n", 10) or 10)
                     n    = max(1, min(n, 30))
                     rows = await kis_news_title(ticker, token, n=n)

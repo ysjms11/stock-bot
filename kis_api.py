@@ -163,6 +163,19 @@ _NEGATIVE_KEYWORDS = [
     "불확실", "위축", "수출감소", "영업이익 감소",
 ]
 
+# 미국 뉴스 영문 감성 키워드 사전
+_US_POSITIVE_KEYWORDS = [
+    "surge", "soar", "rally", "beat", "upgrade", "bullish", "growth",
+    "record", "outperform", "buy", "strong", "raise", "profit", "gain",
+    "upside", "breakout", "momentum", "dividend", "expand",
+]
+
+_US_NEGATIVE_KEYWORDS = [
+    "drop", "plunge", "crash", "miss", "downgrade", "bearish", "decline",
+    "loss", "underperform", "sell", "weak", "cut", "warning", "risk",
+    "layoff", "recall", "lawsuit", "investigation", "bankruptcy",
+]
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 파일 저장/로드
@@ -2697,3 +2710,181 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
     except Exception as e:
         print(f"뉴스 조회 오류: {e}")
     return []
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 미국 뉴스 / 감성분석 / 실적캘린더 / 섹터 ETF
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def fetch_us_news(ticker: str, n: int = 10) -> list:
+    """yfinance로 미국 종목 뉴스 헤드라인 조회.
+    Returns: [{"date": "YYYYMMDD", "time": "", "title": str, "source": str}, ...]
+    yfinance 버전별 응답 구조 차이를 모두 처리 (구버전: flat dict, 신버전: content 중첩).
+    """
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        news = t.news or []
+        result = []
+        from datetime import datetime as _dt
+        for item in news[:n]:
+            # ── 신버전 yfinance (>=0.2.36): content 중첩 구조 ──
+            content = item.get("content", {}) if isinstance(item.get("content"), dict) else {}
+            title = content.get("title") or item.get("title", "")
+            provider = content.get("provider", {})
+            source = provider.get("displayName", "") if isinstance(provider, dict) else ""
+            if not source:
+                source = item.get("publisher", "")
+            # 날짜 파싱: 신버전 pubDate (ISO string) → 구버전 providerPublishTime (unix ts)
+            date_str, time_str = "", ""
+            pub_date = content.get("pubDate", "")
+            pub_ts = item.get("providerPublishTime", 0)
+            if pub_date and isinstance(pub_date, str):
+                try:
+                    dt = _dt.fromisoformat(pub_date.replace("Z", "+00:00"))
+                    date_str = dt.strftime("%Y%m%d")
+                    time_str = dt.strftime("%H%M%S")
+                except Exception:
+                    pass
+            elif pub_ts:
+                try:
+                    dt = _dt.fromtimestamp(pub_ts)
+                    date_str = dt.strftime("%Y%m%d")
+                    time_str = dt.strftime("%H%M%S")
+                except Exception:
+                    pass
+            result.append({"date": date_str, "time": time_str, "title": title, "source": source})
+        return result
+    except Exception as e:
+        print(f"[fetch_us_news] 오류 ({ticker}): {e}")
+        return []
+
+
+def analyze_us_news_sentiment(news_items: list) -> dict:
+    """미국 뉴스 헤드라인 영문 감성 분석."""
+    positive, negative, neutral = [], [], []
+    for item in news_items:
+        title = item.get("title", "").lower()
+        pos_matches = [kw for kw in _US_POSITIVE_KEYWORDS if kw in title]
+        neg_matches = [kw for kw in _US_NEGATIVE_KEYWORDS if kw in title]
+        entry = {**item, "matched_keywords": pos_matches + neg_matches}
+        if len(pos_matches) > len(neg_matches):
+            entry["sentiment"] = "positive"
+            positive.append(entry)
+        elif len(neg_matches) > len(pos_matches):
+            entry["sentiment"] = "negative"
+            negative.append(entry)
+        else:
+            entry["sentiment"] = "neutral"
+            neutral.append(entry)
+    return {
+        "positive": positive, "negative": negative, "neutral": neutral,
+        "summary": f"🟢긍정 {len(positive)} / 🔴부정 {len(negative)} / ⚪중립 {len(neutral)}",
+    }
+
+
+def fetch_us_earnings_calendar(tickers: list) -> list:
+    """yfinance로 미국 종목 실적 발표일 조회.
+    Returns: [{"ticker": str, "name": str, "earnings_date": "YYYY-MM-DD", "days_until": int}, ...]
+    t.calendar가 dict 또는 DataFrame 어느 형태든 처리.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return []
+    from datetime import datetime as _dt, timedelta
+    now = _dt.now()
+    result = []
+    for ticker in tickers:
+        try:
+            t = yf.Ticker(ticker)
+            cal = t.calendar
+            if cal is None:
+                continue
+            # DataFrame → dict 변환 (일부 yfinance 버전에서 DataFrame 반환)
+            if hasattr(cal, 'to_dict'):
+                try:
+                    # DataFrame 형태: columns = [0], index = ["Earnings Date", ...]
+                    if hasattr(cal, 'iloc') and len(cal.columns) > 0:
+                        cal = {idx: cal.iloc[i, 0] for i, idx in enumerate(cal.index)}
+                    else:
+                        cal = cal.to_dict()
+                except Exception:
+                    continue
+            if hasattr(cal, 'empty') and cal.empty:
+                continue
+            if not isinstance(cal, dict):
+                continue
+            ed = cal.get("Earnings Date")
+            if isinstance(ed, list) and ed:
+                ed = ed[0]
+            if not ed:
+                continue
+            if hasattr(ed, 'strftime'):
+                date_str = ed.strftime("%Y-%m-%d")
+            else:
+                date_str = str(ed)[:10]
+            try:
+                ed_dt = _dt.strptime(date_str, "%Y-%m-%d")
+                days_until = (ed_dt - now).days
+                if -1 <= days_until <= 30:
+                    # t.info 호출은 네트워크 요청이므로 방어적 처리
+                    try:
+                        name = t.info.get("shortName", ticker)
+                    except Exception:
+                        name = ticker
+                    result.append({
+                        "ticker": ticker,
+                        "name": name,
+                        "earnings_date": date_str,
+                        "days_until": days_until,
+                    })
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[us_earnings] {ticker} 오류: {e}")
+            continue
+    result.sort(key=lambda x: x.get("days_until", 999))
+    return result
+
+
+US_SECTOR_ETFS = [
+    ("SPY", "S&P500"), ("QQQ", "나스닥100"),
+    ("XLK", "기술"), ("XLF", "금융"), ("XLE", "에너지"),
+    ("XLV", "헬스케어"), ("XLI", "산업재"), ("XLP", "필수소비"),
+    ("XLY", "임의소비"), ("XLRE", "부동산"), ("XLU", "유틸리티"),
+]
+
+
+def fetch_us_sector_etf() -> list:
+    """yfinance로 미국 섹터 ETF 등락률 조회.
+    Returns: [{"ticker", "name", "price", "chg_1d", "chg_5d"}, ...]
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return []
+    result = []
+    for sym, name in US_SECTOR_ETFS:
+        try:
+            t = yf.Ticker(sym)
+            hist = t.history(period="7d")
+            if hist is None or hist.empty or len(hist) < 2:
+                continue
+            cur = float(hist["Close"].iloc[-1])
+            prev = float(hist["Close"].iloc[-2])
+            chg_1d = round((cur - prev) / prev * 100, 2)
+            if len(hist) >= 6:
+                d5_ago = float(hist["Close"].iloc[-6])
+                chg_5d = round((cur - d5_ago) / d5_ago * 100, 2)
+            else:
+                chg_5d = None
+            result.append({
+                "ticker": sym, "name": name,
+                "price": round(cur, 2),
+                "chg_1d": chg_1d,
+                "chg_5d": chg_5d,
+            })
+        except Exception as e:
+            print(f"[us_sector_etf] {sym} 오류: {e}")
+            continue
+    return result

@@ -9,6 +9,7 @@ from kis_api import *
 from kis_api import (
     _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _fetch_sector_flow,
     ws_manager, get_ws_tickers,
+    fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
 
 
@@ -588,6 +589,22 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
                 pass
         if danger:
             msg += "\n🛑 *손절선 근접*\n" + "\n".join(danger) + "\n"
+
+        # ── 섹터 ETF top/bottom ──
+        try:
+            loop = asyncio.get_running_loop()
+            etfs = await loop.run_in_executor(None, fetch_us_sector_etf)
+            if etfs:
+                sorted_e = sorted(etfs, key=lambda x: x["chg_1d"], reverse=True)
+                top3 = sorted_e[:3]
+                bot3 = sorted_e[-3:]
+                msg += "\n[섹터]\n"
+                for e in top3:
+                    msg += f"🟢 {e['name']} {e['chg_1d']:+.1f}%\n"
+                for e in bot3:
+                    msg += f"🔴 {e['name']} {e['chg_1d']:+.1f}%\n"
+        except Exception:
+            pass
 
         msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
@@ -1238,6 +1255,32 @@ async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"[earnings_calendar] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📅 미국 실적 캘린더 알림 (매일 07:10 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def check_us_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        us_stocks = portfolio.get("us_stocks", {})
+        us_wl = load_us_watchlist()
+        tickers = list(set(list(us_stocks.keys()) + list(us_wl.keys())))
+        if not tickers:
+            return
+        loop = asyncio.get_running_loop()
+        earnings = await loop.run_in_executor(None, fetch_us_earnings_calendar, tickers)
+        upcoming = [e for e in earnings if 0 <= e["days_until"] <= 7]
+        if upcoming:
+            msg = "📅 *미국 실적 발표 예정*\n\n"
+            for e in upcoming:
+                msg += f"• {e['name']}({e['ticker']}) — {e['earnings_date']} ({e['days_until']}일 후)\n"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[us_earnings_calendar] 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2055,6 +2098,7 @@ def main():
     # 실적/배당 캘린더: 매일 07:00 KST 평일만
     jq.run_daily(check_earnings_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="earnings_cal")
     jq.run_daily(check_dividend_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="dividend_cal")
+    jq.run_daily(check_us_earnings_calendar, time=dtime(7, 10, tzinfo=KST), days=(0,1,2,3,4), name="us_earnings_cal")
     jq.run_daily(collect_reports_daily,    time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
 
     port = int(os.environ.get("PORT", 8080))
