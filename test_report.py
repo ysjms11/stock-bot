@@ -120,6 +120,28 @@ class TestValidateKoreanText(unittest.TestCase):
         self.assertFalse(_validate_korean_text("Hello World This is English only text"))
 
 
+class TestIsChartImageText(unittest.TestCase):
+    """_is_chart_image_text 테스트"""
+
+    def test_chart_numbers_only(self):
+        from report_crawler import _is_chart_image_text
+        text = "100,000 200,000 300,000\n50.5 60.3 70.1\n(2024) (2025) (2026)"
+        self.assertTrue(_is_chart_image_text(text))
+
+    def test_normal_report_text(self):
+        from report_crawler import _is_chart_image_text
+        text = "삼성전자 반도체 사업부 실적이 크게 개선되었습니다. 매출액 50조원 달성."
+        self.assertFalse(_is_chart_image_text(text))
+
+    def test_short_text(self):
+        from report_crawler import _is_chart_image_text
+        self.assertFalse(_is_chart_image_text("123"))  # < 20자
+
+    def test_empty_text(self):
+        from report_crawler import _is_chart_image_text
+        self.assertFalse(_is_chart_image_text(""))
+
+
 class TestExtractPdfText(unittest.TestCase):
     """extract_pdf_text 테스트"""
 
@@ -205,6 +227,20 @@ class TestExtractPdfText(unittest.TestCase):
             text, status = extract_pdf_text("https://stock.pstatic.net/image.pdf")
 
         self.assertIn("이미지 기반 PDF", text)
+        self.assertEqual(status, "failed")
+
+    @patch("report_crawler.requests.get")
+    def test_chart_image_pdf_returns_failed(self, mock_get):
+        """숫자+좌표만 있는 차트 PDF → 실패 판정."""
+        from report_crawler import extract_pdf_text
+
+        mock_get.return_value = self._make_mock_response()
+        chart_text = "100,000 200,000 300,000\n50.5 60.3 70.1\n(2024) (2025) (2026)\n" * 5
+        mock_plumber_mod = self._make_mock_pdf(chart_text)
+        with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
+            text, status = extract_pdf_text("https://stock.pstatic.net/chart.pdf")
+
+        self.assertIn("차트/이미지 PDF", text)
         self.assertEqual(status, "failed")
 
     @patch("report_crawler.requests.get")

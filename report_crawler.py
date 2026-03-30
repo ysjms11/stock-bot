@@ -146,6 +146,15 @@ def _validate_korean_text(text: str) -> bool:
     return korean_chars / len(text) >= 0.10
 
 
+def _is_chart_image_text(text: str) -> bool:
+    """숫자+좌표+기호만으로 이루어진 차트 이미지 PDF 판정.
+    숫자·소수점·콤마·공백·줄바꿈·좌표기호((),-.)가 90% 이상이면 차트."""
+    if not text or len(text) < 20:
+        return False
+    chart_chars = sum(1 for c in text if c in '0123456789.,()-+/% \t\n\r')
+    return chart_chars / len(text) >= 0.90
+
+
 def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
     """PDF 다운로드 후 pdfplumber로 텍스트 추출.
     Returns: (text, status) — status: 'success'|'failed'|'partial'
@@ -207,6 +216,9 @@ def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
 
         if not text:
             return ("", "failed")
+
+        if _is_chart_image_text(text):
+            return ("[PDF 텍스트 추출 실패 - 차트/이미지 PDF]", "failed")
 
         if not _validate_korean_text(text):
             return ("[PDF 텍스트 추출 실패 - 이미지 기반 PDF]", "failed")
