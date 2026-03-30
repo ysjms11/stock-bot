@@ -775,24 +775,7 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 4: 환율 급변 (1시간마다)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def check_fx_alert(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        d = await get_yahoo_quote("KRW=X")
-        c = d.get("change_pct", 0)
-        if abs(c) >= 1.0:
-            rate = d["price"]
-            direction = "급등 📈" if c > 0 else "급락 📉"
-            impact = "원화약세 → 미국주식 원화이익↑" if c > 0 else "원화강세 → 미국주식 원화이익↓"
-            msg = f"💱 *환율 {direction}*\n\nUSD/KRW: {rate:,.1f}원 ({c:+.1f}%)\n📌 {impact}"
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-    except Exception as e:
-        print(f"환율 체크 오류: {e}")
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 5: 복합 이상 신호 (30분마다)
+# 🔔 자동알림 4: 복합 이상 신호 (30분마다)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _anomaly_fired: dict = {}   # {"date": "YYYY-MM-DD", "sent": set()}
 
@@ -2051,8 +2034,7 @@ def main():
     jq = app.job_queue
     jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")
     jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
-    # [2026-03-19] 환율 알림 비활성화 — 매크로 대시보드(#14)로 통합 예정
-    # jq.run_repeating(check_fx_alert, interval=3600, first=300, name="fx")
+    # 환율 알림: 매크로 대시보드(macro_pm/macro_am)로 통합 완료
     jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
     # 모든 run_daily time은 KST-aware(tzinfo=KST)로 지정 → Railway(UTC 서버)에서도 정확한 시각에 실행됨
     jq.run_daily(daily_kr_summary, time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="kr_summary")
