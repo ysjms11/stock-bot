@@ -1,4 +1,5 @@
 """증권사 리포트 자동 수집 — 네이버증권 리서치 크롤링 + PDF 텍스트 추출"""
+# git push credential test
 import os
 import json
 import time
