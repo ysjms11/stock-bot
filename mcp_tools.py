@@ -1184,10 +1184,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 now_kst = datetime.now(KST)
                 today = now_kst.strftime("%Y%m%d")
                 market_closed = now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 30)
+                data_finalized = now_kst.hour >= 17 or (now_kst.hour == 16 and now_kst.minute >= 30)
 
-                # ── 캐시 확인: 장마감 후 당일 캐시 있으면 즉시 반환 ──
+                # ── 캐시 확인: 16:30 이후 확정 데이터 캐시만 사용 ──
                 cache = load_sector_flow_cache()
-                if market_closed and cache.get("date") == today and "data" in cache:
+                if data_finalized and cache.get("date") == today and "data" in cache:
                     result = dict(cache["data"])
                     result["cached"] = True
                     result["cached_at"] = cache.get("cached_at", "")
@@ -1260,7 +1261,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result["etf_prices"] = etf_prices
 
                     # ── 장마감 후 캐시 저장 (fallback 데이터는 캐시하지 않음) ──
-                    if market_closed and has_data:
+                    if data_finalized and has_data:
                         save_sector_flow_cache({
                             "date": today,
                             "cached_at": now_kst.strftime("%H:%M:%S"),
