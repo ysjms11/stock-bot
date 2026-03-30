@@ -244,6 +244,11 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
     """
     data = load_reports()
     existing_urls = {r["pdf_url"] for r in data["reports"] if r.get("pdf_url")}
+    # 날짜+증권사+종목 복합키로 추가 중복 방지 (URL 변경 대비)
+    existing_keys = {
+        (r.get("date", ""), r.get("source", ""), r.get("ticker", ""), r.get("title", ""))
+        for r in data["reports"]
+    }
 
     new_reports = []
     count = 0
@@ -256,6 +261,10 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
             for r in reports:
                 if count >= max_count:
                     break
+                # 복합키 중복 체크
+                key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""), r.get("title", ""))
+                if key in existing_keys:
+                    continue
                 # PDF 텍스트 추출
                 full_text, status = extract_pdf_text(r["pdf_url"])
                 r["full_text"] = full_text
@@ -263,6 +272,7 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
                 r["collected_at"] = datetime.now(KST).isoformat()
                 new_reports.append(r)
                 existing_urls.add(r["pdf_url"])
+                existing_keys.add(key)
                 count += 1
                 time.sleep(1)  # 크롤링 딜레이
         except Exception as e:
