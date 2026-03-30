@@ -20,6 +20,7 @@ from kis_api import (
     get_historical_ohlcv, get_historical_supply,
     fetch_us_news, analyze_us_news_sentiment,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
+    fetch_us_short_interest,
 )
 
 try:
@@ -1657,16 +1658,25 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             signal_mode = arguments.get("mode", "").strip().lower()
 
             if signal_mode == "short_sale":
-                # ← 기존 get_short_sale 핸들러
                 ticker = arguments.get("ticker", "").strip()
                 if not ticker:
                     result = {"error": "ticker는 필수입니다"}
+                elif _is_us_ticker(ticker):
+                    # ── 미국 종목: yfinance short interest ──
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(None, fetch_us_short_interest, ticker.upper())
+                    if not result:
+                        result = {"ticker": ticker, "market": "US", "message": "공매도 데이터 조회 실패"}
+                    else:
+                        result["market"] = "US"
                 else:
+                    # ── 한국 종목: KIS API 일별 공매도 ──
                     n     = int(arguments.get("days", 10) or 10)
                     n     = max(1, min(n, 30))
                     rows  = await kis_daily_short_sale(ticker, token, n=n)
                     result = {
                         "ticker": ticker,
+                        "market": "KR",
                         "count":  len(rows),
                         "items":  rows,
                     }

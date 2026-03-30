@@ -2888,3 +2888,34 @@ def fetch_us_sector_etf() -> list:
             print(f"[us_sector_etf] {sym} 오류: {e}")
             continue
     return result
+
+
+def fetch_us_short_interest(ticker: str) -> dict:
+    """yfinance에서 미국 종목 공매도 데이터 조회.
+    Returns: {ticker, short_ratio, short_pct_float, days_to_cover, shares_short, ...}
+    데이터 없으면 빈 dict. 동기 함수.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {}
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        shares_short = info.get("sharesShort")
+        if shares_short is None:
+            return {"ticker": ticker, "message": "공매도 데이터 없음"}
+        return {
+            "ticker": ticker,
+            "name": info.get("shortName", ticker),
+            "short_ratio": info.get("shortRatio"),
+            "short_pct_float": info.get("shortPercentOfFloat"),
+            "days_to_cover": info.get("shortRatio"),
+            "shares_short": shares_short,
+            "shares_short_prev": info.get("sharesShortPriorMonth"),
+            "short_pct_shares_out": info.get("sharesPercentSharesOut"),
+            "float_shares": info.get("floatShares"),
+        }
+    except Exception as e:
+        print(f"[us_short_interest] {ticker} 오류: {e}")
+        return {}

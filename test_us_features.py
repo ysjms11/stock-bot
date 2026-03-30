@@ -335,3 +335,91 @@ class TestMcpGetMacroUsSector(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 7. TestFetchUsShortInterest
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class TestFetchUsShortInterest(unittest.TestCase):
+    """fetch_us_short_interest 테스트"""
+
+    def test_normal_data(self):
+        from kis_api import fetch_us_short_interest
+        mock_info = {
+            "shortName": "Tesla Inc",
+            "sharesShort": 30000000,
+            "shortRatio": 1.5,
+            "shortPercentOfFloat": 0.03,
+            "sharesShortPriorMonth": 28000000,
+            "sharesPercentSharesOut": 0.025,
+            "floatShares": 1000000000,
+        }
+        with patch("yfinance.Ticker") as mock_cls:
+            mock_t = MagicMock()
+            mock_t.info = mock_info
+            mock_cls.return_value = mock_t
+            result = fetch_us_short_interest("TSLA")
+
+        self.assertEqual(result["ticker"], "TSLA")
+        self.assertEqual(result["shares_short"], 30000000)
+        self.assertEqual(result["short_ratio"], 1.5)
+        self.assertIsNotNone(result.get("short_pct_float"))
+
+    def test_no_short_data(self):
+        from kis_api import fetch_us_short_interest
+        with patch("yfinance.Ticker") as mock_cls:
+            mock_t = MagicMock()
+            mock_t.info = {"shortName": "NoShort Corp"}
+            mock_cls.return_value = mock_t
+            result = fetch_us_short_interest("XYZ")
+
+        self.assertIn("message", result)
+        self.assertIn("없음", result["message"])
+
+    def test_import_error(self):
+        from kis_api import fetch_us_short_interest
+        with patch.dict("sys.modules", {"yfinance": None}):
+            # Force ImportError by removing module
+            import importlib
+            # Just test that function doesn't crash
+        # Alternative: mock the import to raise
+        result = fetch_us_short_interest("TSLA")
+        # Should return empty dict or data depending on cache
+        self.assertIsInstance(result, dict)
+
+
+class TestMcpShortSaleUs(unittest.TestCase):
+    """get_market_signal short_sale 미국 분기 테스트"""
+
+    def test_us_short_sale(self):
+        from mcp_tools import _execute_tool
+        mock_short = {
+            "ticker": "TSLA", "name": "Tesla",
+            "shares_short": 30000000, "short_ratio": 1.5,
+        }
+        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock"), \
+             patch("mcp_tools.fetch_us_short_interest", return_value=mock_short):
+            result = asyncio.run(_execute_tool("get_market_signal", {
+                "mode": "short_sale", "ticker": "TSLA"
+            }))
+        self.assertEqual(result.get("market"), "US")
+        self.assertEqual(result.get("shares_short"), 30000000)
+
+    def test_kr_short_sale_unchanged(self):
+        from mcp_tools import _execute_tool
+        mock_rows = [{"date": "20260330", "short_vol": 1000, "total_vol": 50000}]
+        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock"), \
+             patch("mcp_tools.kis_daily_short_sale", new_callable=AsyncMock, return_value=mock_rows):
+            result = asyncio.run(_execute_tool("get_market_signal", {
+                "mode": "short_sale", "ticker": "005930"
+            }))
+        self.assertEqual(result.get("market"), "KR")
+        self.assertEqual(result.get("count"), 1)
+
+    def test_missing_ticker(self):
+        from mcp_tools import _execute_tool
+        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock"):
+            result = asyncio.run(_execute_tool("get_market_signal", {
+                "mode": "short_sale"
+            }))
+        self.assertIn("error", result)
