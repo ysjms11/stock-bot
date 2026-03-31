@@ -12,9 +12,12 @@ import pandas as pd
 # telegram 스텁
 telegram_stub = types.ModuleType("telegram")
 telegram_stub.Update = object
+telegram_stub.ReplyKeyboardMarkup = type("ReplyKeyboardMarkup", (), {"__init__": lambda self, *a, **kw: None})
 ext_stub = types.ModuleType("telegram.ext")
 ext_stub.Application = object
 ext_stub.CommandHandler = object
+ext_stub.MessageHandler = object
+ext_stub.filters = type("filters", (), {"TEXT": None, "Regex": staticmethod(lambda x: x)})()
 ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
 sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
