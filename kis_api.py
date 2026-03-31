@@ -1579,8 +1579,11 @@ async def kis_daily_short_sale(ticker: str, token: str, n: int = 10) -> list:
     """국내주식 공매도 일별추이 (FHPST04830000).
 
     Returns: [{date, short_vol, total_vol, short_ratio, close}, ...]
+    날짜범위 파라미터로 조회 (페이징 없음, 범위 내 전체 반환).
     """
     try:
+        today = datetime.now(KST).strftime("%Y%m%d")
+        start = (datetime.now(KST) - timedelta(days=int(n * 1.6))).strftime("%Y%m%d")
         async with aiohttp.ClientSession() as s:
             _, d = await _kis_get(s,
                 "/uapi/domestic-stock/v1/quotations/daily-short-sale",
@@ -1588,8 +1591,8 @@ async def kis_daily_short_sale(ticker: str, token: str, n: int = 10) -> list:
                 {
                     "FID_COND_MRKT_DIV_CODE": "J",
                     "FID_INPUT_ISCD":         ticker,
-                    "FID_INPUT_DATE_1":       "",
-                    "FID_INPUT_DATE_2":       "",
+                    "FID_INPUT_DATE_1":       start,
+                    "FID_INPUT_DATE_2":       today,
                 })
         result = []
         for row in d.get("output2", [])[:n]:

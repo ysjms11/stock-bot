@@ -360,7 +360,7 @@ MCP_TOOLS = [
                      "properties": {
                          "mode": {"type": "string", "enum": ["daily", "history", "estimate", "foreign_rank", "combined_rank"], "description": "수급 조회 모드"},
                          "ticker": {"type": "string", "description": "종목코드 (daily/history/estimate 시 필수)"},
-                         "days": {"type": "integer", "description": "history 시 조회 일수 (기본 5, 최대 10)"},
+                         "days": {"type": "integer", "description": "history 시 조회 일수 (기본 5, 최대 30)"},
                          "sort": {"type": "string", "description": "combined_rank 시 정렬 (buy/sell, 기본 buy)"},
                          "n": {"type": "integer", "description": "foreign_rank/combined_rank 결과 수"},
                      },
@@ -409,7 +409,7 @@ MCP_TOOLS = [
                      "properties": {
                          "mode": {"type": "string", "enum": ["short_sale", "vi", "program_trade"], "description": "시그널 조회 모드"},
                          "ticker": {"type": "string", "description": "종목코드 (short_sale 시 필수)"},
-                         "days": {"type": "integer", "description": "short_sale 조회 일수 (기본 10)"},
+                         "days": {"type": "integer", "description": "short_sale 조회 일수 (기본 10, 최대 60)"},
                          "market": {"type": "string", "description": "program_trade 시 시장 (kospi/kosdaq, 기본 kospi)"},
                      },
                      "required": ["mode"]}},
@@ -802,7 +802,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "w52h": price.get("w52_hgpr"), "w52l": price.get("w52_lwpr"),
                         "per": price.get("per"), "pbr": price.get("pbr"), "eps": price.get("eps"),
                         "bps": price.get("bps"),
-                        "investor": inv[:3] if isinstance(inv, list) else inv,
+                        "investor": inv if isinstance(inv, list) else [inv] if inv else [],
                     }
                     # 추정실적 (period 없을 때만)
                     try:
@@ -857,7 +857,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     result = {"error": "ticker는 필수입니다"}
                 else:
                     days  = int(arguments.get("days", 5) or 5)
-                    days  = max(1, min(days, 10))
+                    days  = max(1, min(days, 30))
                     rows  = await kis_investor_trend_history(ticker, token, n_days=days)
                     result = {
                         "ticker": ticker,
@@ -1672,7 +1672,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 else:
                     # ── 한국 종목: KIS API 일별 공매도 ──
                     n     = int(arguments.get("days", 10) or 10)
-                    n     = max(1, min(n, 30))
+                    n     = max(1, min(n, 60))
                     rows  = await kis_daily_short_sale(ticker, token, n=n)
                     result = {
                         "ticker": ticker,
@@ -2157,10 +2157,10 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             ticker_supply = supply_hist.get(ticker, [])
                             supply_by_date = {s["date"].replace("-", ""): s for s in ticker_supply}
 
-                        # 3순위: KIS API 10일
+                        # 3순위: KIS API 30일 (FHPTJ04160001 단일 페이지 최대)
                         if not supply_by_date:
                             try:
-                                api_hist = await kis_investor_trend_history(ticker, token, n_days=10)
+                                api_hist = await kis_investor_trend_history(ticker, token, n_days=30)
                                 api_hist.reverse()
                                 ticker_supply = [{"date": h["date"][:4]+"-"+h["date"][4:6]+"-"+h["date"][6:],
                                                   "foreign_net": h["foreign_net"],
