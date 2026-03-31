@@ -1,9 +1,9 @@
 """
-텔레그램 Reply Keyboard + 새 명령어 테스트
+텔레그램 Reply Keyboard + 명령어 테스트
 1. ReplyKeyboardMarkup 생성 검증
 2. 버튼 매핑 완전성
-3. 워치리스트 포맷 (현재가+감시가%)
-4. 쇼핑리스트 필터 + 포맷
+3. 워치리스트 (보유종목 간결 요약)
+4. 전체현황 (보유+매수감시 통합, 3섹션 분류)
 5. 리포트 목록 포맷
 6. portfolio_cmd / alert_cmd 기본 흐름
 """
@@ -71,8 +71,14 @@ class TestReplyKeyboard:
         from main import MAIN_KEYBOARD
         flat = [btn for row in MAIN_KEYBOARD.keyboard for btn in row]
         expected = ["📊 포트폴리오", "🚨 알림현황", "📈 매크로",
-                    "🔍 워치리스트", "📰 리포트", "💰 쇼핑리스트"]
+                    "🔍 워치리스트", "📰 리포트", "📋 전체현황"]
         assert flat == expected
+
+    def test_no_shopping_button(self):
+        """쇼핑리스트 버튼 삭제 확인"""
+        from main import MAIN_KEYBOARD
+        flat = [btn for row in MAIN_KEYBOARD.keyboard for btn in row]
+        assert "💰 쇼핑리스트" not in flat
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -90,98 +96,197 @@ class TestButtonMap:
         for key, fn in _BUTTON_MAP.items():
             assert callable(fn), f"'{key}' 핸들러가 callable이 아님"
 
+    def test_no_shopping_in_map(self):
+        """쇼핑리스트 매핑 삭제 확인"""
+        from main import _BUTTON_MAP
+        assert "💰 쇼핑리스트" not in _BUTTON_MAP
+
+    def test_status_in_map(self):
+        """전체현황 매핑 확인"""
+        from main import _BUTTON_MAP
+        assert "📋 전체현황" in _BUTTON_MAP
+
 
 # ─────────────────────────────────────────────────────────────────────
-# 3. 워치리스트 포맷 테스트
+# 3. 워치리스트 (보유종목 간결 요약)
 # ─────────────────────────────────────────────────────────────────────
 class TestWatchlistCmd:
     @pytest.mark.asyncio
-    async def test_empty_watchlist(self):
+    async def test_empty_portfolio(self):
         from main import watchlist_cmd
         update, ctx = _make_update_context()
-        with patch("main.load_watchlist", return_value={}), \
-             patch("main.load_watchalert", return_value={}):
+        with patch("main.load_json", return_value={}):
             await watchlist_cmd(update, ctx)
         update.message.reply_text.assert_called_once()
-        assert "비어있음" in update.message.reply_text.call_args[0][0]
+        assert "보유종목 없음" in update.message.reply_text.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_watchlist_with_alert(self):
+    async def test_watchlist_shows_holdings(self):
         from main import watchlist_cmd
         update, ctx = _make_update_context()
-        wl = {"005930": "삼성전자"}
-        wa = {"005930": {"name": "삼성전자", "buy_price": 70000}}
-        price_data = {"stck_prpr": "68000", "prdy_ctrt": "-1.5"}
-        with patch("main.load_watchlist", return_value=wl), \
-             patch("main.load_watchalert", return_value=wa), \
+        pf = {"005930": {"name": "삼성전자", "qty": 10, "avg_price": 60000}}
+        price_data = {"stck_prpr": "68000", "prdy_ctrt": "+2.0"}
+        with patch("main.load_json", return_value=pf), \
              patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
              patch("main.kis_stock_price", new_callable=AsyncMock, return_value=price_data):
             await watchlist_cmd(update, ctx)
         calls = update.message.reply_text.call_args_list
-        # 두 번 호출: "조회 중..." + 결과
         assert len(calls) == 2
         result_msg = calls[1][0][0]
         assert "삼성전자" in result_msg
         assert "68,000" in result_msg
-        assert "🔴" in result_msg  # 현재가 <= 감시가
+        assert "🔺" in result_msg  # 양수 등락률
 
     @pytest.mark.asyncio
-    async def test_watchlist_above_alert(self):
+    async def test_watchlist_negative_change(self):
         from main import watchlist_cmd
         update, ctx = _make_update_context()
-        wl = {"005930": "삼성전자"}
-        wa = {"005930": {"name": "삼성전자", "buy_price": 60000}}
-        price_data = {"stck_prpr": "68000", "prdy_ctrt": "+1.0"}
-        with patch("main.load_watchlist", return_value=wl), \
-             patch("main.load_watchalert", return_value=wa), \
+        pf = {"005930": {"name": "삼성전자", "qty": 10, "avg_price": 60000}}
+        price_data = {"stck_prpr": "58000", "prdy_ctrt": "-1.5"}
+        with patch("main.load_json", return_value=pf), \
              patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
              patch("main.kis_stock_price", new_callable=AsyncMock, return_value=price_data):
             await watchlist_cmd(update, ctx)
         result_msg = update.message.reply_text.call_args_list[1][0][0]
-        assert "⚪" in result_msg  # 현재가 > 감시가
+        assert "🔻" in result_msg  # 음수 등락률
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 4. 쇼핑리스트 테스트
+# 4. 전체현황 (status_cmd) — 3섹션 분류
 # ─────────────────────────────────────────────────────────────────────
-class TestShoppingCmd:
+class TestStatusCmd:
     @pytest.mark.asyncio
-    async def test_empty_shopping(self):
-        from main import shopping_cmd
+    async def test_empty_all(self):
+        """보유/감시 모두 비었을 때"""
+        from main import status_cmd
         update, ctx = _make_update_context()
-        with patch("main.load_watchalert", return_value={}):
-            await shopping_cmd(update, ctx)
-        assert "매수감시 종목 없음" in update.message.reply_text.call_args[0][0]
+        with patch("main.load_json", return_value={}), \
+             patch("main.load_watchalert", return_value={}), \
+             patch("main.load_stoploss", return_value={}):
+            await status_cmd(update, ctx)
+        assert "보유/감시 종목 없음" in update.message.reply_text.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_shopping_with_rr(self):
-        from main import shopping_cmd
+    async def test_holding_section(self):
+        """보유종목 섹션 표시"""
+        from main import status_cmd
         update, ctx = _make_update_context()
-        wa = {"005930": {"name": "삼성전자", "buy_price": 65000, "memo": "실적 기대"}}
-        stops = {"005930": {"name": "삼성전자", "stop_price": 60000, "target_price": 80000}}
-        price_data = {"stck_prpr": "63000", "prdy_ctrt": "-1.0"}
-        with patch("main.load_watchalert", return_value=wa), \
+        pf = {"005930": {"name": "삼성전자", "qty": 10, "avg_price": 60000}}
+        stops = {"005930": {"name": "삼성전자", "stop_price": 55000, "target_price": 80000}}
+        price_data = {"stck_prpr": "65000"}
+        with patch("main.load_json", return_value=pf), \
+             patch("main.load_watchalert", return_value={}), \
              patch("main.load_stoploss", return_value=stops), \
              patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
              patch("main.kis_stock_price", new_callable=AsyncMock, return_value=price_data), \
-             patch("main._is_us_ticker", return_value=False):
-            await shopping_cmd(update, ctx)
-        calls = update.message.reply_text.call_args_list
-        result_msg = calls[1][0][0]
+             patch("main._is_us_ticker", return_value=False), \
+             patch("main._is_us_market_hours_kst", return_value=False):
+            await status_cmd(update, ctx)
+        result_msg = update.message.reply_text.call_args_list[1][0][0]
+        assert "보유종목" in result_msg
         assert "삼성전자" in result_msg
-        assert "RR" in result_msg
-        assert "🔴" in result_msg  # 현재가 <= 감시가
-        assert "실적 기대" in result_msg
+        assert "보유 1개" in result_msg
 
     @pytest.mark.asyncio
-    async def test_shopping_no_buy_price_filtered(self):
-        """buy_price 없는 항목은 필터링됨"""
-        from main import shopping_cmd
+    async def test_reached_section(self):
+        """감시가 도달 종목 → 🔴 섹션에 분류"""
+        from main import status_cmd
+        update, ctx = _make_update_context()
+        wa = {"005930": {"name": "삼성전자", "buy_price": 70000}}
+        stops = {"005930": {"stop_price": 60000, "target_price": 80000}}
+        price_data = {"stck_prpr": "65000"}  # 65000 <= 70000 → 도달
+        with patch("main.load_json", return_value={}), \
+             patch("main.load_watchalert", return_value=wa), \
+             patch("main.load_stoploss", return_value=stops), \
+             patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("main.kis_stock_price", new_callable=AsyncMock, return_value=price_data), \
+             patch("main._is_us_ticker", return_value=False), \
+             patch("main._is_us_market_hours_kst", return_value=False):
+            await status_cmd(update, ctx)
+        result_msg = update.message.reply_text.call_args_list[1][0][0]
+        assert "감시가 도달" in result_msg
+        assert "🔴" in result_msg
+        assert "감시 도달 1개" in result_msg
+
+    @pytest.mark.asyncio
+    async def test_waiting_section(self):
+        """감시가 미도달 종목 → ⚪ 대기 섹션"""
+        from main import status_cmd
+        update, ctx = _make_update_context()
+        wa = {"005930": {"name": "삼성전자", "buy_price": 60000}}
+        price_data = {"stck_prpr": "68000"}  # 68000 > 60000 → 대기
+        with patch("main.load_json", return_value={}), \
+             patch("main.load_watchalert", return_value=wa), \
+             patch("main.load_stoploss", return_value={}), \
+             patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("main.kis_stock_price", new_callable=AsyncMock, return_value=price_data), \
+             patch("main._is_us_ticker", return_value=False), \
+             patch("main._is_us_market_hours_kst", return_value=False):
+            await status_cmd(update, ctx)
+        result_msg = update.message.reply_text.call_args_list[1][0][0]
+        assert "대기" in result_msg
+        assert "⚪" in result_msg
+        assert "대기 1개" in result_msg
+
+    @pytest.mark.asyncio
+    async def test_rr_calculation(self):
+        """RR 비율 계산 확인"""
+        from main import status_cmd
+        update, ctx = _make_update_context()
+        # buy=65000, stop=60000, target=80000 → risk=5000, reward=15000 → RR 1:3.0
+        wa = {"005930": {"name": "삼성전자", "buy_price": 65000}}
+        stops = {"005930": {"stop_price": 60000, "target_price": 80000}}
+        price_data = {"stck_prpr": "63000"}  # 도달
+        with patch("main.load_json", return_value={}), \
+             patch("main.load_watchalert", return_value=wa), \
+             patch("main.load_stoploss", return_value=stops), \
+             patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("main.kis_stock_price", new_callable=AsyncMock, return_value=price_data), \
+             patch("main._is_us_ticker", return_value=False), \
+             patch("main._is_us_market_hours_kst", return_value=False):
+            await status_cmd(update, ctx)
+        result_msg = update.message.reply_text.call_args_list[1][0][0]
+        assert "RR 1:3.0" in result_msg
+
+    @pytest.mark.asyncio
+    async def test_mixed_holding_and_watch(self):
+        """보유 + 감시 혼합"""
+        from main import status_cmd
+        update, ctx = _make_update_context()
+        pf = {"009540": {"name": "HD한국조선해양", "qty": 5, "avg_price": 300000}}
+        wa = {"005930": {"name": "삼성전자", "buy_price": 70000}}
+        price_009540 = {"stck_prpr": "344000"}
+        price_005930 = {"stck_prpr": "68000"}
+
+        async def mock_price(ticker, token):
+            return price_009540 if ticker == "009540" else price_005930
+
+        with patch("main.load_json", return_value=pf), \
+             patch("main.load_watchalert", return_value=wa), \
+             patch("main.load_stoploss", return_value={}), \
+             patch("main.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("main.kis_stock_price", new_callable=AsyncMock, side_effect=mock_price), \
+             patch("main._is_us_ticker", return_value=False), \
+             patch("main._is_us_market_hours_kst", return_value=False):
+            await status_cmd(update, ctx)
+        result_msg = update.message.reply_text.call_args_list[1][0][0]
+        assert "보유종목" in result_msg
+        assert "HD한국조선해양" in result_msg
+        assert "삼성전자" in result_msg
+        assert "보유 1개" in result_msg
+        assert "감시 도달 1개" in result_msg  # 68000 <= 70000
+
+    @pytest.mark.asyncio
+    async def test_no_buy_price_filtered(self):
+        """buy_price 없는 watchalert 항목은 무시"""
+        from main import status_cmd
         update, ctx = _make_update_context()
         wa = {"005930": {"name": "삼성전자"}}  # buy_price 없음
-        with patch("main.load_watchalert", return_value=wa):
-            await shopping_cmd(update, ctx)
-        assert "매수감시 종목 없음" in update.message.reply_text.call_args[0][0]
+        with patch("main.load_json", return_value={}), \
+             patch("main.load_watchalert", return_value=wa), \
+             patch("main.load_stoploss", return_value={}):
+            await status_cmd(update, ctx)
+        assert "보유/감시 종목 없음" in update.message.reply_text.call_args[0][0]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -321,6 +426,21 @@ class TestButtonHandler:
             mock_macro.assert_called_once_with(update, ctx)
         finally:
             _BUTTON_MAP["📈 매크로"] = original
+
+    @pytest.mark.asyncio
+    async def test_status_button_routes(self):
+        """📋 전체현황 버튼 라우팅"""
+        from main import _button_handler, _BUTTON_MAP
+        update, ctx = _make_update_context()
+        update.message.text = "📋 전체현황"
+        mock_status = AsyncMock()
+        original = _BUTTON_MAP["📋 전체현황"]
+        _BUTTON_MAP["📋 전체현황"] = mock_status
+        try:
+            await _button_handler(update, ctx)
+            mock_status.assert_called_once_with(update, ctx)
+        finally:
+            _BUTTON_MAP["📋 전체현황"] = original
 
     @pytest.mark.asyncio
     async def test_unknown_text_ignored(self):
