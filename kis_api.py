@@ -45,6 +45,7 @@ SECTOR_FLOW_CACHE_FILE    = "/data/sector_flow_cache.json"
 SECTOR_ROTATION_FILE      = "/data/sector_rotation.json"
 SUPPLY_HISTORY_FILE       = "/data/supply_history.json"
 REPORTS_FILE              = "/data/reports.json"
+REGIME_STATE_FILE         = "/data/regime_state.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
@@ -52,7 +53,7 @@ _BACKUP_FILES_LIST = [
     STOPLOSS_FILE, PORTFOLIO_FILE, WATCHLIST_FILE, US_WATCHLIST_FILE,
     WATCHALERT_FILE, WATCHLIST_LOG_FILE, PORTFOLIO_HISTORY_FILE,
     TRADE_LOG_FILE, CONSENSUS_CACHE_FILE, DECISION_LOG_FILE,
-    REPORTS_FILE,
+    REPORTS_FILE, REGIME_STATE_FILE,
 ]
 
 MACRO_SYMBOLS = {
@@ -2922,3 +2923,515 @@ def fetch_us_short_interest(ticker: str) -> dict:
     except Exception as e:
         print(f"[us_short_interest] {ticker} 오류: {e}")
         return {}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 시장 레짐 판정 (복합점수 기반)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _yf_history(symbol: str, period: str = "2y") -> list:
+    """yfinance 종가 히스토리 → [float, ...] (오래된 순)."""
+    try:
+        import yfinance as yf
+        df = yf.download(symbol, period=period, progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return []
+        col = df["Close"]
+        # MultiIndex 대응 (yfinance >= 0.2.36 단일 티커도 MultiIndex 가능)
+        if hasattr(col, "columns"):
+            col = col.iloc[:, 0]
+        return [float(v) for v in col.dropna().tolist()]
+    except Exception as e:
+        print(f"[_yf_history] {symbol}: {e}")
+        return []
+
+
+def _krx_kospi_history(days: int = 600) -> list:
+    """pykrx KOSPI 종가 히스토리. 실패 시 yfinance ^KS11 fallback."""
+    try:
+        from pykrx import stock as krx
+        end = datetime.now(KST).strftime("%Y%m%d")
+        start = (datetime.now(KST) - timedelta(days=days)).strftime("%Y%m%d")
+        df = krx.get_index_ohlcv(start, end, "1001")
+        if df is not None and not df.empty:
+            return [float(c) for c in df["종가"].dropna().tolist()]
+    except Exception as e:
+        print(f"[_krx_kospi_history] pykrx 실패, yfinance fallback: {e}")
+    return _yf_history("^KS11", "2y")
+
+
+def _krx_foreign_net(days: int = 280) -> list:
+    """pykrx 외국인 KOSPI 순매수 금액 히스토리. 실패 시 빈 리스트."""
+    try:
+        from pykrx import stock as krx
+        end = datetime.now(KST).strftime("%Y%m%d")
+        start = (datetime.now(KST) - timedelta(days=days)).strftime("%Y%m%d")
+        df = krx.get_market_net_purchases_of_equities(start, end, "KOSPI", "외국인")
+        if df is not None and not df.empty:
+            col = "순매수거래대금" if "순매수거래대금" in df.columns else df.columns[-1]
+            return [float(v) for v in df[col].dropna().tolist()]
+    except Exception as e:
+        print(f"[_krx_foreign_net] pykrx 실패: {e}")
+    return []
+
+
+def _calc_zscore(values: list, lookback: int = 252, min_data: int = 60):
+    """롤링 z-score. Returns {"value","z","mean","std"} or None."""
+    if len(values) < min_data:
+        return None
+    import numpy as np
+    window = values[-lookback:] if len(values) >= lookback else values
+    current = window[-1]
+    arr = np.array(window, dtype=float)
+    mean = float(np.mean(arr))
+    std = float(np.std(arr, ddof=1))
+    if std < 1e-10:
+        return {"value": current, "z": 0.0, "mean": mean, "std": std}
+    return {"value": current, "z": float((current - mean) / std), "mean": mean, "std": std}
+
+
+def _rolling_ma_pct(closes: list, ma_len: int) -> list:
+    """각 시점에서 (종가-MA)/MA*100 시리즈 생성."""
+    out = []
+    for i in range(ma_len, len(closes)):
+        ma = sum(closes[i - ma_len + 1:i + 1]) / ma_len
+        out.append((closes[i] - ma) / ma * 100 if ma else 0)
+    return out
+
+
+def _rolling_momentum(closes: list, lag: int) -> list:
+    """(현재/lag일전 - 1)*100 시리즈."""
+    return [(closes[i] / closes[i - lag] - 1) * 100
+            for i in range(lag, len(closes))]
+
+
+def _realized_vol(closes: list, window: int = 20):
+    """최근 window일 실현변동성 (연율화 %). None if 데이터 부족."""
+    if len(closes) < window + 1:
+        return None
+    import numpy as np
+    recent = closes[-(window + 1):]
+    rets = np.diff(np.log(np.array(recent, dtype=float)))
+    return float(np.std(rets, ddof=1) * (252 ** 0.5) * 100)
+
+
+def _rolling_realized_vol(closes: list, window: int = 20) -> list:
+    """실현변동성 시계열."""
+    import numpy as np
+    out = []
+    for i in range(window + 1, len(closes)):
+        seg = closes[i - window:i + 1]
+        rets = np.diff(np.log(np.array(seg, dtype=float)))
+        out.append(float(np.std(rets, ddof=1) * (252 ** 0.5) * 100))
+    return out
+
+
+def _sig_entry(value, z, label="", invert=False):
+    """신호 dict 생성 헬퍼."""
+    zz = round(-z if invert else z, 2)
+    return {"value": value, "z": zz, "raw_z": round(z, 2), "label": label}
+
+
+async def compute_us_signals() -> dict:
+    """미국 6개 신호 z-score → {"signals":{}, "score":float, "failed":[]}"""
+    import numpy as np
+    from scipy.stats import norm
+
+    signals, failed = {}, []
+
+    # 1. VIX (역수)
+    vix_data = _yf_history("^VIX", "2y")
+    zs = _calc_zscore(vix_data)
+    if zs:
+        signals["VIX"] = _sig_entry(round(zs["value"], 1), zs["z"], "역수", invert=True)
+    else:
+        failed.append("VIX")
+    await asyncio.sleep(0.3)
+
+    # 2. HY 스프레드 프록시 (HYG/LQD)
+    hyg = _yf_history("HYG", "2y")
+    await asyncio.sleep(0.3)
+    lqd = _yf_history("LQD", "2y")
+    if hyg and lqd:
+        ml = min(len(hyg), len(lqd))
+        ratio = [h / l if l > 0 else 0 for h, l in zip(hyg[-ml:], lqd[-ml:])]
+        zs = _calc_zscore(ratio)
+        if zs:
+            signals["HY스프레드"] = _sig_entry(round(zs["value"], 4), zs["z"], "HYG/LQD")
+        else:
+            failed.append("HY스프레드")
+    else:
+        failed.append("HY스프레드")
+    await asyncio.sleep(0.3)
+
+    # 3. S&P vs 200MA
+    sp = _yf_history("^GSPC", "2y")
+    if sp and len(sp) >= 200:
+        pct_series = _rolling_ma_pct(sp, 200)
+        zs = _calc_zscore(pct_series)
+        if zs:
+            signals["S&P/200MA"] = _sig_entry(round(zs["value"], 1), zs["z"], "%")
+        else:
+            failed.append("S&P/200MA")
+    else:
+        failed.append("S&P/200MA")
+
+    # 4. S&P 50일 모멘텀
+    if sp and len(sp) > 50:
+        mom = _rolling_momentum(sp, 50)
+        zs = _calc_zscore(mom)
+        if zs:
+            signals["50d모멘텀"] = _sig_entry(round(zs["value"], 1), zs["z"], "%")
+        else:
+            failed.append("50d모멘텀")
+    else:
+        failed.append("50d모멘텀")
+    await asyncio.sleep(0.3)
+
+    # 5. VIX 텀스트럭처 (^VIX3M / ^VIX)
+    vix3m = _yf_history("^VIX3M", "2y")
+    if vix3m and vix_data:
+        ml = min(len(vix3m), len(vix_data))
+        term = [v3 / v if v > 0 else 1.0 for v3, v in zip(vix3m[-ml:], vix_data[-ml:])]
+        zs = _calc_zscore(term)
+        if zs:
+            signals["VIX텀"] = _sig_entry(round(zs["value"], 3), zs["z"], "비율")
+        else:
+            failed.append("VIX텀")
+    else:
+        failed.append("VIX텀")
+    await asyncio.sleep(0.3)
+
+    # 6. 금리차 (10Y - 13주 T-bill)
+    tnx = _yf_history("^TNX", "2y")
+    irx = _yf_history("^IRX", "2y")
+    if tnx and irx:
+        ml = min(len(tnx), len(irx))
+        spread = [t - i for t, i in zip(tnx[-ml:], irx[-ml:])]
+        zs = _calc_zscore(spread)
+        if zs:
+            signals["금리차"] = _sig_entry(round(zs["value"], 2), zs["z"], "%p")
+        else:
+            failed.append("금리차")
+    else:
+        failed.append("금리차")
+
+    # 점수
+    z_vals = [s["z"] for s in signals.values()]
+    if z_vals:
+        avg_z = float(np.mean(z_vals))
+        score = float(norm.cdf(avg_z) * 100)
+    else:
+        avg_z, score = 0.0, 50.0
+
+    return {"signals": signals, "score": round(score, 1),
+            "avg_z": round(avg_z, 2), "failed": failed,
+            "n_signals": len(signals)}
+
+
+async def compute_kr_signals() -> dict:
+    """한국 5개 신호 z-score → {"signals":{}, "score":float, "failed":[]}"""
+    import numpy as np
+    from scipy.stats import norm
+
+    signals, failed = {}, []
+
+    # 1. KOSPI vs 200MA
+    kospi = _krx_kospi_history(days=600)
+    if kospi and len(kospi) >= 200:
+        pct_series = _rolling_ma_pct(kospi, 200)
+        zs = _calc_zscore(pct_series)
+        if zs:
+            signals["KOSPI/200MA"] = _sig_entry(round(zs["value"], 1), zs["z"], "%")
+        else:
+            failed.append("KOSPI/200MA")
+    else:
+        failed.append("KOSPI/200MA")
+
+    # 2. KOSPI 50일 모멘텀
+    if kospi and len(kospi) > 50:
+        mom = _rolling_momentum(kospi, 50)
+        zs = _calc_zscore(mom)
+        if zs:
+            signals["50d모멘텀"] = _sig_entry(round(zs["value"], 1), zs["z"], "%")
+        else:
+            failed.append("50d모멘텀")
+    else:
+        failed.append("50d모멘텀")
+
+    # 3. 외인 순매수 5일합
+    frgn = _krx_foreign_net(days=400)
+    if frgn and len(frgn) >= 60:
+        rolling5 = [sum(frgn[i - 4:i + 1]) for i in range(4, len(frgn))]
+        zs = _calc_zscore(rolling5)
+        if zs:
+            val_억 = round(zs["value"] / 1e8, 0)
+            signals["외인5일"] = _sig_entry(val_억, zs["z"], "억")
+        else:
+            failed.append("외인5일")
+    else:
+        failed.append("외인5일")
+
+    # 4. USD/KRW (역수)
+    usdkrw = _yf_history("KRW=X", "2y")
+    if usdkrw:
+        zs = _calc_zscore(usdkrw)
+        if zs:
+            signals["USD/KRW"] = _sig_entry(round(zs["value"], 0), zs["z"], "역수", invert=True)
+        else:
+            failed.append("USD/KRW")
+    else:
+        failed.append("USD/KRW")
+    await asyncio.sleep(0.3)
+
+    # 5. KOSPI 20일 실현변동성 (역수)
+    if kospi and len(kospi) >= 80:
+        vol_series = _rolling_realized_vol(kospi, 20)
+        zs = _calc_zscore(vol_series)
+        if zs:
+            signals["실현변동성"] = _sig_entry(round(zs["value"], 1), zs["z"], "역수,%", invert=True)
+        else:
+            failed.append("실현변동성")
+    else:
+        failed.append("실현변동성")
+
+    z_vals = [s["z"] for s in signals.values()]
+    if z_vals:
+        avg_z = float(np.mean(z_vals))
+        score = float(norm.cdf(avg_z) * 100)
+    else:
+        avg_z, score = 0.0, 50.0
+
+    return {"signals": signals, "score": round(score, 1),
+            "avg_z": round(avg_z, 2), "failed": failed,
+            "n_signals": len(signals)}
+
+
+def compute_turbulence(sp: list, kospi: list,
+                       usdkrw: list, wti: list,
+                       window: int = 60):
+    """Turbulence Index (마할라노비스 거리). Returns dict or None."""
+    import numpy as np
+    ml = min(len(sp), len(kospi), len(usdkrw), len(wti))
+    if ml < window + 2:
+        return None
+
+    def _ret(arr):
+        return np.diff(np.log(np.array(arr[-ml:], dtype=float)))
+
+    R = np.column_stack([_ret(sp), _ret(kospi), _ret(usdkrw), _ret(wti)])
+    n = len(R)
+    if n < window + 1:
+        return None
+
+    cov_win = R[-(window + 1):-1]
+    cov_mat = np.cov(cov_win, rowvar=False)
+    try:
+        cov_inv = np.linalg.inv(cov_mat)
+    except np.linalg.LinAlgError:
+        cov_inv = np.linalg.pinv(cov_mat)
+
+    mean_v = np.mean(cov_win, axis=0)
+    diff = R[-1] - mean_v
+    turb = float(diff @ cov_inv @ diff)
+
+    # 히스토리 95퍼센타일
+    turb_hist = []
+    for i in range(window + 1, n):
+        cw = R[i - window:i]
+        cm = np.cov(cw, rowvar=False)
+        try:
+            ci = np.linalg.inv(cm)
+        except np.linalg.LinAlgError:
+            ci = np.linalg.pinv(cm)
+        mv = np.mean(cw, axis=0)
+        d = R[i] - mv
+        turb_hist.append(float(d @ ci @ d))
+
+    p95 = float(np.percentile(turb_hist, 95)) if turb_hist else turb * 2
+    return {"value": round(turb, 2), "threshold_95": round(p95, 2),
+            "alert": turb > p95}
+
+
+def _regime_label(score: float) -> tuple:
+    """점수 → (emoji, 한글, 영문)"""
+    if score >= 70:
+        return ("🟢", "공격", "offensive")
+    elif score >= 40:
+        return ("🟡", "중립", "neutral")
+    else:
+        return ("🔴", "위기", "defensive")
+
+
+_REGIME_ORDER = {"offensive": 2, "neutral": 1, "defensive": 0}
+
+
+def apply_debounce(new_score: float, state: dict) -> dict:
+    """디바운스 적용 → state 업데이트 반환."""
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    _, _, new_regime = _regime_label(new_score)
+    prev_regime = state.get("regime", new_regime)
+    prev_pending = state.get("pending_regime", "")
+
+    if new_regime == prev_regime:
+        state["consecutive_days"] = state.get("consecutive_days", 0) + 1
+        state["pending_regime"] = ""
+        state["pending_days"] = 0
+    elif new_regime == prev_pending:
+        pd = state.get("pending_days", 0) + 1
+        state["pending_days"] = pd
+        is_worse = _REGIME_ORDER.get(new_regime, 1) < _REGIME_ORDER.get(prev_regime, 1)
+        threshold = 2 if is_worse else 3
+        if pd >= threshold:
+            state["regime"] = new_regime
+            state["consecutive_days"] = pd
+            state["pending_regime"] = ""
+            state["pending_days"] = 0
+    else:
+        state["pending_regime"] = new_regime
+        state["pending_days"] = 1
+
+    state["date"] = today
+    return state
+
+
+async def cmd_regime(mode: str = "current", days: int = 5,
+                     regime: str = "", reason: str = "",
+                     kr_weight: float = 0.6, us_weight: float = 0.4) -> dict:
+    """시장 레짐 판정 메인 함수."""
+    state = load_json(REGIME_STATE_FILE, {"history": [], "current": {}})
+
+    # ── override ──
+    if mode == "override":
+        if regime not in ("crisis", "neutral", "offensive"):
+            return {"error": "regime must be one of: crisis, neutral, offensive"}
+        mapped = {"crisis": "defensive", "neutral": "neutral", "offensive": "offensive"}[regime]
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        cur = state.get("current", {})
+        entry = {"date": today, "regime": mapped, "override": True,
+                 "reason": reason or "수동 강제",
+                 "kr_score": cur.get("kr_score", 0),
+                 "us_score": cur.get("us_score", 0),
+                 "combined_score": cur.get("combined_score", 0)}
+        state["current"].update({"regime": mapped, "override": True,
+                                 "override_reason": reason, "date": today,
+                                 "pending_regime": "", "pending_days": 0})
+        state["history"].append(entry)
+        state["history"] = state["history"][-90:]
+        save_json(REGIME_STATE_FILE, state)
+        e, k, _ = _regime_label({"offensive": 80, "neutral": 55, "defensive": 20}[mapped])
+        return {"regime": f"{e} {k}", "mode": "override", "reason": reason, "date": today}
+
+    # ── history ──
+    if mode == "history":
+        h = state.get("history", [])
+        return {"history": h[-days:], "total_records": len(h)}
+
+    # ── current ──
+    # 비중 정규화
+    tw = kr_weight + us_weight
+    if tw > 0:
+        kr_weight, us_weight = kr_weight / tw, us_weight / tw
+
+    # 포트폴리오 기반 동적 비중
+    try:
+        pf = load_json(PORTFOLIO_FILE, {})
+        kr_v, us_v = 0.0, 0.0
+        for t, info in pf.items():
+            if t == "us_stocks":
+                for _, ui in info.items():
+                    us_v += float(ui.get("qty", 0)) * float(ui.get("avg_price", 0))
+            elif t not in ("cash_krw", "cash_usd"):
+                kr_v += float(info.get("qty", 0)) * float(info.get("avg_price", 0))
+        us_v_krw = us_v * 1400
+        total_v = kr_v + us_v_krw
+        if total_v > 0:
+            kr_weight = kr_v / total_v
+            us_weight = us_v_krw / total_v
+    except Exception:
+        pass
+
+    # 신호 계산
+    us_r = await compute_us_signals()
+    kr_r = await compute_kr_signals()
+
+    us_score = us_r["score"]
+    kr_score = kr_r["score"]
+    combined = round(kr_weight * kr_score + us_weight * us_score, 1)
+
+    # Turbulence
+    turbulence = None
+    try:
+        sp = _yf_history("^GSPC", "1y")
+        kospi = _krx_kospi_history(400)
+        usdkrw = _yf_history("KRW=X", "1y")
+        wti = _yf_history("CL=F", "1y")
+        turbulence = compute_turbulence(sp, kospi, usdkrw, wti)
+    except Exception as e:
+        print(f"[cmd_regime] turbulence 오류: {e}")
+
+    # 디바운스
+    cur = state.get("current", {})
+    cur["kr_score"] = kr_score
+    cur["us_score"] = us_score
+    cur["combined_score"] = combined
+    cur.pop("override", None)
+    cur.pop("override_reason", None)
+    cur = apply_debounce(combined, cur)
+    state["current"] = cur
+
+    # 히스토리 기록
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    h_entry = {"date": today, "kr_score": kr_score, "us_score": us_score,
+               "combined_score": combined, "regime": cur["regime"]}
+    hist = state.get("history", [])
+    if hist and hist[-1].get("date") == today:
+        hist[-1] = h_entry
+    else:
+        hist.append(h_entry)
+    state["history"] = hist[-90:]
+    save_json(REGIME_STATE_FILE, state)
+
+    # 결과 조립
+    e_c, k_c, en_c = _regime_label(combined)
+    e_us, k_us, _ = _regime_label(us_score)
+    e_kr, k_kr, _ = _regime_label(kr_score)
+
+    # 디바운스 메시지
+    if cur.get("pending_regime"):
+        pe, pk, _ = _regime_label(
+            {"offensive": 80, "neutral": 55, "defensive": 20}.get(cur["pending_regime"], 55))
+        db_msg = f"→{pe}{pk} 전환 대기 {cur.get('pending_days', 0)}일차"
+    else:
+        db_msg = f"{e_c} {cur.get('consecutive_days', 1)}일차 (확정)"
+
+    def _fmt_sigs(sigs):
+        return " | ".join(f"{k}: {v['value']} (z={v['z']:+.1f})" for k, v in sigs.items()) or "데이터 없음"
+
+    result = {
+        "regime": f"{e_c} {k_c}",
+        "regime_en": en_c,
+        "combined_score": combined,
+        "kr": {"score": kr_score, "emoji": e_kr, "label": k_kr,
+               "signals": kr_r["signals"], "text": _fmt_sigs(kr_r["signals"]),
+               "failed": kr_r["failed"], "weight": round(kr_weight, 2)},
+        "us": {"score": us_score, "emoji": e_us, "label": k_us,
+               "signals": us_r["signals"], "text": _fmt_sigs(us_r["signals"]),
+               "failed": us_r["failed"], "weight": round(us_weight, 2)},
+        "debounce": db_msg,
+        "date": today,
+    }
+    if turbulence:
+        t_status = "⚠️ 경고" if turbulence["alert"] else "정상"
+        result["turbulence"] = {
+            "value": turbulence["value"],
+            "threshold_95": turbulence["threshold_95"],
+            "alert": turbulence["alert"],
+            "text": f"{turbulence['value']} ({t_status}, 95p={turbulence['threshold_95']})",
+        }
+
+    all_failed = us_r["failed"] + kr_r["failed"]
+    if all_failed:
+        result["warnings"] = f"데이터 실패: {', '.join(all_failed)}"
+
+    return result

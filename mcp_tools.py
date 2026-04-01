@@ -21,6 +21,7 @@ from kis_api import (
     fetch_us_news, analyze_us_news_sentiment,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_us_short_interest,
+    cmd_regime,
 )
 
 try:
@@ -519,6 +520,21 @@ MCP_TOOLS = [
                          "brief": {"type": "boolean", "description": "list 시 true면 제목+증권사만 (full_text 제외)"},
                      },
                      "required": ["action"]}},
+    # 20. get_regime
+    {"name": "get_regime",
+     "description": "시장 레짐 판정. KR/US 복합점수(0~100) 기반 🟢공격/🟡중립/🔴위기 판정. 디바운스로 잡음 방지. Turbulence Index 보조경고.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode": {"type": "string", "enum": ["current", "history", "override"],
+                                  "description": "current=오늘 레짐, history=최근 N일, override=수동 강제", "default": "current"},
+                         "days": {"type": "integer", "description": "history 모드 조회 일수", "default": 5},
+                         "regime": {"type": "string", "enum": ["crisis", "neutral", "offensive"],
+                                    "description": "override 모드에서 강제할 레짐"},
+                         "reason": {"type": "string", "description": "override 사유"},
+                         "kr_weight": {"type": "number", "description": "한국 비중 (0~1, 기본 0.6)"},
+                         "us_weight": {"type": "number", "description": "미국 비중 (0~1, 기본 0.4)"},
+                     },
+                     "required": []}},
 ]
 
 
@@ -2386,6 +2402,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
                 else:
                     result = {"error": f"알 수 없는 action: {action}. list|collect|tickers"}
+
+        elif name == "get_regime":
+            result = await cmd_regime(
+                mode=arguments.get("mode", "current"),
+                days=int(arguments.get("days", 5)),
+                regime=arguments.get("regime", ""),
+                reason=arguments.get("reason", ""),
+                kr_weight=float(arguments.get("kr_weight", 0.6)),
+                us_weight=float(arguments.get("us_weight", 0.4)),
+            )
 
         else:
             result = {"error": f"unknown tool: {name}"}

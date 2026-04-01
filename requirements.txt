@@ -7,4 +7,6 @@ requests
 finance-datareader>=0.9.50
 yfinance>=0.2.0
 pdfplumber>=0.10.0
-# force rebuild Sun Mar 29 23:25:30 KST 2026
+numpy>=1.24.0
+scipy>=1.10.0
+pykrx>=1.0.0
