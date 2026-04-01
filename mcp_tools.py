@@ -22,6 +22,8 @@ from kis_api import (
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_us_short_interest,
     cmd_regime,
+    load_corp_codes, search_dart_reports, save_dart_report,
+    list_dart_reports, DART_REPORTS_DIR,
 )
 
 try:
@@ -366,9 +368,15 @@ MCP_TOOLS = [
                          "n": {"type": "integer", "description": "foreign_rank/combined_rank 결과 수"},
                      },
                      "required": ["mode"]}},
-    # 5. get_dart (유지)
-    {"name": "get_dart",       "description": "워치리스트 최근 3일 DART 공시",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    # 5. get_dart (유지 + report/report_list 모드 추가)
+    {"name": "get_dart",
+     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode":   {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 생략=기존 공시"},
+                         "ticker": {"type": "string", "description": "[report] 특정 종목코드 (생략 시 전체)"},
+                     },
+                     "required": []}},
     # 6. get_macro (유지)
     {"name": "get_macro",
      "description": "매크로 지표 조회. mode 생략 시 KOSPI·KOSDAQ·환율. mode='dashboard': VIX·WTI·금·구리·DXY·US10Y 등 전체. mode='sector_etf': 섹터 ETF 시세. mode='us_sector': 미국 섹터 ETF 등락률 (SPY/QQQ/XLK 등). mode='convergence': 이평선 수렴 스크리너 (disp_20/disp_60 이격도 포함, market/sort 지원). mode='convergence2': 코스닥 위주 하위호환. mode='op_growth': KIS 영업이익 증가율 스크리너. mode='op_turnaround': KIS 적자→흑자 전환. mode='dart_op_growth': DART 기반 연간 영업이익 성장률 스크리너. mode='dart_turnaround': DART 기반 적자→흑자 전환.",
@@ -923,20 +931,96 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = {"error": f"알 수 없는 mode: {supply_mode}. daily/history/estimate/foreign_rank/combined_rank 중 하나"}
 
         elif name == "get_dart":
-            disclosures = await search_dart_disclosures(days_back=3)
-            wl = load_watchlist()
-            important = filter_important_disclosures(disclosures, list(wl.values()))
-            result = []
-            for d in important[:10]:
-                title = d.get("report_nm", "") or ""
-                tag = _dart_tag(title)
-                tagged_title = f"[{tag}] {title}" if tag != "일반" else title
-                result.append({
-                    "corp": d.get("corp_name", ""),
-                    "title": tagged_title,
-                    "date": d.get("rcept_dt", ""),
-                    "importance": tag,
-                })
+            dart_mode = arguments.get("mode", "").strip().lower()
+
+            if dart_mode == "report_list":
+                result = list_dart_reports()
+
+            elif dart_mode == "report":
+                target_ticker = arguments.get("ticker", "").strip()
+                report_error = None
+                # 종목 목록: 포트폴리오 + 워치리스트 + 매수감시
+                tickers = {}  # {ticker: name}
+                pf = load_json(PORTFOLIO_FILE, {})
+                for t, v in pf.items():
+                    if t != "us_stocks" and not _is_us_ticker(t) and isinstance(v, dict):
+                        tickers[t] = v.get("name", t)
+                wl = load_watchlist()
+                for t, n in wl.items():
+                    if not _is_us_ticker(t):
+                        tickers[t] = n
+                wa = load_watchalert()
+                for t, v in wa.items():
+                    if not _is_us_ticker(t) and isinstance(v, dict):
+                        tickers[t] = v.get("name", t)
+
+                if target_ticker:
+                    if _is_us_ticker(target_ticker):
+                        report_error = "미국 종목은 지원하지 않습니다."
+                    elif target_ticker in tickers:
+                        tickers = {target_ticker: tickers[target_ticker]}
+                    else:
+                        tickers = {target_ticker: target_ticker}
+
+                if report_error:
+                    result = {"error": report_error}
+                elif not tickers:
+                    result = {"error": "대상 종목이 없습니다. 포트폴리오 또는 워치리스트에 종목을 추가하세요."}
+                else:
+                    # corp_code 매핑 로드
+                    corp_codes = await load_corp_codes()
+                    if not corp_codes:
+                        result = {"error": "corp_codes 매핑을 가져올 수 없습니다. DART_API_KEY를 확인하세요."}
+                    else:
+                        saved = []
+                        skipped_no_report = []
+                        for ticker, name in tickers.items():
+                            cc_info = corp_codes.get(ticker)
+                            if not cc_info:
+                                print(f"[DART report] {ticker} corp_code 없음, 스킵")
+                                skipped_no_report.append({"ticker": ticker, "name": name, "reason": "corp_code 없음"})
+                                continue
+                            corp_code = cc_info["corp_code"] if isinstance(cc_info, dict) else cc_info
+                            corp_name = cc_info.get("corp_name", name) if isinstance(cc_info, dict) else name
+
+                            reports = await search_dart_reports(corp_code)
+                            if not reports:
+                                print(f"[DART report] {ticker} ({corp_name}) 사업보고서 없음")
+                                skipped_no_report.append({"ticker": ticker, "name": corp_name, "reason": "사업보고서 없음"})
+                                await asyncio.sleep(0.5)
+                                continue
+
+                            for rpt in reports[:1]:  # 최신 1건만
+                                rcept_no = rpt.get("rcept_no", "")
+                                rpt_date = rpt.get("rcept_dt", "")
+                                res = await save_dart_report(ticker, corp_name, rcept_no, rpt_date)
+                                if res:
+                                    saved.append(res)
+                            await asyncio.sleep(0.5)
+
+                        result = {
+                            "saved": saved,
+                            "skipped": skipped_no_report,
+                            "total_saved": len(saved),
+                            "total_skipped": len(skipped_no_report),
+                        }
+
+            else:
+                # 기존 동작: 워치리스트 최근 3일 공시
+                disclosures = await search_dart_disclosures(days_back=3)
+                wl = load_watchlist()
+                important = filter_important_disclosures(disclosures, list(wl.values()))
+                result = []
+                for d in important[:10]:
+                    title = d.get("report_nm", "") or ""
+                    tag = _dart_tag(title)
+                    tagged_title = f"[{tag}] {title}" if tag != "일반" else title
+                    result.append({
+                        "corp": d.get("corp_name", ""),
+                        "title": tagged_title,
+                        "date": d.get("rcept_dt", ""),
+                        "importance": tag,
+                    })
 
         elif name == "get_macro":
             mode = arguments.get("mode", "").strip().lower()

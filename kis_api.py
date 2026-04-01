@@ -2547,6 +2547,228 @@ async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | N
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 사업보고서 본문 저장
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+DART_REPORTS_DIR = "/data/dart_reports"
+CORP_CODES_FILE  = "/data/corp_codes.json"
+
+
+async def load_corp_codes() -> dict:
+    """corp_codes.json 로드. 1일 1회 갱신 (캐시)."""
+    if os.path.exists(CORP_CODES_FILE):
+        try:
+            mtime = os.path.getmtime(CORP_CODES_FILE)
+            age_hours = (datetime.now(KST).timestamp() - mtime) / 3600
+            if age_hours < 24:
+                with open(CORP_CODES_FILE, encoding="utf-8") as f:
+                    data = json.load(f)
+                if data:
+                    print(f"[DART] corp_codes 캐시 사용 ({len(data)}종목, {age_hours:.1f}h)")
+                    return data
+        except Exception as e:
+            print(f"[DART] corp_codes 캐시 로드 실패: {e}")
+
+    # 캐시 만료 또는 없음 → corpCode.xml 다운로드
+    return await _download_corp_codes()
+
+
+async def _download_corp_codes() -> dict:
+    """OpenDART corpCode.xml zip → ticker↔corp_code 매핑 생성."""
+    import zipfile, io
+    if not DART_API_KEY:
+        print("[DART] corp_codes: DART_API_KEY 미설정")
+        return {}
+    url = f"{DART_BASE_URL}/corpCode.xml?crtfc_key={DART_API_KEY}"
+    print(f"[DART] corpCode.xml 다운로드 시작...")
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
+            async with s.get(url) as resp:
+                if resp.status != 200:
+                    print(f"[DART] corpCode.xml HTTP {resp.status}")
+                    return {}
+                raw = await resp.read()
+        from xml.etree import ElementTree as ET
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        xml_data = zf.read("CORPCODE.xml")
+        root = ET.fromstring(xml_data)
+
+        mapping = {}
+        for item in root.findall("list"):
+            stock_code = (item.findtext("stock_code") or "").strip()
+            corp_code  = (item.findtext("corp_code")  or "").strip()
+            corp_name  = (item.findtext("corp_name")  or "").strip()
+            if stock_code and corp_code:
+                mapping[stock_code] = {"corp_code": corp_code, "corp_name": corp_name}
+
+        os.makedirs(os.path.dirname(CORP_CODES_FILE), exist_ok=True)
+        with open(CORP_CODES_FILE, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False)
+        print(f"[DART] corp_codes 저장: {len(mapping)}종목")
+        return mapping
+    except Exception as e:
+        print(f"[DART] corp_codes 다운로드 실패: {e}")
+        return {}
+
+
+async def search_dart_reports(corp_code: str, days_back: int = 365) -> list:
+    """OpenDART list.json으로 사업보고서(A001) 검색."""
+    if not DART_API_KEY:
+        return []
+    now = datetime.now(KST)
+    params = {
+        "crtfc_key": DART_API_KEY,
+        "corp_code": corp_code,
+        "bgn_de": (now - timedelta(days=days_back)).strftime("%Y%m%d"),
+        "end_de": now.strftime("%Y%m%d"),
+        "pblntf_ty": "A",
+        "pblntf_detail_ty": "A001",
+        "page_count": 10,
+        "sort": "date",
+        "sort_mth": "desc",
+    }
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+            async with s.get(f"{DART_BASE_URL}/list.json", params=params) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+                if data.get("status") == "000":
+                    return data.get("list", [])
+    except Exception as e:
+        print(f"[DART] report search error ({corp_code}): {e}")
+    return []
+
+
+async def fetch_dart_document(rcept_no: str) -> str:
+    """OpenDART document.xml → HTML 본문 → 순수 텍스트."""
+    if not DART_API_KEY:
+        return ""
+    url = f"{DART_BASE_URL}/document.xml"
+    params = {"crtfc_key": DART_API_KEY, "rcept_no": rcept_no}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
+            async with s.get(url, params=params) as resp:
+                if resp.status != 200:
+                    print(f"[DART] document.xml HTTP {resp.status} for {rcept_no}")
+                    return ""
+                content_type = resp.headers.get("Content-Type", "")
+                raw = await resp.read()
+                # OpenDART는 에러 시 HTTP 200 + JSON/XML 에러 반환
+                if b'"status"' in raw[:200] and b'"message"' in raw[:500]:
+                    try:
+                        err = json.loads(raw)
+                        print(f"[DART] document.xml API 에러: {err.get('status')} {err.get('message')}")
+                        return ""
+                    except Exception:
+                        pass
+                html = raw.decode("utf-8", errors="replace")
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(separator="\n")
+        # 연속 빈줄 정리
+        import re
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+        if len(text) < 100:
+            print(f"[DART] document.xml 본문 너무 짧음 ({len(text)}자): {rcept_no}")
+            return ""
+        return text
+    except Exception as e:
+        print(f"[DART] document fetch error ({rcept_no}): {e}")
+        return ""
+
+
+def _report_file_exists(rcept_no: str) -> str | None:
+    """접수번호로 기존 파일 검색. 있으면 파일경로, 없으면 None."""
+    if not rcept_no or not os.path.exists(DART_REPORTS_DIR):
+        return None
+    for fname in os.listdir(DART_REPORTS_DIR):
+        if rcept_no in fname:
+            return os.path.join(DART_REPORTS_DIR, fname)
+    return None
+
+
+async def save_dart_report(ticker: str, name: str, rcept_no: str,
+                           report_date: str) -> dict | None:
+    """사업보고서 본문을 txt로 저장. 이미 존재하면 스킵."""
+    if not rcept_no:
+        return None
+    existing = _report_file_exists(rcept_no)
+    if existing:
+        size_kb = os.path.getsize(existing) / 1024
+        print(f"[DART] 이미 존재: {existing}")
+        return {"ticker": ticker, "name": name, "report_date": report_date,
+                "file_path": existing, "file_size_kb": round(size_kb, 1),
+                "skipped": True}
+
+    text = await fetch_dart_document(rcept_no)
+    if not text:
+        print(f"[DART] 본문 없음: {ticker} {rcept_no}")
+        return None
+
+    os.makedirs(DART_REPORTS_DIR, exist_ok=True)
+    date_str = report_date.replace("-", "").replace(".", "")[:8]
+    # path traversal 방지: 파일명에서 위험 문자 제거
+    import re as _re
+    safe_ticker = _re.sub(r'[^a-zA-Z0-9]', '', ticker)
+    safe_name = _re.sub(r'[^\w]', '', name)
+    safe_rcept = _re.sub(r'[^0-9]', '', rcept_no)
+    safe_date = _re.sub(r'[^0-9]', '', date_str)
+    if not safe_ticker or not safe_rcept:
+        print(f"[DART] 잘못된 ticker/rcept_no: {ticker}/{rcept_no}")
+        return None
+    filename = f"{safe_ticker}_{safe_name}_{safe_date}_{safe_rcept}.txt"
+    filepath = os.path.join(DART_REPORTS_DIR, filename)
+    # 최종 경로가 DART_REPORTS_DIR 내인지 확인
+    if not os.path.abspath(filepath).startswith(os.path.abspath(DART_REPORTS_DIR)):
+        print(f"[DART] 경로 이탈 감지: {filepath}")
+        return None
+
+    now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+    header = (
+        f"===== DART 사업보고서 =====\n"
+        f"종목: {name} ({ticker})\n"
+        f"보고서일: {report_date}\n"
+        f"접수번호: {rcept_no}\n"
+        f"저장일시: {now_str}\n"
+        f"{'=' * 30}\n\n"
+    )
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(header + text)
+
+    size_kb = os.path.getsize(filepath) / 1024
+    print(f"[DART] 저장: {filepath} ({size_kb:.1f}KB)")
+    return {"ticker": ticker, "name": name, "report_date": report_date,
+            "file_path": filepath, "file_size_kb": round(size_kb, 1),
+            "skipped": False}
+
+
+def list_dart_reports() -> dict:
+    """저장된 사업보고서 txt 파일 목록 반환."""
+    files = []
+    if os.path.exists(DART_REPORTS_DIR):
+        for fname in sorted(os.listdir(DART_REPORTS_DIR)):
+            if not fname.endswith(".txt"):
+                continue
+            filepath = os.path.join(DART_REPORTS_DIR, fname)
+            parts = fname.replace(".txt", "").split("_")
+            ticker = parts[0] if len(parts) >= 1 else ""
+            name = parts[1] if len(parts) >= 2 else ""
+            date_str = parts[2] if len(parts) >= 3 else ""
+            if len(date_str) == 8:
+                report_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            else:
+                report_date = date_str
+            size_kb = os.path.getsize(filepath) / 1024
+            files.append({
+                "ticker": ticker, "name": name,
+                "report_date": report_date,
+                "file_path": filepath,
+                "file_size_kb": round(size_kb, 1),
+            })
+    return {"files": files, "total": len(files)}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # GitHub Gist 백업/복원
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def backup_data_files() -> dict:

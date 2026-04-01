@@ -84,6 +84,8 @@ BACKUP_GIST_ID   백업 Gist ID (선택)
 | `/data/trade_log.json` | 매매 기록 | `[]` |
 | `/data/dart_corp_map.json` | DART 고유번호 매핑 | `{}` |
 | `/data/dart_screener_cache.json` | DART 스크리너 당일 캐시 | `{}` |
+| `/data/corp_codes.json` | OpenDART corp_code 매핑 캐시 (1일 1회 갱신) | `{}` |
+| `/data/dart_reports/*.txt` | DART 사업보고서 본문 txt 파일 | — |
 
 > Railway는 `/data` 볼륨을 영구 마운트해야 재시작 후에도 데이터 보존됨.
 > 볼륨 미마운트 시 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`, `BACKUP_STOPLOSS` 등).
@@ -203,7 +205,16 @@ BACKUP_GIST_ID   백업 Gist ID (선택)
             get_dart_corp_map()       매핑 로드/캐시
             dart_quarterly_op()       분기별 영업이익 조회
 
-[2230~2372] GitHub Gist 백업
+[2230~2400] DART 사업보고서 본문 저장
+            load_corp_codes()         corp_code 매핑 캐시 (1일 1회)
+            _download_corp_codes()    corpCode.xml zip → 매핑 생성
+            search_dart_reports()     사업보고서(A001) 검색
+            fetch_dart_document()     document.xml → 텍스트 추출
+            _report_file_exists()     접수번호 중복 체크
+            save_dart_report()        사업보고서 txt 저장
+            list_dart_reports()       저장된 txt 목록 반환
+
+[2400~2570] GitHub Gist 백업
             backup_data_files()       Gist에 백업
             restore_data_files()      Gist에서 복원
             get_backup_status()       백업 상태 조회
@@ -406,7 +417,7 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | 2 | `get_portfolio` | 포트폴리오 조회/수정 (한국+미국 손익, cash_krw/cash_usd) |
 | 3 | `get_stock_detail` | 개별 종목 상세 (현재가·PER·PBR·수급, 한국/미국 자동 판별, period로 일봉 조회) |
 | 4 | `get_foreign_rank` | 외국인 순매수 상위 종목 |
-| 5 | `get_dart` | 워치리스트 최근 3일 DART 공시 |
+| 5 | `get_dart` | DART 공시 (기본: 워치 3일 공시, mode='report': 사업보고서 txt 저장, mode='report_list': 저장 파일 목록) |
 | 6 | `get_macro` | 매크로 지표 (기본: 지수+환율, dashboard/sector_etf/convergence/op_growth/dart_op_growth 등 모드) |
 | 7 | `get_sector_flow` | WI26 업종별 외국인+기관 순매수 상위/하위 3개 |
 | 8 | `add_watch` | 한국 워치리스트 종목 추가 |
