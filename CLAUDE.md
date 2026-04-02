@@ -35,19 +35,21 @@ KIS_APP_SECRET   KIS Open API 시크릿
 DART_API_KEY     전자공시 API 키 (선택)
 GITHUB_TOKEN     GitHub Gist 백업용 토큰 (선택)
 BACKUP_GIST_ID   백업 Gist ID (선택)
+KRX_PROXY        KRX 크롤러 프록시 URL (선택, 데이터센터 IP 차단 우회용)
 ```
 
 ---
 
 ## 파일 구조
 
-프로젝트는 3개 주요 Python 파일로 분리되어 있음:
+프로젝트는 4개 주요 Python 파일로 분리되어 있음:
 
 | 파일 | 줄 수 | 역할 |
 |------|-------|------|
 | `kis_api.py` | ~2400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업 |
 | `main.py` | ~1950 | 텔레그램 봇 + 자동알림 스케줄 + 진입점 |
 | `mcp_tools.py` | ~1760 | MCP 도구 스키마 + 실행 로직 + SSE 서버 |
+| `krx_crawler.py` | ~400 | KRX 전종목 크롤러, DB 관리, 스캐너 |
 
 기타 파일:
 
@@ -86,6 +88,7 @@ BACKUP_GIST_ID   백업 Gist ID (선택)
 | `/data/dart_screener_cache.json` | DART 스크리너 당일 캐시 | `{}` |
 | `/data/corp_codes.json` | OpenDART corp_code 매핑 캐시 (1일 1회 갱신) | `{}` |
 | `/data/dart_reports/*.txt` | DART 사업보고서 본문 txt 파일 | — |
+| `/data/krx_db/YYYYMMDD.json` | KRX 전종목 일별 DB (시세+수급+비율, 30일 보관) | — |
 
 > Railway는 `/data` 볼륨을 영구 마운트해야 재시작 후에도 데이터 보존됨.
 > 볼륨 미마운트 시 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`, `BACKUP_STOPLOSS` 등).
@@ -409,7 +412,7 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 
 ---
 
-## MCP 도구 목록 (28개)
+## MCP 도구 목록 (29개)
 
 | # | 이름 | 설명 |
 |---|------|------|
@@ -441,6 +444,7 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | 26 | `get_trade_stats` | 매매 기록 성과 분석 (승률·손익·평균보유기간) |
 | 27 | `get_batch_detail` | 다종목 일괄 조회 (최대 20종목, 현재가·PER·PBR·수급) |
 | 28 | `backup_data` | /data/*.json GitHub Gist 백업·복원·상태 조회 |
+| 29 | `get_scan` | KRX 전종목 스크리너 (시총/PER/PBR/수급비율/회전율 필터, 6개 프리셋) |
 
 ---
 
@@ -487,12 +491,13 @@ elif name == "new_tool_name":
 - **check_fx_alert 비활성화**: 환율 알림은 매크로 대시보드로 통합 예정, 스케줄에서 주석 처리됨.
 - **WebSocket 국내 전용**: `KisRealtimeManager`는 국내주식만 지원. 미국주식은 폴링 방식(`check_stoploss`).
 - **DST 자동 감지**: 미국 장 시간 판별은 `zoneinfo.ZoneInfo('America/New_York')` 사용으로 서머타임/표준시 자동 전환.
+- **KRX 데이터센터 IP 차단**: `data.krx.co.kr`은 Railway 등 데이터센터 IP를 Akamai WAF + 앱 레벨에서 차단. `KRX_PROXY` 환경변수로 프록시 설정 필요. 프록시 없으면 pykrx fallback 시도 (동일 IP 차단일 수 있음).
 
 ---
 
 ## 코딩 규칙
 
-- **3파일 구조**: API/데이터 → `kis_api.py`, 텔레그램+스케줄 → `main.py`, MCP → `mcp_tools.py`.
+- **4파일 구조**: API/데이터 → `kis_api.py`, 텔레그램+스케줄 → `main.py`, MCP → `mcp_tools.py`, KRX 크롤러 → `krx_crawler.py`.
 - **KIS API 신 방식**: 새 함수는 반드시 `_kis_get()` 래퍼 사용 (구 방식 `get_stock_price()` 패턴 사용 금지).
 - **에러 처리**: 개별 종목 루프 내부는 `try/except Exception: pass` 패턴으로 한 종목 오류가 전체 중단 방지.
 - **asyncio.sleep(0.3~0.4)**: KIS API 연속 호출 시 rate limit 방지를 위해 `await asyncio.sleep(0.3)` 삽입.

@@ -26,6 +26,8 @@ from kis_api import (
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
 
+from krx_crawler import load_krx_db, scan_stocks
+
 try:
     from report_crawler import (
         load_reports, collect_reports, get_collection_tickers,
@@ -541,6 +543,29 @@ MCP_TOOLS = [
                          "reason": {"type": "string", "description": "override 사유"},
                          "kr_weight": {"type": "number", "description": "한국 비중 (0~1, 기본 0.6)"},
                          "us_weight": {"type": "number", "description": "미국 비중 (0~1, 기본 0.4)"},
+                     },
+                     "required": []}},
+    # 21. get_scan — KRX 전종목 스크리너
+    {"name": "get_scan",
+     "description": "KRX 전종목 스크리너. 시총/등락률/PER/PBR/외인수급비율/회전율 등으로 필터링. preset 지원: relative_strength(하락장 버틴), small_cap_buy(소형주 외인매수), value(저평가), momentum(모멘텀), oversold(낙폭과대), foreign_streak(5일연속 외인매수).",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "preset": {"type": "string", "enum": ["relative_strength", "small_cap_buy", "value", "momentum", "oversold", "foreign_streak"],
+                                    "description": "프리셋 스크리너 (개별 파라미터로 오버라이드 가능)"},
+                         "market_cap_min": {"type": "number", "description": "시총 최소 (억원, 기본 0)"},
+                         "market_cap_max": {"type": "number", "description": "시총 최대 (억원, 기본 9999999)"},
+                         "chg_pct_min": {"type": "number", "description": "등락률 최소 (%)"},
+                         "chg_pct_max": {"type": "number", "description": "등락률 최대 (%)"},
+                         "foreign_ratio_min": {"type": "number", "description": "외인 수급비율 최소"},
+                         "fi_ratio_min": {"type": "number", "description": "외인+기관 합산 수급비율 최소"},
+                         "per_min": {"type": "number", "description": "PER 최소 (기본 0)"},
+                         "per_max": {"type": "number", "description": "PER 최대 (기본 9999)"},
+                         "pbr_max": {"type": "number", "description": "PBR 최대 (기본 9999)"},
+                         "turnover_min": {"type": "number", "description": "회전율 최소 (%)"},
+                         "sort": {"type": "string", "description": "정렬: foreign_ratio/fi_ratio/chg_pct/turnover/market_cap (기본 fi_ratio)"},
+                         "n": {"type": "integer", "description": "결과 수 (기본 30, 최대 100)"},
+                         "date": {"type": "string", "description": "날짜 YYYYMMDD (생략 시 최신 DB)"},
+                         "market": {"type": "string", "description": "kospi/kosdaq/all (기본 all)"},
                      },
                      "required": []}},
 ]
@@ -2533,6 +2558,29 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 kr_weight=float(arguments.get("kr_weight", 0.6)),
                 us_weight=float(arguments.get("us_weight", 0.4)),
             )
+
+        elif name == "get_scan":
+            scan_date = (arguments.get("date") or "").strip() or None
+            db = load_krx_db(scan_date)
+            if not db:
+                result = {"error": "KRX DB 없음. 장 마감 후 자동 갱신되거나, 수동 크롤링이 필요합니다."}
+            else:
+                preset = (arguments.get("preset") or "").strip() or None
+                filters = {}
+                for key in ["market_cap_min", "market_cap_max", "chg_pct_min", "chg_pct_max",
+                            "foreign_ratio_min", "fi_ratio_min", "per_min", "per_max",
+                            "pbr_max", "turnover_min"]:
+                    val = arguments.get(key)
+                    if val is not None:
+                        filters[key] = float(val)
+                for key in ["sort", "market"]:
+                    val = arguments.get(key)
+                    if val:
+                        filters[key] = val
+                val = arguments.get("n")
+                if val is not None:
+                    filters["n"] = int(val)
+                result = scan_stocks(db, filters, preset=preset)
 
         else:
             result = {"error": f"unknown tool: {name}"}

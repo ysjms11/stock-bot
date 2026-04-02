@@ -11,6 +11,7 @@ from kis_api import (
     ws_manager, get_ws_tickers,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
+from krx_crawler import update_daily_db
 
 
 async def _refresh_ws():
@@ -1355,6 +1356,32 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📄 증권사 리포트 자동 수집 (매일 07:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def update_krx_db_job(context: ContextTypes.DEFAULT_TYPE):
+    """매일 15:55 KST — KRX 전종목 DB 갱신"""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return  # 주말 스킵
+    try:
+        res = await update_daily_db()
+        if res.get("error"):
+            print(f"[KRX] DB 갱신 실패: {res['error']}")
+            return
+        count = res.get("count", 0)
+        summary = res.get("market_summary", {})
+        msg = (
+            f"📊 *KRX DB 갱신 완료*\n"
+            f"종목수: {count}개\n"
+            f"코스피: {summary.get('kospi_count', 0)}개 "
+            f"(↑{summary.get('kospi_up', 0)} ↓{summary.get('kospi_down', 0)})\n"
+            f"코스닥: {summary.get('kosdaq_count', 0)}개 "
+            f"(↑{summary.get('kosdaq_up', 0)} ↓{summary.get('kosdaq_down', 0)})\n"
+            f"파일: {res.get('file_size_kb', 0)}KB"
+        )
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[KRX] DB 갱신 오류: {e}")
+
+
 async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
     """매일 07:00 KST — 보유+감시 종목 증권사 리포트 수집"""
     if not _REPORT_AVAILABLE:
@@ -2443,6 +2470,8 @@ def main():
     jq.run_daily(check_dividend_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="dividend_cal")
     jq.run_daily(check_us_earnings_calendar, time=dtime(7, 10, tzinfo=KST), days=(0,1,2,3,4), name="us_earnings_cal")
     jq.run_daily(collect_reports_daily,    time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
+    # KRX 전종목 DB 갱신: 매일 15:55 KST 평일만 (장 마감 후)
+    jq.run_daily(update_krx_db_job, time=dtime(15, 55, tzinfo=KST), days=(0,1,2,3,4), name="krx_db")
 
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")
