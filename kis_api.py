@@ -2649,7 +2649,7 @@ async def fetch_dart_document(rcept_no: str) -> str:
     """OpenDART document.xml → ZIP 내 HTML 파일들 → 순수 텍스트.
 
     document.xml 응답은 ZIP 파일 (다수 HTML 조각) 또는 XML wrapper.
-    ZIP인 경우 내부 HTML 파일들을 모두 합쳐 텍스트 추출.
+    ZIP인 경우 내부 모든 텍스트 파일을 합쳐 추출.
     """
     import zipfile, io
     if not DART_API_KEY:
@@ -2657,21 +2657,41 @@ async def fetch_dart_document(rcept_no: str) -> str:
     url = f"{DART_BASE_URL}/document.xml"
     params = {"crtfc_key": DART_API_KEY, "rcept_no": rcept_no}
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as s:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
             async with s.get(url, params=params) as resp:
-                if resp.status != 200:
-                    print(f"[DART] document.xml HTTP {resp.status} for {rcept_no}")
+                status = resp.status
+                ct = resp.headers.get("Content-Type", "")
+                if status != 200:
+                    print(f"[DART] document.xml HTTP {status} ct={ct} for {rcept_no}")
                     return ""
                 raw = await resp.read()
 
-        # OpenDART는 에러 시 HTTP 200 + JSON 에러 반환
+        size_kb = len(raw) / 1024
+        magic = raw[:4].hex() if len(raw) >= 4 else "empty"
+        print(f"[DART] document.xml 응답: rcept={rcept_no} size={size_kb:.1f}KB "
+              f"ct={ct} magic={magic}")
+
+        # OpenDART 에러 감지 — JSON 형태
         if b'"status"' in raw[:200] and b'"message"' in raw[:500]:
             try:
                 err = json.loads(raw)
-                print(f"[DART] document.xml API 에러: {err.get('status')} {err.get('message')}")
+                print(f"[DART] document.xml JSON 에러: {err.get('status')} {err.get('message')}")
                 return ""
             except Exception:
                 pass
+
+        # OpenDART 에러 감지 — XML 형태 (<result><status>...)
+        if raw[:50].lstrip().startswith(b'<?xml') or b'<result>' in raw[:200]:
+            try:
+                from xml.etree import ElementTree as _ET
+                _root = _ET.fromstring(raw)
+                _status = _root.findtext("status") or _root.findtext(".//status") or ""
+                _msg = _root.findtext("message") or _root.findtext(".//message") or ""
+                if _status and _status != "000":
+                    print(f"[DART] document.xml XML 에러: status={_status} msg={_msg}")
+                    return ""
+            except Exception:
+                pass  # XML 파싱 실패 → 본문일 수 있음
 
         from bs4 import BeautifulSoup
         import re
@@ -2680,35 +2700,50 @@ async def fetch_dart_document(rcept_no: str) -> str:
         if raw[:2] == b'PK':
             try:
                 zf = zipfile.ZipFile(io.BytesIO(raw))
+                all_names = zf.namelist()
+                print(f"[DART] ZIP 내부 파일({len(all_names)}): "
+                      f"{[n for n in all_names[:10]]}")
+
                 html_parts = []
-                for name in sorted(zf.namelist()):
-                    if name.lower().endswith(('.html', '.htm', '.xml')):
-                        try:
-                            part = zf.read(name).decode("utf-8", errors="replace")
-                            soup = BeautifulSoup(part, "html.parser")
-                            text = soup.get_text(separator="\n")
-                            text = re.sub(r'\n{3,}', '\n\n', text).strip()
-                            if text:
-                                html_parts.append(text)
-                        except Exception as ze:
-                            print(f"[DART] ZIP 내 파일 처리 실패 ({name}): {ze}")
+                # 이미지/CSS/폰트 제외, 나머지 텍스트 파일 모두 처리
+                skip_ext = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg',
+                            '.css', '.js', '.ttf', '.woff', '.woff2', '.eot'}
+                for name in sorted(all_names):
+                    ext = os.path.splitext(name)[1].lower()
+                    if ext in skip_ext:
+                        continue
+                    try:
+                        part_raw = zf.read(name)
+                        part = part_raw.decode("utf-8", errors="replace")
+                        soup = BeautifulSoup(part, "html.parser")
+                        text = soup.get_text(separator="\n")
+                        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+                        if len(text) > 20:
+                            html_parts.append(text)
+                    except Exception as ze:
+                        print(f"[DART] ZIP 내 파일 처리 실패 ({name}): {ze}")
+
                 full_text = "\n\n".join(html_parts)
                 if len(full_text) < 100:
-                    print(f"[DART] ZIP 본문 너무 짧음 ({len(full_text)}자): {rcept_no}")
+                    print(f"[DART] ZIP 본문 너무 짧음 ({len(full_text)}자, "
+                          f"파일{len(html_parts)}개): {rcept_no}")
                     return ""
-                print(f"[DART] ZIP 문서 추출: {rcept_no} ({len(full_text)}자, {len(html_parts)}파일)")
+                print(f"[DART] ZIP 문서 추출 성공: {rcept_no} "
+                      f"({len(full_text)}자, {len(html_parts)}파일)")
                 return full_text
             except zipfile.BadZipFile:
-                print(f"[DART] ZIP 파일 손상: {rcept_no}")
+                print(f"[DART] ZIP 파일 손상 (BadZipFile): {rcept_no} "
+                      f"raw[:20]={raw[:20]}")
                 return ""
 
-        # XML 또는 HTML 직접 응답
+        # ZIP이 아닌 경우 — XML/HTML 직접 응답
         html = raw.decode("utf-8", errors="replace")
+        print(f"[DART] non-ZIP 응답 처리: {rcept_no} 앞100자={html[:100]!r}")
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(separator="\n")
         text = re.sub(r'\n{3,}', '\n\n', text).strip()
         if len(text) < 100:
-            print(f"[DART] document.xml 본문 너무 짧음 ({len(text)}자): {rcept_no}")
+            print(f"[DART] non-ZIP 본문 너무 짧음 ({len(text)}자): {rcept_no}")
             return ""
         return text
     except Exception as e:
