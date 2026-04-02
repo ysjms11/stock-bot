@@ -2610,8 +2610,23 @@ async def _download_corp_codes() -> dict:
         return {}
 
 
+def _report_name_priority(report_nm: str) -> int:
+    """보고서명 우선순위. 낮을수록 우선. 원본 > 정정 > 첨부정정."""
+    nm = (report_nm or "").strip()
+    if nm == "사업보고서":
+        return 0
+    if nm.startswith("[정정]"):
+        return 1
+    if nm.startswith("[첨부정정]"):
+        return 2
+    return 3
+
+
 async def search_dart_reports(corp_code: str, days_back: int = 365) -> list:
-    """OpenDART list.json으로 사업보고서(A001) 검색."""
+    """OpenDART list.json으로 사업보고서(A001) 검색.
+
+    결과를 보고서명 우선순위로 정렬: 사업보고서 > [정정] > [첨부정정].
+    """
     if not DART_API_KEY:
         return []
     now = datetime.now(KST)
@@ -2636,7 +2651,10 @@ async def search_dart_reports(corp_code: str, days_back: int = 365) -> list:
                 status = data.get("status", "")
                 if status == "000":
                     results = data.get("list", [])
-                    print(f"[DART] list.json {corp_code}: {len(results)}건 (A001)")
+                    # 원본 사업보고서 우선, 정정/첨부정정 후순위
+                    results.sort(key=lambda r: _report_name_priority(r.get("report_nm", "")))
+                    names = [r.get("report_nm", "") for r in results[:5]]
+                    print(f"[DART] list.json {corp_code}: {len(results)}건 → {names}")
                     return results
                 else:
                     print(f"[DART] list.json {corp_code}: status={status} msg={data.get('message','')}")

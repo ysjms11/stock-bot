@@ -994,21 +994,28 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                     await asyncio.sleep(0.5)
                                     continue
 
-                                for rpt in reports[:1]:  # 최신 1건만
+                                # 우선순위 순으로 최대 3건 시도 (원본 > 정정 > 첨부정정)
+                                got_saved = False
+                                tried = []
+                                for rpt in reports[:3]:
                                     rcept_no = rpt.get("rcept_no", "")
                                     rpt_date = rpt.get("rcept_dt", "")
                                     rpt_title = rpt.get("report_nm", "")
-                                    print(f"[DART report] {ticker} 보고서: {rpt_title} ({rpt_date}) rcept={rcept_no}")
+                                    tried.append({"rcept_no": rcept_no, "title": rpt_title})
+                                    print(f"[DART report] {ticker} 시도: {rpt_title} ({rpt_date}) rcept={rcept_no}")
                                     res = await save_dart_report(ticker, corp_name, rcept_no, rpt_date)
                                     if res:
                                         saved.append(res)
-                                    else:
-                                        failed.append({
-                                            "ticker": ticker, "name": corp_name,
-                                            "rcept_no": rcept_no, "report_date": rpt_date,
-                                            "report_nm": rpt_title,
-                                            "reason": "문서 본문 다운로드 실패 (ZIP 손상/빈 본문/API 에러)",
-                                        })
+                                        got_saved = True
+                                        break
+                                    print(f"[DART report] {ticker} rcept={rcept_no} 실패, 다음 시도...")
+                                    await asyncio.sleep(0.5)
+                                if not got_saved:
+                                    failed.append({
+                                        "ticker": ticker, "name": corp_name,
+                                        "tried": tried,
+                                        "reason": f"document.xml {len(tried)}건 모두 실패 (status=014 등)",
+                                    })
                                 await asyncio.sleep(0.5)
                             except Exception as e:
                                 print(f"[DART report] {ticker} 처리 중 예외: {e}")
