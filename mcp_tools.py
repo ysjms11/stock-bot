@@ -23,7 +23,7 @@ from kis_api import (
     fetch_us_short_interest,
     cmd_regime,
     load_corp_codes, search_dart_reports, save_dart_report,
-    list_dart_reports, DART_REPORTS_DIR,
+    list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
 
 try:
@@ -370,11 +370,11 @@ MCP_TOOLS = [
                      "required": ["mode"]}},
     # 5. get_dart (유지 + report/report_list 모드 추가)
     {"name": "get_dart",
-     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록.",
+     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록. mode='read': 저장된 사업보고서 txt 내용 반환 (ticker 필수).",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":   {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 생략=기존 공시"},
-                         "ticker": {"type": "string", "description": "[report] 특정 종목코드 (생략 시 전체)"},
+                         "mode":   {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 'read'=저장된 보고서 읽기(ticker 필수), 생략=기존 공시"},
+                         "ticker": {"type": "string", "description": "[report/read] 종목코드 (report: 생략 시 전체, read: 필수)"},
                      },
                      "required": []}},
     # 6. get_macro (유지)
@@ -935,6 +935,13 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
             if dart_mode == "report_list":
                 result = list_dart_reports()
+
+            elif dart_mode == "read":
+                target_ticker = (arguments.get("ticker") or "").strip()
+                if not target_ticker:
+                    result = {"error": "ticker를 지정하세요. 예: get_dart(mode='read', ticker='092780')"}
+                else:
+                    result = read_dart_report(target_ticker)
 
             elif dart_mode == "report":
                 target_ticker = arguments.get("ticker", "").strip()

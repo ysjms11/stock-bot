@@ -2836,6 +2836,72 @@ async def save_dart_report(ticker: str, name: str, rcept_no: str,
             "skipped": False}
 
 
+def read_dart_report(ticker: str, max_chars: int = 50_000) -> dict:
+    """저장된 사업보고서 txt 파일 내용 반환. 여러 개면 최신 날짜."""
+    if not os.path.exists(DART_REPORTS_DIR):
+        return {"error": f"사업보고서 없음. get_dart(mode='report', ticker='{ticker}')으로 먼저 저장하세요."}
+
+    matches = []
+    for fname in os.listdir(DART_REPORTS_DIR):
+        if not fname.endswith(".txt"):
+            continue
+        parts = fname.replace(".txt", "").split("_")
+        if parts[0] == ticker:
+            matches.append(fname)
+
+    if not matches:
+        return {"error": f"사업보고서 없음. get_dart(mode='report', ticker='{ticker}')으로 먼저 저장하세요."}
+
+    # 파일명: {ticker}_{name}_{date}_{rcept}.txt — name에 _가 포함될 수 있으므로 뒤에서 파싱
+    def _parse_fname(f):
+        stem = f.replace(".txt", "")
+        parts = stem.split("_")
+        # 뒤에서 rcept(숫자), date(8자리 숫자), 나머지가 ticker_name
+        if len(parts) >= 4:
+            rcept = parts[-1]
+            date_str = parts[-2]
+            name = "_".join(parts[1:-2])
+        elif len(parts) >= 3:
+            rcept = ""
+            date_str = parts[-1]
+            name = "_".join(parts[1:-1])
+        else:
+            rcept = ""
+            date_str = ""
+            name = parts[1] if len(parts) >= 2 else ""
+        return name, date_str, rcept
+
+    matches.sort(key=lambda f: (_parse_fname(f)[1], _parse_fname(f)[2]), reverse=True)
+    fname = matches[0]
+    filepath = os.path.join(DART_REPORTS_DIR, fname)
+
+    name, date_str, _ = _parse_fname(fname)
+    if len(date_str) == 8:
+        report_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    else:
+        report_date = date_str
+
+    size_kb = os.path.getsize(filepath) / 1024
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    truncated = False
+    if len(content) > max_chars:
+        content = content[:max_chars]
+        truncated = True
+
+    return {
+        "ticker": ticker,
+        "name": name,
+        "report_date": report_date,
+        "file_path": filepath,
+        "file_size_kb": round(size_kb, 1),
+        "content": content,
+        "truncated": truncated,
+    }
+
+
 def list_dart_reports() -> dict:
     """저장된 사업보고서 txt 파일 목록 반환."""
     files = []
@@ -2846,8 +2912,16 @@ def list_dart_reports() -> dict:
             filepath = os.path.join(DART_REPORTS_DIR, fname)
             parts = fname.replace(".txt", "").split("_")
             ticker = parts[0] if len(parts) >= 1 else ""
-            name = parts[1] if len(parts) >= 2 else ""
-            date_str = parts[2] if len(parts) >= 3 else ""
+            # 뒤에서 파싱: rcept(마지막), date(뒤에서 둘째), 나머지가 name
+            if len(parts) >= 4:
+                date_str = parts[-2]
+                name = "_".join(parts[1:-2])
+            elif len(parts) >= 3:
+                date_str = parts[-1]
+                name = "_".join(parts[1:-1])
+            else:
+                date_str = ""
+                name = parts[1] if len(parts) >= 2 else ""
             if len(date_str) == 8:
                 report_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
             else:

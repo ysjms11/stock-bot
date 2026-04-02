@@ -417,7 +417,7 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | 2 | `get_portfolio` | 포트폴리오 조회/수정 (한국+미국 손익, cash_krw/cash_usd) |
 | 3 | `get_stock_detail` | 개별 종목 상세 (현재가·PER·PBR·수급, 한국/미국 자동 판별, period로 일봉 조회) |
 | 4 | `get_foreign_rank` | 외국인 순매수 상위 종목 |
-| 5 | `get_dart` | DART 공시 (기본: 워치 3일 공시, mode='report': 사업보고서 txt 저장, mode='report_list': 저장 파일 목록) |
+| 5 | `get_dart` | DART 공시 (기본: 워치 3일 공시, mode='report': 사업보고서 txt 저장, mode='report_list': 저장 파일 목록, mode='read': 저장된 보고서 읽기) |
 | 6 | `get_macro` | 매크로 지표 (기본: 지수+환율, dashboard/sector_etf/convergence/op_growth/dart_op_growth 등 모드) |
 | 7 | `get_sector_flow` | WI26 업종별 외국인+기관 순매수 상위/하위 3개 |
 | 8 | `add_watch` | 한국 워치리스트 종목 추가 |
