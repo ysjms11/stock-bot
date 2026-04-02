@@ -597,6 +597,10 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "count":  len(items),
                     "items":  items,
                 }
+                if not items:
+                    result["note"] = ("장중 등락률 순위 미제공. "
+                                      "get_scan(preset='momentum' 또는 'oversold')으로 "
+                                      "KRX DB 기반 전일 데이터를 조회하세요.")
 
             elif rank_type == "us_price":
                 # ← 기존 get_us_price_rank 핸들러
@@ -913,6 +917,9 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "days":   days,
                         "history": rows,
                     }
+                    if not rows:
+                        result["note"] = ("수급 히스토리는 장 마감 후 데이터만 제공됩니다. "
+                                          "장중에는 get_supply(mode='estimate')로 추정 수급을 확인하세요.")
 
             elif supply_mode == "estimate":
                 # ← 기존 get_investor_estimate 핸들러
@@ -927,7 +934,12 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 try:
                     rows = await kis_foreigner_trend(token)
                     if not rows:
-                        result = {"error": "데이터 없음", "items": []}
+                        result = {
+                            "items": [],
+                            "note": ("장중 외국인 순매수 데이터 미제공. "
+                                     "장 마감 후(15:40 이후) 조회하거나, "
+                                     "get_supply(mode='combined_rank')로 장중 가집계를 확인하세요."),
+                        }
                     else:
                         result = [
                             {
@@ -946,11 +958,28 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 n    = int(arguments.get("n", 20) or 20)
                 n    = max(1, min(n, 50))
                 items = await kis_foreign_institution_total(token, sort=sort, n=n)
+                # KRX DB에서 시총 대비 비율 보강
+                db = load_krx_db()
+                if db and db.get("stocks"):
+                    db_stocks = db["stocks"]
+                    for item in items:
+                        ticker = item.get("ticker", "")
+                        s = db_stocks.get(ticker)
+                        mcap = s.get("market_cap", 0) if s else 0
+                        if mcap > 0:
+                            # fi_total_net(수량) × price → 대략적 금액 추정
+                            net_qty = item.get("fi_total_net", 0)
+                            price = item.get("price", 0)
+                            est_amt = net_qty * price
+                            item["fi_ratio_pct"] = round(est_amt / mcap * 100, 4)
+                            item["market_cap_억"] = round(mcap / 1_0000_0000)
                 result = {
                     "sort":  sort,
                     "count": len(items),
                     "items": items,
                 }
+                if not db:
+                    result["note"] = "시총 대비 비율은 KRX DB 갱신 후 사용 가능 (fi_ratio_pct 필드)"
 
             else:
                 result = {"error": f"알 수 없는 mode: {supply_mode}. daily/history/estimate/foreign_rank/combined_rank 중 하나"}
@@ -1400,7 +1429,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                              "total": sector_frgn.get(label, 0)}
                             for code, label in WI26_SECTORS
                         ]
-                        note = "업종별 투자자 API 미지원 — 외국인 순매수 상위 기반 근사치(수량)"
+                        note = ("장중 업종별 수급 데이터 미제공 — 외국인 순매수 상위 기반 근사치(수량). "
+                               "ETF 시세로 섹터 동향을 확인하세요.")
 
                     sorted_s = sorted(sectors, key=lambda x: x["total"], reverse=True)
                     result = {
