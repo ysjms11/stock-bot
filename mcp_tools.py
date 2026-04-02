@@ -17,7 +17,7 @@ from kis_api import (
     load_trade_log, save_trade_log, get_trade_stats, TRADE_LOG_FILE,
     backup_data_files, restore_data_files, get_backup_status,
     SUPPLY_HISTORY_FILE,
-    get_historical_ohlcv, get_historical_supply,
+    get_historical_ohlcv, get_historical_supply, compute_volume_profile,
     fetch_us_news, analyze_us_news_sentiment,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_us_short_interest,
@@ -349,11 +349,13 @@ MCP_TOOLS = [
                      "required": []}},
     # 3. get_stock_detail (확장 ← + get_batch_detail)
     {"name": "get_stock_detail",
-     "description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환. tickers 전달 시 여러 종목 일괄 조회 (최대 20종목).",
+     "description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환. tickers 전달 시 여러 종목 일괄 조회 (최대 20종목). mode='volume_profile' 시 볼륨 프로파일(매물대) 분석 (period: Y1/Y2/Y3 지원).",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker": {"type": "string", "description": "한국 종목코드(예: 005930) 또는 미국 티커(예: TSLA, AAPL)"},
-                         "period": {"type": "string", "description": "일봉 조회 시 지정 (예: D60=최근 60일, D30=30일, W20=20주). 생략 시 현재가 상세 반환"},
+                         "mode": {"type": "string", "description": "volume_profile: 볼륨 프로파일(매물대) 분석", "enum": ["volume_profile"]},
+                         "period": {"type": "string", "description": "일봉 조회: D60/D30/W20 등. volume_profile 시: Y1=1년, Y2=2년, Y3=3년 (기본 Y1)"},
+                         "bins": {"type": "integer", "description": "볼륨 프로파일 가격 구간 수 (기본 20, 최대 50)"},
                          "tickers": {"type": "string", "description": "콤마 구분 종목코드로 다종목 일괄 조회 (예: '005930,000660'). 최대 20종목."},
                          "delay": {"type": "number", "description": "일괄조회 시 종목간 딜레이 (기본 0.3초)"},
                      },
@@ -774,9 +776,43 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             else:
                 # ── 단일 종목 조회 (기존 로직) ──
                 ticker = arguments.get("ticker", "005930").strip().upper()
+                mode = arguments.get("mode", "").strip().lower()
                 period = arguments.get("period", "").strip().upper()  # e.g. "D60", "W20"
 
-                if period:
+                if mode == "volume_profile":
+                    # ── 볼륨 프로파일(매물대) 분석 ──
+                    if not period or period not in ("Y1", "Y2", "Y3"):
+                        period = "Y1"
+                    bins_count = min(int(arguments.get("bins", 20) or 20), 50)
+                    years_map = {"Y1": 1, "Y2": 2, "Y3": 3}
+                    years = years_map.get(period, 1)
+
+                    candles = await asyncio.to_thread(get_historical_ohlcv, ticker, years)
+                    if not candles:
+                        result = {"error": f"{ticker} 일봉 데이터를 가져올 수 없습니다"}
+                    else:
+                        # 현재가 조회
+                        if _is_us_ticker(ticker):
+                            excd = _guess_excd(ticker)
+                            price_d = await kis_us_stock_price(ticker, token, excd)
+                            current_price = float(price_d.get("last", 0) or 0)
+                            stock_name = price_d.get("rsym", ticker).replace("D", "").replace("N", "")
+                        else:
+                            price_d = await kis_stock_price(ticker, token)
+                            current_price = float(price_d.get("stck_prpr", 0) or 0)
+                            stock_name = price_d.get("hts_kor_isnm", ticker)
+
+                        if current_price <= 0:
+                            # fallback: 마지막 종가
+                            current_price = float(candles[-1].get("close", 0))
+
+                        result = compute_volume_profile(candles, current_price, bins_count)
+                        result["ticker"] = ticker
+                        result["name"] = stock_name
+                        result["period"] = period
+                        result["market"] = "US" if _is_us_ticker(ticker) else "KR"
+
+                elif period:
                     # ── 일봉/주봉 조회 모드 ──
                     period_type = period[0] if period else "D"  # D/W/M
                     try:

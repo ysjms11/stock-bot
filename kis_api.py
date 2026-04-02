@@ -1297,6 +1297,145 @@ def get_historical_ohlcv(ticker: str, years: int = 3) -> list:
             return []
 
 
+def compute_volume_profile(candles: list, current_price: float, bins: int = 20) -> dict:
+    """일봉 데이터에서 볼륨 프로파일(매물대) 계산.
+    candles: get_historical_ohlcv() 반환값 [{"close":..., "vol":...}, ...]
+    """
+    if not candles:
+        return {"error": "일봉 데이터 없음"}
+
+    valid = [c for c in candles if c.get("close") and c.get("vol")]
+    if not valid:
+        return {"error": "종가 데이터 없음"}
+
+    all_lows = [c.get("low", c["close"]) for c in valid]
+    all_highs = [c.get("high", c["close"]) for c in valid]
+    closes = [c["close"] for c in valid]
+    volumes = [c["vol"] for c in valid]
+
+    price_low = min(all_lows)
+    price_high = max(all_highs)
+    if price_high == price_low:
+        price_high = price_low * 1.01 if price_low else 1  # avoid zero-division
+
+    bin_size = (price_high - price_low) / bins
+    total_volume = sum(volumes)
+
+    # Build bins
+    bin_list = []
+    for i in range(bins):
+        b_low = price_low + i * bin_size
+        b_high = price_low + (i + 1) * bin_size
+        b_mid = (b_low + b_high) / 2
+        bin_list.append({
+            "price_low": round(b_low, 2),
+            "price_high": round(b_high, 2),
+            "price_mid": round(b_mid, 2),
+            "volume": 0,
+        })
+
+    # Assign volumes to bins (distribute across low~high range)
+    for c in valid:
+        c_low = c.get("low", c["close"])
+        c_high = c.get("high", c["close"])
+        vol = c["vol"]
+        idx_lo = max(0, min(int((c_low - price_low) / bin_size), bins - 1))
+        idx_hi = max(0, min(int((c_high - price_low) / bin_size), bins - 1))
+        span = idx_hi - idx_lo + 1
+        per_bin = vol / span
+        for i in range(idx_lo, idx_hi + 1):
+            bin_list[i]["volume"] += int(per_bin)
+
+    # Calculate volume_pct and bar
+    max_vol = max(b["volume"] for b in bin_list) or 1
+    for b in bin_list:
+        b["volume_pct"] = round(b["volume"] / total_volume * 100, 2) if total_volume else 0
+        filled = int(round(b["volume"] / max_vol * 10))
+        b["bar"] = "\u2588" * filled + "\u2591" * (10 - filled)
+
+    # POC (Point of Control)
+    poc_idx = max(range(bins), key=lambda i: bin_list[i]["volume"])
+    poc = bin_list[poc_idx]["price_mid"]
+    poc_volume_pct = bin_list[poc_idx]["volume_pct"]
+
+    # Value Area (70% of total volume, expand from POC)
+    va_volume = bin_list[poc_idx]["volume"]
+    va_low_idx = poc_idx
+    va_high_idx = poc_idx
+    target = total_volume * 0.70
+
+    while va_volume < target:
+        expand_down = bin_list[va_low_idx - 1]["volume"] if va_low_idx > 0 else -1
+        expand_up = bin_list[va_high_idx + 1]["volume"] if va_high_idx < bins - 1 else -1
+        if expand_down < 0 and expand_up < 0:
+            break
+        if expand_down >= expand_up:
+            va_low_idx -= 1
+            va_volume += bin_list[va_low_idx]["volume"]
+        else:
+            va_high_idx += 1
+            va_volume += bin_list[va_high_idx]["volume"]
+
+    value_area_low = bin_list[va_low_idx]["price_low"]
+    value_area_high = bin_list[va_high_idx]["price_high"]
+
+    # Support / Resistance levels
+    support_bins = [b for b in bin_list if b["price_mid"] < current_price]
+    resistance_bins = [b for b in bin_list if b["price_mid"] > current_price]
+    support_levels = sorted(support_bins, key=lambda b: b["volume"], reverse=True)[:3]
+    resistance_levels = sorted(resistance_bins, key=lambda b: b["volume"], reverse=True)[:3]
+
+    # Format for output
+    is_decimal = any(isinstance(c["close"], float) and c["close"] != int(c["close"]) for c in valid[:5])
+    def _fmt_level(b):
+        if is_decimal:
+            return {"price_range": f"{b['price_low']:.2f}~{b['price_high']:.2f}",
+                    "price_mid": b["price_mid"], "volume_pct": b["volume_pct"]}
+        return {"price_range": f"{b['price_low']:,.0f}~{b['price_high']:,.0f}",
+                "price_mid": b["price_mid"], "volume_pct": b["volume_pct"]}
+
+    support_out = [_fmt_level(b) for b in support_levels]
+    resistance_out = [_fmt_level(b) for b in resistance_levels]
+
+    # Interpretation
+    cp = current_price
+    _pf = ".2f" if is_decimal else ",.0f"
+    poc_diff_pct = (cp - poc) / poc * 100 if poc else 0
+    interp_parts = []
+    if abs(poc_diff_pct) < 2:
+        interp_parts.append(f"현재가가 POC({poc:{_pf}}) 부근 → 매물대 중심에서 거래 중")
+    elif poc_diff_pct > 0:
+        interp_parts.append(f"현재가가 POC({poc:{_pf}}) 위 {poc_diff_pct:.1f}% → 매물 소화 후 상승 구간")
+    else:
+        interp_parts.append(f"현재가가 POC({poc:{_pf}}) 아래 {abs(poc_diff_pct):.1f}% → 매물대 저항 가능")
+
+    if value_area_low <= cp <= value_area_high:
+        interp_parts.append(f"Value Area({value_area_low:{_pf}}~{value_area_high:{_pf}}) 내부 위치")
+    elif cp > value_area_high:
+        interp_parts.append(f"Value Area({value_area_low:{_pf}}~{value_area_high:{_pf}}) 상단 돌파 → 강세")
+    else:
+        interp_parts.append(f"Value Area({value_area_low:{_pf}}~{value_area_high:{_pf}}) 하단 이탈 → 약세 주의")
+
+    if support_out:
+        interp_parts.append(f"주요 지지대: {support_out[0]['price_range']}")
+    if resistance_out:
+        interp_parts.append(f"주요 저항대: {resistance_out[0]['price_range']}")
+
+    return {
+        "total_candles": len(candles),
+        "total_volume": total_volume,
+        "current_price": current_price,
+        "price_range": {"low": round(price_low, 2), "high": round(price_high, 2)},
+        "poc": round(poc, 2),
+        "poc_volume_pct": poc_volume_pct,
+        "value_area": {"low": round(value_area_low, 2), "high": round(value_area_high, 2)},
+        "bins": bin_list,
+        "support_levels": support_out,
+        "resistance_levels": resistance_out,
+        "interpretation": ". ".join(interp_parts),
+    }
+
+
 def get_historical_supply(ticker: str, days: int = 365) -> list:
     """KRX 크롤링으로 종목별 투자자 매매동향 (외인/기관) 조회.
     Returns: [{"date": "YYYYMMDD", "foreign_net": int, "institution_net": int}, ...]
