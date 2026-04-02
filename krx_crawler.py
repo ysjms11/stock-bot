@@ -404,9 +404,9 @@ PRESETS = {
         "sort": "foreign_ratio",
     },
     "value": {
-        "description": "PER<10 AND PBR<1 AND 시총>1000억 (저평가)",
-        "filters": {"per_min": 0.01, "per_max": 10, "pbr_max": 1, "market_cap_min": 1000},
-        "sort": "fi_ratio",
+        "description": "PER>0 AND PER<10 AND PBR>0 AND PBR<1 AND 시총>1000억 (저평가)",
+        "filters": {"per_min": 0.01, "per_max": 10, "pbr_min": 0.01, "pbr_max": 1, "market_cap_min": 1000},
+        "sort": "pbr",
     },
     "momentum": {
         "description": "chg_pct>3% AND turnover>1% (모멘텀)",
@@ -419,33 +419,47 @@ PRESETS = {
         "sort": "chg_pct",
     },
     "foreign_streak": {
-        "description": "최근 5일 연속 외인 순매수 (multi-day)",
-        "sort": "foreign_ratio",
+        "description": "최근 5일 연속 외인 순매수, 시총 500억 이상 (multi-day)",
+        "filters": {"market_cap_min": 500},
+        "sort": "cum_foreign_ratio",
     },
 }
 
 
-def _get_foreign_streak_tickers(target_date: str, days: int = 5) -> set:
-    """최근 N일 연속 외인 순매수 종목 집합."""
+def _get_foreign_streak_data(target_date: str, days: int = 5) -> tuple[dict, int]:
+    """최근 N일 연속 외인 순매수 종목 + 누적 foreign_ratio.
+
+    Returns: ({ticker: cum_foreign_ratio}, days_available)
+    가용 DB가 days보다 적으면 있는 만큼 사용.
+    """
     if not os.path.exists(KRX_DB_DIR):
-        return set()
+        return {}, 0
     files = sorted([f for f in os.listdir(KRX_DB_DIR) if f.endswith(".json")
                      and f[:8] <= target_date], reverse=True)[:days]
-    if len(files) < days:
-        return set()
+    if not files:
+        return {}, 0
 
-    # 첫 번째(최신) 파일의 전 종목을 후보로
+    days_available = len(files)
+
+    # 각 날짜별 외인 순매수 양수인 종목 + foreign_ratio 누적
     candidates = None
+    cum_ratio = {}  # ticker → 누적 foreign_ratio
     for fname in files:
         with open(os.path.join(KRX_DB_DIR, fname), encoding="utf-8") as f:
             db = json.load(f)
-        positive = {t for t, s in db.get("stocks", {}).items()
-                     if s.get("foreign_net_amt", 0) > 0}
+        daily_positive = set()
+        for t, s in db.get("stocks", {}).items():
+            if s.get("foreign_net_amt", 0) > 0:
+                daily_positive.add(t)
+                cum_ratio[t] = cum_ratio.get(t, 0) + s.get("foreign_ratio", 0)
         if candidates is None:
-            candidates = positive
+            candidates = daily_positive
         else:
-            candidates &= positive
-    return candidates or set()
+            candidates &= daily_positive
+
+    # 연속 매수 종목만 남기기
+    result = {t: round(cum_ratio.get(t, 0), 4) for t in (candidates or set())}
+    return result, days_available
 
 
 def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
@@ -485,6 +499,7 @@ def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
     fi_min = float(filters.get("fi_ratio_min", -999))
     per_min = float(filters.get("per_min", 0))
     per_max = float(filters.get("per_max", 9999))
+    pbr_min = float(filters.get("pbr_min", 0))
     pbr_max = float(filters.get("pbr_max", 9999))
     turn_min = float(filters.get("turnover_min", 0))
     sort_by = filters.get("sort", "fi_ratio")
@@ -492,27 +507,37 @@ def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
     n = max(1, min(n, 100))
     market_filter = filters.get("market", "all")
 
+    # 시장 평균 등락률
+    summary = db.get("market_summary", {})
+    market_avg_chg = round(
+        (summary.get("kospi_avg_chg", 0) + summary.get("kosdaq_avg_chg", 0)) / 2, 2)
+
     # relative_strength: 동적 chg_pct_min
     if preset == "relative_strength":
-        summary = db.get("market_summary", {})
-        avg_chg = (summary.get("kospi_avg_chg", 0) + summary.get("kosdaq_avg_chg", 0)) / 2
         if "chg_pct_min" not in filters or filters["chg_pct_min"] == chg_min:
-            chg_min = avg_chg + 3.0
+            chg_min = market_avg_chg + 3.0
         fi_min = max(fi_min, 0)
 
-    # foreign_streak: 연속 매수 종목 필터
-    streak_tickers = None
+    # foreign_streak: 연속 매수 종목 + 누적 비율
+    streak_data = None   # {ticker: cum_foreign_ratio}
+    days_available = 0
     if preset == "foreign_streak":
-        streak_tickers = _get_foreign_streak_tickers(date)
-        if not streak_tickers:
+        streak_days = max(2, int(filters.get("streak_days", 5)))
+        streak_data, days_available = _get_foreign_streak_data(date, streak_days)
+        if days_available < streak_days:
+            preset_desc = f"최근 {days_available}/{streak_days}일 연속 외인 순매수 (DB 부족)"
+        if not streak_data:
             return {
                 "date": date,
                 "preset": preset,
                 "preset_description": preset_desc,
                 "filters": _summarize_filters(filters),
+                "market_avg_chg": market_avg_chg,
+                "days_available": days_available,
+                "total_matched": 0,
                 "count": 0,
                 "results": [],
-                "note": f"최근 5일 DB 파일 부족 또는 연속 매수 종목 없음",
+                "note": f"연속 매수 종목 없음 (가용 DB: {days_available}/{streak_days}일)",
             }
 
     # ── 필터링 ──
@@ -536,6 +561,8 @@ def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
         if per_max < 9999 and per > per_max:
             continue
         pbr = s.get("pbr", 0)
+        if pbr_min > 0 and pbr < pbr_min:
+            continue
         if pbr_max < 9999 and pbr > pbr_max:
             continue
         turn = s.get("turnover", 0)
@@ -544,10 +571,10 @@ def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
         if market_filter != "all":
             if s.get("market", "") != market_filter:
                 continue
-        if streak_tickers is not None and ticker not in streak_tickers:
+        if streak_data is not None and ticker not in streak_data:
             continue
 
-        results.append({
+        item = {
             "ticker": ticker,
             "name": s.get("name", ticker),
             "market": s.get("market", ""),
@@ -560,27 +587,34 @@ def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
             "inst_ratio": s.get("inst_ratio", 0),
             "fi_ratio": fi,
             "turnover": turn,
-        })
+        }
+        if streak_data is not None:
+            item["cum_foreign_ratio"] = streak_data.get(ticker, 0)
+        results.append(item)
 
     # ── 정렬 ──
     reverse = True
     if sort_by in ("per", "pbr"):
-        reverse = False  # PER/PBR은 낮은순이 유용
+        reverse = False  # PER/PBR은 낮은순
     if sort_by == "chg_pct" and preset == "oversold":
         reverse = False  # 낙폭 큰 순
     results.sort(key=lambda x: x.get(sort_by, 0), reverse=reverse)
     total_matched = len(results)
     results = results[:n]
 
-    return {
+    out = {
         "date": date,
         "preset": preset,
         "preset_description": preset_desc,
         "filters": _summarize_filters(filters),
+        "market_avg_chg": market_avg_chg,
         "total_matched": total_matched,
         "count": len(results),
         "results": results,
     }
+    if preset == "foreign_streak":
+        out["days_available"] = days_available
+    return out
 
 
 def _summarize_filters(filters: dict) -> dict:
@@ -588,7 +622,7 @@ def _summarize_filters(filters: dict) -> dict:
     summary = {}
     keys = ["market_cap_min", "market_cap_max", "chg_pct_min", "chg_pct_max",
             "foreign_ratio_min", "fi_ratio_min", "per_min", "per_max",
-            "pbr_max", "turnover_min", "sort", "n", "market"]
+            "pbr_min", "pbr_max", "turnover_min", "sort", "n", "market"]
     for k in keys:
         v = filters.get(k)
         if v is not None:
