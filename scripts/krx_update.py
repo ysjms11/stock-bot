@@ -302,14 +302,35 @@ def upload_to_bot(db: dict) -> dict:
     return result
 
 
-def main():
-    date = datetime.now(KST).strftime("%Y%m%d")
-    # 주말이면 직전 금요일
+def _last_trading_date() -> str:
+    """KST 기준 최근 거래일 반환 (YYYYMMDD).
+    - 평일 15:30 이후 → 오늘
+    - 평일 15:30 이전 → 전 거래일
+    - 주말 → 직전 금요일
+    """
     now = datetime.now(KST)
-    if now.weekday() == 5:  # 토
-        date = (now - timedelta(days=1)).strftime("%Y%m%d")
-    elif now.weekday() == 6:  # 일
-        date = (now - timedelta(days=2)).strftime("%Y%m%d")
+    d = now
+
+    # 15:30 이전이면 전날부터 탐색
+    if d.hour < 15 or (d.hour == 15 and d.minute < 30):
+        d -= timedelta(days=1)
+
+    # 주말이면 금요일로
+    while d.weekday() >= 5:  # 5=토, 6=일
+        d -= timedelta(days=1)
+
+    return d.strftime("%Y%m%d")
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="KRX 전종목 크롤러")
+    parser.add_argument("--date", type=str, default=None,
+                        help="거래일 YYYYMMDD (생략 시 KST 기준 최근 거래일)")
+    args = parser.parse_args()
+
+    date = args.date or _last_trading_date()
+    print(f"[KRX] 대상 날짜: {date} (KST now={datetime.now(KST).strftime('%Y-%m-%d %H:%M')})")
 
     try:
         db = build_db(date)

@@ -54,7 +54,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 import krx_update
-from krx_update import fetch_market_data, fetch_investor_data, build_db
+from krx_update import fetch_market_data, fetch_investor_data, build_db, _last_trading_date
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -648,3 +648,66 @@ class TestCleanupOldDb:
         # 보존 확인
         assert os.path.exists(recent_file), f"10일 전 파일이 잘못 삭제됨: {recent_file}"
         assert os.path.exists(today_file), f"오늘 파일이 잘못 삭제됨: {today_file}"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 테스트 11: 날짜 계산 로직
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+class TestLastTradingDate:
+    """_last_trading_date: KST 기준 최근 거래일 계산."""
+
+    def test_weekday_after_market_close(self):
+        """평일 16:00 → 오늘."""
+        fake = datetime(2026, 4, 3, 16, 0, tzinfo=KST)  # 금요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260403"
+
+    def test_weekday_before_market_close(self):
+        """평일 14:00 → 전 거래일."""
+        fake = datetime(2026, 4, 3, 14, 0, tzinfo=KST)  # 금요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260402"
+
+    def test_saturday(self):
+        """토요일 → 직전 금요일."""
+        fake = datetime(2026, 4, 4, 10, 0, tzinfo=KST)  # 토요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260403"
+
+    def test_sunday(self):
+        """일요일 → 직전 금요일."""
+        fake = datetime(2026, 4, 5, 10, 0, tzinfo=KST)  # 일요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260403"
+
+    def test_monday_morning(self):
+        """월요일 09:00 → 직전 금요일."""
+        fake = datetime(2026, 4, 6, 9, 0, tzinfo=KST)  # 월요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260403"
+
+    def test_exactly_1530(self):
+        """15:30 정각 → 오늘 (장 마감 완료)."""
+        fake = datetime(2026, 4, 3, 15, 30, tzinfo=KST)  # 금요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260403"
+
+    def test_1531(self):
+        """15:31 → 오늘."""
+        fake = datetime(2026, 4, 3, 15, 31, tzinfo=KST)  # 금요일
+        with patch("krx_update.datetime") as mock_dt:
+            mock_dt.now.return_value = fake
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _last_trading_date() == "20260403"
