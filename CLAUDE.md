@@ -35,7 +35,14 @@ KIS_APP_SECRET   KIS Open API 시크릿
 DART_API_KEY     전자공시 API 키 (선택)
 GITHUB_TOKEN     GitHub Gist 백업용 토큰 (선택)
 BACKUP_GIST_ID   백업 Gist ID (선택)
-KRX_PROXY        KRX 크롤러 프록시 URL (선택, 데이터센터 IP 차단 우회용)
+KRX_UPLOAD_KEY   KRX DB 업로드 인증 키 (GitHub Actions → Railway)
+```
+
+**GitHub Actions Secrets** (KRX 크롤러용)
+
+```
+BOT_URL          Railway 서버 URL (예: https://chic-ambition-production-d764.up.railway.app)
+BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 ```
 
 ---
@@ -49,12 +56,15 @@ KRX_PROXY        KRX 크롤러 프록시 URL (선택, 데이터센터 IP 차단 
 | `kis_api.py` | ~2400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업 |
 | `main.py` | ~1950 | 텔레그램 봇 + 자동알림 스케줄 + 진입점 |
 | `mcp_tools.py` | ~1760 | MCP 도구 스키마 + 실행 로직 + SSE 서버 |
-| `krx_crawler.py` | ~400 | KRX 전종목 크롤러, DB 관리, 스캐너 |
+| `krx_crawler.py` | ~400 | KRX DB 로드, 스캐너 (크롤링은 GitHub Actions) |
 
 기타 파일:
 
 | 파일 | 내용 |
 |------|------|
+| `scripts/krx_update.py` | GitHub Actions용 KRX 크롤러 (독립 실행) |
+| `scripts/requirements_actions.txt` | GitHub Actions 의존성 |
+| `.github/workflows/krx_update.yml` | KRX 크롤링 워크플로우 (평일 15:55 KST) |
 | `stock_universe.json` | 종목 유니버스 (시총 상위 코스피+코스닥) |
 | `dart_corp_map.json` | DART 고유번호 ↔ 종목코드 매핑 |
 | `test_consensus_ci.py` | CI 테스트 (컨센서스 기능) |
@@ -491,7 +501,7 @@ elif name == "new_tool_name":
 - **check_fx_alert 비활성화**: 환율 알림은 매크로 대시보드로 통합 예정, 스케줄에서 주석 처리됨.
 - **WebSocket 국내 전용**: `KisRealtimeManager`는 국내주식만 지원. 미국주식은 폴링 방식(`check_stoploss`).
 - **DST 자동 감지**: 미국 장 시간 판별은 `zoneinfo.ZoneInfo('America/New_York')` 사용으로 서머타임/표준시 자동 전환.
-- **KRX 데이터센터 IP 차단**: `data.krx.co.kr`은 Railway 등 데이터센터 IP를 Akamai WAF + 앱 레벨에서 차단. `KRX_PROXY` 환경변수로 프록시 설정 필요. 프록시 없으면 pykrx fallback 시도 (동일 IP 차단일 수 있음).
+- **KRX 크롤링 → GitHub Actions**: `data.krx.co.kr`은 Railway 데이터센터 IP 차단. GitHub Actions에서 크롤링 후 `/api/krx_upload`로 업로드하는 구조. 설정: GitHub Secrets(`BOT_URL`, `BOT_API_KEY`) + Railway 환경변수(`KRX_UPLOAD_KEY`).
 
 ---
 
