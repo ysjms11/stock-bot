@@ -1011,10 +1011,14 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                     print(f"[DART report] {ticker} rcept={rcept_no} 실패, 다음 시도...")
                                     await asyncio.sleep(0.5)
                                 if not got_saved:
+                                    best_rcept = tried[0]["rcept_no"] if tried else ""
+                                    dart_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={best_rcept}" if best_rcept else ""
                                     failed.append({
                                         "ticker": ticker, "name": corp_name,
                                         "tried": tried,
-                                        "reason": f"document.xml {len(tried)}건 모두 실패 (status=014 등)",
+                                        "dart_url": dart_url,
+                                        "reason": "PDF 전용 보고서 — document.xml API 미지원. DART 사이트에서 PDF로 확인 가능.",
+                                        "hint": "PDF를 다운로드해서 Claude에게 직접 전달하면 분석 가능합니다.",
                                     })
                                 await asyncio.sleep(0.5)
                             except Exception as e:
