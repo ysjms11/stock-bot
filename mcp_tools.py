@@ -974,35 +974,54 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     else:
                         saved = []
                         skipped_no_report = []
+                        failed = []
                         for ticker, name in tickers.items():
-                            cc_info = corp_codes.get(ticker)
-                            if not cc_info:
-                                print(f"[DART report] {ticker} corp_code 없음, 스킵")
-                                skipped_no_report.append({"ticker": ticker, "name": name, "reason": "corp_code 없음"})
-                                continue
-                            corp_code = cc_info["corp_code"] if isinstance(cc_info, dict) else cc_info
-                            corp_name = cc_info.get("corp_name", name) if isinstance(cc_info, dict) else name
+                            try:
+                                cc_info = corp_codes.get(ticker)
+                                if not cc_info:
+                                    print(f"[DART report] {ticker} corp_code 없음, 스킵")
+                                    skipped_no_report.append({"ticker": ticker, "name": name, "reason": "corp_code 없음"})
+                                    continue
+                                corp_code = cc_info["corp_code"] if isinstance(cc_info, dict) else cc_info
+                                corp_name = cc_info.get("corp_name", name) if isinstance(cc_info, dict) else name
+                                print(f"[DART report] {ticker} ({corp_name}) → corp_code={corp_code}")
 
-                            reports = await search_dart_reports(corp_code)
-                            if not reports:
-                                print(f"[DART report] {ticker} ({corp_name}) 사업보고서 없음")
-                                skipped_no_report.append({"ticker": ticker, "name": corp_name, "reason": "사업보고서 없음"})
+                                reports = await search_dart_reports(corp_code)
+                                if not reports:
+                                    print(f"[DART report] {ticker} ({corp_name}) 사업보고서 없음")
+                                    skipped_no_report.append({"ticker": ticker, "name": corp_name,
+                                                              "reason": "사업보고서 없음", "corp_code": corp_code})
+                                    await asyncio.sleep(0.5)
+                                    continue
+
+                                for rpt in reports[:1]:  # 최신 1건만
+                                    rcept_no = rpt.get("rcept_no", "")
+                                    rpt_date = rpt.get("rcept_dt", "")
+                                    rpt_title = rpt.get("report_nm", "")
+                                    print(f"[DART report] {ticker} 보고서: {rpt_title} ({rpt_date}) rcept={rcept_no}")
+                                    res = await save_dart_report(ticker, corp_name, rcept_no, rpt_date)
+                                    if res:
+                                        saved.append(res)
+                                    else:
+                                        failed.append({
+                                            "ticker": ticker, "name": corp_name,
+                                            "rcept_no": rcept_no, "report_date": rpt_date,
+                                            "report_nm": rpt_title,
+                                            "reason": "문서 본문 다운로드 실패 (ZIP 손상/빈 본문/API 에러)",
+                                        })
                                 await asyncio.sleep(0.5)
-                                continue
-
-                            for rpt in reports[:1]:  # 최신 1건만
-                                rcept_no = rpt.get("rcept_no", "")
-                                rpt_date = rpt.get("rcept_dt", "")
-                                res = await save_dart_report(ticker, corp_name, rcept_no, rpt_date)
-                                if res:
-                                    saved.append(res)
-                            await asyncio.sleep(0.5)
+                            except Exception as e:
+                                print(f"[DART report] {ticker} 처리 중 예외: {e}")
+                                failed.append({"ticker": ticker, "name": name,
+                                               "reason": f"예외: {str(e)[:200]}"})
 
                         result = {
                             "saved": saved,
                             "skipped": skipped_no_report,
+                            "failed": failed,
                             "total_saved": len(saved),
                             "total_skipped": len(skipped_no_report),
+                            "total_failed": len(failed),
                         }
 
             else:

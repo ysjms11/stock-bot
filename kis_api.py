@@ -2630,43 +2630,82 @@ async def search_dart_reports(corp_code: str, days_back: int = 365) -> list:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
             async with s.get(f"{DART_BASE_URL}/list.json", params=params) as resp:
                 if resp.status != 200:
+                    print(f"[DART] list.json HTTP {resp.status} for {corp_code}")
                     return []
                 data = await resp.json(content_type=None)
-                if data.get("status") == "000":
-                    return data.get("list", [])
+                status = data.get("status", "")
+                if status == "000":
+                    results = data.get("list", [])
+                    print(f"[DART] list.json {corp_code}: {len(results)}건 (A001)")
+                    return results
+                else:
+                    print(f"[DART] list.json {corp_code}: status={status} msg={data.get('message','')}")
     except Exception as e:
         print(f"[DART] report search error ({corp_code}): {e}")
     return []
 
 
 async def fetch_dart_document(rcept_no: str) -> str:
-    """OpenDART document.xml → HTML 본문 → 순수 텍스트."""
+    """OpenDART document.xml → ZIP 내 HTML 파일들 → 순수 텍스트.
+
+    document.xml 응답은 ZIP 파일 (다수 HTML 조각) 또는 XML wrapper.
+    ZIP인 경우 내부 HTML 파일들을 모두 합쳐 텍스트 추출.
+    """
+    import zipfile, io
     if not DART_API_KEY:
         return ""
     url = f"{DART_BASE_URL}/document.xml"
     params = {"crtfc_key": DART_API_KEY, "rcept_no": rcept_no}
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as s:
             async with s.get(url, params=params) as resp:
                 if resp.status != 200:
                     print(f"[DART] document.xml HTTP {resp.status} for {rcept_no}")
                     return ""
-                content_type = resp.headers.get("Content-Type", "")
                 raw = await resp.read()
-                # OpenDART는 에러 시 HTTP 200 + JSON/XML 에러 반환
-                if b'"status"' in raw[:200] and b'"message"' in raw[:500]:
-                    try:
-                        err = json.loads(raw)
-                        print(f"[DART] document.xml API 에러: {err.get('status')} {err.get('message')}")
-                        return ""
-                    except Exception:
-                        pass
-                html = raw.decode("utf-8", errors="replace")
+
+        # OpenDART는 에러 시 HTTP 200 + JSON 에러 반환
+        if b'"status"' in raw[:200] and b'"message"' in raw[:500]:
+            try:
+                err = json.loads(raw)
+                print(f"[DART] document.xml API 에러: {err.get('status')} {err.get('message')}")
+                return ""
+            except Exception:
+                pass
+
         from bs4 import BeautifulSoup
+        import re
+
+        # ZIP 파일인지 확인 (PK 매직넘버)
+        if raw[:2] == b'PK':
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(raw))
+                html_parts = []
+                for name in sorted(zf.namelist()):
+                    if name.lower().endswith(('.html', '.htm', '.xml')):
+                        try:
+                            part = zf.read(name).decode("utf-8", errors="replace")
+                            soup = BeautifulSoup(part, "html.parser")
+                            text = soup.get_text(separator="\n")
+                            text = re.sub(r'\n{3,}', '\n\n', text).strip()
+                            if text:
+                                html_parts.append(text)
+                        except Exception as ze:
+                            print(f"[DART] ZIP 내 파일 처리 실패 ({name}): {ze}")
+                full_text = "\n\n".join(html_parts)
+                if len(full_text) < 100:
+                    print(f"[DART] ZIP 본문 너무 짧음 ({len(full_text)}자): {rcept_no}")
+                    return ""
+                print(f"[DART] ZIP 문서 추출: {rcept_no} ({len(full_text)}자, {len(html_parts)}파일)")
+                return full_text
+            except zipfile.BadZipFile:
+                print(f"[DART] ZIP 파일 손상: {rcept_no}")
+                return ""
+
+        # XML 또는 HTML 직접 응답
+        html = raw.decode("utf-8", errors="replace")
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(separator="\n")
-        # 연속 빈줄 정리
-        import re
         text = re.sub(r'\n{3,}', '\n\n', text).strip()
         if len(text) < 100:
             print(f"[DART] document.xml 본문 너무 짧음 ({len(text)}자): {rcept_no}")
