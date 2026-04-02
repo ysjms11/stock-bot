@@ -2707,7 +2707,9 @@ async def fetch_dart_document(rcept_no: str) -> str:
                 html_parts = []
                 # 이미지/CSS/폰트 제외, 나머지 텍스트 파일 모두 처리
                 skip_ext = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg',
-                            '.css', '.js', '.ttf', '.woff', '.woff2', '.eot'}
+                            '.css', '.js', '.ttf', '.woff', '.woff2', '.eot',
+                            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt',
+                            '.zip', '.hwp', '.mp3', '.mp4', '.avi', '.ico'}
                 for name in sorted(all_names):
                     ext = os.path.splitext(name)[1].lower()
                     if ext in skip_ext:
