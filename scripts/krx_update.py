@@ -2,7 +2,7 @@
 """
 KRX 전종목 일별 데이터 크롤러 (GitHub Actions 전용, 독립 실행)
 - KRX data.krx.co.kr에서 전종목 시세 + PER/PBR + 투자자별 수급 크롤링
-- OTP 기반 CSV 다운로드 (primary) → JSON 직접호출 (fallback) → pykrx (fallback2)
+- 세션 기반 JSON (primary) → 세션 기반 OTP CSV (fallback) → pykrx (fallback2)
 - 비율 계산 후 Railway 서버 /api/krx_upload로 POST
 """
 
@@ -20,16 +20,27 @@ import requests
 KST = ZoneInfo("Asia/Seoul")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# URLs & 헤더
+# URLs
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+KRX_JSON_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
 KRX_OTP_URL = "https://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
 KRX_CSV_URL = "https://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
-KRX_JSON_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+# 전종목 시세 페이지 — 세션 쿠키 획득용
+KRX_PAGE_URL = "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101"
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 브라우저 흉내 헤더 (크롬 실제 XHR 요청과 동일)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 KRX_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiStat/mkd/shortSalesByStkDaily/main.cmd",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "X-Requested-With": "XMLHttpRequest",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Referer": KRX_PAGE_URL,
+    "Origin": "https://data.krx.co.kr",
 }
 
 BOT_URL = os.environ.get("BOT_URL", "https://chic-ambition-production-d764.up.railway.app")
@@ -62,25 +73,49 @@ def _pf(s) -> float:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# OTP 기반 CSV 다운로드 (Primary)
+# 세션 관리 — 핵심: 페이지 방문 → JSESSIONID 획득 → 같은 세션으로 API 호출
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def _get_krx_session() -> requests.Session:
-    """세션 생성 + KRX 메인 페이지 방문으로 쿠키 획득."""
+    """세션 생성 + KRX 전종목 시세 페이지 방문으로 JSESSIONID 쿠키 획득."""
     sess = requests.Session()
     sess.headers.update(KRX_HEADERS)
     try:
-        sess.get("https://data.krx.co.kr/contents/MDC/MDI/mdiStat/mkd/shortSalesByStkDaily/main.cmd",
-                 timeout=10)
-        print("[OTP] 세션 쿠키 획득 완료")
+        resp = sess.get(KRX_PAGE_URL, timeout=15)
+        cookies = dict(sess.cookies)
+        cookie_names = list(cookies.keys())
+        has_jsession = any("JSESSIONID" in k.upper() or "SESSION" in k.upper()
+                          for k in cookie_names)
+        print(f"[Session] 페이지 방문 HTTP {resp.status_code}, "
+              f"쿠키={cookie_names}, JSESSIONID={'있음' if has_jsession else '없음'}")
     except Exception as e:
-        print(f"[OTP] 세션 쿠키 획득 실패 (무시): {e}")
+        print(f"[Session] 페이지 방문 실패: {e}")
     return sess
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 세션 기반 JSON 호출 (Primary)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _krx_json_post(sess: requests.Session, form: dict) -> dict:
+    """세션 유지하면서 KRX JSON API 호출."""
+    resp = sess.post(KRX_JSON_URL, data=form, timeout=30)
+    print(f"[JSON] POST {form.get('bld','?')} → HTTP {resp.status_code}, "
+          f"body={resp.text[:100]}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"KRX HTTP {resp.status_code}: {resp.text[:200]}")
+    body = resp.json()
+    if isinstance(body, dict) and body.get("RESULT") == "LOGOUT":
+        raise RuntimeError("KRX LOGOUT 응답 — 세션 쿠키 미인식")
+    return body
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 세션 기반 OTP CSV 다운로드 (Fallback 1)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 def _otp_download_csv(sess: requests.Session, otp_params: dict) -> pd.DataFrame:
     """OTP 2단계: OTP 생성 → CSV 다운로드 → DataFrame 반환."""
     # Step 1: OTP 생성
     resp = sess.post(KRX_OTP_URL, data=otp_params, timeout=15)
+    print(f"[OTP] 생성 → HTTP {resp.status_code}, body={resp.text[:80]}")
     if resp.status_code != 200 or len(resp.text) < 10:
         raise RuntimeError(f"OTP 생성 실패: HTTP {resp.status_code}, body={resp.text[:100]}")
     otp = resp.text.strip()
@@ -107,68 +142,12 @@ def _otp_download_csv(sess: requests.Session, otp_params: dict) -> pd.DataFrame:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# JSON 직접 호출 (Fallback 1)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-def _krx_json_post(form: dict) -> dict:
-    resp = requests.post(KRX_JSON_URL, data=form, headers=KRX_HEADERS, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(f"KRX HTTP {resp.status_code}: {resp.text[:200]}")
-    body = resp.json()
-    # "LOGOUT" 응답 체크
-    if isinstance(body, dict) and body.get("RESULT") == "LOGOUT":
-        raise RuntimeError("KRX LOGOUT 응답 — 세션/OTP 필요")
-    return body
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 1) 전종목 시세 — MDCSTAT01501
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def fetch_market_data(date: str, market: str = "STK", sess: requests.Session = None) -> list[dict]:
     mkt_label = "kospi" if market == "STK" else "kosdaq"
 
-    # ── Primary: OTP CSV ──
-    try:
-        sess = sess or _get_krx_session()
-        otp_params = {
-            "locale": "ko_KR",
-            "mktId": market,
-            "trdDd": date,
-            "share": "1",
-            "money": "1",
-            "csvxls_isNo": "false",
-            "name": "fileDown",
-            "url": "dbms/MDC/STAT/standard/MDCSTAT01501",
-        }
-        df = _otp_download_csv(sess, otp_params)
-        result = []
-        for _, row in df.iterrows():
-            ticker = str(row.get("종목코드", row.iloc[0]) if "종목코드" in df.columns else row.iloc[0]).strip()
-            if not ticker or len(ticker) != 6:
-                continue
-            name_col = "종목명" if "종목명" in df.columns else df.columns[1]
-            close_col = "종가" if "종가" in df.columns else "TDD_CLSPRC"
-            chg_col = "등락률" if "등락률" in df.columns else "FLUC_RT"
-            vol_col = "거래량" if "거래량" in df.columns else "ACC_TRDVOL"
-            tv_col = "거래대금" if "거래대금" in df.columns else "ACC_TRDVAL"
-            cap_col = "시가총액" if "시가총액" in df.columns else "MKTCAP"
-            result.append({
-                "ticker": ticker,
-                "name": str(row.get(name_col, "")),
-                "market": mkt_label,
-                "close": _pi(row.get(close_col, 0)),
-                "chg_pct": _pf(row.get(chg_col, 0)),
-                "volume": _pi(row.get(vol_col, 0)),
-                "trade_value": _pi(row.get(tv_col, 0)),
-                "market_cap": _pi(row.get(cap_col, 0)),
-            })
-        print(f"[OTP] {market} 시세: {len(result)}종목")
-        if result:
-            return result
-        raise RuntimeError("OTP CSV 파싱 결과 0종목")
-    except Exception as e:
-        print(f"[OTP] {market} 시세 OTP 실패: {e} → JSON fallback")
-
-    # ── Fallback 1: JSON 직접호출 ──
+    # ── Primary: 세션 기반 JSON ──
     try:
         form = {
             "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
@@ -178,7 +157,7 @@ def fetch_market_data(date: str, market: str = "STK", sess: requests.Session = N
             "share": "1",
             "money": "1",
         }
-        body = _krx_json_post(form)
+        body = _krx_json_post(sess, form)
         records = body.get("OutBlock_1", [])
         if not records:
             raise RuntimeError("empty OutBlock_1")
@@ -198,17 +177,65 @@ def fetch_market_data(date: str, market: str = "STK", sess: requests.Session = N
                 "market_cap": _pi(r.get("MKTCAP")),
             })
         print(f"[JSON] {market} 시세: {len(result)}종목")
-        return result
+        if result:
+            return result
+        raise RuntimeError("JSON 파싱 결과 0종목")
     except Exception as e:
-        print(f"[JSON] {market} 시세 실패: {e} → pykrx fallback")
+        print(f"[JSON] {market} 시세 실패: {e} → OTP CSV fallback")
 
-    # ── Fallback 2: pykrx (세션 워밍업 포함) ──
+    # ── Fallback 1: 세션 기반 OTP CSV ──
+    try:
+        otp_params = {
+            "locale": "ko_KR",
+            "mktId": market,
+            "trdDd": date,
+            "share": "1",
+            "money": "1",
+            "csvxls_isNo": "false",
+            "name": "fileDown",
+            "url": "dbms/MDC/STAT/standard/MDCSTAT01501",
+        }
+        df = _otp_download_csv(sess, otp_params)
+        result = _parse_market_csv(df, mkt_label)
+        print(f"[OTP] {market} 시세: {len(result)}종목")
+        if result:
+            return result
+        raise RuntimeError("OTP CSV 파싱 결과 0종목")
+    except Exception as e:
+        print(f"[OTP] {market} 시세 OTP 실패: {e} → pykrx fallback")
+
+    # ── Fallback 2: pykrx ──
     return _market_data_pykrx(date, market)
+
+
+def _parse_market_csv(df: pd.DataFrame, mkt_label: str) -> list[dict]:
+    """시세 CSV DataFrame → dict 리스트 변환."""
+    result = []
+    for _, row in df.iterrows():
+        ticker = str(row.get("종목코드", row.iloc[0]) if "종목코드" in df.columns else row.iloc[0]).strip()
+        if not ticker or len(ticker) != 6:
+            continue
+        name_col = "종목명" if "종목명" in df.columns else df.columns[1]
+        close_col = "종가" if "종가" in df.columns else "TDD_CLSPRC"
+        chg_col = "등락률" if "등락률" in df.columns else "FLUC_RT"
+        vol_col = "거래량" if "거래량" in df.columns else "ACC_TRDVOL"
+        tv_col = "거래대금" if "거래대금" in df.columns else "ACC_TRDVAL"
+        cap_col = "시가총액" if "시가총액" in df.columns else "MKTCAP"
+        result.append({
+            "ticker": ticker,
+            "name": str(row.get(name_col, "")),
+            "market": mkt_label,
+            "close": _pi(row.get(close_col, 0)),
+            "chg_pct": _pf(row.get(chg_col, 0)),
+            "volume": _pi(row.get(vol_col, 0)),
+            "trade_value": _pi(row.get(tv_col, 0)),
+            "market_cap": _pi(row.get(cap_col, 0)),
+        })
+    return result
 
 
 def _market_data_pykrx(date: str, market: str) -> list[dict]:
     try:
-        # pykrx 전에 세션 워밍업
         _warmup_pykrx_session()
         from pykrx import stock
         mkt = "KOSPI" if market == "STK" else "KOSDAQ"
@@ -239,18 +266,26 @@ def _market_data_pykrx(date: str, market: str) -> list[dict]:
 
 
 def _warmup_pykrx_session():
-    """pykrx 호출 전 KRX 메인 페이지 방문으로 세션 쿠키 확보."""
+    """pykrx 호출 전 KRX 페이지 방문으로 세션 쿠키 확보 시도."""
     try:
-        sess = requests.Session()
-        sess.headers.update(KRX_HEADERS)
-        sess.get("https://data.krx.co.kr/", timeout=10)
+        import pykrx
+        # pykrx 내부에서 사용하는 requests 세션에 쿠키 주입
+        warm = requests.Session()
+        warm.headers.update(KRX_HEADERS)
+        warm.get(KRX_PAGE_URL, timeout=10)
+        cookies = dict(warm.cookies)
+        print(f"[pykrx] 세션 워밍업: 쿠키={list(cookies.keys())}")
         # pykrx 내부 세션에 쿠키 주입 시도
         try:
             from pykrx.website.krx import krxio
-            if hasattr(krxio, '_session'):
-                for cookie in sess.cookies:
-                    krxio._session.cookies.set(cookie.name, cookie.value)
-                print("[pykrx] 세션 쿠키 주입 완료")
+            for attr in ("_session", "session"):
+                if hasattr(krxio, attr):
+                    s = getattr(krxio, attr)
+                    if hasattr(s, "cookies"):
+                        for k, v in cookies.items():
+                            s.cookies.set(k, v)
+                        print(f"[pykrx] 쿠키 주입 성공 ({attr})")
+                        break
         except Exception:
             pass
     except Exception as e:
@@ -261,9 +296,33 @@ def _warmup_pykrx_session():
 # 2) 전종목 PER/PBR — MDCSTAT03901
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def fetch_fundamental(date: str, market: str = "STK", sess: requests.Session = None) -> dict:
-    # ── Primary: OTP CSV ──
+    # ── Primary: 세션 기반 JSON ──
     try:
-        sess = sess or _get_krx_session()
+        form = {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT03901",
+            "locale": "ko_KR",
+            "mktId": market,
+            "trdDd": date,
+        }
+        body = _krx_json_post(sess, form)
+        records = body.get("output", body.get("OutBlock_1", []))
+        result = {}
+        for r in records:
+            ticker = r.get("ISU_SRT_CD", "")
+            if ticker:
+                result[ticker] = {
+                    "per": _pf(r.get("PER", "0")),
+                    "pbr": _pf(r.get("PBR", "0")),
+                }
+        print(f"[JSON] {market} PER/PBR: {len(result)}종목")
+        if result:
+            return result
+        raise RuntimeError("JSON PER/PBR 파싱 결과 0종목")
+    except Exception as e:
+        print(f"[JSON] {market} PER/PBR 실패: {e} → OTP CSV fallback")
+
+    # ── Fallback 1: 세션 기반 OTP CSV ──
+    try:
         otp_params = {
             "locale": "ko_KR",
             "mktId": market,
@@ -289,30 +348,7 @@ def fetch_fundamental(date: str, market: str = "STK", sess: requests.Session = N
             return result
         raise RuntimeError("OTP CSV PER/PBR 파싱 결과 0종목")
     except Exception as e:
-        print(f"[OTP] {market} PER/PBR OTP 실패: {e} → JSON fallback")
-
-    # ── Fallback 1: JSON ──
-    try:
-        form = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT03901",
-            "locale": "ko_KR",
-            "mktId": market,
-            "trdDd": date,
-        }
-        body = _krx_json_post(form)
-        records = body.get("output", body.get("OutBlock_1", []))
-        result = {}
-        for r in records:
-            ticker = r.get("ISU_SRT_CD", "")
-            if ticker:
-                result[ticker] = {
-                    "per": _pf(r.get("PER", "0")),
-                    "pbr": _pf(r.get("PBR", "0")),
-                }
-        print(f"[JSON] {market} PER/PBR: {len(result)}종목")
-        return result
-    except Exception as e:
-        print(f"[JSON] {market} PER/PBR 실패: {e} → pykrx fallback")
+        print(f"[OTP] {market} PER/PBR OTP 실패: {e} → pykrx fallback")
 
     # ── Fallback 2: pykrx ──
     return _fundamental_pykrx(date, market)
@@ -343,10 +379,40 @@ def fetch_investor_data(date: str, market: str = "STK", sess: requests.Session =
     result = {}
     inv_types = [("9000", "foreign"), ("7050", "inst"), ("8000", "indiv")]
 
-    sess = sess or _get_krx_session()
     for inv_code, prefix in inv_types:
         got_data = False
-        # ── Primary: OTP CSV ──
+
+        # ── Primary: 세션 기반 JSON ──
+        try:
+            form = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT02401",
+                "locale": "ko_KR",
+                "strtDd": date,
+                "endDd": date,
+                "mktId": market,
+                "invstTpCd": inv_code,
+            }
+            body = _krx_json_post(sess, form)
+            records = body.get("output", body.get("OutBlock_1", []))
+            for r in records:
+                ticker = r.get("ISU_SRT_CD", "")
+                if not ticker:
+                    continue
+                if ticker not in result:
+                    result[ticker] = {}
+                result[ticker][f"{prefix}_net_qty"] = _pi(r.get("NETBID_TRDVOL"))
+                result[ticker][f"{prefix}_net_amt"] = _pi(r.get("NETBID_TRDVAL"))
+            print(f"[JSON] {market} 투자자({prefix}): {len(records)}종목")
+            if records:
+                got_data = True
+        except Exception as e:
+            print(f"[JSON] {market} 투자자({prefix}) 실패: {e} → OTP CSV fallback")
+
+        if got_data:
+            time.sleep(1)
+            continue
+
+        # ── Fallback 1: 세션 기반 OTP CSV ──
         try:
             otp_params = {
                 "locale": "ko_KR",
@@ -373,38 +439,8 @@ def fetch_investor_data(date: str, market: str = "STK", sess: requests.Session =
                 result[ticker][f"{prefix}_net_amt"] = _pi(row.get(amt_col, 0)) if amt_col else 0
                 count += 1
             print(f"[OTP] {market} 투자자({prefix}): {count}종목")
-            if count > 0:
-                got_data = True
         except Exception as e:
-            print(f"[OTP] {market} 투자자({prefix}) OTP 실패: {e} → JSON fallback")
-
-        if got_data:
-            time.sleep(1)
-            continue
-
-        # ── Fallback 1: JSON ──
-        try:
-            form = {
-                "bld": "dbms/MDC/STAT/standard/MDCSTAT02401",
-                "locale": "ko_KR",
-                "strtDd": date,
-                "endDd": date,
-                "mktId": market,
-                "invstTpCd": inv_code,
-            }
-            body = _krx_json_post(form)
-            records = body.get("output", body.get("OutBlock_1", []))
-            for r in records:
-                ticker = r.get("ISU_SRT_CD", "")
-                if not ticker:
-                    continue
-                if ticker not in result:
-                    result[ticker] = {}
-                result[ticker][f"{prefix}_net_qty"] = _pi(r.get("NETBID_TRDVOL"))
-                result[ticker][f"{prefix}_net_amt"] = _pi(r.get("NETBID_TRDVAL"))
-            print(f"[JSON] {market} 투자자({prefix}): {len(records)}종목")
-        except Exception as e:
-            print(f"[JSON] {market} 투자자({prefix}) 실패: {e}")
+            print(f"[OTP] {market} 투자자({prefix}) OTP 실패: {e}")
         time.sleep(1)
     return result
 
@@ -416,7 +452,7 @@ def build_db(date: str) -> dict:
     """전종목 시세+수급 크롤링 후 DB dict 생성."""
     print(f"[KRX] 크롤링 시작: {date}")
 
-    # 세션 1개를 전체 크롤링에 재사용
+    # 세션 1개를 전체 크롤링에 재사용 (JSESSIONID 유지)
     sess = _get_krx_session()
 
     # 1) 시세
