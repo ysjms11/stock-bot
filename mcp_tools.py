@@ -417,8 +417,10 @@ MCP_TOOLS = [
                      },
                      "required": ["action", "ticker"]}},
     # 9. get_alerts (유지)
-    {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 % + 매수감시 목록",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_alerts",     "description": "손절가 목록 + 현재가 대비 손절까지 남은 % + 매수감시 목록. brief=true 시 핵심 필드만 반환.",
+     "inputSchema": {"type": "object", "properties": {
+         "brief": {"type": "boolean", "description": "true 시 핵심 필드만 (memo/changelog/compares 제거)"},
+     }, "required": []}},
     # 10. get_market_signal ← get_short_sale + get_vi_status + get_program_trade
     {"name": "get_market_signal",
      "description": "시장 시그널 통합. mode별: short_sale=공매도일별추이, vi=VI발동종목현황, program_trade=프로그램매매투자자별동향, credit=신용잔고일별추이, lending=대차거래일별추이",
@@ -441,10 +443,11 @@ MCP_TOOLS = [
                      },
                      "required": []}},
     # 12. get_consensus (유지)
-    {"name": "get_consensus",  "description": "종목별 증권사 컨센서스 목표주가/투자의견 조회 (FnGuide 기반). 평균·최고·최저 목표주가, 매수/중립/매도 건수, 증권사별 최신 목표가 반환.",
+    {"name": "get_consensus",  "description": "종목별 증권사 컨센서스 목표주가/투자의견 조회 (FnGuide 기반). brief=true 시 reports/broker_targets 최근 5건만.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker": {"type": "string", "description": "한국 종목코드 6자리 (예: 009540)"},
+                         "brief": {"type": "boolean", "description": "true 시 reports/broker_targets 최근 5건만"},
                      },
                      "required": ["ticker"]}},
     # 13. set_alert (확장 ← + delete_alert)
@@ -479,10 +482,11 @@ MCP_TOOLS = [
                      "required": []}},
     # 14. get_portfolio_history (유지)
     {"name": "get_portfolio_history",
-     "description": "포트폴리오 스냅샷 히스토리 + 드로다운 분석. 주간/월간 수익률, 월간 최대 드로다운, 투자규칙 경고(주간-4%/월간-7%/연속손절3회) 포함.",
+     "description": "포트폴리오 스냅샷 히스토리 + 드로다운 분석. brief=true 시 스냅샷 핵심 필드만 (holdings 제거).",
      "inputSchema": {"type": "object",
                      "properties": {
                          "days": {"type": "integer", "description": "최근 N일 스냅샷 반환 (기본 30, 최대 365)"},
+                         "brief": {"type": "boolean", "description": "true 시 스냅샷에서 holdings 제거, 핵심 집계만"},
                      },
                      "required": []}},
     # 15. get_trade_stats (유지)
@@ -1681,13 +1685,35 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             if not isinstance(cmp_log, list):
                 cmp_log = []
             recent_compares = cmp_log[-3:][::-1]
-            result = {
-                "alerts": alerts,
-                "watch_alerts": watch_alerts,
-                "recent_decisions": recent_decisions,
-                "recent_compares": recent_compares,
-                "recent_changelog": load_watchlist_log()[-20:],
-            }
+            brief = arguments.get("brief", False)
+            if isinstance(brief, str):
+                brief = brief.lower() in ("true", "1", "yes")
+
+            if brief:
+                alerts = [{"ticker": a["ticker"], "name": a["name"],
+                           "gap_pct": a.get("gap_pct"), "target_pct": a.get("target_pct")}
+                          for a in alerts]
+                watch_alerts = [{"ticker": w["ticker"], "name": w["name"],
+                                 "buy_price": w["buy_price"], "cur_price": w["cur_price"],
+                                 "gap_pct": w["gap_pct"], "triggered": w["triggered"]}
+                                for w in watch_alerts]
+                recent_decisions = recent_decisions[:1]
+                for d in recent_decisions:
+                    for k in ("notes", "watchlist", "changelog"):
+                        d.pop(k, None)
+                result = {
+                    "alerts": alerts,
+                    "watch_alerts": watch_alerts,
+                    "recent_decisions": recent_decisions,
+                }
+            else:
+                result = {
+                    "alerts": alerts,
+                    "watch_alerts": watch_alerts,
+                    "recent_decisions": recent_decisions,
+                    "recent_compares": recent_compares,
+                    "recent_changelog": load_watchlist_log()[-20:],
+                }
 
         elif name == "set_alert":
             log_type     = arguments.get("log_type", "").strip().lower()
@@ -2123,27 +2149,45 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
         elif name == "get_consensus":
             ticker = arguments.get("ticker", "").strip().upper()
+            brief = arguments.get("brief", False)
+            if isinstance(brief, str):
+                brief = brief.lower() in ("true", "1", "yes")
             if not ticker:
                 result = {"error": "ticker는 필수입니다"}
             elif ticker.isdigit():
-                # 한국 종목 (6자리 숫자) → FnGuide
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_fnguide_consensus, ticker
                 )
             else:
-                # 미국 종목 (영문 티커) → yfinance
                 r = await asyncio.get_event_loop().run_in_executor(
                     None, get_us_consensus, ticker
                 )
                 result = r if r else {"error": f"{ticker} 컨센서스 데이터 없음"}
+            if brief and isinstance(result, dict) and "error" not in result:
+                if "reports" in result:
+                    result["reports"] = [
+                        {k: r[k] for k in ("broker", "date", "target", "title") if k in r}
+                        for r in result["reports"][:5]
+                    ]
+                if "broker_targets" in result:
+                    result["broker_targets"] = result["broker_targets"][:5]
 
         elif name == "get_portfolio_history":
             days = min(int(arguments.get("days", 30) or 30), 365)
+            brief = arguments.get("brief", False)
+            if isinstance(brief, str):
+                brief = brief.lower() in ("true", "1", "yes")
             history = load_json(PORTFOLIO_HISTORY_FILE, {"snapshots": []})
             snaps = sorted(history.get("snapshots", []), key=lambda x: x.get("date", ""))
             cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
             recent = [s for s in snaps if s.get("date", "") >= cutoff]
             dd = check_drawdown()
+            if brief:
+                recent = [
+                    {k: s.get(k) for k in ("date", "total_asset_krw", "cash_weight_pct",
+                                            "kr_eval", "us_eval_krw") if k in s}
+                    for s in recent
+                ]
             result = {
                 "days": days,
                 "snapshot_count": len(recent),
