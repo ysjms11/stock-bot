@@ -23,6 +23,7 @@ from kis_api import (
     fetch_us_short_interest,
     cmd_regime,
     kis_finance_ratio_rank, kis_near_new_highlow, kis_inquire_member,
+    kis_daily_credit_balance, kis_daily_loan_trans, kis_overtime_price, kis_asking_price,
     load_corp_codes, search_dart_reports, save_dart_report,
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
@@ -350,11 +351,11 @@ MCP_TOOLS = [
                      "required": []}},
     # 3. get_stock_detail (확장 ← + get_batch_detail)
     {"name": "get_stock_detail",
-     "description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉 반환. tickers 전달 시 여러 종목 일괄 조회 (최대 20종목). mode='volume_profile' 시 볼륨 프로파일(매물대) 분석 (period: Y1/Y2/Y3 지원).",
+     "description": "개별 종목 상세: 현재가·PER·PBR·수급 또는 일봉 조회. 한국/미국 자동 판별. period 지정 시 일봉. mode별: volume_profile=매물대분석, after_hours=시간외현재가, orderbook=호가잔량",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker": {"type": "string", "description": "한국 종목코드(예: 005930) 또는 미국 티커(예: TSLA, AAPL)"},
-                         "mode": {"type": "string", "description": "volume_profile: 볼륨 프로파일(매물대) 분석", "enum": ["volume_profile"]},
+                         "mode": {"type": "string", "description": "volume_profile/after_hours/orderbook", "enum": ["volume_profile", "after_hours", "orderbook"]},
                          "period": {"type": "string", "description": "일봉 조회: D60/D30/W20 등. volume_profile 시: Y1=1년, Y2=2년, Y3=3년 (기본 Y1)"},
                          "bins": {"type": "integer", "description": "볼륨 프로파일 가격 구간 수 (기본 20, 최대 50)"},
                          "tickers": {"type": "string", "description": "콤마 구분 종목코드로 다종목 일괄 조회 (예: '005930,000660'). 최대 20종목."},
@@ -418,12 +419,12 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     # 10. get_market_signal ← get_short_sale + get_vi_status + get_program_trade
     {"name": "get_market_signal",
-     "description": "시장 시그널 통합. mode별: short_sale=공매도일별추이, vi=VI발동종목현황, program_trade=프로그램매매투자자별동향",
+     "description": "시장 시그널 통합. mode별: short_sale=공매도일별추이, vi=VI발동종목현황, program_trade=프로그램매매투자자별동향, credit=신용잔고일별추이, lending=대차거래일별추이",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode": {"type": "string", "enum": ["short_sale", "vi", "program_trade"], "description": "시그널 조회 모드"},
-                         "ticker": {"type": "string", "description": "종목코드 (short_sale 시 필수)"},
-                         "days": {"type": "integer", "description": "short_sale 조회 일수 (기본 10, 최대 60)"},
+                         "mode": {"type": "string", "enum": ["short_sale", "vi", "program_trade", "credit", "lending"], "description": "시그널 조회 모드"},
+                         "ticker": {"type": "string", "description": "종목코드 (short_sale/credit/lending 시 필수)"},
+                         "days": {"type": "integer", "description": "short_sale/credit/lending 조회 일수 (기본 20, 최대 60)"},
                          "market": {"type": "string", "description": "program_trade 시 시장 (kospi/kosdaq, 기본 kospi)"},
                      },
                      "required": ["mode"]}},
@@ -844,6 +845,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         result["name"] = stock_name
                         result["period"] = period
                         result["market"] = "US" if _is_us_ticker(ticker) else "KR"
+
+                elif mode == "after_hours":
+                    # ── 시간외 현재가 ──
+                    data = await kis_overtime_price(ticker, token)
+                    result = data
+
+                elif mode == "orderbook":
+                    # ── 호가 잔량 ──
+                    data = await kis_asking_price(ticker, token)
+                    result = data
 
                 elif period:
                     # ── 일봉/주봉 조회 모드 ──
@@ -1960,8 +1971,36 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "items":  rows,
                 }
 
+            elif signal_mode == "credit":
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    n = min(int(arguments.get("days", 20) or 20), 60)
+                    rows = await kis_daily_credit_balance(ticker, token, n=n)
+                    warning = any(r.get("credit_ratio", 0) >= 10 for r in rows[:3])
+                    result = {
+                        "ticker": ticker,
+                        "count": len(rows),
+                        "warning": "⚠️ 신용잔고 비율 10% 이상 — 투기적 과열 주의" if warning else None,
+                        "items": rows,
+                    }
+
+            elif signal_mode == "lending":
+                ticker = arguments.get("ticker", "").strip()
+                if not ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                else:
+                    n = min(int(arguments.get("days", 20) or 20), 60)
+                    rows = await kis_daily_loan_trans(ticker, token, n=n)
+                    result = {
+                        "ticker": ticker,
+                        "count": len(rows),
+                        "items": rows,
+                    }
+
             else:
-                result = {"error": f"알 수 없는 mode: {signal_mode}. short_sale/vi/program_trade 중 하나"}
+                result = {"error": f"알 수 없는 mode: {signal_mode}. short_sale/vi/program_trade/credit/lending 중 하나"}
 
         elif name == "get_news":
             sentiment = arguments.get("sentiment", False)

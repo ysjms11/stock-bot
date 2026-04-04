@@ -392,6 +392,10 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | `FHPST01750000` | 재무비율 순위 (전종목) | `kis_finance_ratio_rank()` |
 | `FHPST01870000` | 52주 신고가/신저가 근접 | `kis_near_new_highlow()` |
 | `FHKST01010600` | 거래원(증권사) 매매 | `kis_inquire_member()` |
+| `FHPST04760000` | 신용잔고 일별추이 | `kis_daily_credit_balance()` |
+| `HHPST074500C0` | 대차거래 일별추이 | `kis_daily_loan_trans()` |
+| `FHPST02300000` | 시간외 현재가 | `kis_overtime_price()` |
+| `FHKST01010200` | 호가 잔량 (10호가) | `kis_asking_price()` |
 
 **해외 주요 TR_ID**
 

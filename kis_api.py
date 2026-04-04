@@ -2048,6 +2048,151 @@ async def kis_inquire_member(ticker: str, token: str) -> dict:
     }
 
 
+async def kis_daily_credit_balance(ticker: str, token: str, n: int = 20) -> list:
+    """신용잔고 일별추이 (FHPST04760000).
+
+    Returns: [{date, credit_balance, credit_ratio, change, ...}, ...]
+    """
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-credit-balance",
+                              "FHPST04760000", token, {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20476",
+            "FID_INPUT_ISCD": ticker,
+            "FID_INPUT_DATE_1": "",
+        })
+    items = d.get("output", d.get("output1", []))
+    if isinstance(items, dict):
+        items = [items]
+    result = []
+    for item in items[:n]:
+        result.append({
+            "date": (item.get("bsop_date") or item.get("stck_bsop_date") or "").strip(),
+            "credit_balance": int(item.get("crdt_ldng_remn", 0) or 0),
+            "credit_ratio": float(item.get("crdt_ldng_remn_rate", 0) or 0),
+            "credit_new": int(item.get("crdt_ldng_new_qty", 0) or 0),
+            "credit_repay": int(item.get("crdt_ldng_repy_qty", 0) or 0),
+            "close": int(item.get("stck_prpr", 0) or item.get("stck_clpr", 0) or 0),
+        })
+    # 전일 대비 증감 계산
+    for i, row in enumerate(result):
+        if i + 1 < len(result):
+            row["change"] = row["credit_balance"] - result[i + 1]["credit_balance"]
+        else:
+            row["change"] = 0
+    return result
+
+
+async def kis_daily_loan_trans(ticker: str, token: str, n: int = 20) -> list:
+    """대차거래 일별추이 (HHPST074500C0).
+
+    Returns: [{date, loan_balance, loan_new, loan_repay, ...}, ...]
+    """
+    today = datetime.now(KST).strftime("%Y%m%d")
+    start = (datetime.now(KST) - timedelta(days=n * 2)).strftime("%Y%m%d")
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-loan-trans",
+                              "HHPST074500C0", token, {
+            "MRKT_DIV_CLS_CODE": "3",
+            "MKSC_SHRN_ISCD": ticker,
+            "START_DATE": start,
+            "END_DATE": today,
+            "CTS": "",
+        })
+    items = d.get("output1", d.get("output", []))
+    if isinstance(items, dict):
+        items = [items]
+    result = []
+    for item in items[:n]:
+        result.append({
+            "date": (item.get("trns_date") or item.get("bsop_date") or "").strip(),
+            "loan_balance": int(item.get("loan_remn", 0) or item.get("stln_remn", 0) or 0),
+            "loan_new": int(item.get("loan_new_qty", 0) or item.get("stln_new_qty", 0) or 0),
+            "loan_repay": int(item.get("loan_repy_qty", 0) or item.get("stln_repy_qty", 0) or 0),
+            "loan_balance_amt": int(item.get("loan_remn_amt", 0) or 0),
+        })
+    # 전일 대비 증감
+    for i, row in enumerate(result):
+        if i + 1 < len(result):
+            row["change"] = row["loan_balance"] - result[i + 1]["loan_balance"]
+        else:
+            row["change"] = 0
+    return result
+
+
+async def kis_overtime_price(ticker: str, token: str) -> dict:
+    """시간외 현재가 (FHPST02300000).
+
+    Returns: {ticker, overtime_price, overtime_chg_rate, overtime_vol, ...}
+    """
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-overtime-price",
+                              "FHPST02300000", token, {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": ticker,
+        })
+    out = d.get("output", {})
+    if isinstance(out, list):
+        out = out[0] if out else {}
+    return {
+        "ticker": ticker,
+        "overtime_price": int(out.get("ovtm_untp_prpr", 0) or 0),
+        "overtime_chg_rate": float(out.get("ovtm_untp_prdy_ctrt", 0) or 0),
+        "overtime_vol": int(out.get("ovtm_untp_vol", 0) or 0),
+        "overtime_tr_pbmn": int(out.get("ovtm_untp_tr_pbmn", 0) or 0),
+        "close": int(out.get("stck_prpr", 0) or 0),
+        "base_price": int(out.get("stck_sdpr", 0) or 0),
+        "chg_pct": float(out.get("prdy_ctrt", 0) or 0),
+    }
+
+
+async def kis_asking_price(ticker: str, token: str) -> dict:
+    """호가 잔량 (FHKST01010200).
+
+    Returns: {ticker, asks: [{price, volume}], bids: [{price, volume}],
+             total_ask_vol, total_bid_vol, bid_ask_ratio}
+    """
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+                              "FHKST01010200", token, {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": ticker,
+        })
+    out1 = d.get("output1", {})
+    out2 = d.get("output2", {})
+    if isinstance(out1, list):
+        out1 = out1[0] if out1 else {}
+    if isinstance(out2, list):
+        out2 = out2[0] if out2 else {}
+
+    asks = []  # 매도호가 (낮은 가격부터)
+    bids = []  # 매수호가 (높은 가격부터)
+    for i in range(1, 11):
+        ask_p = int(out1.get(f"askp{i}", 0) or 0)
+        ask_v = int(out1.get(f"askp_rsqn{i}", 0) or 0)
+        bid_p = int(out1.get(f"bidp{i}", 0) or 0)
+        bid_v = int(out1.get(f"bidp_rsqn{i}", 0) or 0)
+        if ask_p:
+            asks.append({"price": ask_p, "volume": ask_v})
+        if bid_p:
+            bids.append({"price": bid_p, "volume": bid_v})
+
+    total_ask = int(out1.get("total_askp_rsqn", 0) or 0)
+    total_bid = int(out1.get("total_bidp_rsqn", 0) or 0)
+    ratio = round(total_bid / total_ask * 100, 1) if total_ask > 0 else 0
+
+    return {
+        "ticker": ticker,
+        "asks": asks,
+        "bids": bids,
+        "total_ask_vol": total_ask,
+        "total_bid_vol": total_bid,
+        "bid_ask_ratio": ratio,
+        "price": int(out2.get("stck_prpr", 0) or 0),
+        "chg_pct": float(out2.get("prdy_ctrt", 0) or 0),
+    }
+
+
 async def kis_us_updown_rate(token: str, sort: str = "rise",
                              exchange: str = "NAS", n: int = 20) -> list:
     """해외주식 등락률 상위/하위 종목 순위 (HHDFS76290000).
