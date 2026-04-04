@@ -1,14 +1,14 @@
 import os
 import json
 import asyncio
-from datetime import datetime, timedelta, timezone, time as dtime
+from datetime import datetime, timedelta, time as dtime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from aiohttp import web
 
 from kis_api import *
 from kis_api import (
-    _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _fetch_sector_flow, _guess_excd,
+    _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _guess_excd,
     ws_manager, get_ws_tickers,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
@@ -121,7 +121,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 chg = float(d.get("prdy_ctrt", 0) or 0)
                 sector_parts.append(f"{label}{chg:+.2f}%")
                 await asyncio.sleep(0.05)
-            except:
+            except Exception:
                 pass
         if sector_parts:
             msg += f"[섹터] {' | '.join(sector_parts)}\n"
@@ -352,7 +352,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                     if cur_p > 0 and (cur_p - buy_p) / buy_p * 100 <= 5:
                         near.append((wa_info.get("name", wa_ticker), cur_p, buy_p,
                                      (cur_p - buy_p) / buy_p * 100, _is_us_ticker(wa_ticker)))
-                except:
+                except Exception:
                     pass
             if near:
                 msg += "\n[감시 접근]\n"
@@ -362,7 +362,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                         msg += f"{sign} {name}: ${cur:,.2f} ← 감시 ${buy:,.2f} ({gap:+.1f}%)\n"
                     else:
                         msg += f"{sign} {name}: {cur:,}원 ← 감시 {buy:,.0f}원 ({gap:+.1f}%)\n"
-        except:
+        except Exception:
             pass
 
         msg += "\n→ Claude에서 점검하세요"
@@ -1672,7 +1672,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if v >= 200: vt = "🔥 급증"
             elif v >= 150: vt = "⚡ 증가"
             elif v <= 50: vt = "😴 감소"
-        except: pass
+        except Exception: pass
 
         msg = (
             f"{cs} *{ticker} 분석*\n\n"
@@ -1959,11 +1959,11 @@ async def setstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ); return
     ticker, name = context.args[0].upper(), context.args[1]
     try: stop = float(context.args[2])
-    except: await update.message.reply_text("❌ 손절가는 숫자"); return
+    except Exception: await update.message.reply_text("❌ 손절가는 숫자"); return
     fourth = 0.0
     if len(context.args) >= 4:
         try: fourth = float(context.args[3])
-        except: pass
+        except Exception: pass
     stops = load_stoploss()
     if _is_us_ticker(ticker):
         us = stops.get("us_stocks", {})

@@ -1727,6 +1727,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "saved_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
                 }
                 log[date] = entry
+                # 365일 초과 항목 정리
+                if len(log) > 365:
+                    sorted_dates = sorted(log.keys())
+                    for old_date in sorted_dates[:-365]:
+                        del log[old_date]
                 save_json(DECISION_LOG_FILE, log)
                 result = {"ok": True, "message": f"{date} 투자판단 저장됨", "date": date}
 
