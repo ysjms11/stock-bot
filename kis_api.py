@@ -4243,6 +4243,7 @@ def apply_debounce(new_score: float, state: dict) -> dict:
     prev_pending = state.get("pending_regime", "")
 
     if new_regime == prev_regime:
+        state["regime"] = new_regime
         state["consecutive_days"] = state.get("consecutive_days", 0) + 1
         state["pending_regime"] = ""
         state["pending_days"] = 0
@@ -4257,6 +4258,7 @@ def apply_debounce(new_score: float, state: dict) -> dict:
             state["pending_regime"] = ""
             state["pending_days"] = 0
     else:
+        state.setdefault("regime", prev_regime)
         state["pending_regime"] = new_regime
         state["pending_days"] = 1
 
