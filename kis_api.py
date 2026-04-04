@@ -4071,7 +4071,8 @@ async def compute_us_signals() -> dict:
         failed.append("VIX텀")
     await asyncio.sleep(0.3)
 
-    # 6. 금리차 (10Y - 13주 T-bill)
+    # 6. 금리차 (10Y-3M 스프레드, ^TNX - ^IRX)
+    #    Bauer & Mertens(2018, SF Fed): 10Y-3M이 10Y-2Y보다 경기침체 예측력 우수
     tnx = _yf_history("^TNX", "2y")
     irx = _yf_history("^IRX", "2y")
     if tnx and irx:
@@ -4079,11 +4080,11 @@ async def compute_us_signals() -> dict:
         spread = [t - i for t, i in zip(tnx[-ml:], irx[-ml:])]
         zs = _calc_zscore(spread)
         if zs:
-            signals["금리차"] = _sig_entry(round(zs["value"], 2), zs["z"], "%p")
+            signals["10Y-3M금리차"] = _sig_entry(round(zs["value"], 2), zs["z"], "%p")
         else:
-            failed.append("금리차")
+            failed.append("10Y-3M금리차")
     else:
-        failed.append("금리차")
+        failed.append("10Y-3M금리차")
 
     # 점수
     z_vals = [s["z"] for s in signals.values()]
