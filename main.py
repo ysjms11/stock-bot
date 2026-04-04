@@ -9,7 +9,7 @@ from aiohttp import web
 from kis_api import *
 from kis_api import (
     _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _guess_excd,
-    ws_manager, get_ws_tickers,
+    ws_manager, get_ws_tickers, close_session,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
 from krx_crawler import KRX_DB_DIR, _cleanup_old_db
@@ -2582,11 +2582,15 @@ async def _run_all(app, port):
     print(f"[WS] 실시간 매니저 시작 ({len(ws_manager._subscribed)}개 KR 종목)")
 
     # 텔레그램 봇 비동기 실행
-    async with app:
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()  # 무한 대기
+    try:
+        async with app:
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+            await asyncio.Event().wait()  # 무한 대기
+    finally:
+        await close_session()
+        print("[Shutdown] aiohttp 공유 세션 정리 완료")
 
 
 if __name__ == "__main__":

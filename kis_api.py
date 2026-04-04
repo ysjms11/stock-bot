@@ -9,6 +9,30 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 공유 aiohttp 세션 (TCP 연결 풀 재사용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_shared_session: aiohttp.ClientSession | None = None
+
+
+def _get_session() -> aiohttp.ClientSession:
+    """공유 aiohttp 세션 반환. 없거나 닫혔으면 새로 생성."""
+    global _shared_session
+    if _shared_session is None or _shared_session.closed:
+        connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
+        timeout = aiohttp.ClientTimeout(total=30)
+        _shared_session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+    return _shared_session
+
+
+async def close_session():
+    """서버 종료 시 세션 정리."""
+    global _shared_session
+    if _shared_session and not _shared_session.closed:
+        await _shared_session.close()
+        _shared_session = None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 & 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -895,10 +919,24 @@ def _kis_headers(token, tr_id):
 
 
 async def _kis_get(session, path, tr_id, token, params):
+    """KIS API GET 호출 (429/5xx 자동 재시도, 공유 세션 fallback)."""
+    s = session if session and not getattr(session, 'closed', False) else _get_session()
     url = f"{KIS_BASE_URL}{path}"
-    async with session.get(url, headers=_kis_headers(token, tr_id), params=params) as r:
-        data = await r.json(content_type=None)
-        return r.status, data
+    headers = _kis_headers(token, tr_id)
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        async with s.get(url, headers=headers, params=params) as r:
+            if r.status == 429 and attempt < max_retries:
+                print(f"[RETRY] {path} → 429, attempt {attempt}/{max_retries}")
+                await asyncio.sleep(1.0 * attempt)
+                continue
+            if r.status in (500, 502, 503) and attempt < max_retries:
+                print(f"[RETRY] {path} → {r.status}, attempt {attempt}/{max_retries}")
+                await asyncio.sleep(2.0)
+                continue
+            data = await r.json(content_type=None)
+            return r.status, data
+    return 500, {}
 
 
 async def kis_stock_price(ticker, token):
