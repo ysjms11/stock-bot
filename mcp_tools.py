@@ -22,6 +22,7 @@ from kis_api import (
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_us_short_interest,
     cmd_regime,
+    kis_finance_ratio_rank, kis_near_new_highlow, kis_inquire_member,
     load_corp_codes, search_dart_reports, save_dart_report,
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
@@ -570,6 +571,38 @@ MCP_TOOLS = [
                          "market": {"type": "string", "description": "kospi/kosdaq/all (기본 all)"},
                      },
                      "required": []}},
+    # 22. get_finance_rank — 재무비율 순위
+    {"name": "get_finance_rank",
+     "description": "전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/순이익률/부채비율/매출성장률). KIS FHPST01750000.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "market": {"type": "string", "description": "0000=전체(기본), 0001=거래소, 1001=코스닥, 2001=코스피200"},
+                         "year": {"type": "string", "description": "회계연도 (기본: 전년도)"},
+                         "quarter": {"type": "string", "description": "0=1Q, 1=반기, 2=3Q, 3=결산(기본)"},
+                         "sort": {"type": "string", "description": "7=수익성(기본), 11=안정성, 15=성장성, 20=활동성"},
+                         "n": {"type": "integer", "description": "결과 수 (기본 30, 최대 100)"},
+                     },
+                     "required": []}},
+    # 23. get_highlow — 52주 신고가/신저가 근접
+    {"name": "get_highlow",
+     "description": "52주 신고가/신저가 근접 종목 순위. 괴리율 범위 필터. KIS FHPST01870000.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "mode": {"type": "string", "enum": ["high", "low"], "description": "high=신고가 근접(기본), low=신저가 근접"},
+                         "market": {"type": "string", "description": "0000=전체(기본), 0001=거래소, 1001=코스닥"},
+                         "gap_min": {"type": "integer", "description": "괴리율 최소 %(기본 0)"},
+                         "gap_max": {"type": "integer", "description": "괴리율 최대 %(기본 10)"},
+                         "n": {"type": "integer", "description": "결과 수 (기본 30)"},
+                     },
+                     "required": []}},
+    # 24. get_broker — 거래원(증권사) 매매 정보
+    {"name": "get_broker",
+     "description": "종목별 거래원(증권사) 매수/매도 상위 5곳. 외국계 증권사 동향 파악.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
+                     },
+                     "required": ["ticker"]}},
 ]
 
 
@@ -2647,6 +2680,46 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 if val is not None:
                     filters["n"] = int(val)
                 result = scan_stocks(db, filters, preset=preset)
+
+        elif name == "get_finance_rank":
+            market = arguments.get("market", "0000").strip()
+            year = arguments.get("year", "").strip()
+            quarter = arguments.get("quarter", "3").strip()
+            sort = arguments.get("sort", "7").strip()
+            n = min(int(arguments.get("n", 30) or 30), 100)
+            sort_labels = {"7": "수익성", "11": "안정성", "15": "성장성", "20": "활동성"}
+            items = await kis_finance_ratio_rank(token, market=market, year=year,
+                                                 quarter=quarter, sort=sort, n=n)
+            result = {
+                "sort": sort_labels.get(sort, sort),
+                "year": year or str(datetime.now(KST).year - 1),
+                "quarter": quarter,
+                "count": len(items),
+                "stocks": items,
+            }
+
+        elif name == "get_highlow":
+            mode = arguments.get("mode", "high").strip().lower()
+            market = arguments.get("market", "0000").strip()
+            gap_min = int(arguments.get("gap_min", 0) or 0)
+            gap_max = int(arguments.get("gap_max", 10) or 10)
+            n = min(int(arguments.get("n", 30) or 30), 100)
+            items = await kis_near_new_highlow(token, mode=mode, market=market,
+                                               gap_min=gap_min, gap_max=gap_max, n=n)
+            result = {
+                "mode": "52주 신고가 근접" if mode == "high" else "52주 신저가 근접",
+                "gap_range": f"{gap_min}%~{gap_max}%",
+                "count": len(items),
+                "stocks": items,
+            }
+
+        elif name == "get_broker":
+            ticker = arguments.get("ticker", "").strip()
+            if not ticker:
+                result = {"error": "ticker 필수"}
+            else:
+                data = await kis_inquire_member(ticker, token)
+                result = data
 
         else:
             result = {"error": f"unknown tool: {name}"}

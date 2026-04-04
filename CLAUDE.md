@@ -389,6 +389,9 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | `FHPST01680000` | 체결강도 상위 | `kis_volume_power_rank()` |
 | `FHPST01740000` | 시가총액 상위 (유니버스) | `fetch_universe_from_krx()` |
 | `HHKST668300C0` | 종목추정실적 | `kis_estimate_perform()` |
+| `FHPST01750000` | 재무비율 순위 (전종목) | `kis_finance_ratio_rank()` |
+| `FHPST01870000` | 52주 신고가/신저가 근접 | `kis_near_new_highlow()` |
+| `FHKST01010600` | 거래원(증권사) 매매 | `kis_inquire_member()` |
 
 **해외 주요 TR_ID**
 
@@ -422,7 +425,7 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 
 ---
 
-## MCP 도구 목록 (29개)
+## MCP 도구 목록 (32개)
 
 | # | 이름 | 설명 |
 |---|------|------|
@@ -455,6 +458,9 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | 27 | `get_batch_detail` | 다종목 일괄 조회 (최대 20종목, 현재가·PER·PBR·수급) |
 | 28 | `backup_data` | /data/*.json GitHub Gist 백업·복원·상태 조회 |
 | 29 | `get_scan` | KRX 전종목 스크리너 (시총/PER/PBR/수급비율/회전율 필터, 6개 프리셋) |
+| 30 | `get_finance_rank` | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
+| 31 | `get_highlow` | 52주 신고가/신저가 근접 종목 순위 (괴리율 필터) |
+| 32 | `get_broker` | 종목별 거래원(증권사) 매수/매도 상위 5곳 |
 
 ---
 

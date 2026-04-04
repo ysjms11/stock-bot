@@ -1,0 +1,432 @@
+{
+  "audit_date": "2026-04-03",
+  "summary": "open-trading-api has ~130 domestic + ~40 overseas functions. Our bot uses 21 domestic + 3 overseas TR_IDs. The KIS MCP server is an API search tool (not execution), and kis-ai-extensions is a quant strategy plugin.",
+
+  "already_used": [
+    {"tr_id": "FHKST01010100", "name": "국내 현재가 시세", "our_function": "kis_stock_price / kis_stock_price()", "our_tool": "get_stock_detail"},
+    {"tr_id": "FHKST01010900", "name": "국내 투자자별 수급", "our_function": "kis_investor_trend()", "our_tool": "get_investor_flow"},
+    {"tr_id": "FHPST01710000", "name": "거래량 상위", "our_function": "kis_volume_rank_api()", "our_tool": "scan_market"},
+    {"tr_id": "FHKUP03500100", "name": "업종별 시세", "our_function": "kis_sector_price()", "our_tool": "get_sector_flow"},
+    {"tr_id": "FHPTJ04060100", "name": "외국인 순매수 상위", "our_function": "kis_foreigner_trend()", "our_tool": "get_foreign_rank"},
+    {"tr_id": "FHPUP02100000", "name": "KOSPI/KOSDAQ 지수", "our_function": "get_kis_index()", "our_tool": "get_macro"},
+    {"tr_id": "CTPF1002R", "name": "종목 기본정보", "our_function": "kis_stock_info()", "our_tool": "get_stock_detail"},
+    {"tr_id": "FHKST01010600", "name": "신용잔고", "our_function": "kis_credit_balance()", "our_tool": "get_stock_detail"},
+    {"tr_id": "FHKST01010700", "name": "공매도", "our_function": "kis_short_selling()", "our_tool": "get_stock_detail"},
+    {"tr_id": "FHPST01700000", "name": "등락률 순위", "our_function": "kis_fluctuation_rank()", "our_tool": "get_price_rank"},
+    {"tr_id": "FHPTJ04160001", "name": "투자자별 일별 수급 히스토리", "our_function": "kis_investor_trend_history()", "our_tool": "get_investor_trend_history"},
+    {"tr_id": "FHKST03010100", "name": "일봉 차트 (거래량/종가)", "our_function": "kis_daily_volumes() / kis_daily_closes()", "our_tool": "get_stock_detail (period)"},
+    {"tr_id": "HHPPG046600C1", "name": "프로그램매매 당일 동향", "our_function": "kis_program_trade_today()", "our_tool": "get_program_trade"},
+    {"tr_id": "HHPTJ04160200", "name": "장중 투자자 추정 수급", "our_function": "kis_investor_trend_estimate()", "our_tool": "get_investor_estimate"},
+    {"tr_id": "FHPTJ04400000", "name": "외국인+기관 합산 순매수", "our_function": "kis_foreign_institution_total()", "our_tool": "get_foreign_institution"},
+    {"tr_id": "FHPST04830000", "name": "공매도 일별추이", "our_function": "kis_daily_short_sale()", "our_tool": "get_short_sale"},
+    {"tr_id": "FHKST01011800", "name": "종목 뉴스 헤드라인", "our_function": "kis_news_title()", "our_tool": "get_news"},
+    {"tr_id": "FHPST01390000", "name": "VI 발동 현황", "our_function": "kis_vi_status()", "our_tool": "get_vi_status"},
+    {"tr_id": "FHPST01680000", "name": "체결강도 상위", "our_function": "kis_volume_power_rank()", "our_tool": "get_volume_power"},
+    {"tr_id": "FHPST01740000", "name": "시가총액 상위 (유니버스)", "our_function": "fetch_universe_from_krx()", "our_tool": "internal"},
+    {"tr_id": "HHKST668300C0", "name": "종목추정실적", "our_function": "kis_estimate_perform()", "our_tool": "get_consensus"},
+    {"tr_id": "HHDFS00000300", "name": "해외 현재가", "our_function": "kis_us_stock_price()", "our_tool": "get_stock_detail (US)"},
+    {"tr_id": "HHDFS76200200", "name": "해외 현재가상세 (PER/PBR/시총/52주)", "our_function": "kis_us_stock_detail()", "our_tool": "get_stock_detail (US)"},
+    {"tr_id": "HHDFS76290000", "name": "해외 등락률 상위/하위", "our_function": "kis_us_updown_rate()", "our_tool": "get_us_price_rank"}
+  ],
+
+  "useful_missing": [
+    {
+      "tr_id": "FHKST66430100",
+      "name": "재무제표 - 대차대조표",
+      "description": "종목별 분기/연간 대차대조표 (자산, 부채, 자본 등)",
+      "priority": "high",
+      "reason": "현재 DART API로 영업이익만 조회 중. KIS 재무제표 API로 PER/PBR/ROE/부채비율 등을 종합 분석 가능. 스크리너 고도화에 핵심.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/balance-sheet",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHKST66430200",
+      "name": "재무제표 - 손익계산서",
+      "description": "종목별 분기/연간 손익계산서 (매출, 영업이익, 당기순이익 등)",
+      "priority": "high",
+      "reason": "DART 영업이익 조회를 대체/보완 가능. 매출 성장률, 순이익 추이 분석 가능.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/income-statement",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHKST66430300",
+      "name": "재무제표 - 재무비율",
+      "description": "ROE, ROA, 영업이익률, 순이익률, 부채비율 등 주요 재무비율",
+      "priority": "high",
+      "reason": "현재 재무비율 조회 기능 없음. 스크리너에서 ROE/ROA 필터 추가 가능.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/financial-ratio",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHPST01870000",
+      "name": "신고가/신저가 근접 종목",
+      "description": "52주 신고가/신저가에 근접한 종목 순위. 괴리율 범위 필터 가능.",
+      "priority": "high",
+      "reason": "52주 신고가 돌파 전략, 신저가 역발상 투자 모두에 유용. 현재 이 기능 완전히 부재.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/near-new-highlow",
+      "category": "D"
+    },
+    {
+      "tr_id": "FHKST01010600_member",
+      "name": "거래원 정보 (회원사별 매매)",
+      "description": "종목별 당일 증권사 매수/매도 상위 5곳, 외국계 증권사 동향",
+      "priority": "high",
+      "reason": "외국계 증권사 매수 동향은 기관 수급의 세부 분석에 핵심. 현재 기관/외국인 합산만 볼 수 있음.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-member",
+      "tr_id_actual": "FHKST01010600 (inquire-member용, credit_balance와 TR_ID 동일하지만 URL이 다름)",
+      "category": "E"
+    },
+    {
+      "tr_id": "FHPST04760000",
+      "name": "신용잔고 일별추이",
+      "description": "종목별 신용잔고(융자/대주) 일별 변화 추이",
+      "priority": "medium",
+      "reason": "신용잔고 급증은 투기적 매수 신호. 현재 당일 스냅샷만 있고 추이 분석 불가.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/daily-credit-balance",
+      "category": "C"
+    },
+    {
+      "tr_id": "HHPST074500C0",
+      "name": "대차거래 일별추이",
+      "description": "종목별 대차잔고(공매도용 대차) 일별 변화 추이, 대차거래 증감",
+      "priority": "medium",
+      "reason": "공매도 비율 변화 추적 가능. 현재 공매도 일별추이만 있고 대차잔고 추이는 없음.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/daily-loan-trans",
+      "category": "C"
+    },
+    {
+      "tr_id": "FHPST04770000",
+      "name": "증권사별 신용잔고",
+      "description": "종목별 증권사(회원사)별 신용잔고 현황",
+      "priority": "low",
+      "reason": "특정 증권사의 신용 집중도 확인 가능. 일반적 사용빈도는 낮음.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/credit-by-company",
+      "category": "C"
+    },
+    {
+      "tr_id": "FHPST02300000",
+      "name": "시간외 현재가",
+      "description": "시간외 단일가 현재가, 예상체결가, 거래량 등",
+      "priority": "medium",
+      "reason": "장 마감 후 시간외 거래 모니터링. 야간 뉴스 반응 확인에 유용.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-overtime-price",
+      "category": "F"
+    },
+    {
+      "tr_id": "FHPST02340000",
+      "name": "시간외 등락률 순위",
+      "description": "시간외 거래에서 등락률 상위/하위 종목",
+      "priority": "medium",
+      "reason": "장 마감 후 시간외에서 급등/급락 종목 포착. 다음날 갭 예측에 활용.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/overtime-fluctuation",
+      "category": "F"
+    },
+    {
+      "tr_id": "FHPST02350000",
+      "name": "시간외 거래량 순위",
+      "description": "시간외 거래에서 거래량 상위 종목",
+      "priority": "low",
+      "reason": "시간외 거래량 이상 탐지. overtime-fluctuation과 함께 사용.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/overtime-volume",
+      "category": "F"
+    },
+    {
+      "tr_id": "FHKST66430400",
+      "name": "재무제표 - 수익성비율",
+      "description": "매출총이익률, 영업이익률, ROE, ROA 등 수익성 지표",
+      "priority": "medium",
+      "reason": "재무비율(FHKST66430300)과 보완적. 수익성 필터링에 활용.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/profit-ratio",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHKST66430600",
+      "name": "재무제표 - 안정성비율",
+      "description": "유동비율, 부채비율, 이자보상배율 등 안정성 지표",
+      "priority": "medium",
+      "reason": "부채비율 높은 종목 필터링. 금리 상승기 리스크 관리.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/stability-ratio",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHKST66430800",
+      "name": "재무제표 - 성장성비율",
+      "description": "매출 성장률, 영업이익 성장률, 총자산 증가율 등",
+      "priority": "medium",
+      "reason": "성장주 스크리닝에 직접 활용. 현재 DART 영업이익 QoQ만 계산 중.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/growth-ratio",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHKST66430500",
+      "name": "재무제표 - 기타주요비율",
+      "description": "EV/EBITDA, PCR, PSR 등 밸류에이션 지표",
+      "priority": "medium",
+      "reason": "PER/PBR 외 추가 밸류에이션 지표. EV/EBITDA는 기업가치 비교에 핵심.",
+      "endpoint": "/uapi/domestic-stock/v1/finance/other-major-ratios",
+      "category": "G"
+    },
+    {
+      "tr_id": "HHKDB13470100",
+      "name": "배당수익률 순위",
+      "description": "배당수익률 기준 종목 순위 (배당금, 배당률, 배당성향 포함)",
+      "priority": "medium",
+      "reason": "고배당주 스크리닝. 배당 투자 전략에 필수.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/dividend-rate",
+      "category": "G"
+    },
+    {
+      "tr_id": "HHKDB669102C0",
+      "name": "KSD 배당정보",
+      "description": "종목별 배당금, 배당기준일, 배당락일, 현금지급일 등 상세 배당 정보",
+      "priority": "medium",
+      "reason": "배당락일 알림, 배당금 예상 계산에 활용. 포트폴리오 관리 강화.",
+      "endpoint": "/uapi/domestic-stock/v1/ksdinfo/dividend",
+      "category": "G"
+    },
+    {
+      "tr_id": "FHKST663300C0",
+      "name": "투자의견 (증권사 리포트)",
+      "description": "종목별 증권사 투자의견, 목표주가, 매수/매도 의견 추이",
+      "priority": "medium",
+      "reason": "현재 FnGuide 크롤링으로 컨센서스 조회 중. KIS API 대체 가능성 검토 필요.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/invest-opinion",
+      "category": "G"
+    },
+    {
+      "tr_id": "FHPST01750000",
+      "name": "재무비율 순위 (전종목)",
+      "description": "전종목 PER/PBR/ROE 등 재무비율 기준 순위 조회",
+      "priority": "high",
+      "reason": "전종목 PER/PBR 일괄 조회 가능! 현재 KRX 크롤링으로 하는 것을 대체 가능. get_scan 프리셋 강화에 핵심.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/finance-ratio",
+      "category": "A"
+    },
+    {
+      "tr_id": "FHPST01860000",
+      "name": "증권사별 매매종목 순위",
+      "description": "특정 증권사(회원사)의 매수/매도 상위 종목",
+      "priority": "medium",
+      "reason": "골드만삭스, 모건스탠리 등 외국계 증권사의 집중 매수 종목 파악.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/traded-by-company",
+      "category": "E"
+    },
+    {
+      "tr_id": "FHPST01780000",
+      "name": "이격도 순위",
+      "description": "이동평균 대비 이격도 상위/하위 종목 (과열/침체 판단)",
+      "priority": "low",
+      "reason": "이평 수렴 스크리너와 보완적. 기술적 분석 도구 확장.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/disparity",
+      "category": "G"
+    },
+    {
+      "tr_id": "FHPST01760000",
+      "name": "시간외잔량 순위",
+      "description": "장 마감 후 시간외 잔량(매수/매도) 순위",
+      "priority": "low",
+      "reason": "시간외 매수 잔량 급증은 다음날 상승 기대감 반영. 보조 지표로 활용.",
+      "endpoint": "/uapi/domestic-stock/v1/ranking/after-hour-balance",
+      "category": "F"
+    },
+    {
+      "tr_id": "HHDFS76300000",
+      "name": "해외주식 신고가/신저가",
+      "description": "해외 거래소별 52주 신고가/신저가 종목 리스트",
+      "priority": "medium",
+      "reason": "미국 시장 52주 신고가 돌파 종목 포착. 해외 투자 분석 강화.",
+      "endpoint": "/uapi/overseas-stock/v1/ranking/new-highlow",
+      "category": "D"
+    },
+    {
+      "tr_id": "HHDFS76350100",
+      "name": "해외주식 시가총액 순위",
+      "description": "해외 거래소별 시가총액 상위 종목",
+      "priority": "low",
+      "reason": "미국 대형주 시총 변화 모니터링. 현재 Yahoo로 대체 가능.",
+      "endpoint": "/uapi/overseas-stock/v1/ranking/market-cap",
+      "category": "G"
+    },
+    {
+      "tr_id": "HHDFS76270000",
+      "name": "해외주식 거래량 급증",
+      "description": "해외 거래량 급증 종목 (평균 대비 급증률)",
+      "priority": "medium",
+      "reason": "미국 시장 이상 거래량 탐지. 뉴스 이벤트 사전 포착에 유용.",
+      "endpoint": "/uapi/overseas-stock/v1/ranking/volume-surge",
+      "category": "G"
+    },
+    {
+      "tr_id": "HHDFS76370100",
+      "name": "해외 업종별 시세",
+      "description": "해외 거래소 업종(산업)별 시세 정보",
+      "priority": "medium",
+      "reason": "미국 섹터 로테이션 분석. 현재 Yahoo로 S&P500 섹터 ETF 조회하는 것 대체.",
+      "endpoint": "/uapi/overseas-price/v1/quotations/industry-price",
+      "category": "G"
+    },
+    {
+      "tr_id": "HHDFS78330900",
+      "name": "해외주식 권리종합 (배당)",
+      "description": "해외 종목 배당락일, 배당지급일, 권리유형, 배당금 등",
+      "priority": "medium",
+      "reason": "미국 배당주 배당락일 알림 자동화. 포트폴리오 미국 종목 배당 관리.",
+      "endpoint": "/uapi/overseas-price/v1/quotations/rights-by-ice",
+      "category": "G"
+    },
+    {
+      "tr_id": "HHDFS76410000",
+      "name": "해외주식 조건검색",
+      "description": "해외 종목 조건검색 (PER/시총/등락률/거래량 등 복합 필터)",
+      "priority": "medium",
+      "reason": "미국 종목 스크리너 기능. PER/시총/거래량 복합 조건 필터 가능.",
+      "endpoint": "/uapi/overseas-price/v1/quotations/inquire-search",
+      "category": "A"
+    },
+    {
+      "tr_id": "HHKST03900300+HHKST03900400",
+      "name": "HTS 조건검색 (국내)",
+      "description": "HTS에서 등록한 사용자 조건검색 목록 조회 + 결과 조회 (최대 100건)",
+      "priority": "low",
+      "reason": "HTS 계정 연동 필요. eFriend Plus에서 조건 등록 후 API로 결과만 조회하는 구조라 자동화 한계.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/psearch-title + psearch-result",
+      "category": "A"
+    },
+    {
+      "tr_id": "CTPF1604R",
+      "name": "종목 상세정보 (search-info)",
+      "description": "종목 상품유형, 주식분류, 상장일, 액면가, 신용가능 여부 등 상세 정보",
+      "priority": "low",
+      "reason": "CTPF1002R(search-stock-info)와 유사하지만 추가 필드. 현재 충분히 커버.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/search-info",
+      "category": "G"
+    },
+    {
+      "tr_id": "FHPST02320000",
+      "name": "시간외 일자별 주가",
+      "description": "시간외 거래 일별 가격 추이",
+      "priority": "low",
+      "reason": "시간외 거래 패턴 분석용. 일반적 사용빈도 낮음.",
+      "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice",
+      "category": "F"
+    }
+  ],
+
+  "not_needed": [
+    {"tr_id": "TTTC0011U/TTTC0012U/TTTC0013U", "name": "주문/취소/정정", "reason": "주문 실행 기능은 의도적으로 제외. 분석/모니터링 봇 목적."},
+    {"tr_id": "TTTC8434R", "name": "주식잔고조회", "reason": "실계좌 잔고 조회는 보안 이슈. portfolio.json으로 수동 관리 중."},
+    {"tr_id": "FHKST01010200", "name": "호가/예상체결", "reason": "실시간 호가창은 WebSocket으로 이미 커버. REST 호가는 지연성 문제."},
+    {"tr_id": "FHKST01010300", "name": "체결가 (틱)", "reason": "체결가 틱 데이터는 HFT용. 우리 봇 사용 사례 없음."},
+    {"tr_id": "FHKST01010400", "name": "일자별 시세", "reason": "FHKST03010100(일봉)으로 이미 커버."},
+    {"tr_id": "FHKEW15010000", "name": "ELW 시세", "reason": "ELW 투자 대상 아님."},
+    {"tr_id": "선물옵션 관련 전체", "name": "국내/해외 선물옵션", "reason": "선물옵션 투자 대상 아님."},
+    {"tr_id": "채권 관련 전체", "name": "국내채권 시세/주문", "reason": "채권 투자 대상 아님."},
+    {"tr_id": "FHPST07020000", "name": "종합주가지수 지수추이", "reason": "FHPUP02100000으로 지수 조회 이미 가능."},
+    {"tr_id": "FHPST01010000+FHPST01060000+FHPST01130000", "name": "시세분석 기타 (체결/비교)", "reason": "기존 도구로 충분히 커버."},
+    {"tr_id": "FHPST01720000/01730000/01770000/01790000/01800000/01840000", "name": "기타 순위 (거래대금/거래증감/거래비중/매매전략)", "reason": "거래량 순위/등락률 순위로 대부분 커버. 미세한 차이."},
+    {"tr_id": "KSD관련 (주총/유상/무상/합병 등)", "name": "KSD 기업정보 (주총/유상/무상 등)", "reason": "DART 공시로 커버. 중복 기능."},
+    {"tr_id": "연금/계좌 관련", "name": "연금저축/계좌 조회", "reason": "실계좌 연동 불필요."},
+    {"tr_id": "FHPST01810000", "name": "예상장전매매 등락률", "reason": "프리마켓 데이터. 활용도 낮음."},
+    {"tr_id": "FHPST02300400", "name": "시간외 체결추이", "reason": "시간외 모니터링은 overtime-price로 충분."},
+    {"tr_id": "HHDFS76200100", "name": "해외주식 현재체결가 (간이)", "reason": "HHDFS00000300으로 이미 커버."},
+    {"tr_id": "HHDFS76200300", "name": "해외주식 기간별시세", "reason": "일봉/주봉은 별도로 필요 시 추가."},
+    {"tr_id": "HHDFS76240000/76260000/76280000", "name": "해외 거래대금/급등/상승하락 순위", "reason": "HHDFS76290000(등락률)으로 대부분 커버."},
+    {"tr_id": "해외주식 주문 관련", "name": "해외 매수/매도/취소/정정", "reason": "주문 기능 의도적 제외."}
+  ],
+
+  "mcp_analysis": {
+    "repo": "koreainvestment/koreainvestment-mcp",
+    "description": "KIS API '검색' 서버. 334개 API 명세(data.csv/data2.csv)를 자연어 검색하여 API 정보를 반환. 실제 API 호출은 하지 않음.",
+    "tools_provided": [
+      "search_auth_api",
+      "search_domestic_stock_api",
+      "search_domestic_bond_api",
+      "search_domestic_futureoption_api",
+      "search_overseas_stock_api",
+      "search_overseas_futureoption_api",
+      "search_elw_api",
+      "search_etfetn_api",
+      "read_source_code"
+    ],
+    "tool_count": 9,
+    "overlap_with_ours": [],
+    "unique_to_them": ["API 검색 (자연어 -> API 명세 반환)", "GitHub 소스코드 읽기 (examples_llm 코드 fetch)"],
+    "can_use_directly": false,
+    "can_connect_to_claude_ai": true,
+    "connection_method": "DXT 파일 (.dxt)을 Claude Desktop에 드래그&드롭으로 설치. 또는 Claude Desktop settings에 MCP 서버 수동 등록. Claude.ai 웹에서는 직접 사용 불가 (로컬 실행 필요).",
+    "recommendation": "이 서버는 API '검색' 도구일 뿐 API '실행'은 하지 않음. 우리 봇과는 목적이 완전히 다름. 새 API 개발 시 참고용으로만 유용. 우리 봇에 통합할 필요 없음. 다만 data2.csv (12437행)는 API 명세 참조 자료로 유용."
+  },
+
+  "ai_extensions_analysis": {
+    "repo": "koreainvestment/kis-ai-extensions",
+    "description": "AI 에이전트(Claude Code, Cursor, Codex, Gemini CLI)용 퀀트 투자 플러그인. npm 패키지 @koreainvestment/kis-quant-plugin.",
+    "features": [
+      "10개 프리셋 전략 설계 (골든크로스, 모멘텀, 52주신고가, 연속상승, 이격도, 돌파실패, 강한종가, 변동성확장, 평균회귀, 추세필터)",
+      "Docker/Lean 엔진 기반 백테스팅 + 파라미터 최적화",
+      "BUY/SELL/HOLD 신호 기반 모의/실전 주문 실행",
+      "보안 훅 (appkey/token 유출 차단, 실전 주문 사용자 확인)",
+      "MCP 서버 (백테스팅 전용: run_backtest, optimize_params, get_report, list_strategies)",
+      "에이전트별 skill/command 체계 (/auth, /my-status, /kis-setup, /kis-help)"
+    ],
+    "useful_for_us": [
+      "전략 프리셋 아이디어 (52주 신고가 전략, 이격도, 변동성 확장 등을 스크리너 프리셋에 응용 가능)",
+      "보안 훅 패턴 (appkey/token 유출 방지 로직 참고)"
+    ],
+    "not_useful_for_us": [
+      "백테스팅 엔진 (Docker/Lean 필요, Railway 환경에 부적합)",
+      "주문 실행 기능 (우리 봇은 분석/모니터링 전용)",
+      "에이전트 설정 파일들 (Claude Code/Cursor 용, 서버 봇과 무관)"
+    ],
+    "recommendation": "직접 통합은 불필요. strategy_builder의 전략 로직(지표 조합)을 참고하여 스크리너 프리셋(이격도, 52주 신고가 근접 등)을 강화하는 데 아이디어로만 활용."
+  },
+
+  "priority_summary": {
+    "high_priority_count": 5,
+    "medium_priority_count": 16,
+    "low_priority_count": 8,
+    "top_5_recommendations": [
+      {
+        "rank": 1,
+        "name": "재무비율 순위 (finance-ratio)",
+        "tr_id": "FHPST01750000",
+        "reason": "전종목 PER/PBR/ROE 순위 조회. get_scan 프리셋에 재무 필터 추가 가능. KRX 크롤링 보완/대체."
+      },
+      {
+        "rank": 2,
+        "name": "재무제표 3종 (balance-sheet, income-statement, financial-ratio)",
+        "tr_id": "FHKST66430100/200/300",
+        "reason": "종목별 상세 재무 분석 기능 추가. DART API 보완. get_stock_detail에 재무 탭 추가."
+      },
+      {
+        "rank": 3,
+        "name": "신고가/신저가 근접 종목",
+        "tr_id": "FHPST01870000",
+        "reason": "52주 신고가 돌파 전략 스크리너. MCP 도구 get_scan에 프리셋 추가."
+      },
+      {
+        "rank": 4,
+        "name": "거래원 정보 (회원사별 매매)",
+        "tr_id": "inquire-member API",
+        "reason": "외국계 증권사 매수/매도 동향. 수급 분석 고도화."
+      },
+      {
+        "rank": 5,
+        "name": "시간외 현재가 + 등락률",
+        "tr_id": "FHPST02300000/02340000",
+        "reason": "장 마감 후 시간외 급등/급락 모니터링. 손절알림 확장."
+      }
+    ]
+  },
+
+  "open_trading_api_stats": {
+    "domestic_stock_functions": 130,
+    "overseas_stock_functions": 40,
+    "total_unique_tr_ids_domestic": 130,
+    "total_unique_tr_ids_overseas": 40,
+    "our_domestic_tr_ids_used": 21,
+    "our_overseas_tr_ids_used": 3,
+    "coverage_domestic_pct": 16,
+    "coverage_overseas_pct": 8,
+    "note": "Coverage is low by count but we cover the most important market data APIs. Missing areas are mainly: financials, order/account, specialized rankings."
+  }
+}

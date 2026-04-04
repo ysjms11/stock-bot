@@ -1902,6 +1902,152 @@ async def kis_volume_power_rank(token: str, market: str = "all", n: int = 20) ->
     return result
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 재무비율 순위 / 52주 신고가·신저가 / 거래원
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def kis_finance_ratio_rank(token: str, market: str = "0000",
+                                  year: str = "", quarter: str = "3",
+                                  sort: str = "7", n: int = 30) -> list:
+    """전종목 재무비율 순위 (FHPST01750000).
+
+    market: 0000=전체, 0001=거래소, 1001=코스닥, 2001=코스피200
+    year: 회계연도 (기본=전년도)
+    quarter: 0=1Q, 1=반기, 2=3Q, 3=결산
+    sort: 7=수익성, 11=안정성, 15=성장성, 20=활동성
+    """
+    if not year:
+        year = str(datetime.now(KST).year - 1)
+
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/finance-ratio",
+                              "FHPST01750000", token, {
+            "fid_trgt_cls_code": "0",
+            "fid_cond_mrkt_div_code": "J",
+            "fid_cond_scr_div_code": "20175",
+            "fid_input_iscd": market,
+            "fid_div_cls_code": "0",
+            "fid_input_price_1": "",
+            "fid_input_price_2": "",
+            "fid_vol_cnt": "",
+            "fid_input_option_1": year,
+            "fid_input_option_2": quarter,
+            "fid_rank_sort_cls_code": sort,
+            "fid_blng_cls_code": "0",
+            "fid_trgt_exls_cls_code": "0",
+        })
+    items = d.get("output", [])
+    result = []
+    for item in items[:n]:
+        ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
+        if not ticker:
+            continue
+        result.append({
+            "rank": int(item.get("data_rank", 0) or 0),
+            "ticker": ticker,
+            "name": (item.get("hts_kor_isnm") or "").strip(),
+            "price": int(item.get("stck_prpr", 0) or 0),
+            "chg_pct": float(item.get("prdy_ctrt", 0) or 0),
+            "per": float(item.get("per", 0) or 0),
+            "pbr": float(item.get("pbr", 0) or 0),
+            "roe": float(item.get("roe_val", 0) or 0),
+            "operating_margin": float(item.get("bsop_prfi_inrt", 0) or 0),
+            "net_margin": float(item.get("thtr_ntin_inrt", 0) or 0),
+            "debt_ratio": float(item.get("lblt_rate", 0) or 0),
+            "revenue_growth": float(item.get("sles_icr_rate", 0) or 0),
+        })
+    return result
+
+
+async def kis_near_new_highlow(token: str, mode: str = "high",
+                                market: str = "0000", gap_min: int = 0,
+                                gap_max: int = 10, n: int = 30) -> list:
+    """52주 신고가/신저가 근접 종목 (FHPST01870000).
+
+    mode: "high"=신고가 근접, "low"=신저가 근접
+    market: 0000=전체, 0001=거래소, 1001=코스닥
+    gap_min/gap_max: 괴리율 범위 (%)
+    """
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/near-new-highlow",
+                              "FHPST01870000", token, {
+            "fid_aply_rang_vol": "0",
+            "fid_cond_mrkt_div_code": "J",
+            "fid_cond_scr_div_code": "20187",
+            "fid_div_cls_code": "0",
+            "fid_input_cnt_1": str(gap_min),
+            "fid_input_cnt_2": str(gap_max),
+            "fid_prc_cls_code": "0" if mode == "high" else "1",
+            "fid_input_iscd": market,
+            "fid_trgt_cls_code": "0",
+            "fid_trgt_exls_cls_code": "0",
+            "fid_aply_rang_prc_1": "0",
+            "fid_aply_rang_prc_2": "10000000",
+        })
+    items = d.get("output", [])
+    result = []
+    for item in items[:n]:
+        ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
+        if not ticker:
+            continue
+        result.append({
+            "rank": int(item.get("data_rank", 0) or 0),
+            "ticker": ticker,
+            "name": (item.get("hts_kor_isnm") or "").strip(),
+            "price": int(item.get("stck_prpr", 0) or 0),
+            "chg_pct": float(item.get("prdy_ctrt", 0) or 0),
+            "high_52w": int(item.get("stck_sdpr", 0) or item.get("w52_hgpr", 0) or 0),
+            "low_52w": int(item.get("stck_lwpr", 0) or item.get("w52_lwpr", 0) or 0),
+            "gap_pct": float(item.get("dscr_rate", 0) or 0),
+            "volume": int(item.get("acml_vol", 0) or 0),
+        })
+    return result
+
+
+async def kis_inquire_member(ticker: str, token: str) -> dict:
+    """종목별 거래원(증권사) 매매 정보 (FHKST01010600, inquire-member).
+
+    Returns: {ticker, name, buy_members: [...], sell_members: [...]}
+    """
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-member",
+                              "FHKST01010600", token, {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": ticker,
+        })
+    output = d.get("output", [])
+    buy_members = []
+    sell_members = []
+    if isinstance(output, list):
+        for m in output:
+            if m.get("seln_mbcr_nm"):
+                sell_members.append({
+                    "name": (m.get("seln_mbcr_nm") or "").strip(),
+                    "volume": int(m.get("seln_vol", 0) or 0),
+                })
+            if m.get("shnu_mbcr_nm"):
+                buy_members.append({
+                    "name": (m.get("shnu_mbcr_nm") or "").strip(),
+                    "volume": int(m.get("shnu_vol", 0) or 0),
+                })
+    elif isinstance(output, dict):
+        # 단일 dict인 경우
+        if output.get("seln_mbcr_nm"):
+            sell_members.append({
+                "name": (output.get("seln_mbcr_nm") or "").strip(),
+                "volume": int(output.get("seln_vol", 0) or 0),
+            })
+        if output.get("shnu_mbcr_nm"):
+            buy_members.append({
+                "name": (output.get("shnu_mbcr_nm") or "").strip(),
+                "volume": int(output.get("shnu_vol", 0) or 0),
+            })
+    return {
+        "ticker": ticker,
+        "buy_members": buy_members[:5],
+        "sell_members": sell_members[:5],
+    }
+
+
 async def kis_us_updown_rate(token: str, sort: str = "rise",
                              exchange: str = "NAS", n: int = 20) -> list:
     """해외주식 등락률 상위/하위 종목 순위 (HHDFS76290000).
