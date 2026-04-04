@@ -1936,6 +1936,8 @@ async def kis_finance_ratio_rank(token: str, market: str = "0000",
             "fid_trgt_exls_cls_code": "0",
         })
     items = d.get("output", [])
+    if os.environ.get("DEBUG") and items:
+        print(f"[DEBUG] finance_ratio keys: {list(items[0].keys())}")
     result = []
     for item in items[:n]:
         ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
@@ -1947,13 +1949,25 @@ async def kis_finance_ratio_rank(token: str, market: str = "0000",
             "name": (item.get("hts_kor_isnm") or "").strip(),
             "price": int(item.get("stck_prpr", 0) or 0),
             "chg_pct": float(item.get("prdy_ctrt", 0) or 0),
-            "per": float(item.get("per", 0) or 0),
-            "pbr": float(item.get("pbr", 0) or 0),
-            "roe": float(item.get("roe_val", 0) or 0),
-            "operating_margin": float(item.get("bsop_prfi_inrt", 0) or 0),
-            "net_margin": float(item.get("thtr_ntin_inrt", 0) or 0),
-            "debt_ratio": float(item.get("lblt_rate", 0) or 0),
-            "revenue_growth": float(item.get("sles_icr_rate", 0) or 0),
+            # 수익성 (sort=7)
+            "capital_profit_rate": float(item.get("cptl_op_prfi", 0) or 0),    # 총자본경상이익률
+            "capital_net_rate": float(item.get("cptl_ntin_rate", 0) or 0),     # 총자본순이익률
+            "sales_gross_rate": float(item.get("sale_totl_rate", 0) or 0),     # 매출액총이익률
+            "sales_net_rate": float(item.get("sale_ntin_rate", 0) or 0),       # 매출액순이익률
+            # 안정성 (sort=11)
+            "equity_ratio": float(item.get("bis", 0) or 0),                    # 자기자본비율
+            "debt_ratio": float(item.get("lblt_rate", 0) or 0),               # 부채비율
+            "borrowing_dep": float(item.get("bram_depn", 0) or 0),            # 차입금의존도
+            "reserve_rate": float(item.get("rsrv_rate", 0) or 0),             # 유보비율
+            # 성장성 (sort=15)
+            "revenue_growth": float(item.get("grs", 0) or 0),                 # 매출액증가율
+            "op_profit_growth": float(item.get("bsop_prfi_inrt", 0) or 0),    # 영업이익증가율
+            "net_profit_growth": float(item.get("ntin_inrt", 0) or 0),        # 순이익증가율
+            "equity_growth": float(item.get("equt_inrt", 0) or 0),            # 자기자본증가율
+            "total_asset_growth": float(item.get("totl_aset_inrt", 0) or 0),  # 총자산증가율
+            # 활동성 (sort=20)
+            "capital_turnover": float(item.get("cptl_tnrt", 0) or 0),         # 총자본회전율
+            "volume": int(item.get("acml_vol", 0) or 0),
         })
     return result
 
@@ -1984,20 +1998,24 @@ async def kis_near_new_highlow(token: str, mode: str = "high",
             "fid_aply_rang_prc_2": "10000000",
         })
     items = d.get("output", [])
+    if os.environ.get("DEBUG") and items:
+        print(f"[DEBUG] near_new_highlow keys: {list(items[0].keys())}")
     result = []
-    for item in items[:n]:
+    for i, item in enumerate(items[:n]):
         ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
         if not ticker:
             continue
         result.append({
-            "rank": int(item.get("data_rank", 0) or 0),
+            "rank": i + 1,
             "ticker": ticker,
             "name": (item.get("hts_kor_isnm") or "").strip(),
             "price": int(item.get("stck_prpr", 0) or 0),
             "chg_pct": float(item.get("prdy_ctrt", 0) or 0),
-            "high_52w": int(item.get("stck_sdpr", 0) or item.get("w52_hgpr", 0) or 0),
-            "low_52w": int(item.get("stck_lwpr", 0) or item.get("w52_lwpr", 0) or 0),
-            "gap_pct": float(item.get("dscr_rate", 0) or 0),
+            "base_price": int(item.get("stck_sdpr", 0) or 0),
+            "new_high": int(item.get("new_hgpr", 0) or 0),
+            "high_gap_pct": float(item.get("hprc_near_rate", 0) or 0),
+            "new_low": int(item.get("new_lwpr", 0) or 0),
+            "low_gap_pct": float(item.get("lwpr_near_rate", 0) or 0),
             "volume": int(item.get("acml_vol", 0) or 0),
         })
     return result
@@ -2014,38 +2032,37 @@ async def kis_inquire_member(ticker: str, token: str) -> dict:
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": ticker,
         })
-    output = d.get("output", [])
-    buy_members = []
-    sell_members = []
+    output = d.get("output", {})
+    if os.environ.get("DEBUG") and output:
+        keys = list(output.keys()) if isinstance(output, dict) else list(output[0].keys()) if output else []
+        print(f"[DEBUG] inquire_member keys: {keys}")
+    # output은 단일 dict, 필드가 seln_mbcr_name1~5, total_seln_qty1~5 등 번호 접미사
     if isinstance(output, list):
-        for m in output:
-            if m.get("seln_mbcr_nm"):
-                sell_members.append({
-                    "name": (m.get("seln_mbcr_nm") or "").strip(),
-                    "volume": int(m.get("seln_vol", 0) or 0),
-                })
-            if m.get("shnu_mbcr_nm"):
-                buy_members.append({
-                    "name": (m.get("shnu_mbcr_nm") or "").strip(),
-                    "volume": int(m.get("shnu_vol", 0) or 0),
-                })
-    elif isinstance(output, dict):
-        # 단일 dict인 경우
-        if output.get("seln_mbcr_nm"):
-            sell_members.append({
-                "name": (output.get("seln_mbcr_nm") or "").strip(),
-                "volume": int(output.get("seln_vol", 0) or 0),
-            })
-        if output.get("shnu_mbcr_nm"):
-            buy_members.append({
-                "name": (output.get("shnu_mbcr_nm") or "").strip(),
-                "volume": int(output.get("shnu_vol", 0) or 0),
-            })
-    return {
+        output = output[0] if output else {}
+    sell_members = []
+    buy_members = []
+    for i in range(1, 6):
+        sname = (output.get(f"seln_mbcr_name{i}") or "").strip()
+        sqty = int(output.get(f"total_seln_qty{i}", 0) or 0)
+        srlim = float(output.get(f"seln_mbcr_rlim{i}", 0) or 0)
+        if sname:
+            sell_members.append({"name": sname, "volume": sqty, "ratio": srlim})
+        bname = (output.get(f"shnu_mbcr_name{i}") or "").strip()
+        bqty = int(output.get(f"total_shnu_qty{i}", 0) or 0)
+        brlim = float(output.get(f"shnu_mbcr_rlim{i}", 0) or 0)
+        if bname:
+            buy_members.append({"name": bname, "volume": bqty, "ratio": brlim})
+    note = None
+    if not sell_members and not buy_members:
+        note = "거래원 데이터 없음 (휴장일이거나 장중 미제공)"
+    result = {
         "ticker": ticker,
-        "buy_members": buy_members[:5],
-        "sell_members": sell_members[:5],
+        "buy_members": buy_members,
+        "sell_members": sell_members,
     }
+    if note:
+        result["note"] = note
+    return result
 
 
 async def kis_daily_credit_balance(ticker: str, token: str, n: int = 20) -> list:
