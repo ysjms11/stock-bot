@@ -24,6 +24,7 @@ from kis_api import (
     cmd_regime,
     kis_finance_ratio_rank, kis_near_new_highlow, kis_inquire_member,
     kis_daily_credit_balance, kis_daily_loan_trans, kis_overtime_price, kis_asking_price,
+    kis_overtime_fluctuation, kis_traded_by_company, kis_dividend_rate_rank,
     load_corp_codes, search_dart_reports, save_dart_report,
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
@@ -327,12 +328,12 @@ async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem:
 MCP_TOOLS = [
     # 1. get_rank ← scan_market + get_price_rank + get_us_price_rank + get_volume_power
     {"name": "get_rank",
-     "description": "순위 조회 통합. type별: price=한국등락률상위/하위, us_price=미국등락률상위/하위, volume=체결강도상위(120%이상=매수우위), scan=거래량상위종목",
+     "description": "순위 조회 통합. type별: price=등락률, us_price=미국등락률, volume=체결강도, scan=거래량, after_hours=시간외등락률, dividend=배당수익률",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "type": {"type": "string", "enum": ["price", "us_price", "volume", "scan"], "description": "순위 조회 유형"},
-                         "sort": {"type": "string", "description": "price/us_price용 (rise/fall, 기본 rise)"},
-                         "market": {"type": "string", "description": "price용 (all/kospi/kosdaq, 기본 all)"},
+                         "type": {"type": "string", "enum": ["price", "us_price", "volume", "scan", "after_hours", "dividend"], "description": "순위 조회 유형"},
+                         "sort": {"type": "string", "description": "price/us_price/after_hours용 (rise/fall, 기본 rise)"},
+                         "market": {"type": "string", "description": "price용 (all/kospi/kosdaq), dividend용 (0=전체/1=코스피/3=코스닥)"},
                          "exchange": {"type": "string", "description": "us_price용 (NAS/NYS/AMS, 기본 NAS)"},
                          "n": {"type": "integer", "description": "결과 수 (기본 20)"},
                      },
@@ -364,14 +365,15 @@ MCP_TOOLS = [
                      "required": []}},
     # 4. get_supply ← get_investor_flow + get_investor_trend_history + get_investor_estimate + get_foreign_rank + get_foreign_institution
     {"name": "get_supply",
-     "description": "수급 분석 통합. mode별: daily=당일확정수급(외인/기관/개인), history=N일수급추세(연속매수매도), estimate=장중추정수급(가집계), foreign_rank=외국인순매수상위, combined_rank=외인+기관합산순매수상위",
+     "description": "수급 분석 통합. mode별: daily=당일확정수급, history=N일수급추세, estimate=장중추정수급, foreign_rank=외국인순매수상위, combined_rank=외인+기관합산, broker_rank=증권사별매매종목상위",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode": {"type": "string", "enum": ["daily", "history", "estimate", "foreign_rank", "combined_rank"], "description": "수급 조회 모드"},
+                         "mode": {"type": "string", "enum": ["daily", "history", "estimate", "foreign_rank", "combined_rank", "broker_rank"], "description": "수급 조회 모드"},
                          "ticker": {"type": "string", "description": "종목코드 (daily/history/estimate 시 필수)"},
                          "days": {"type": "integer", "description": "history 시 조회 일수 (기본 5, 최대 30)"},
-                         "sort": {"type": "string", "description": "combined_rank 시 정렬 (buy/sell, 기본 buy)"},
-                         "n": {"type": "integer", "description": "foreign_rank/combined_rank 결과 수"},
+                         "sort": {"type": "string", "description": "combined_rank/broker_rank 시 정렬 (buy/sell, 기본 buy)"},
+                         "broker": {"type": "string", "description": "broker_rank 시 증권사코드 (생략 시 전체)"},
+                         "n": {"type": "integer", "description": "foreign_rank/combined_rank/broker_rank 결과 수"},
                      },
                      "required": ["mode"]}},
     # 5. get_dart (유지 + report/report_list 모드 추가)
@@ -686,8 +688,31 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         item["tag"] = "외인매수"
                     result.append(item)
 
+            elif rank_type == "after_hours":
+                sort = arguments.get("sort", "rise").strip().lower()
+                market_code = {"all": "0000", "kospi": "0001", "kosdaq": "1001"}.get(
+                    arguments.get("market", "all").strip().lower(), "0000")
+                n = max(1, min(int(arguments.get("n", 20) or 20), 50))
+                items = await kis_overtime_fluctuation(token, sort=sort, market=market_code, n=n)
+                result = {
+                    "sort": sort,
+                    "count": len(items),
+                    "note": "장 마감 후 시간외 거래 등락률 순위",
+                    "stocks": items,
+                }
+
+            elif rank_type == "dividend":
+                market = arguments.get("market", "0").strip()
+                n = max(1, min(int(arguments.get("n", 30) or 30), 100))
+                items = await kis_dividend_rate_rank(token, market=market, n=n)
+                result = {
+                    "count": len(items),
+                    "note": "배당수익률 상위 종목 (전년 기준)",
+                    "stocks": items,
+                }
+
             else:
-                result = {"error": f"알 수 없는 type: {rank_type}. price/us_price/volume/scan 중 하나"}
+                result = {"error": f"알 수 없는 type: {rank_type}. price/us_price/volume/scan/after_hours/dividend 중 하나"}
 
         elif name == "get_portfolio":
             mode = arguments.get("mode", "").strip().lower()
@@ -1061,8 +1086,23 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 if not db:
                     result["note"] = "시총 대비 비율은 KRX DB 갱신 후 사용 가능 (fi_ratio_pct 필드)"
 
+            elif supply_mode == "broker_rank":
+                sort = arguments.get("sort", "buy").strip().lower()
+                broker = arguments.get("broker", "").strip()
+                n = max(1, min(int(arguments.get("n", 20) or 20), 50))
+                market_code = {"all": "0000", "kospi": "0001", "kosdaq": "1001"}.get(
+                    arguments.get("market", "all").strip().lower(), "0000")
+                items = await kis_traded_by_company(token, broker=broker, sort=sort,
+                                                     market=market_code, n=n)
+                result = {
+                    "sort": "매수상위" if sort == "buy" else "매도상위",
+                    "broker": broker or "전체",
+                    "count": len(items),
+                    "stocks": items,
+                }
+
             else:
-                result = {"error": f"알 수 없는 mode: {supply_mode}. daily/history/estimate/foreign_rank/combined_rank 중 하나"}
+                result = {"error": f"알 수 없는 mode: {supply_mode}. daily/history/estimate/foreign_rank/combined_rank/broker_rank 중 하나"}
 
         elif name == "get_dart":
             dart_mode = arguments.get("mode", "").strip().lower()

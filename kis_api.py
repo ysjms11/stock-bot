@@ -2193,6 +2193,138 @@ async def kis_asking_price(ticker: str, token: str) -> dict:
     }
 
 
+async def kis_overtime_fluctuation(token: str, sort: str = "rise",
+                                    market: str = "0000", n: int = 20) -> list:
+    """시간외 등락률 순위 (FHPST02340000).
+
+    sort: "rise"=상승률 상위, "fall"=하락률 상위
+    market: 0000=전체, 0001=코스피, 1001=코스닥
+    """
+    div_code = "2" if sort == "rise" else "5"  # 2=상승률, 5=하락률
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/overtime-fluctuation",
+                              "FHPST02340000", token, {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_MRKT_CLS_CODE": "",
+            "FID_COND_SCR_DIV_CODE": "20234",
+            "FID_INPUT_ISCD": market,
+            "FID_DIV_CLS_CODE": div_code,
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+            "FID_TRGT_CLS_CODE": "",
+            "FID_TRGT_EXLS_CLS_CODE": "",
+        })
+    items = d.get("output", d.get("output1", []))
+    if isinstance(items, dict):
+        items = [items]
+    result = []
+    for item in items[:n]:
+        ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
+        if not ticker:
+            continue
+        result.append({
+            "rank": int(item.get("data_rank", 0) or 0),
+            "ticker": ticker,
+            "name": (item.get("hts_kor_isnm") or "").strip(),
+            "overtime_price": int(item.get("stck_prpr", 0) or item.get("ovtm_untp_prpr", 0) or 0),
+            "chg_pct": float(item.get("prdy_ctrt", 0) or item.get("ovtm_untp_prdy_ctrt", 0) or 0),
+            "volume": int(item.get("acml_vol", 0) or item.get("ovtm_untp_vol", 0) or 0),
+            "prev_close": int(item.get("stck_sdpr", 0) or 0),
+        })
+    return result
+
+
+async def kis_traded_by_company(token: str, broker: str = "", sort: str = "buy",
+                                 market: str = "0000", n: int = 20) -> list:
+    """증권사별 매매종목 순위 (FHPST01860000).
+
+    broker: 증권사코드 (빈 문자열이면 자사)
+    sort: "buy"=매수상위, "sell"=매도상위
+    market: 0000=전체, 0001=거래소, 1001=코스닥
+    """
+    today = datetime.now(KST).strftime("%Y%m%d")
+    sort_code = "1" if sort == "buy" else "0"
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/traded-by-company",
+                              "FHPST01860000", token, {
+            "fid_trgt_exls_cls_code": "0",
+            "fid_cond_mrkt_div_code": "J",
+            "fid_cond_scr_div_code": "20186",
+            "fid_div_cls_code": "0",
+            "fid_rank_sort_cls_code": sort_code,
+            "fid_input_date_1": today,
+            "fid_input_date_2": today,
+            "fid_input_iscd": broker if broker else market,
+            "fid_trgt_cls_code": "0",
+            "fid_aply_rang_vol": "0",
+            "fid_aply_rang_prc_1": "",
+            "fid_aply_rang_prc_2": "",
+        })
+    items = d.get("output", [])
+    if isinstance(items, dict):
+        items = [items]
+    result = []
+    for item in items[:n]:
+        ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
+        if not ticker:
+            continue
+        result.append({
+            "rank": int(item.get("data_rank", 0) or 0),
+            "ticker": ticker,
+            "name": (item.get("hts_kor_isnm") or "").strip(),
+            "price": int(item.get("stck_prpr", 0) or 0),
+            "chg_pct": float(item.get("prdy_ctrt", 0) or 0),
+            "trade_amt": int(item.get("trad_pbmn", 0) or item.get("acml_tr_pbmn", 0) or 0),
+            "trade_vol": int(item.get("trad_vol", 0) or item.get("acml_vol", 0) or 0),
+            "broker_name": (item.get("mbcr_nm") or "").strip(),
+        })
+    return result
+
+
+async def kis_dividend_rate_rank(token: str, market: str = "0",
+                                  n: int = 30) -> list:
+    """배당수익률 순위 (HHKDB13470100).
+
+    market: 0=전체, 1=코스피, 3=코스닥
+    """
+    today = datetime.now(KST)
+    year = str(today.year - 1)
+    f_dt = f"{year}0101"
+    t_dt = f"{year}1231"
+    async with aiohttp.ClientSession() as s:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/dividend-rate",
+                              "HHKDB13470100", token, {
+            "CTS_AREA": " ",
+            "GB1": market,
+            "UPJONG": "",
+            "GB2": "0",
+            "GB3": "2",
+            "F_DT": f_dt,
+            "T_DT": t_dt,
+            "GB4": "0",
+        })
+    items = d.get("output", [])
+    if isinstance(items, dict):
+        items = [items]
+    result = []
+    for item in items[:n]:
+        ticker = (item.get("stck_shrn_iscd") or item.get("rank_iscd") or "").strip()
+        if not ticker or len(ticker) != 6:
+            continue
+        result.append({
+            "rank": int(item.get("data_rank", 0) or len(result) + 1),
+            "ticker": ticker,
+            "name": (item.get("hts_kor_isnm") or item.get("rank_isnm") or "").strip(),
+            "price": int(item.get("stck_prpr", 0) or 0),
+            "dividend": int(item.get("per_sto_divi_amt", 0) or item.get("dvdn_amt", 0) or 0),
+            "dividend_yield": float(item.get("divi_rate", 0) or item.get("dvdn_rate", 0) or 0),
+            "per": float(item.get("per", 0) or 0),
+            "market_cap": int(item.get("lstg_stcn", 0) or 0),
+        })
+    return result
+
+
 async def kis_us_updown_rate(token: str, sort: str = "rise",
                              exchange: str = "NAS", n: int = 20) -> list:
     """해외주식 등락률 상위/하위 종목 순위 (HHDFS76290000).
