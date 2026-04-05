@@ -1848,42 +1848,141 @@ async def dart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ DART 오류: {str(e)}")
 
 
-# 워치리스트 (보유종목 간결 요약)
+# 워치리스트 (매수감시 종목 — grade 정렬)
+_GRADE_ORDER = {"A": 0, "B+": 1, "B": 2, "B-": 3, "C+": 4, "C": 5, "D": 6, "": 7}
+
 async def watchlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    portfolio = load_json(PORTFOLIO_FILE, {})
-    _meta_keys = {"us_stocks", "cash_krw", "cash_usd"}
-    kr_stocks = {k: v for k, v in portfolio.items() if k not in _meta_keys}
-    us_stocks = portfolio.get("us_stocks", {})
-    if not kr_stocks and not us_stocks:
-        await update.message.reply_text("📭 보유종목 없음\n/setportfolio 로 등록"); return
-    await update.message.reply_text("⏳ 보유종목 조회 중...")
+    wa = load_watchalert()
+    if not wa:
+        await update.message.reply_text("📭 매수감시 종목 없음\nset_alert으로 등록"); return
+    await update.message.reply_text("⏳ 워치리스트 조회 중...")
     token = await get_kis_token()
-    msg = "🔍 *보유종목 현황*\n\n"
-    for t, info in kr_stocks.items():
+    today = datetime.now(KST)
+    today_str = today.strftime("%Y-%m-%d")
+
+    items = []
+    for t, info in wa.items():
+        buy_p = float(info.get("buy_price", 0))
+        name = info.get("name", t)
+        grade = info.get("grade", "")
+        if not grade:
+            import re as _re
+            m = _re.search(r"\(([ABCD][+-]?)\)", info.get("memo", ""))
+            grade = m.group(1) if m else ""
+        mkt = info.get("market", "")
+        if not mkt:
+            mkt = "US" if _is_us_ticker(t) else "KR"
+        memo = info.get("memo", "")
+        updated = info.get("updated_at", info.get("created_at", ""))
+        # 가격 조회
+        cur = 0.0
         try:
-            d = await kis_stock_price(t, token) if token else {}
-            price = int(d.get("stck_prpr", 0) or 0)
-            chg = d.get("prdy_ctrt", "0")
-            icon = "🔺" if float(chg) >= 0 else "🔻"
-            msg += f"{icon} *{info.get('name', t)}* {price:,}원 ({chg}%)\n"
-            await asyncio.sleep(0.3)
-        except Exception:
-            msg += f"⚪ *{info.get('name', t)}* — 조회실패\n"
-    for sym, info in us_stocks.items():
-        try:
-            if _is_us_market_hours_kst():
-                d = await kis_us_stock_price(sym, _guess_excd(sym), token) if token else {}
-                price = float(d.get("last") or 0)
-                chg = d.get("rate", "0")
-                icon = "🔺" if float(chg or 0) >= 0 else "🔻"
-                msg += f"{icon} *{info.get('name', sym)}* ${price:,.2f} ({chg}%)\n"
+            if mkt == "US":
+                if _is_us_market_hours_kst():
+                    d = await kis_us_stock_price(t, _guess_excd(t), token) if token else {}
+                    cur = float(d.get("last") or 0)
+                # 미장마감이면 cur=0 유지
             else:
-                msg += f"⚪ *{info.get('name', sym)}* 미장마감\n"
-            await asyncio.sleep(0.3)
+                d = await kis_stock_price(t, token) if token else {}
+                cur = int(d.get("stck_prpr", 0) or 0)
+            await asyncio.sleep(0.15)
         except Exception:
-            msg += f"⚪ *{info.get('name', sym)}* — 조회실패\n"
-    msg += f"\n총 {len(kr_stocks) + len(us_stocks)}개 보유 중"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+            pass
+        gap_pct = (cur - buy_p) / buy_p * 100 if cur > 0 and buy_p > 0 else None
+        triggered = cur > 0 and cur <= buy_p
+        near = gap_pct is not None and -5 <= gap_pct <= 0 and not triggered
+        # 30일 미갱신
+        stale = False
+        if updated:
+            try:
+                upd_dt = datetime.strptime(updated[:10], "%Y-%m-%d")
+                stale = (today - upd_dt.replace(tzinfo=None)).days >= 30 if upd_dt.tzinfo is None else (today.replace(tzinfo=None) - upd_dt.replace(tzinfo=None)).days >= 30
+            except Exception:
+                pass
+        blocked = "차단" in memo
+        items.append({
+            "t": t, "name": name, "grade": grade, "mkt": mkt,
+            "buy_p": buy_p, "cur": cur, "gap_pct": gap_pct,
+            "triggered": triggered, "near": near, "stale": stale,
+            "blocked": blocked, "updated": updated,
+        })
+
+    # 정렬
+    triggered_items = sorted([i for i in items if i["triggered"]],
+                             key=lambda x: (_GRADE_ORDER.get(x["grade"], 7), abs(x["gap_pct"] or 0)))
+    near_items = sorted([i for i in items if i["near"]],
+                        key=lambda x: (_GRADE_ORDER.get(x["grade"], 7), abs(x["gap_pct"] or 0)))
+    kr_items = sorted([i for i in items if i["mkt"] == "KR" and not i["triggered"] and not i["near"]],
+                      key=lambda x: (_GRADE_ORDER.get(x["grade"], 7), abs(x["gap_pct"] or 999)))
+    us_items = sorted([i for i in items if i["mkt"] == "US" and not i["triggered"] and not i["near"]],
+                      key=lambda x: (_GRADE_ORDER.get(x["grade"], 7), abs(x["gap_pct"] or 999)))
+
+    def _fmt(i):
+        g = i["grade"] or "·"
+        block = "🚨 " if i["blocked"] else ""
+        stale = "⏰ " if i["stale"] else ""
+        date_str = f" ({i['updated'][5:10]})" if i["updated"] else ""
+        if i["mkt"] == "US":
+            bp = f"${i['buy_p']:,.1f}"
+            cp = f"현${i['cur']:,.1f}" if i["cur"] > 0 else "미장마감"
+        else:
+            bp = f"{i['buy_p']/1000:.0f}K" if i["buy_p"] >= 1000 else f"{i['buy_p']:,.0f}"
+            cp = f"현{i['cur']/1000:.0f}K" if i["cur"] >= 1000 else f"현{i['cur']:,}" if i["cur"] > 0 else "?"
+        gap = f" {i['gap_pct']:+.1f}%" if i["gap_pct"] is not None else ""
+        return f"{block}{stale}{g} {i['name']} {bp} {cp}{gap}{date_str}\n"
+
+    msgs = []
+    msg = "👀 *매수감시 워치리스트*\n\n"
+
+    if triggered_items:
+        msg += "⚡ *감시가 도달*\n"
+        for i in triggered_items:
+            msg += _fmt(i)
+        msg += "\n"
+    if near_items:
+        msg += "🔔 *5% 이내 근접*\n"
+        for i in near_items:
+            msg += _fmt(i)
+        msg += "\n"
+
+    kr_msg = ""
+    if kr_items:
+        kr_msg = "🇰🇷 *한국*\n"
+        for i in kr_items:
+            kr_msg += _fmt(i)
+        kr_msg += "\n"
+
+    us_msg = ""
+    if us_items:
+        us_msg = "🇺🇸 *미국*\n"
+        for i in us_items:
+            us_msg += _fmt(i)
+        us_msg += "\n"
+
+    stale_cnt = sum(1 for i in items if i["stale"])
+    blocked_cnt = sum(1 for i in items if i["blocked"])
+    footer = f"총 {len(items)}개"
+    if stale_cnt:
+        footer += f" | ⏰ 30일+ 미갱신 {stale_cnt}"
+    if blocked_cnt:
+        footer += f" | 🚨 차단 {blocked_cnt}"
+
+    # 4096자 제한 처리
+    combined = msg + kr_msg + us_msg + footer
+    if len(combined) <= 4000:
+        await update.message.reply_text(combined, parse_mode="Markdown")
+    else:
+        # 분할 전송
+        if len(msg) > 10:
+            await update.message.reply_text(msg.rstrip(), parse_mode="Markdown")
+        if kr_msg:
+            kr_full = "👀 *워치 — 한국*\n\n" + kr_msg + footer
+            if len(kr_full) > 4000:
+                kr_full = kr_full[:3950] + "\n_(일부 생략)_"
+            await update.message.reply_text(kr_full, parse_mode="Markdown")
+        if us_msg:
+            us_full = "👀 *워치 — 미국*\n\n" + us_msg
+            await update.message.reply_text(us_full, parse_mode="Markdown")
 
 
 async def watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2040,124 +2139,103 @@ async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-# 전체현황 (보유 + 매수감시 통합)
+# 전체현황 → 대시보드
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     portfolio = load_json(PORTFOLIO_FILE, {})
     _meta_keys = {"us_stocks", "cash_krw", "cash_usd"}
     kr_pf = {k: v for k, v in portfolio.items() if k not in _meta_keys}
     us_pf = portfolio.get("us_stocks", {})
     wa = load_watchalert()
-    watch_items = {t: v for t, v in wa.items() if v.get("buy_price")}
-    stops = load_stoploss()
-    if not kr_pf and not us_pf and not watch_items:
-        await update.message.reply_text("📭 보유/감시 종목 없음"); return
-    await update.message.reply_text("⏳ 전체현황 조회 중...")
-    token = await get_kis_token()
-    # 가격 캐시 (중복 조회 방지)
-    price_cache = {}
+    today = datetime.now(KST)
 
-    async def _fetch_price(t):
-        if t in price_cache:
-            return price_cache[t]
+    # ── 보유종목 집계 ──
+    hold_cnt = len(kr_pf) + len(us_pf)
+    total_eval = 0
+    total_cost = 0
+    token = await get_kis_token()
+    for t, info in kr_pf.items():
+        qty = int(info.get("qty", 0))
+        avg = float(info.get("avg_price", 0))
+        total_cost += qty * avg
+        try:
+            d = await kis_stock_price(t, token) if token else {}
+            p = int(d.get("stck_prpr", 0) or 0)
+            total_eval += qty * p
+            await asyncio.sleep(0.15)
+        except Exception:
+            total_eval += qty * avg
+    for sym, info in us_pf.items():
+        qty = int(info.get("qty", 0))
+        avg = float(info.get("avg_price", 0))
+        total_cost += qty * avg * 1400
+        try:
+            if _is_us_market_hours_kst():
+                d = await kis_us_stock_price(sym, _guess_excd(sym), token) if token else {}
+                p = float(d.get("last") or 0)
+                total_eval += qty * p * 1400
+            else:
+                total_eval += qty * avg * 1400
+            await asyncio.sleep(0.15)
+        except Exception:
+            total_eval += qty * avg * 1400
+    pnl_pct = round((total_eval - total_cost) / total_cost * 100, 1) if total_cost > 0 else 0
+    eval_m = f"{total_eval / 1_000_000:.0f}M" if total_eval >= 1_000_000 else f"{total_eval:,.0f}"
+
+    # ── 워치 집계 ──
+    watch_cnt = len(wa)
+    triggered_cnt = 0
+    near_cnt = 0
+    blocked_cnt = 0
+    stale_cnt = 0
+    for t, info in wa.items():
+        buy_p = float(info.get("buy_price", 0))
+        memo = info.get("memo", "")
+        updated = info.get("updated_at", info.get("created_at", ""))
+        if "차단" in memo:
+            blocked_cnt += 1
+        if updated:
+            try:
+                upd_dt = datetime.strptime(updated[:10], "%Y-%m-%d")
+                if (today - upd_dt.replace(tzinfo=None)).days >= 30:
+                    stale_cnt += 1
+            except Exception:
+                pass
+        # 가격 체크 (간이 — KR만, US는 미장이면 스킵)
         try:
             if _is_us_ticker(t):
-                if not _is_us_market_hours_kst():
-                    price_cache[t] = (0.0, "미장마감")
-                    return price_cache[t]
-                d = await kis_us_stock_price(t, _guess_excd(t), token)
-                p = float(d.get("last") or 0)
-                price_cache[t] = (p, "")
+                pass  # 미장시간 체크 비용 줄이기
             else:
                 d = await kis_stock_price(t, token) if token else {}
-                p = int(d.get("stck_prpr", 0) or 0)
-                price_cache[t] = (p, "")
-            await asyncio.sleep(0.3)
+                cur = int(d.get("stck_prpr", 0) or 0)
+                if cur > 0 and buy_p > 0:
+                    if cur <= buy_p:
+                        triggered_cnt += 1
+                    elif (cur - buy_p) / buy_p * 100 <= 5:
+                        near_cnt += 1
+                await asyncio.sleep(0.1)
         except Exception:
-            price_cache[t] = (0, "조회실패")
-        return price_cache[t]
+            pass
 
-    msg = "📋 *전체현황*\n\n"
-    cnt_hold = cnt_reached = cnt_wait = 0
+    # ── 레짐 ──
+    regime_state = load_json(REGIME_STATE_FILE, {"current": {}})
+    regime_cur = regime_state.get("current", {})
+    regime_name = regime_cur.get("regime", "")
+    regime_emoji = {"offensive": "🟢", "neutral": "🟡", "defensive": "🔴"}.get(regime_name, "⚪")
+    regime_kr = {"offensive": "공격", "neutral": "중립", "defensive": "방어"}.get(regime_name, "미정")
 
-    # ── [보유종목] ──
-    if kr_pf or us_pf:
-        msg += "━━ *보유종목* ━━\n"
-        for t, info in kr_pf.items():
-            price, err = await _fetch_price(t)
-            si = stops.get(t, {})
-            stop_p = float(si.get("stop_price") or si.get("stop") or 0)
-            tgt_p = float(si.get("target_price") or si.get("target") or 0)
-            if err:
-                msg += f"⚪ *{info.get('name', t)}* — {err}\n"
-            else:
-                stop_str = f" | 손절 {stop_p:,.0f} ({(stop_p - price) / price * 100:+.1f}%)" if stop_p > 0 and price > 0 else ""
-                tgt_str = f" → 목표 {tgt_p:,.0f}" if tgt_p > 0 else ""
-                icon = "🔻" if stop_p > 0 and price > 0 and (stop_p - price) / price * 100 >= -5 else "🔺"
-                # 천원 단위 약식 표시
-                p_k = f"{price / 1000:.0f}K" if price >= 1000 else f"{price:,}"
-                msg += f"{icon} *{info.get('name', t)}* {p_k}{stop_str}{tgt_str}\n"
-            cnt_hold += 1
-        for sym, info in us_pf.items():
-            price, err = await _fetch_price(sym)
-            si = (stops.get("us_stocks") or {}).get(sym, {})
-            stop_p = float(si.get("stop_price") or si.get("stop") or 0)
-            tgt_p = float(si.get("target_price") or si.get("target") or 0)
-            if err:
-                msg += f"⚪ *{info.get('name', sym)}* — {err}\n"
-            else:
-                stop_str = f" | 손절 ${stop_p:,.1f} ({(stop_p - price) / price * 100:+.1f}%)" if stop_p > 0 and price > 0 else ""
-                tgt_str = f" → 목표 ${tgt_p:,.1f}" if tgt_p > 0 else ""
-                icon = "🔻" if stop_p > 0 and price > 0 and (stop_p - price) / price * 100 >= -5 else "🔺"
-                msg += f"{icon} *{info.get('name', sym)}* ${price:,.2f}{stop_str}{tgt_str}\n"
-            cnt_hold += 1
-        msg += "\n"
+    # ── 메시지 조립 ──
+    msg = "📊 *전체현황*\n\n"
+    msg += f"💼 보유 {hold_cnt}종목 | 총{eval_m} | {pnl_pct:+.1f}%\n"
+    msg += f"👁 워치 {watch_cnt}종목 | ⚡도달 {triggered_cnt} | 🔔근접 {near_cnt}\n"
+    if blocked_cnt:
+        msg += f"🚨 진입차단 {blocked_cnt}종목\n"
+    if stale_cnt:
+        msg += f"⏰ 30일+ 미갱신 {stale_cnt}종목\n"
+    msg += f"{regime_emoji} 레짐 {regime_kr}"
+    if regime_cur.get("combined_score"):
+        msg += f" (점수 {regime_cur['combined_score']})"
+    msg += "\n"
 
-    # ── [매수감시] ──
-    if watch_items:
-        reached, waiting = [], []
-        for t, info in watch_items.items():
-            buy_p = float(info.get("buy_price", 0))
-            name = info.get("name", t)
-            price, err = await _fetch_price(t)
-            is_us = _is_us_ticker(t)
-            si = (stops.get("us_stocks") or {}).get(t, {}) if is_us else stops.get(t, {})
-            stop_p = float(si.get("stop_price") or si.get("stop") or 0)
-            tgt_p = float(si.get("target_price") or si.get("target") or 0)
-            rr = ""
-            if stop_p > 0 and tgt_p > 0 and buy_p > 0:
-                risk = abs(buy_p - stop_p)
-                reward = abs(tgt_p - buy_p)
-                rr = f" | RR 1:{reward / risk:.1f}" if risk > 0 else ""
-            gap_pct = (price - buy_p) / buy_p * 100 if price > 0 and buy_p > 0 else None
-            if is_us:
-                p_str = f"${price:,.2f}" if price > 0 else err or "?"
-                b_str = f"${buy_p:,.2f}"
-            else:
-                p_k = f"{price / 1000:.0f}K" if price >= 1000 else f"{price:,}"
-                p_str = p_k if price > 0 else err or "?"
-                b_str = f"{buy_p / 1000:.0f}K" if buy_p >= 1000 else f"{buy_p:,.0f}"
-            gap_str = f" ({gap_pct:+.1f}%)" if gap_pct is not None else ""
-            line = f"*{name}* {p_str} | 감시 {b_str}{gap_str}{rr}\n"
-            if price > 0 and price <= buy_p:
-                reached.append(f"🔴 {line}")
-            else:
-                waiting.append(f"⚪ {line}")
-
-        if reached:
-            msg += "━━ *매수감시 — 감시가 도달* ━━\n"
-            msg += "".join(reached)
-            msg += "\n"
-            cnt_reached = len(reached)
-        if waiting:
-            msg += "━━ *매수감시 — 대기* ━━\n"
-            msg += "".join(waiting)
-            msg += "\n"
-            cnt_wait = len(waiting)
-
-    msg += f"보유 {cnt_hold}개 | 감시 도달 {cnt_reached}개 | 대기 {cnt_wait}개"
-    # 텔레그램 4096자 제한
-    if len(msg) > 4000:
-        msg = msg[:3950] + "\n\n_(일부 생략)_"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 

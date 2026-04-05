@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import asyncio
 import uuid
 import aiohttp
@@ -477,7 +478,8 @@ MCP_TOOLS = [
                          "price":             {"type": "number", "description": "[trade] 매매 단가"},
                          "grade":             {"type": "string", "description": "[trade] 매매 시점 확신등급 (A/B/C/D)"},
                          "reason":            {"type": "string", "description": "[trade] 매매 사유"},
-                         "market":            {"type": "string", "description": "[delete] 'KR'=한국(기본), 'US'=미국"},
+                         "market":            {"type": "string", "description": "[delete] 'KR'=한국(기본), 'US'=미국. [buy_price 등록 시 자동 감지]"},
+                         "watch_grade":       {"type": "string", "description": "[buy_price] 매수감시 확신등급 (A/B+/B/B-/C+/C/D). 생략 가능."},
                      },
                      "required": []}},
     # 14. get_portfolio_history (유지)
@@ -1668,6 +1670,15 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 except Exception:
                     pass
                 gap_pct = round((cur - buy_price) / buy_price * 100, 2) if buy_price else None
+                # grade: 저장된 값 우선, 없으면 memo에서 파싱
+                grade = wa_info.get("grade", "")
+                if not grade:
+                    m = re.search(r"\(([ABCD][+-]?)\)", wa_info.get("memo", ""))
+                    grade = m.group(1) if m else ""
+                # market: 저장된 값 우선, 없으면 ticker 패턴
+                mkt = wa_info.get("market", "")
+                if not mkt:
+                    mkt = "US" if re.match(r"^[A-Z]+$", wa_ticker) else "KR"
                 watch_alerts.append({
                     "ticker": wa_ticker,
                     "name": wa_info.get("name", wa_ticker),
@@ -1675,8 +1686,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "cur_price": cur,
                     "gap_pct": gap_pct,
                     "triggered": cur > 0 and cur <= buy_price,
+                    "grade": grade,
+                    "market": mkt,
                     "memo": wa_info.get("memo", ""),
                     "created": wa_info.get("created", ""),
+                    "updated_at": wa_info.get("updated_at", ""),
                 })
             # ── 투자판단/비교 최근 기록 ──
             dec_log = load_decision_log()
@@ -1886,14 +1900,37 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             elif buy_price > 0:
                 # ── 매수감시 모드 ──
                 wa = load_watchalert()
-                old_price = wa.get(ticker, {}).get("buy_price", None)
+                old = wa.get(ticker, {})
+                old_price = old.get("buy_price", None)
                 log_action = "update" if old_price else "add"
-                wa[ticker] = {
+                now_str = datetime.now(KST).strftime("%Y-%m-%d")
+                # grade: watch_grade 파라미터 우선, 없으면 기존 유지
+                watch_grade = arguments.get("watch_grade", "").strip().upper()
+                if watch_grade not in ("A", "B+", "B", "B-", "C+", "C", "D", ""):
+                    watch_grade = ""
+                if not watch_grade:
+                    watch_grade = old.get("grade", "")
+                # market 자동 감지
+                if re.match(r"^\d{6}$", ticker):
+                    mkt = "KR"
+                elif re.match(r"^[A-Z]+$", ticker):
+                    mkt = "US"
+                else:
+                    mkt = "KR"
+                entry = {
                     "name": aname,
                     "buy_price": buy_price,
                     "memo": memo,
-                    "created": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+                    "grade": watch_grade,
+                    "market": mkt,
+                    "created_at": old.get("created_at", now_str),
+                    "updated_at": now_str,
+                    # 하위호환: 기존 created 필드 유지
+                    "created": old.get("created") or datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
                 }
+                if log_action == "add":
+                    entry["created_at"] = now_str
+                wa[ticker] = entry
                 save_json(WATCHALERT_FILE, wa)
                 asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                 append_watchlist_log({
