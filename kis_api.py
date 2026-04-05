@@ -131,11 +131,22 @@ _NYSE_TICKERS = {
     "KO", "PFE", "MRK", "VZ", "T", "NKE", "MMM", "CAT", "GS", "JPM",
     "BAC", "C", "WFC", "UNH", "CVX", "XOM", "CRM", "ORCL", "IBM", "GE",
     "LMT", "RTX", "NOC", "PM", "MCD", "UPS", "FDX", "GM", "F",
+    # 추가 NYSE 종목 (2026-04-05)
+    "VRT", "ETN", "GLW", "MOD", "BWXT", "NVT", "STVN", "XYL",
+    "HWM", "TDG", "GEV", "VST", "CEG", "CARR", "EMR", "ROK",
+}
+_AMEX_TICKERS = {
+    "LEU", "HYMC", "BTG", "NGD", "USAS", "SAND",
 }
 
 def _guess_excd(symbol: str) -> str:
     """미국 종목 거래소코드 추정 (NYS/NAS/AMS)"""
-    return "NYS" if symbol.upper() in _NYSE_TICKERS else "NAS"
+    s = symbol.upper()
+    if s in _NYSE_TICKERS:
+        return "NYS"
+    if s in _AMEX_TICKERS:
+        return "AMS"
+    return "NAS"
 
 
 def _is_us_market_hours_kst() -> bool:
@@ -1124,14 +1135,31 @@ async def detect_sector_rotation(token: str) -> dict:
 
 
 async def kis_us_stock_price(symbol: str, token: str, excd: str = "") -> dict:
-    """KIS API 해외주식 현재가 (HHDFS00000300)"""
+    """KIS API 해외주식 현재가 (HHDFS00000300). 거래소 코드 자동 fallback."""
     if not excd:
         excd = _guess_excd(symbol)
+    # 1차 시도
     async with aiohttp.ClientSession() as s:
         _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
             "HHDFS00000300", token,
             {"AUTH": "", "EXCD": excd, "SYMB": symbol})
-        return d.get("output", {})
+        out = d.get("output", {})
+        price = float(out.get("last", 0) or 0)
+        if price > 0:
+            return out
+        # 2차: 다른 거래소로 fallback
+        fallback_codes = [c for c in ("NYS", "NAS", "AMS") if c != excd]
+        for fb in fallback_codes:
+            await asyncio.sleep(0.2)
+            _, d2 = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
+                "HHDFS00000300", token,
+                {"AUTH": "", "EXCD": fb, "SYMB": symbol})
+            out2 = d2.get("output", {})
+            p2 = float(out2.get("last", 0) or 0)
+            if p2 > 0:
+                print(f"[excd fallback] {symbol}: {excd}→{fb} 성공")
+                return out2
+        return out  # 모든 거래소에서 0이면 원래 결과 반환
 
 
 async def kis_us_stock_detail(symbol: str, token: str, excd: str = "") -> dict:
