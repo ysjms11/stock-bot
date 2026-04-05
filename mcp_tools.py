@@ -1897,6 +1897,21 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
             elif not ticker or not aname:
                 result = {"error": "ticker와 name은 필수입니다"}
+
+            elif buy_price <= 0 and stop_price <= 0 and target_price <= 0:
+                # ── grade만 단독 업데이트 모드 ──
+                wa = load_watchalert()
+                _g = (arguments.get("watch_grade") or arguments.get("grade") or "").strip().upper()
+                if ticker in wa and _g in ("A", "B+", "B", "B-", "C+", "C", "D"):
+                    wa[ticker]["grade"] = _g
+                    wa[ticker]["updated_at"] = datetime.now(KST).strftime("%Y-%m-%d")
+                    save_json(WATCHALERT_FILE, wa)
+                    result = {"ok": True, "message": f"{aname}({ticker}) grade → {_g}"}
+                elif ticker not in wa:
+                    result = {"error": f"{ticker} 매수감시 항목 없음. buy_price와 함께 등록하세요."}
+                else:
+                    result = {"error": f"유효하지 않은 grade: {_g}. A/B+/B/B-/C+/C/D 중 하나"}
+
             elif buy_price > 0:
                 # ── 매수감시 모드 ──
                 wa = load_watchalert()
@@ -1904,8 +1919,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 old_price = old.get("buy_price", None)
                 log_action = "update" if old_price else "add"
                 now_str = datetime.now(KST).strftime("%Y-%m-%d")
-                # grade: watch_grade 파라미터 우선, 없으면 기존 유지
-                watch_grade = arguments.get("watch_grade", "").strip().upper()
+                # grade: watch_grade 또는 grade 파라미터, 없으면 기존 유지
+                watch_grade = (arguments.get("watch_grade") or arguments.get("grade") or "").strip().upper()
                 if watch_grade not in ("A", "B+", "B", "B-", "C+", "C", "D", ""):
                     watch_grade = ""
                 if not watch_grade:
