@@ -30,7 +30,7 @@ from kis_api import (
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
 
-from krx_crawler import load_krx_db, scan_stocks
+from krx_crawler import load_krx_db, scan_stocks, _load_history, _compute_technicals
 
 try:
     from report_crawler import (
@@ -2935,7 +2935,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = data
 
         elif name == "get_change_scan":
-            from krx_crawler import load_krx_db
             db = load_krx_db()
             if not db:
                 result = {"error": "KRX DB 없음 (data/krx_db/ 비어있음)"}
@@ -3005,7 +3004,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     elif p == "golden_cross":
                         s_set = set()
                         import numpy as _np
-                        from krx_crawler import _load_history
                         hist, hdates = _load_history(db["date"], 25)
                         for t, s in stocks.items():
                             _m5 = s.get("ma5")
@@ -3045,8 +3043,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         default_sort = "short_change_20d"
                     elif p == "credit_unwind":
                         s_set = set()
-                        from krx_crawler import _load_history as _lh
-                        hist_c, _ = _lh(db["date"], 6)
+                        hist_c, _ = _load_history(db["date"], 6)
                         for t, s in stocks.items():
                             ch = hist_c.get(t, {}).get("credit_balance", [])
                             if len(ch) >= 5 and all(ch[i] < ch[i+1] for i in range(4) if ch[i+1] > 0):
