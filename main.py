@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import asyncio
 from datetime import datetime, timedelta, time as dtime
 from telegram import Update, ReplyKeyboardMarkup
@@ -8,7 +9,7 @@ from aiohttp import web
 
 from kis_api import *
 from kis_api import (
-    _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _guess_excd,
+    _DATA_DIR, _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _guess_excd,
     ws_manager, get_ws_tickers, close_session,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
@@ -2950,6 +2951,335 @@ async def _handle_krx_supplement(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "date": date, "merged": merged_count, "file_size_kb": size_kb})
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 웹 대시보드 (/dash)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_DASH_CSS = """
+<style>
+:root{--bg:#1a1a2e;--bg2:#16213e;--fg:#e0e0e0;--fg2:#a0a0b0;--accent:#4fc3f7;--red:#ef5350;--green:#66bb6a;--border:#2a2a4a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,sans-serif;padding:16px;max-width:860px;margin:0 auto;line-height:1.6}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+h1{font-size:1.6em;margin:16px 0 8px}h2{font-size:1.3em;margin:24px 0 8px;border-bottom:1px solid var(--border);padding-bottom:4px}
+h3{font-size:1.1em;margin:16px 0 4px;color:var(--accent)}
+p{margin:8px 0}
+code{background:var(--bg2);padding:2px 6px;border-radius:3px;font-family:'SF Mono',monospace;font-size:0.9em}
+pre{background:var(--bg2);padding:12px;border-radius:6px;overflow-x:auto;margin:8px 0;font-size:0.85em;border:1px solid var(--border)}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:8px 0;font-size:0.9em}
+th{background:var(--bg2);padding:8px;text-align:left;border:1px solid var(--border);font-weight:600}
+td{padding:6px 8px;border:1px solid var(--border)}
+tr:nth-child(even){background:rgba(255,255,255,0.03)}
+ul,ol{margin:8px 0 8px 20px}li{margin:2px 0}
+.check{display:flex;align-items:center;gap:6px;margin:2px 0}
+.check input{width:16px;height:16px;accent-color:var(--accent)}
+.section{margin:24px 0;padding:16px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)}
+.nav{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
+.nav a{padding:4px 10px;border-radius:4px;background:var(--bg2);font-size:0.9em}
+.pos{color:var(--green)}.neg{color:var(--red)}
+@media(max-width:600px){body{padding:8px}table{font-size:0.8em}th,td{padding:4px}}
+</style>
+"""
+
+
+def _md_to_html(md: str) -> str:
+    """Markdown → HTML (정규식 기반 경량 변환)."""
+    lines = md.split("\n")
+    html_lines = []
+    in_code = False
+    in_table = False
+    in_list = False
+
+    for line in lines:
+        # code block
+        if line.strip().startswith("```"):
+            if in_code:
+                html_lines.append("</code></pre>")
+                in_code = False
+            else:
+                lang = line.strip()[3:].strip()
+                html_lines.append(f"<pre><code>")
+                in_code = True
+            continue
+        if in_code:
+            html_lines.append(line.replace("<", "&lt;").replace(">", "&gt;"))
+            continue
+
+        stripped = line.strip()
+
+        # close table
+        if in_table and not stripped.startswith("|"):
+            html_lines.append("</tbody></table>")
+            in_table = False
+
+        # close list
+        if in_list and not stripped.startswith("- ") and not stripped.startswith("* ") and stripped:
+            html_lines.append("</ul>")
+            in_list = False
+
+        # empty line
+        if not stripped:
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append("")
+            continue
+
+        # headers
+        if stripped.startswith("### "):
+            html_lines.append(f"<h3>{_inline(stripped[4:])}</h3>")
+        elif stripped.startswith("## "):
+            html_lines.append(f"<h2>{_inline(stripped[3:])}</h2>")
+        elif stripped.startswith("# "):
+            html_lines.append(f"<h1>{_inline(stripped[2:])}</h1>")
+        elif stripped.startswith("> "):
+            html_lines.append(f"<blockquote style='border-left:3px solid var(--accent);padding-left:12px;color:var(--fg2)'>{_inline(stripped[2:])}</blockquote>")
+        # checkbox
+        elif stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
+            html_lines.append(f"<div class='check'><input type='checkbox' checked disabled><span style='text-decoration:line-through;color:var(--fg2)'>{_inline(stripped[6:])}</span></div>")
+        elif stripped.startswith("- [ ] "):
+            html_lines.append(f"<div class='check'><input type='checkbox' disabled><span>{_inline(stripped[6:])}</span></div>")
+        # table
+        elif stripped.startswith("|"):
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+            if all(set(c) <= {"-", ":", " "} for c in cells):
+                continue  # separator row
+            if not in_table:
+                html_lines.append("<table><thead><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in cells) + "</tr></thead><tbody>")
+                in_table = True
+            else:
+                html_lines.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells) + "</tr>")
+        # list
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            if not in_list:
+                html_lines.append("<ul>")
+                in_list = True
+            html_lines.append(f"<li>{_inline(stripped[2:])}</li>")
+        # hr
+        elif stripped.startswith("---"):
+            html_lines.append("<hr style='border-color:var(--border);margin:16px 0'>")
+        else:
+            html_lines.append(f"<p>{_inline(stripped)}</p>")
+
+    if in_code:
+        html_lines.append("</code></pre>")
+    if in_table:
+        html_lines.append("</tbody></table>")
+    if in_list:
+        html_lines.append("</ul>")
+    return "\n".join(html_lines)
+
+
+def _inline(text: str) -> str:
+    """인라인 마크다운 (bold, code, link)."""
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    return text
+
+
+def _json_to_table(data, title: str = "") -> str:
+    """JSON 데이터를 HTML 테이블로."""
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        keys = list(data[0].keys())
+        rows = "".join("<tr>" + "".join(f"<td>{v}</td>" for v in [r.get(k, "") for k in keys]) + "</tr>" for r in data[:50])
+        header = "".join(f"<th>{k}</th>" for k in keys)
+        return f"<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table>"
+    elif isinstance(data, dict):
+        rows = "".join(f"<tr><td><strong>{k}</strong></td><td>{_format_val(v)}</td></tr>" for k, v in list(data.items())[:100])
+        return f"<table>{rows}</table>"
+    return f"<pre>{json.dumps(data, ensure_ascii=False, indent=2)[:5000]}</pre>"
+
+
+def _format_val(v):
+    if isinstance(v, dict):
+        return "<code>" + json.dumps(v, ensure_ascii=False)[:200] + "</code>"
+    if isinstance(v, list):
+        return f"[{len(v)} items]"
+    if isinstance(v, (int, float)) and abs(v) >= 10000:
+        return f"{v:,.0f}"
+    return str(v)
+
+
+def _build_portfolio_html() -> str:
+    """portfolio.json → 보기 좋은 테이블."""
+    pf = load_json(PORTFOLIO_FILE, {})
+    kr = {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
+    us = pf.get("us_stocks", {})
+
+    html = ""
+    if kr:
+        html += "<h3>🇰🇷 한국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th></tr></thead><tbody>"
+        for t, v in kr.items():
+            html += f"<tr><td>{v.get('name', t)}</td><td>{int(v.get('qty', 0)):,}</td><td>{int(v.get('avg_price', 0)):,}원</td></tr>"
+        html += "</tbody></table>"
+    if us:
+        html += "<h3>🇺🇸 미국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th></tr></thead><tbody>"
+        for t, v in us.items():
+            html += f"<tr><td>{v.get('name', t)} ({t})</td><td>{int(v.get('qty', 0)):,}</td><td>${float(v.get('avg_price', 0)):,.2f}</td></tr>"
+        html += "</tbody></table>"
+
+    cash_k = float(pf.get("cash_krw", 0) or 0)
+    cash_u = float(pf.get("cash_usd", 0) or 0)
+    if cash_k or cash_u:
+        html += f"<p>💰 현금: {cash_k:,.0f}원 / ${cash_u:,.2f}</p>"
+    return html or "<p>포트폴리오 비어있음</p>"
+
+
+def _build_watchalert_html() -> str:
+    """watchalert.json → 감시가 테이블."""
+    wa = load_watchalert()
+    if not wa:
+        return "<p>감시 종목 없음</p>"
+    items = []
+    for t, v in wa.items():
+        bp = float(v.get("buy_price", 0) or 0)
+        items.append({"name": v.get("name", t), "ticker": t, "buy_price": bp,
+                       "grade": v.get("grade", ""), "memo": v.get("memo", "")[:40]})
+    items.sort(key=lambda x: x["buy_price"], reverse=True)
+    html = "<table><thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>등급</th><th>메모</th></tr></thead><tbody>"
+    for i in items[:30]:
+        bp = f"${i['buy_price']:,.2f}" if _is_us_ticker(i["ticker"]) else f"{i['buy_price']:,.0f}원"
+        html += f"<tr><td>{i['name']}</td><td>{i['ticker']}</td><td>{bp}</td><td>{i['grade']}</td><td>{i['memo']}</td></tr>"
+    html += "</tbody></table>"
+    if len(items) > 30:
+        html += f"<p>... 외 {len(items) - 30}종목</p>"
+    return html
+
+
+async def _handle_dash(request: web.Request) -> web.Response:
+    """GET /dash — 메인 대시보드."""
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Bot Dashboard</title>{_DASH_CSS}</head><body>
+<h1>📊 Stock Bot Dashboard</h1>
+<div class="nav">
+<a href="/dash">홈</a>
+<a href="/health">Health</a>
+</div>"""
+
+    # 📋 TODO
+    try:
+        todo_path = os.path.join(_DATA_DIR, "TODO.md")
+        if os.path.exists(todo_path):
+            with open(todo_path, encoding="utf-8") as f:
+                todo_md = f.read()
+            html += f'<div class="section"><h2>📋 TODO</h2>{_md_to_html(todo_md)}</div>'
+    except Exception:
+        pass
+
+    # 💰 포트폴리오
+    html += f'<div class="section"><h2>💰 포트폴리오</h2>{_build_portfolio_html()}</div>'
+
+    # 👀 워치리스트
+    html += f'<div class="section"><h2>👀 감시 종목</h2>{_build_watchalert_html()}</div>'
+
+    # 📝 투자판단 최근 5건
+    try:
+        dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
+        if dl:
+            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:5]
+            html += '<div class="section"><h2>📝 최근 투자판단</h2><table><thead><tr><th>날짜</th><th>레짐</th><th>액션</th></tr></thead><tbody>'
+            for date, entry in recent:
+                regime = entry.get("regime", "?")
+                actions = ", ".join(entry.get("actions", [])) or entry.get("summary", "")[:60]
+                html += f"<tr><td>{date}</td><td>{regime}</td><td>{actions}</td></tr>"
+            html += "</tbody></table></div>"
+    except Exception:
+        pass
+
+    # 💼 매매기록 최근 10건
+    try:
+        tl = load_json(f"{_DATA_DIR}/trade_log.json", [])
+        trades = tl if isinstance(tl, list) else tl.get("trades", [])
+        if trades:
+            recent_t = trades[-10:][::-1]
+            html += '<div class="section"><h2>💼 최근 매매</h2><table><thead><tr><th>날짜</th><th>종목</th><th>매매</th><th>가격</th><th>수량</th></tr></thead><tbody>'
+            for t in recent_t:
+                side = "매수" if t.get("side") == "buy" else "매도"
+                html += f"<tr><td>{t.get('date', '?')}</td><td>{t.get('name', t.get('ticker', '?'))}</td><td>{side}</td><td>{t.get('price', '?'):,}</td><td>{t.get('qty', '?')}</td></tr>"
+            html += "</tbody></table></div>"
+    except Exception:
+        pass
+
+    # 📅 이벤트
+    try:
+        events = load_json(f"{_DATA_DIR}/events.json", {})
+        if events:
+            html += '<div class="section"><h2>📅 이벤트</h2><table><thead><tr><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
+            for date in sorted(events.keys()):
+                html += f"<tr><td>{date}</td><td>{events[date]}</td></tr>"
+            html += "</tbody></table></div>"
+    except Exception:
+        pass
+
+    # 📚 문서
+    try:
+        doc_files = []
+        for f in sorted(os.listdir(_DATA_DIR)):
+            if f.endswith((".md", ".txt")) and not f.startswith("."):
+                doc_files.append(f)
+        if doc_files:
+            html += '<div class="section"><h2>📚 문서</h2><ul>'
+            for f in doc_files:
+                html += f'<li><a href="/dash/file/{f}">{f}</a></li>'
+            html += "</ul></div>"
+    except Exception:
+        pass
+
+    html += "</body></html>"
+    return web.Response(text=html, content_type="text/html")
+
+
+async def _handle_dash_file(request: web.Request) -> web.Response:
+    """GET /dash/file/{filename} — data/ 파일 렌더링."""
+    try:
+        filename = request.match_info.get("filename", "")
+
+        # 보안
+        if ".." in filename or "/" in filename or "\\" in filename:
+            return web.Response(text="Forbidden", status=403)
+        if filename.endswith((".py", ".env", ".sh")):
+            return web.Response(text="Forbidden", status=403)
+
+        filepath = os.path.join(_DATA_DIR, filename)
+        if not os.path.isfile(filepath):
+            return web.Response(text="Not Found", status=404)
+        if os.path.getsize(filepath) > 500 * 1024:
+            return web.Response(text="File too large", status=413)
+
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{filename}</title>{_DASH_CSS}</head><body>
+<div class="nav"><a href="/dash">← 대시보드</a></div>
+<h1>{filename}</h1>"""
+
+        if filename.endswith(".md") or filename.endswith(".txt"):
+            html += _md_to_html(content)
+        elif filename.endswith(".json"):
+            try:
+                data = json.loads(content)
+                if filename == "portfolio.json":
+                    html += _build_portfolio_html()
+                elif filename == "watchalert.json":
+                    html += _build_watchalert_html()
+                else:
+                    html += _json_to_table(data)
+            except Exception:
+                html += f"<pre>{content[:10000]}</pre>"
+        else:
+            html += f"<pre>{content[:10000]}</pre>"
+
+        html += "</body></html>"
+        return web.Response(text=html, content_type="text/html")
+    except Exception as e:
+        import traceback
+        print(f"[Dash] file 오류: {e}\n{traceback.format_exc()}")
+        return web.Response(text=f"Error: {e}", status=500)
+
+
 async def _run_all(app, port):
     # MCP aiohttp 서버 시작
     mcp_app = web.Application(client_max_size=50 * 1024 * 1024)  # 50MB for KRX upload
@@ -2958,6 +3288,8 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     mcp_app.router.add_post("/api/krx_upload", _handle_krx_upload)
     mcp_app.router.add_post("/api/krx_supplement", _handle_krx_supplement)
+    mcp_app.router.add_get("/dash", _handle_dash)
+    mcp_app.router.add_get("/dash/file/{filename}", _handle_dash_file)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
