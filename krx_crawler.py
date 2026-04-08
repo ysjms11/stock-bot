@@ -12,6 +12,7 @@ import aiohttp
 import asyncio
 import json
 import os
+import subprocess
 import numpy as np
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -370,7 +371,7 @@ def _load_history(target_date: str, n_days: int = 250) -> dict:
     if not files:
         return {}, []
 
-    history = {}  # ticker → {close: [], volume: [], eps: []}
+    history = {}
     dates = []
     for fname in files:
         d = fname[:8]
@@ -380,11 +381,17 @@ def _load_history(target_date: str, n_days: int = 250) -> dict:
                 db = json.load(f)
             for ticker, s in db.get("stocks", {}).items():
                 if ticker not in history:
-                    history[ticker] = {"close": [], "volume": [], "eps": []}
+                    history[ticker] = {"close": [], "volume": [], "eps": [],
+                                       "foreign_net_amt": [], "short_balance": [],
+                                       "credit_balance": [], "foreign_hold_ratio": []}
                 h = history[ticker]
                 h["close"].append(s.get("close", 0))
                 h["volume"].append(s.get("volume", 0))
                 h["eps"].append(s.get("eps", 0))
+                h["foreign_net_amt"].append(s.get("foreign_net_amt", 0))
+                h["short_balance"].append(s.get("short_balance", 0))
+                h["credit_balance"].append(s.get("credit_balance", 0))
+                h["foreign_hold_ratio"].append(s.get("foreign_hold_ratio", 0))
         except Exception:
             pass
     return history, dates
@@ -591,6 +598,41 @@ def _compute_technicals(date: str, stocks: dict):
         else:
             s["eps_change_90d"] = s["earnings_gap"] = None
 
+        # ── 수급 추세: foreign_trend Nd ──
+        frgn_hist = h.get("foreign_net_amt", [])
+        for nd in (5, 20, 60):
+            key = f"foreign_trend_{nd}d"
+            if len(frgn_hist) >= nd:
+                buy_days = sum(1 for x in frgn_hist[:nd] if x > 0)
+                s[key] = round(buy_days / nd, 4)
+            else:
+                s[key] = None
+
+        # ── 수급 추세: short_change Nd ──
+        short_hist = h.get("short_balance", [])
+        for nd in (5, 20):
+            key = f"short_change_{nd}d"
+            if len(short_hist) >= nd + 1 and short_hist[nd] > 0:
+                s[key] = round((short_hist[0] - short_hist[nd]) / short_hist[nd] * 100, 2)
+            else:
+                s[key] = None
+
+        # ── 수급 추세: credit_change Nd ──
+        credit_hist = h.get("credit_balance", [])
+        for nd in (5, 20):
+            key = f"credit_change_{nd}d"
+            if len(credit_hist) >= nd + 1 and credit_hist[nd] > 0:
+                s[key] = round((credit_hist[0] - credit_hist[nd]) / credit_hist[nd] * 100, 2)
+            else:
+                s[key] = None
+
+        # ── 수급 추세: foreign_hold_change_5d ──
+        fh_hist = h.get("foreign_hold_ratio", [])
+        if len(fh_hist) >= 6 and fh_hist[5] > 0:
+            s["foreign_hold_change_5d"] = round(fh_hist[0] - fh_hist[5], 4)
+        else:
+            s["foreign_hold_change_5d"] = None
+
         # ── 매물대 60d / 250d ──
         for period, suffix in [(60, "_60d"), (250, "_250d")]:
             vp = _calc_vp(closes, volumes, period)
@@ -619,6 +661,174 @@ def _compute_technicals(date: str, stocks: dict):
         s.setdefault("sector_rank", None)
 
     print(f"[Tech] 지표 계산 완료: {len(stocks)}종목")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Safari KRX 크롤링 (로그인 세션)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _safari_fetch(bld: str, params: dict, key: str = "krx_tmp") -> list:
+    """Safari fetch로 KRX JSON API 호출 (동기). Returns output records."""
+    body_parts = [f"{k}={v}" for k, v in params.items()]
+    body_str = "&".join(body_parts)
+
+    js = (f"fetch('/comm/bldAttendant/getJsonData.cmd',{{"
+          f"method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},"
+          f"body:'{body_str}'}}).then(r=>r.text()).then(t=>"
+          f"{{localStorage.setItem('{key}',t);document.title='OK_'+t.length;}})"
+          f".catch(e=>document.title='ERR:'+e.message);")
+
+    try:
+        subprocess.run(["osascript", "-e",
+            f'tell application "Safari" to do JavaScript "{js}" in document 1'],
+            capture_output=True, timeout=15)
+        import time; time.sleep(3)
+
+        r = subprocess.run(["osascript", "-e",
+            'tell application "Safari" to get name of document 1'],
+            capture_output=True, text=True, timeout=5)
+        title = r.stdout.strip()
+        if not title.startswith("OK_"):
+            return []
+
+        r2 = subprocess.run(["osascript", "-e",
+            f'tell application "Safari" to do JavaScript "localStorage.getItem(\'{key}\')" in document 1'],
+            capture_output=True, text=True, timeout=30)
+        raw = r2.stdout.strip()
+
+        # Clean localStorage
+        subprocess.run(["osascript", "-e",
+            f'tell application "Safari" to do JavaScript "localStorage.removeItem(\'{key}\')" in document 1'],
+            capture_output=True, timeout=5)
+
+        data = json.loads(raw)
+        records = data.get("output", data.get("block1", data.get("OutBlock_1", [])))
+        return records if isinstance(records, list) else []
+    except Exception as e:
+        print(f"  [Safari] 에러: {e}")
+        return []
+
+
+def _safari_available() -> bool:
+    """Safari에 KRX 로그인 세션이 있는지 확인."""
+    try:
+        r = subprocess.run(["osascript", "-e",
+            'tell application "Safari" to get URL of document 1'],
+            capture_output=True, text=True, timeout=5)
+        return "krx.co.kr" in r.stdout
+    except Exception:
+        return False
+
+
+def _fetch_safari_krx(date: str) -> dict:
+    """Safari 로그인 세션으로 KRX 전종목 데이터 일괄 수집 (동기).
+    Returns: {ticker: {per, pbr, eps, bps, div_yield, sector_name,
+                       foreign_net_amt, inst_net_amt, indiv_net_amt,
+                       short_balance, short_ratio, foreign_hold_ratio,
+                       foreign_exhaust_rate, credit_balance, lending_balance}}
+    """
+    import time
+    result = {}
+
+    # 1) PER/PBR/EPS/BPS/배당/업종 (MDCSTAT03501)
+    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        records = _safari_fetch("", {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT03501",
+            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
+        }, key=f"krx_fund_{mkt_id}")
+        for r in records:
+            t = r.get("ISU_SRT_CD", "")
+            if not t: continue
+            result.setdefault(t, {})
+            result[t]["per"] = _pf(r.get("PER"))
+            result[t]["pbr"] = _pf(r.get("PBR"))
+            result[t]["eps"] = _pf(r.get("EPS"))
+            result[t]["bps"] = _pf(r.get("BPS"))
+            result[t]["div_yield"] = _pf(r.get("DVD_YLD"))
+            idn = r.get("IDX_IND_NM", "")
+            if idn:
+                result[t]["sector_name"] = idn
+        print(f"  [Safari] {label} PER/PBR: {len(records)}종목")
+        time.sleep(1)
+
+    # 2) 투자자별 순매수 (MDCSTAT02401)
+    for inv_code, prefix in [("9000", "foreign"), ("7050", "inst"), ("8000", "indiv")]:
+        for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+            records = _safari_fetch("", {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT02401",
+                "locale": "ko_KR", "strtDd": date, "endDd": date,
+                "mktId": mkt_id, "invstTpCd": inv_code,
+            }, key=f"krx_{prefix}_{mkt_id}")
+            for r in records:
+                t = r.get("ISU_SRT_CD", "")
+                if not t: continue
+                result.setdefault(t, {})
+                result[t][f"{prefix}_net_qty"] = _pi(r.get("NETBID_TRDVOL"))
+                result[t][f"{prefix}_net_amt"] = _pi(r.get("NETBID_TRDVAL"))
+            print(f"  [Safari] {label} {prefix}: {len(records)}종목")
+            time.sleep(1)
+
+    # 3) 공매도 잔고 (MDCSTAT08501)
+    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        records = _safari_fetch("", {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT08501",
+            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
+            "strtDd": date, "endDd": date,
+        }, key=f"krx_short_{mkt_id}")
+        for r in records:
+            t = r.get("ISU_SRT_CD", r.get("ISU_CD", ""))
+            if len(t) != 6: continue
+            result.setdefault(t, {})
+            result[t]["short_balance"] = _pi(r.get("BAL_QTY", r.get("CVSHO_REMN_QTY", 0)))
+            result[t]["short_ratio"] = _pf(r.get("BAL_RTO", r.get("CVSHO_REMN_RTO", 0)))
+        print(f"  [Safari] {label} 공매도: {len(records)}종목")
+        time.sleep(1)
+
+    # 4) 외인 보유비율 (MDCSTAT03701)
+    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        records = _safari_fetch("", {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT03701",
+            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
+        }, key=f"krx_frgn_{mkt_id}")
+        for r in records:
+            t = r.get("ISU_SRT_CD", "")
+            if not t: continue
+            result.setdefault(t, {})
+            result[t]["foreign_hold_ratio"] = _pf(r.get("FRGN_HLDN_RTO", r.get("FRGN_TRDVOL_RTO", 0)))
+            result[t]["foreign_exhaust_rate"] = _pf(r.get("FRGN_LMT_EXHST_RTO", 0))
+        print(f"  [Safari] {label} 외인보유: {len(records)}종목")
+        time.sleep(1)
+
+    # 5) 신용잔고 (MDCSTAT02501)
+    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        records = _safari_fetch("", {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT02501",
+            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
+        }, key=f"krx_credit_{mkt_id}")
+        for r in records:
+            t = r.get("ISU_SRT_CD", "")
+            if not t: continue
+            result.setdefault(t, {})
+            result[t]["credit_balance"] = _pi(r.get("CRDT_REMN_QTY", r.get("TOTL_REMN_QTY", 0)))
+        print(f"  [Safari] {label} 신용잔고: {len(records)}종목")
+        time.sleep(1)
+
+    # 6) 대차잔고 (MDCSTAT08401)
+    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        records = _safari_fetch("", {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT08401",
+            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
+            "strtDd": date, "endDd": date,
+        }, key=f"krx_lend_{mkt_id}")
+        for r in records:
+            t = r.get("ISU_SRT_CD", r.get("ISU_CD", ""))
+            if len(t) != 6: continue
+            result.setdefault(t, {})
+            result[t]["lending_balance"] = _pi(r.get("BAL_QTY", r.get("LEND_REMN_QTY", 0)))
+        print(f"  [Safari] {label} 대차잔고: {len(records)}종목")
+        time.sleep(1)
+
+    print(f"  [Safari] 총 {len(result)}종목 수집")
+    return result
 
 
 async def _fetch_sector_info(date: str) -> dict:
@@ -746,27 +956,36 @@ async def update_daily_db(date: str = None) -> dict:
     all_tickers = list(stocks.keys())
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Task 2~4 병렬: 섹터정보 + KIS PER/PBR + 컨센서스
+    # Task 2: Safari KRX 크롤링 (PER/PBR/수급/공매도/외인보유/신용/대차/업종)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    sector_task = asyncio.create_task(_fetch_sector_info(date))
-    kis_task = asyncio.create_task(_fetch_kis_valuations(all_tickers))
-    consensus_task = asyncio.create_task(_fetch_consensus_batch(all_tickers))
+    safari_data = {}
+    safari_ok = False
+    if _safari_available():
+        print("[KRX] Safari 세션 감지 → KRX 크롤링 시작")
+        safari_data = await asyncio.to_thread(_fetch_safari_krx, date)
+        safari_ok = len(safari_data) > 0
+        for ticker, vals in safari_data.items():
+            if ticker in stocks:
+                stocks[ticker].update(vals)
+        print(f"[KRX] Safari 수집: {len(safari_data)}종목")
+    else:
+        print("[KRX] Safari 세션 없음 → KIS API fallback")
 
-    # 섹터 먼저 완료 대기 (빠름)
-    sector_data = await sector_task
-    for ticker, info in sector_data.items():
-        if ticker in stocks:
-            stocks[ticker]["sector_name"] = info["sector_name"]
-            stocks[ticker]["list_shares"] = info["list_shares"]
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Task 3: KIS API PER/PBR fallback (Safari 실패 시)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    kis_count = 0
+    if not safari_ok:
+        kis_data = await _fetch_kis_valuations(all_tickers)
+        kis_count = len(kis_data)
+        for ticker, vals in kis_data.items():
+            if ticker in stocks:
+                stocks[ticker].update(vals)
 
-    # KIS PER/PBR 완료 대기
-    kis_data = await kis_task
-    for ticker, vals in kis_data.items():
-        if ticker in stocks:
-            stocks[ticker].update(vals)
-
-    # 컨센서스 완료 대기
-    consensus_data = await consensus_task
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Task 4: 컨센서스 (FnGuide, 병렬)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    consensus_data = await _fetch_consensus_batch(all_tickers)
     for ticker, vals in consensus_data.items():
         if ticker in stocks:
             close = stocks[ticker].get("close", 0)
@@ -779,21 +998,18 @@ async def update_daily_db(date: str = None) -> dict:
     # 기본값 + 비율 계산
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
     for s in stocks.values():
-        # 밸류에이션 기본값
         for key in ["per", "pbr", "eps", "bps", "div_yield"]:
             s.setdefault(key, 0.0)
-        # 수급 기본값 (현재 맥미니 차단으로 0)
-        for key in ["foreign_net_amt", "inst_net_amt", "indiv_net_amt"]:
+        for key in ["foreign_net_amt", "inst_net_amt", "indiv_net_amt",
+                     "short_balance", "short_ratio", "foreign_hold_ratio",
+                     "foreign_exhaust_rate", "credit_balance", "lending_balance"]:
             s.setdefault(key, 0)
-        # 섹터 기본값
         s.setdefault("sector_name", "")
         s.setdefault("list_shares", 0)
-        # 컨센서스 기본값
         s.setdefault("consensus_target", 0)
         s.setdefault("consensus_count", 0)
         s.setdefault("consensus_gap", 0)
 
-        # 비율 계산
         mcap = s.get("market_cap", 0)
         tv = s.get("trade_value", 0)
         f_amt = s.get("foreign_net_amt", 0)
@@ -831,13 +1047,15 @@ async def update_daily_db(date: str = None) -> dict:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
     # 저장 (atomic write, 보관 무제한)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    kis_count = len(kis_data)
     cons_count = len(consensus_data)
+    safari_count = len(safari_data)
+    val_src = f"safari_krx({safari_count})" if safari_ok else f"KIS_API({kis_count})"
+    supply_src = f"safari_krx({safari_count})" if safari_ok else "unavailable"
     db = {
         "date": date,
         "updated_at": datetime.now(KST).isoformat(),
-        "source": {"price": "KRX_OPENAPI", "valuation": f"KIS_API({kis_count})",
-                    "consensus": f"FnGuide({cons_count})", "supply": "unavailable"},
+        "source": {"price": "KRX_OPENAPI", "valuation": val_src,
+                    "consensus": f"FnGuide({cons_count})", "supply": supply_src},
         "market_summary": market_summary,
         "count": len(stocks),
         "stocks": stocks,

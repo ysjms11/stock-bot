@@ -636,7 +636,7 @@ MCP_TOOLS = [
                      },
                      "required": []}},
     {"name": "get_change_scan",
-     "description": "변화 감지 스캔. 기술적 지표 기반 종목 발굴. preset: ma_convergence(이평수렴)/volume_spike(거래량급증)/earnings_disconnect(실적괴리)/consensus_undervalued(컨센서스저평가)/oversold_bounce(과매도반등)/vp_support(매물대지지)/golden_cross(골든크로스)/sector_leader(섹터선도)/w52_breakout(52주신고가근접). 복합: preset 콤마 구분.",
+     "description": "변화 감지 스캔. 기술적 지표+수급 기반 종목 발굴. preset: ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout/short_squeeze/credit_unwind/foreign_reversal/foreign_accumulation. 복합: 콤마 구분.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "preset": {"type": "string", "description": "프리셋명 (콤마로 복합 가능, 예: 'earnings_disconnect,vp_support')"},
@@ -3036,6 +3036,39 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         preset_desc.append(f"52주신고가근접(>{position_min*100:.0f}%)")
                         default_sort = "w52_position"
 
+                    elif p == "short_squeeze":
+                        change_max = _t("change_max", -30)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("short_change_20d") is not None and s["short_change_20d"] < change_max}
+                        matched &= s_set
+                        preset_desc.append(f"숏스퀴즈(공매도20d<{change_max}%)")
+                        default_sort = "short_change_20d"
+                    elif p == "credit_unwind":
+                        s_set = set()
+                        from krx_crawler import _load_history as _lh
+                        hist_c, _ = _lh(db["date"], 6)
+                        for t, s in stocks.items():
+                            ch = hist_c.get(t, {}).get("credit_balance", [])
+                            if len(ch) >= 5 and all(ch[i] < ch[i+1] for i in range(4) if ch[i+1] > 0):
+                                s_set.add(t)
+                        matched &= s_set
+                        preset_desc.append("신용청산(5일연속감소)")
+                        default_sort = "credit_change_5d"
+                    elif p == "foreign_reversal":
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("foreign_trend_5d") is not None and s["foreign_trend_5d"] >= 0.6
+                                 and s.get("foreign_trend_20d") is not None and s["foreign_trend_20d"] < 0.4}
+                        matched &= s_set
+                        preset_desc.append("외인전환(5d매수+20d매도)")
+                        default_sort = "foreign_trend_5d"
+                    elif p == "foreign_accumulation":
+                        hold_min = _t("hold_min", 1.0)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("foreign_hold_change_5d") is not None and s["foreign_hold_change_5d"] > hold_min}
+                        matched &= s_set
+                        preset_desc.append(f"외인축적(보유+{hold_min}%p/5d)")
+                        default_sort = "foreign_hold_change_5d"
+
                 if not presets:
                     preset_desc.append("전체 (프리셋 미지정)")
 
@@ -3072,6 +3105,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "sector_rel_strength": s.get("sector_rel_strength"),
                         "sector_rank": s.get("sector_rank"),
                         "ytd_return": s.get("ytd_return"),
+                        "foreign_trend_5d": s.get("foreign_trend_5d"),
+                        "foreign_trend_20d": s.get("foreign_trend_20d"),
+                        "short_change_5d": s.get("short_change_5d"),
+                        "short_change_20d": s.get("short_change_20d"),
+                        "credit_change_5d": s.get("credit_change_5d"),
+                        "foreign_hold_change_5d": s.get("foreign_hold_change_5d"),
+                        "short_balance": s.get("short_balance"),
+                        "short_ratio": s.get("short_ratio"),
+                        "foreign_hold_ratio": s.get("foreign_hold_ratio"),
+                        "credit_balance": s.get("credit_balance"),
                     })
                 results.sort(key=lambda x: x.get(sort_field) if x.get(sort_field) is not None else (-9999 if reverse else 9999), reverse=reverse)
                 total = len(results)
