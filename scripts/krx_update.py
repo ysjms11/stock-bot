@@ -14,6 +14,21 @@ import sys
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from pathlib import Path
+
+# .env 로드 (launchd에서 실행 시 환경변수 없음)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    for line in _env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and k not in os.environ:
+                os.environ[k] = v
 
 import pandas as pd
 import requests
@@ -581,22 +596,169 @@ def _last_trading_date() -> str:
     return d.strftime("%Y%m%d")
 
 
+def save_local(db: dict, data_dir: str = None) -> dict:
+    """로컬 data/krx_db/에 직접 저장 (맥미니 cron용)."""
+    if not data_dir:
+        data_dir = os.environ.get("DATA_DIR", "/data")
+    db_dir = os.path.join(data_dir, "krx_db")
+    os.makedirs(db_dir, exist_ok=True)
+
+    filepath = os.path.join(db_dir, f"{db['date']}.json")
+    tmp_path = filepath + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False)
+    os.replace(tmp_path, filepath)
+
+    size_kb = os.path.getsize(filepath) / 1024
+    print(f"[Local] 저장 완료: {filepath} ({size_kb:.0f}KB, {db['count']}종목)")
+
+    # 30일 이전 파일 정리
+    cutoff = (datetime.now(KST) - timedelta(days=30)).strftime("%Y%m%d")
+    removed = 0
+    for fname in os.listdir(db_dir):
+        if fname.endswith(".json") and fname[:8] < cutoff:
+            os.remove(os.path.join(db_dir, fname))
+            removed += 1
+    if removed:
+        print(f"[Local] {removed}개 오래된 DB 파일 삭제")
+
+    return {"date": db["date"], "count": db["count"], "file_size_kb": round(size_kb, 1)}
+
+
+def collect_supplement(date: str) -> dict:
+    """pykrx로 수급/공매도/외인보유 수집. Returns {ticker: {fields...}}"""
+    from pykrx import stock
+    result = {}
+
+    # 1) 투자자별 순매수 (외인/기관/개인)
+    for mkt in ["KOSPI", "KOSDAQ"]:
+        try:
+            df = stock.get_market_net_purchases_of_equities_by_ticker(date, date, market=mkt)
+            if not df.empty:
+                for ticker in df.index:
+                    row = df.loc[ticker]
+                    if ticker not in result:
+                        result[ticker] = {}
+                    result[ticker]["foreign_net_amt"] = int(row.get("외국인합계", 0) or 0)
+                    result[ticker]["inst_net_amt"] = int(row.get("기관합계", 0) or 0)
+                    result[ticker]["indiv_net_amt"] = int(row.get("개인", 0) or 0)
+                print(f"[pykrx] {mkt} 수급: {len(df)}종목")
+        except Exception as e:
+            print(f"[pykrx] {mkt} 수급 실패: {e}")
+        time.sleep(1)
+
+    # 2) 공매도 잔고/비중
+    for mkt in ["KOSPI", "KOSDAQ"]:
+        try:
+            df = stock.get_shorting_balance_by_date(date, date, market=mkt)
+            if not df.empty:
+                for ticker in df.index:
+                    row = df.loc[ticker]
+                    if ticker not in result:
+                        result[ticker] = {}
+                    result[ticker]["short_balance"] = int(row.get("공매도잔고", row.get("잔고수량", 0)) or 0)
+                    result[ticker]["short_ratio"] = float(row.get("공매도비중", row.get("비중", 0)) or 0)
+                print(f"[pykrx] {mkt} 공매도: {len(df)}종목")
+        except Exception as e:
+            print(f"[pykrx] {mkt} 공매도 실패: {e}")
+        time.sleep(1)
+
+    # 3) 외인 보유비율/한도소진율
+    for mkt in ["KOSPI", "KOSDAQ"]:
+        try:
+            df = stock.get_exhaustion_rates_of_foreign_investment(date, market=mkt)
+            if not df.empty:
+                for ticker in df.index:
+                    row = df.loc[ticker]
+                    if ticker not in result:
+                        result[ticker] = {}
+                    result[ticker]["foreign_hold_ratio"] = float(row.get("지분율", row.get("보유비율", 0)) or 0)
+                    result[ticker]["foreign_exhaust_rate"] = float(row.get("한도소진율", 0) or 0)
+                print(f"[pykrx] {mkt} 외인보유: {len(df)}종목")
+        except Exception as e:
+            print(f"[pykrx] {mkt} 외인보유 실패: {e}")
+        time.sleep(1)
+
+    # 4) 신용잔고 (data.krx.co.kr 크롤링)
+    sess = _get_krx_session()
+    for mkt_id, mkt_label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        try:
+            form = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT02501",
+                "locale": "ko_KR",
+                "mktId": mkt_id,
+                "trdDd": date,
+            }
+            body = _krx_json_post(sess, form)
+            records = body.get("output", body.get("OutBlock_1", []))
+            for r in records:
+                ticker = r.get("ISU_SRT_CD", "")
+                if not ticker:
+                    continue
+                if ticker not in result:
+                    result[ticker] = {}
+                result[ticker]["credit_balance"] = _pi(r.get("CRED_REMN_MARG_AMT", r.get("TOTL_REMN_QTY", 0)))
+            print(f"[Scrape] {mkt_label} 신용잔고: {len(records)}종목")
+        except Exception as e:
+            print(f"[Scrape] {mkt_label} 신용잔고 실패: {e}")
+        time.sleep(1)
+
+    return result
+
+
+def upload_supplement(date: str, supplement: dict) -> dict:
+    """수급 데이터를 맥미니 서버로 POST."""
+    url = f"{BOT_URL.rstrip('/')}/api/krx_supplement"
+    headers = {"Content-Type": "application/json"}
+    if BOT_API_KEY:
+        headers["Authorization"] = f"Bearer {BOT_API_KEY}"
+
+    payload = {"date": date, "stocks": supplement}
+    print(f"[Supplement] POST {url} ({len(supplement)}종목)")
+    resp = requests.post(url, json=payload, headers=headers, timeout=60)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Supplement upload failed: HTTP {resp.status_code} {resp.text[:300]}")
+    result = resp.json()
+    print(f"[Supplement] 완료: {result}")
+    return result
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="KRX 전종목 크롤러")
     parser.add_argument("--date", type=str, default=None,
                         help="거래일 YYYYMMDD (생략 시 KST 기준 최근 거래일)")
+    parser.add_argument("--local", action="store_true",
+                        help="로컬 저장 (맥미니 cron용, 업로드 안 함)")
+    parser.add_argument("--supplement", action="store_true",
+                        help="수급/공매도/외인보유 보강 (GitHub Actions → 맥미니)")
     args = parser.parse_args()
 
     date = args.date or _last_trading_date()
     print(f"[KRX] 대상 날짜: {date} (KST now={datetime.now(KST).strftime('%Y-%m-%d %H:%M')})")
 
     try:
-        db = build_db(date)
-        print(f"[KRX] 크롤링 완료: {db['count']}종목")
-        result = upload_to_bot(db)
-        print(f"[OK] date={result.get('date')}, count={result.get('count')}, "
-              f"size={result.get('file_size_kb')}KB")
+        if args.supplement:
+            # GitHub Actions: pykrx 수급 수집 → 맥미니 merge
+            supplement = collect_supplement(date)
+            if not supplement:
+                raise RuntimeError("수급 데이터 수집 실패 (0종목)")
+            result = upload_supplement(date, supplement)
+        elif args.local:
+            # 맥미니 로컬: krx_crawler.update_daily_db() 사용
+            import asyncio
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from krx_crawler import update_daily_db
+            result = asyncio.run(update_daily_db(date))
+            if "error" in result:
+                raise RuntimeError(result["error"])
+        else:
+            # GitHub Actions: 기존 build_db + upload
+            db = build_db(date)
+            print(f"[KRX] 크롤링 완료: {db['count']}종목")
+            result = upload_to_bot(db)
+
+        print(f"[OK] {result}")
     except Exception as e:
         print(f"[FAIL] {e}", file=sys.stderr)
         sys.exit(1)

@@ -954,7 +954,7 @@ async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔔 자동알림 7: 모멘텀 종료 감지 (15:45)
+# 🔔 자동알림 7: 모멘텀 종료 감지 (16:30)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def momentum_exit_check(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
@@ -996,7 +996,7 @@ async def momentum_exit_check(context: ContextTypes.DEFAULT_TYPE):
                 print(f"[momentum] {ticker} 오류: {e}")
 
         if alerts:
-            msg = ("⚠️ *모멘텀 종료 경고* (15:45)\n\n"
+            msg = ("⚠️ *모멘텀 종료 경고* (16:30)\n\n"
                    + "\n\n".join(alerts)
                    + "\n\n→ 등급 재평가 필요")
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
@@ -2515,7 +2515,7 @@ def main():
     jq.run_daily(us_market_summary, time=dtime(5,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_dst")
     jq.run_daily(us_market_summary, time=dtime(6,  5, tzinfo=KST), days=(1,2,3,4,5), name="us_summary_std")
     jq.run_daily(check_supply_drain,   time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="supply_drain")
-    jq.run_daily(momentum_exit_check,  time=dtime(15, 45, tzinfo=KST), days=(0,1,2,3,4), name="momentum_check")
+    jq.run_daily(momentum_exit_check,  time=dtime(16, 30, tzinfo=KST), days=(0,1,2,3,4), name="momentum_check")
     jq.run_daily(snapshot_and_drawdown, time=dtime(15, 50, tzinfo=KST), days=(0,1,2,3,4), name="snapshot_dd")
     jq.run_daily(weekly_review,           time=dtime(7,  0, tzinfo=KST), days=(5,), name="weekly")
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
@@ -2599,6 +2599,73 @@ async def _handle_krx_upload(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "date": date, "count": count, "file_size_kb": size_kb})
 
 
+async def _handle_krx_supplement(request: web.Request) -> web.Response:
+    """POST /api/krx_supplement — GitHub Actions에서 수급/공매도/외인보유 데이터 merge."""
+    if not KRX_UPLOAD_KEY:
+        return web.json_response({"error": "KRX_UPLOAD_KEY not configured"}, status=503)
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {KRX_UPLOAD_KEY}":
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    date = payload.get("date", "")
+    supplement = payload.get("stocks", {})
+    if not date or not supplement:
+        return web.json_response({"error": "date + stocks 필요"}, status=400)
+
+    # 기존 daily JSON 로드
+    filepath = os.path.join(KRX_DB_DIR, f"{date}.json")
+    if not os.path.exists(filepath):
+        return web.json_response({"error": f"DB 파일 없음: {date}"}, status=404)
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            db = json.load(f)
+    except Exception as e:
+        return web.json_response({"error": f"DB 로드 실패: {e}"}, status=500)
+
+    # merge: 기존 stocks에 수급 필드 추가
+    merged_count = 0
+    for ticker, vals in supplement.items():
+        if ticker in db.get("stocks", {}):
+            db["stocks"][ticker].update(vals)
+            merged_count += 1
+
+    # 비율 재계산 (수급 데이터 merge 후)
+    for s in db.get("stocks", {}).values():
+        mcap = s.get("market_cap", 0)
+        f_amt = s.get("foreign_net_amt", 0)
+        i_amt = s.get("inst_net_amt", 0)
+        tv = s.get("trade_value", 0)
+        if mcap > 0:
+            s["foreign_ratio"] = round(f_amt / mcap * 100, 4)
+            s["inst_ratio"] = round(i_amt / mcap * 100, 4)
+            s["fi_ratio"] = round((f_amt + i_amt) / mcap * 100, 4)
+            s["turnover"] = round(tv / mcap * 100, 4)
+
+    # 기술적 지표 재계산 (수급 추세 포함)
+    from krx_crawler import _compute_technicals
+    _compute_technicals(date, db["stocks"])
+
+    db["supplement_at"] = datetime.now(KST).isoformat()
+    db["source"]["supply"] = f"pykrx({merged_count})"
+
+    # atomic write
+    tmp_path = filepath + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False)
+    os.replace(tmp_path, filepath)
+
+    size_kb = round(os.path.getsize(filepath) / 1024, 1)
+    print(f"[KRX Supplement] {date}: {merged_count}종목 수급 merge, {size_kb}KB")
+
+    return web.json_response({"ok": True, "date": date, "merged": merged_count, "file_size_kb": size_kb})
+
+
 async def _run_all(app, port):
     # MCP aiohttp 서버 시작
     mcp_app = web.Application(client_max_size=50 * 1024 * 1024)  # 50MB for KRX upload
@@ -2606,6 +2673,7 @@ async def _run_all(app, port):
     mcp_app.router.add_post("/mcp/messages", mcp_messages_handler)
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     mcp_app.router.add_post("/api/krx_upload", _handle_krx_upload)
+    mcp_app.router.add_post("/api/krx_supplement", _handle_krx_supplement)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)

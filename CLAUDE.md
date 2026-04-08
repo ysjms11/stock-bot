@@ -19,13 +19,15 @@
 | 항목 | 내용 |
 |------|------|
 | 레포 | https://github.com/ysjms11/stock-bot |
-| 배포 | Railway (main 브랜치 push → 자동 배포) |
-| MCP URL | `https://<railway-domain>/mcp` (SSE) |
-| MCP messages | `https://<railway-domain>/mcp/messages?sessionId=<id>` (POST) |
-| Health check | `https://<railway-domain>/health` |
-| 포트 | 환경변수 `PORT` (Railway 자동 주입, 기본 8080) |
+| 배포 | 맥미니 M4 (192.168.0.36), launchd 자동시작 |
+| MCP URL | `https://bot.arcbot-server.org/mcp` (SSE) |
+| MCP messages | `https://bot.arcbot-server.org/mcp/messages?sessionId=<id>` (POST) |
+| Health check | `https://bot.arcbot-server.org/health` |
+| Cloudflare Tunnel | `com.stock-bot.cloudflared` (launchd) |
+| 도메인 | `arcbot-server.org` |
+| 포트 | 환경변수 `PORT` (기본 8080) |
 
-**필수 환경변수 (Railway Variables)**
+**필수 환경변수**
 
 ```
 TELEGRAM_TOKEN   텔레그램 봇 토큰
@@ -35,13 +37,14 @@ KIS_APP_SECRET   KIS Open API 시크릿
 DART_API_KEY     전자공시 API 키 (선택)
 GITHUB_TOKEN     GitHub Gist 백업용 토큰 (선택)
 BACKUP_GIST_ID   백업 Gist ID (선택)
-KRX_UPLOAD_KEY   KRX DB 업로드 인증 키 (GitHub Actions → Railway)
+KRX_UPLOAD_KEY   KRX DB 업로드 인증 키 (GitHub Actions)
+DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 ```
 
 **GitHub Actions Secrets** (KRX 크롤러용)
 
 ```
-BOT_URL          Railway 서버 URL (예: https://chic-ambition-production-d764.up.railway.app)
+BOT_URL          서버 URL (https://bot.arcbot-server.org)
 BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 ```
 
@@ -100,8 +103,8 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | `/data/dart_reports/*.txt` | DART 사업보고서 본문 txt 파일 | — |
 | `/data/krx_db/YYYYMMDD.json` | KRX 전종목 일별 DB (시세+수급+비율, 30일 보관) | — |
 
-> Railway는 `/data` 볼륨을 영구 마운트해야 재시작 후에도 데이터 보존됨.
-> 볼륨 미마운트 시 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`, `BACKUP_STOPLOSS` 등).
+> 맥미니 로컬 `data/` 디렉토리 사용 (`DATA_DIR` 환경변수).
+> 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`, `BACKUP_STOPLOSS` 등).
 
 ---
 
@@ -109,7 +112,7 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 
 ---
 
-## MCP 도구 목록 (24개)
+## MCP 도구 목록 (28개)
 
 | # | 이름 | mode/type | 설명 |
 |---|------|-----------|------|
@@ -154,6 +157,10 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | 22 | `get_finance_rank` | | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
 | 23 | `get_highlow` | | 52주 신고가/신저가 근접 종목 순위 (괴리율 필터) |
 | 24 | `get_broker` | | 종목별 거래원(증권사) 매수/매도 상위 5곳 |
+| 25 | `read_file` | | stock-bot 디렉토리 내 파일 읽기 (.md/.py/.json/.txt, 100KB, ../ 차단) |
+| 26 | `write_file` | | stock-bot 디렉토리 내 파일 쓰기 (.md/.json/.txt, .py/.env 불가, 200KB, ../ 차단) |
+| 27 | `list_files` | | stock-bot 디렉토리 내 파일/폴더 목록 (이름·크기·수정일, depth 2, ../ 차단) |
+| 28 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout, 복합 콤마 구분) |
 
 ---
 
@@ -186,7 +193,7 @@ elif name == "new_tool_name":
     result = {"ticker": ticker, "field": d.get("field_name")}
 ```
 
-**Step 4** — 커밋 & push → Railway 자동 배포
+**Step 4** — 커밋 & push → 맥미니 서버에서 git pull 후 재시작
 
 ---
 
@@ -194,13 +201,13 @@ elif name == "new_tool_name":
 
 - **해외 현재가 `rate` 필드**: 응답 필드는 `rate` (등락률%). `diff_rate`는 존재하지 않음 → None 반환됨. `get_portfolio` 미국 섹션은 `d.get("rate")` 사용.
 - **거래소 코드 자동판별**: `_guess_excd()`는 `_NYSE_TICKERS` 세트 기반으로 NYS/NAS만 구분. AMEX(`AMS`) 종목은 NAS로 fallback됨.
-- **`/data` 볼륨**: Railway에서 볼륨 마운트 안 하면 재배포 시 데이터 초기화됨. 환경변수 기반 fallback 복원 + Gist 백업 있음.
-- **KIS 토큰 캐시**: `_token_cache`는 메모리에만 존재. 재시작 시 재발급 필요 (20초 내외 소요).
+- **로컬 데이터**: 맥미니 로컬 `data/` 디렉토리 사용. 환경변수 기반 fallback 복원 + Gist 백업 있음.
+- **KIS 토큰 캐시**: `data/token_cache.json`에 파일 캐싱 (24시간 유효, 23시간 재사용). 재시작 시에도 캐시된 토큰 즉시 사용.
 - **Yahoo Finance fallback**: 미국 장 요약(`us_market_summary`)과 손절 체크(`check_stoploss` US)는 Yahoo Finance 사용. KIS 해외 API와 혼용 주의.
 - **check_fx_alert 비활성화**: 환율 알림은 매크로 대시보드로 통합 예정, 스케줄에서 주석 처리됨.
 - **WebSocket 국내 전용**: `KisRealtimeManager`는 국내주식만 지원. 미국주식은 폴링 방식(`check_stoploss`).
 - **DST 자동 감지**: 미국 장 시간 판별은 `zoneinfo.ZoneInfo('America/New_York')` 사용으로 서머타임/표준시 자동 전환.
-- **KRX 크롤링 → GitHub Actions**: `data.krx.co.kr`은 Railway 데이터센터 IP 차단. GitHub Actions에서 크롤링 후 `/api/krx_upload`로 업로드하는 구조. 설정: GitHub Secrets(`BOT_URL`, `BOT_API_KEY`) + Railway 환경변수(`KRX_UPLOAD_KEY`).
+- **KRX 크롤링 → GitHub Actions**: GitHub Actions에서 크롤링 후 `/api/krx_upload`로 업로드하는 구조. 설정: GitHub Secrets(`BOT_URL`, `BOT_API_KEY`) + 환경변수(`KRX_UPLOAD_KEY`).
 
 ---
 
@@ -224,3 +231,31 @@ elif name == "new_tool_name":
 3. Parallelize independent tool calls when possible
 4. Route output > 20 lines to subagents
 5. Never restate what the user already said
+
+---
+
+## Agent Team
+
+모든 코드 작업은 아래 팀 구조를 따른다:
+
+### Teammate 1: architect (Opus)
+- 역할: 설계/계획만. 코드 작성 안 함.
+- "어떤 파일을 어떻게 수정할지" 계획을 세우고 python-developer에게 넘김.
+
+### Teammate 2: python-developer (Sonnet)
+- 역할: architect 계획에 따라 실제 코드 작성.
+- 모든 수정은 이 에이전트가 실행.
+
+### Teammate 3: kis-api-specialist (Sonnet)
+- 역할: KIS Open API 관련 로직 검토. API 호출 순서, 파라미터, 에러 처리 확인.
+- KIS API 관련 없는 작업이면 스킵.
+
+### Teammate 4: test-writer (Sonnet)
+- 역할: 테스트 작성 및 실행. 수정된 기능의 정상 동작 확인.
+
+### Teammate 5: code-reviewer (Codex)
+- 역할: 최종 코드 리뷰. /codex:review --base main 실행.
+- 모든 작업의 마지막 단계.
+
+### 작업 순서
+architect → python-developer → kis-api-specialist(해당시) → test-writer → code-reviewer

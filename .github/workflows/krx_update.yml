@@ -1,15 +1,15 @@
 name: KRX Daily Update
 on:
   schedule:
-    # UTC 06:55 = KST 15:55, 평일만 (Mon-Fri)
-    - cron: '55 6 * * 1-5'
+    # UTC 07:10 = KST 16:10 (맥미니 시세 수집 15:55 후 15분 여유)
+    - cron: '10 7 * * 1-5'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  krx-update:
+  krx-supplement:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.11
@@ -18,8 +18,8 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install -r scripts/requirements_actions.txt
-      - name: Run KRX crawler
+      - name: Run KRX supplement (수급/공매도/외인보유)
         env:
           BOT_URL: ${{ secrets.BOT_URL }}
           BOT_API_KEY: ${{ secrets.BOT_API_KEY }}
-        run: python scripts/krx_update.py
+        run: python scripts/krx_update.py --supplement

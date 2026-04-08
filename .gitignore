@@ -4,3 +4,10 @@ __pycache__/
 _check*.py
 _hankyung.html
 test_*.py
+venv/
+data/*.json
+data/krx_db/
+data/dart_reports/
+data/.DS_Store
+data_backup_before_railway/
+.DS_Store

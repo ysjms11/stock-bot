@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 
 KST = ZoneInfo("Asia/Seoul")
-REPORTS_FILE = "/data/reports.json"
+REPORTS_FILE = os.environ.get("DATA_DIR", "/data") + "/reports.json"
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                   " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

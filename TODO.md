@@ -1,112 +1,59 @@
 # 주식봇 개선 TODO
-> 업데이트: 2026-03-19 | 레포: ysjms11/stock-bot | Railway: chic-ambition
-
-
----
-
-## ✅ 완료된 항목
-- [x] 미국 주식 현재가 조회 (get_stock_detail 통합)
-- [x] 미국 포트폴리오 등락률 반영
-- [x] 미보유 종목 가격 감시 (set_alert buy_price)
-- [x] 일봉 데이터 조회 (get_stock_detail period 파라미터)
-- [x] decision_log 저장/조회 (set_alert log_type=decision)
-- [x] compare_snapshot (set_alert log_type=compare)
-- [x] #11 복합 신호 분류 개선 — 보유종목 익절/손절/추세 분류 + 일일 중복 방지 (2026-03-19)
-- [x] #14 매크로 대시보드 — VIX/WTI/금/구리/DXY/US10Y/외인수급/이벤트 수집, 매일 18:00+06:00 자동발송, get_macro(mode=dashboard) MCP 지원 (2026-03-19)
-- [x] #4 외국인 순매수 + scan_market 통합 — scan 결과에 frgn_ntby_qty + [외인매수] 태그 (2026-03-19)
-- [x] #7 DART 공시 중요도 태깅 — [긴급]/[주의]/[참고] 키워드 확장 + 제목 앞 태그 표시 (2026-03-19)
-- [x] #6 섹터 ETF 시세 조회 — get_macro(mode='sector_etf') 8개 ETF 현재가·등락률 (2026-03-19)
-- [x] #12 이평선 수렴 스크리너 — convergence/convergence2 분할 스캔 (110/111종목) (2026-03-19)
-- [x] #13 영업이익 증가율 스크리너 — op_growth + op_turnaround + 매출/이익률 필드 (2026-03-19)
-- [x] #16 배치 스캔 인프라 — get_stock_universe() + batch_fetch() + kis_daily_closes(), stock_universe.json 221종목 (2026-03-19)
-- [x] 한국 장마감 요약 개선 — 섹터ETF/포트변동/목표갭/감시접근 추가 (15:40) (2026-03-19)
-- [x] 미국 장마감 요약 신규 — S&P/나스닥/보유종목/손절경고/감시접근 (06:00) (2026-03-19)
-- [x] 수급 이탈 경고 — 외인 3일 연속 순매도 시 자동 경고 (2026-03-19)
-- [x] 주간 손실 한도 경고 — -3%/-4% 자동 경고 (weekly_base.json 기준) (2026-03-19)
-- [x] 감시 알림 파일 기반 중복 방지 — watch_sent.json (배포 후에도 유지) (2026-03-19)
-- [x] 전체 알림 주말/장외 시간 체크 추가 — _is_kr_trading_time() 헬퍼 (2026-03-19)
-- [x] 환율 알림 비활성화 — 매크로 대시보드로 통합 (2026-03-19)
-- [x] 매도 규칙 전면 개정 — 평단 기준 금지 (2026-03-19)
+> 업데이트: 2026-04-08 | 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
 
 ---
 
-## 🔄 진행중 / 디버깅 필요
+## 🔄 진행중 / PENDING
 
-- [ ] **DART API 분기별 영업이익 스크리너** — dart_corp_map.json 생성 완료 (211종목), dart_op_growth/dart_turnaround 구현 완료. MCP 레벨 에러 디버깅 중.
-- [ ] **#18 GitHub API 연동** (P2) — Claude가 MCP 도구로 직접 파일 수정+커밋+push
+### 봇 개발
+- [ ] KRX OPEN API 전환 (8개 서비스 승인완료 4/6, 코드 전환 필요)
+- [ ] Railway 완전 삭제
+- [ ] GitHub API 연동 — Claude MCP로 직접 커밋/push (P2)
 
----
-
-## 🟢 P2 — 다음 달
-
-### 17. 모멘텀 종료 자동 감지
-**영향도:** ★★★★★ | **난이도:** ★★★
-
-```
-보유 종목 섹터별 5가지 조건 자동 체크:
-1. 외인/기관 3일 연속 순매도
-2. 대장주 고점 대비 -10%
-3. 거래량 20일 평균 대비 50% 이하
-4. 동일 섹터 신고가 종목 수 감소
-5. (뉴스 기반은 수동)
-
-→ 2개 이상 해당: "⚠️ 모멘텀 종료 의심" 알림
-```
-
-### 15. get_consensus — 증권사 컨센서스 자동 수집
-**영향도:** ★★★★☆ | **난이도:** ★★★★
-
-```
-데이터 소스: 네이버증권 또는 FnGuide 크롤링
-기능: 감시/보유 종목의 증권사 목표가 자동 수집
-알림: 목표가 상향/하향 시 텔레그램 알림
-```
-
-### 10. 텔레그램 /summary 고도화
-- 확신등급 변동 표시 (이전 점검 대비)
-- 포트 비중 변화
-- 당일 중요 공시 하이라이트
-
-### 18. GitHub API 연동
-**영향도:** ★★★★☆ | **난이도:** ★★★
-
-```
-목표: Claude가 MCP 도구로 직접 TODO.md/코드 파일 수정 + 커밋 + push 가능하게
-- Railway 환경변수에 GitHub PAT (GITHUB_PAT) 저장
-- update_file MCP 도구 추가: path/content/message 인자로 파일 수정+커밋
-- Claude가 코드 변경 후 바로 배포까지 자율 완결 가능
-```
+### 투자 PENDING
+- [ ] CRSP -29.6% → 25% 강제재평가 (thesis 재평가 필수)
+- [ ] HD조선 51.8% 비중 축소 검토
+- [ ] 촉매 발생 시 감시가 재설정 룰 확정 (RR 역산 기반)
+- [ ] 레짐 🟡 전환 시 A등급 감시가 재평가 (NVDA/LITE)
+- [ ] LITE 5/5 Q3 실적 전후 추매 판단
+- [ ] 삼성전자 셀온더뉴스 여부 모니터링
+- [ ] 워치 44개 → 20개 이하 축소 검토
+- [ ] 포트 등급-비중 반비례 문제 구조조정
 
 ---
 
-## 구현 우선순위 요약
+## ✅ 완료 (2026-04-08)
+- [x] 맥미니 M4 서버 이전 + Cloudflare Tunnel + 도메인 (arcbot-server.org)
+- [x] 데이터 44개 워치 복원 (Railway → 맥미니)
+- [x] Codex 플러그인 설치 + Agent Team 구조 확립
+- [x] read_file / write_file / list_files MCP 도구 추가
+- [x] CLAUDE.md 맥미니 환경 업데이트
+- [x] 미국 $0.00 버그 수정 (NYS/NAS/AMS fallback)
+- [x] 모멘텀경고 16:30 KST 이동 + 추정수급 포함
+- [x] 토큰 캐싱 파일 저장 (token_cache.json)
+- [x] Gist 백업 빈 데이터 스킵 로직
+- [x] 봇 자동시작 launchd 등록
+- [x] get_regime 10Y-3M 금리차 확인
+- [x] TSLA/LITE 딥서치
+- [x] credit/lending/after_hours 필드 매핑 수정
+- [x] DART API 스크리너 정상 동작 확인
+- [x] 코드 최적화 audit 반영 확인
 
-```
-진행중:
-  DART API 스크리너 디버깅
-
-다음 달 (P2):
-  17. 모멘텀 종료 감지
-  15. get_consensus
-  10. summary 고도화
-  18. GitHub API 연동 (Claude 자율 커밋/push)
-```
+## ✅ 완료 (2026-03-19 이전)
+- [x] 미국 주식 현재가 조회 + 포트폴리오 등락률
+- [x] 미보유 종목 가격 감시 + 일봉 데이터
+- [x] decision_log / compare_snapshot 저장
+- [x] 매크로 대시보드 + 섹터 ETF
+- [x] 이평선 수렴/영업이익 스크리너
+- [x] 장마감 요약 (한국 15:40 / 미국 06:00)
+- [x] 수급 이탈 경고 + 주간 손실 한도
+- [x] 모멘텀 종료 자동 감지 + get_consensus
 
 ---
 
 ## 구현 시 주의사항
-
-1. **Railway Volume:** JSON 파일이 재배포 시 리셋됨.
-   GitHub Gist 백업 또는 환경변수 저장 검토.
-
-2. **KIS API 호출 제한:** 초당 20회.
-   배치 스캔 시 sleep(0.05) 필요. 200종목 = 최소 10초.
-
-3. **미국 시장 시간대:** 한국시간 밤 11:30~새벽 6:00.
-   미국 종목 실시간 데이터는 장중에만 유효.
-
-4. **MCP 도구 등록:** 새 함수 추가 시 mcp_tools.py에
-   스키마 등록 필수. Claude가 호출하려면 정확해야 함.
-
-5. **DART API:** dart_corp_map.json은 레포에 커밋되어 있음 (211종목).
-   업데이트 필요 시 로컬에서 build_dart_corp_map() 실행 후 재커밋.
+1. 맥미니 로컬 data/ (DATA_DIR 환경변수)
+2. KIS API 초당 20회 제한 (sleep 0.3)
+3. 미국 장시간: 한국 23:30~06:00
+4. MCP 도구 추가 시 mcp_tools.py 스키마 등록 필수
+5. Agent Team: architect(Opus) → python-developer(Sonnet) → kis-api-specialist(Sonnet) → test-writer(Sonnet) → code-reviewer(Codex)

@@ -10,7 +10,7 @@ from aiohttp import web
 
 from kis_api import *
 from kis_api import (
-    _is_us_ticker, _guess_excd, _kis_get,
+    _DATA_DIR, _is_us_ticker, _guess_excd, _kis_get,
     _fetch_sector_flow, _TICKER_SECTOR,
     ws_manager, get_ws_tickers,
     collect_macro_data, format_macro_msg,
@@ -46,7 +46,7 @@ _mcp_sessions: dict = {}   # session_id → asyncio.Queue
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # DART 스크리너 당일 결과 캐시
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-_DART_CACHE_FILE = "/data/dart_screener_cache.json"
+_DART_CACHE_FILE = f"{_DATA_DIR}/dart_screener_cache.json"
 
 def _load_dart_screener_cache(mode: str, cache_key: str) -> dict | None:
     """당일 mode+cache_key 에 해당하는 캐시 반환. 없으면 None."""
@@ -612,6 +612,39 @@ MCP_TOOLS = [
                          "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
                      },
                      "required": ["ticker"]}},
+
+    {"name": "read_file",
+     "description": "stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt, 최대 100KB. ../ 경로 차단.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (예: CLAUDE.md, kis_api.py)"},
+                     },
+                     "required": ["path"]}},
+    {"name": "write_file",
+     "description": "stock-bot 디렉토리 내 파일 쓰기. 허용 확장자: .md/.json/.txt (.py/.env 불가), 최대 200KB. ../ 경로 차단.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (예: TODO.md, data/events.json)"},
+                         "content": {"type": "string", "description": "파일에 쓸 내용"},
+                     },
+                     "required": ["path", "content"]}},
+    {"name": "list_files",
+     "description": "stock-bot 디렉토리 내 파일/폴더 목록 조회. 최대 depth 2. ../ 경로 차단.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (기본값: .)"},
+                     },
+                     "required": []}},
+    {"name": "get_change_scan",
+     "description": "변화 감지 스캔. 기술적 지표 기반 종목 발굴. preset: ma_convergence(이평수렴)/volume_spike(거래량급증)/earnings_disconnect(실적괴리)/consensus_undervalued(컨센서스저평가)/oversold_bounce(과매도반등)/vp_support(매물대지지)/golden_cross(골든크로스)/sector_leader(섹터선도)/w52_breakout(52주신고가근접). 복합: preset 콤마 구분.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "preset": {"type": "string", "description": "프리셋명 (콤마로 복합 가능, 예: 'earnings_disconnect,vp_support')"},
+                         "n": {"type": "integer", "description": "결과 수 (기본 30, 최대 100)"},
+                         "market": {"type": "string", "description": "kospi/kosdaq/all (기본 all)"},
+                         "sort": {"type": "string", "description": "정렬 기준 필드명 (기본: 프리셋별 자동)"},
+                     },
+                     "required": []}},
 ]
 
 
@@ -2900,6 +2933,253 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             else:
                 data = await kis_inquire_member(ticker, token)
                 result = data
+
+        elif name == "get_change_scan":
+            from krx_crawler import load_krx_db
+            db = load_krx_db()
+            if not db:
+                result = {"error": "KRX DB 없음 (data/krx_db/ 비어있음)"}
+            else:
+                preset_str = (arguments.get("preset") or "").strip()
+                n = max(1, min(int(arguments.get("n", 30) or 30), 100))
+                market_filter = (arguments.get("market") or "all").strip().lower()
+                sort_by = (arguments.get("sort") or "").strip()
+                stocks = db.get("stocks", {})
+
+                # 시장 필터
+                if market_filter != "all":
+                    stocks = {t: s for t, s in stocks.items() if s.get("market") == market_filter}
+
+                presets = [p.strip() for p in preset_str.split(",") if p.strip()] if preset_str else []
+                matched = set(stocks.keys())
+                preset_desc = []
+                default_sort = "chg_pct"
+
+                # 파라미터 (프리셋 임계값 오버라이드 가능)
+                _t = lambda k, d: float(arguments.get(k, d) or d)
+
+                for p in presets:
+                    if p == "ma_convergence":
+                        spread_max = _t("spread_max", 3)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("ma_spread") is not None and abs(s["ma_spread"]) < spread_max
+                                 and s.get("ma_spread_change_30d") is not None and s["ma_spread_change_30d"] > 0}
+                        matched &= s_set
+                        preset_desc.append(f"MA수렴(spread<{spread_max}%+30d수렴)")
+                        default_sort = "ma_spread_change_30d"
+                    elif p == "volume_spike":
+                        ratio_min = _t("ratio_min", 2.0)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("volume_ratio_10d") is not None and s["volume_ratio_10d"] > ratio_min}
+                        matched &= s_set
+                        preset_desc.append(f"거래량급증(10d>{ratio_min}x)")
+                        default_sort = "volume_ratio_10d"
+                    elif p == "earnings_disconnect":
+                        gap_min = _t("gap_min", 30)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("earnings_gap") is not None and s["earnings_gap"] > gap_min}
+                        matched &= s_set
+                        preset_desc.append(f"실적괴리(gap>{gap_min})")
+                        default_sort = "earnings_gap"
+                    elif p == "consensus_undervalued":
+                        gap_min = _t("gap_min", 40)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("consensus_gap", 0) > gap_min and s.get("consensus_count", 0) >= 3}
+                        matched &= s_set
+                        preset_desc.append(f"컨센서스저평가(gap>{gap_min}%)")
+                        default_sort = "consensus_gap"
+                    elif p == "oversold_bounce":
+                        rsi_max = _t("rsi_max", 30)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("rsi14") is not None and s["rsi14"] < rsi_max}
+                        matched &= s_set
+                        preset_desc.append(f"과매도(RSI<{rsi_max})")
+                        default_sort = "rsi14"
+                    elif p == "vp_support":
+                        position_max = _t("position_max", 0.2)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("vp_position") is not None and s["vp_position"] < position_max}
+                        matched &= s_set
+                        preset_desc.append(f"매물대지지(VP<{position_max})")
+                        default_sort = "vp_position"
+                    elif p == "golden_cross":
+                        s_set = set()
+                        import numpy as _np
+                        from krx_crawler import _load_history
+                        hist, hdates = _load_history(db["date"], 25)
+                        for t, s in stocks.items():
+                            _m5 = s.get("ma5")
+                            _m20 = s.get("ma20")
+                            if _m5 is None or _m20 is None or _m5 <= _m20:
+                                continue
+                            hc = hist.get(t, {}).get("close", [])
+                            if len(hc) >= 21:
+                                pm5 = float(_np.mean(hc[1:6]))
+                                pm20 = float(_np.mean(hc[1:21]))
+                                if pm5 < pm20:
+                                    s_set.add(t)
+                        matched &= s_set
+                        preset_desc.append("골든크로스(MA5>MA20전환)")
+                        default_sort = "ma_spread"
+                    elif p == "sector_leader":
+                        strength_min = _t("strength_min", 5)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("sector_rel_strength") is not None and s["sector_rel_strength"] > strength_min}
+                        matched &= s_set
+                        preset_desc.append(f"섹터선도(상대강도>{strength_min}%)")
+                        default_sort = "sector_rel_strength"
+                    elif p == "w52_breakout":
+                        position_min = _t("position_min", 0.95)
+                        s_set = {t for t, s in stocks.items()
+                                 if s.get("w52_position") is not None and s["w52_position"] > position_min}
+                        matched &= s_set
+                        preset_desc.append(f"52주신고가근접(>{position_min*100:.0f}%)")
+                        default_sort = "w52_position"
+
+                if not presets:
+                    preset_desc.append("전체 (프리셋 미지정)")
+
+                sort_field = sort_by or default_sort
+                reverse = sort_field not in ("rsi14", "vp_position")
+                results = []
+                for t in matched:
+                    s = stocks[t]
+                    results.append({
+                        "ticker": t,
+                        "name": s.get("name", t),
+                        "market": s.get("market", ""),
+                        "close": s.get("close", 0),
+                        "chg_pct": s.get("chg_pct", 0),
+                        "market_cap": round(s.get("market_cap", 0) / 1_0000_0000) if s.get("market_cap", 0) else 0,
+                        "per": s.get("per"),
+                        "pbr": s.get("pbr"),
+                        "rsi14": s.get("rsi14"),
+                        "ma_spread": s.get("ma_spread"),
+                        "ma_spread_change_10d": s.get("ma_spread_change_10d"),
+                        "ma_spread_change_30d": s.get("ma_spread_change_30d"),
+                        "volume_ratio_5d": s.get("volume_ratio_5d"),
+                        "volume_ratio_10d": s.get("volume_ratio_10d"),
+                        "volume_ratio_20d": s.get("volume_ratio_20d"),
+                        "rsi_change_5d": s.get("rsi_change_5d"),
+                        "rsi_change_20d": s.get("rsi_change_20d"),
+                        "consensus_gap": s.get("consensus_gap"),
+                        "consensus_target": s.get("consensus_target"),
+                        "earnings_gap": s.get("earnings_gap"),
+                        "eps_change_90d": s.get("eps_change_90d"),
+                        "vp_position": s.get("vp_position"),
+                        "vp_position_60d": s.get("vp_position_60d"),
+                        "w52_position": s.get("w52_position"),
+                        "sector_rel_strength": s.get("sector_rel_strength"),
+                        "sector_rank": s.get("sector_rank"),
+                        "ytd_return": s.get("ytd_return"),
+                    })
+                results.sort(key=lambda x: x.get(sort_field) if x.get(sort_field) is not None else (-9999 if reverse else 9999), reverse=reverse)
+                total = len(results)
+                results = results[:n]
+
+                result = {
+                    "date": db["date"],
+                    "preset": preset_str or "(none)",
+                    "preset_description": " + ".join(preset_desc),
+                    "sort": sort_field,
+                    "market": market_filter,
+                    "total_matched": total,
+                    "count": len(results),
+                    "results": results,
+                }
+
+        elif name == "read_file":
+            rel = arguments.get("path", "").strip()
+            if not rel:
+                result = {"error": "path는 필수입니다"}
+            elif ".." in rel or rel.startswith("/"):
+                result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
+            else:
+                _allowed_ext = (".md", ".py", ".json", ".txt")
+                if not any(rel.endswith(ext) for ext in _allowed_ext):
+                    result = {"error": f"허용 확장자: {', '.join(_allowed_ext)}"}
+                else:
+                    _base = os.path.dirname(os.path.realpath(__file__))
+                    _fpath = os.path.realpath(os.path.join(_base, rel))
+                    if not _fpath.startswith(_base):
+                        result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
+                    elif not os.path.isfile(_fpath):
+                        result = {"error": f"파일 없음: {rel}"}
+                    elif os.path.getsize(_fpath) > 100 * 1024:
+                        result = {"error": f"파일 크기 초과 (최대 100KB, 실제 {os.path.getsize(_fpath) // 1024}KB)"}
+                    else:
+                        with open(_fpath, "r", encoding="utf-8") as _rf:
+                            result = {"path": rel, "content": _rf.read()}
+
+        elif name == "write_file":
+            rel = arguments.get("path", "").strip()
+            content = arguments.get("content", "")
+            if not rel:
+                result = {"error": "path는 필수입니다"}
+            elif ".." in rel or rel.startswith("/"):
+                result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
+            else:
+                _write_allowed = (".md", ".json", ".txt")
+                _write_blocked = (".py", ".env")
+                if any(rel.endswith(ext) for ext in _write_blocked):
+                    result = {"error": f".py/.env 파일은 쓰기 불가"}
+                elif not any(rel.endswith(ext) for ext in _write_allowed):
+                    result = {"error": f"허용 확장자: {', '.join(_write_allowed)}"}
+                elif len(content.encode("utf-8")) > 200 * 1024:
+                    result = {"error": f"내용 크기 초과 (최대 200KB)"}
+                else:
+                    _base = os.path.dirname(os.path.realpath(__file__))
+                    _fpath = os.path.realpath(os.path.join(_base, rel))
+                    if not _fpath.startswith(_base):
+                        result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
+                    else:
+                        os.makedirs(os.path.dirname(_fpath), exist_ok=True)
+                        with open(_fpath, "w", encoding="utf-8") as _wf:
+                            _wf.write(content)
+                        result = {"ok": True, "path": rel, "bytes": len(content.encode("utf-8"))}
+
+        elif name == "list_files":
+            rel = (arguments.get("path") or ".").strip()
+            if ".." in rel or rel.startswith("/"):
+                result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
+            else:
+                _base = os.path.dirname(os.path.realpath(__file__))
+                _dpath = os.path.realpath(os.path.join(_base, rel))
+                if not _dpath.startswith(_base):
+                    result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
+                elif not os.path.isdir(_dpath):
+                    result = {"error": f"디렉토리 없음: {rel}"}
+                else:
+                    entries = []
+                    for item in sorted(os.listdir(_dpath)):
+                        item_path = os.path.join(_dpath, item)
+                        if item.startswith("."):
+                            continue
+                        try:
+                            st = os.stat(item_path)
+                            entry = {"name": item, "size": st.st_size,
+                                     "modified": datetime.fromtimestamp(st.st_mtime, tz=KST).strftime("%Y-%m-%d %H:%M")}
+                            if os.path.isdir(item_path):
+                                entry["type"] = "dir"
+                                sub = []
+                                for sub_item in sorted(os.listdir(item_path)):
+                                    if sub_item.startswith("."):
+                                        continue
+                                    sub_path = os.path.join(item_path, sub_item)
+                                    try:
+                                        ss = os.stat(sub_path)
+                                        sub.append({"name": sub_item, "size": ss.st_size,
+                                                     "modified": datetime.fromtimestamp(ss.st_mtime, tz=KST).strftime("%Y-%m-%d %H:%M"),
+                                                     "type": "dir" if os.path.isdir(sub_path) else "file"})
+                                    except Exception:
+                                        pass
+                                entry["children"] = sub
+                            else:
+                                entry["type"] = "file"
+                            entries.append(entry)
+                        except Exception:
+                            pass
+                    result = {"path": rel, "entries": entries}
 
         else:
             result = {"error": f"unknown tool: {name}"}

@@ -7,6 +7,9 @@ import xml.etree.ElementTree as ET
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 공유 aiohttp 세션 (TCP 연결 풀 재사용)
@@ -46,30 +49,31 @@ DART_BASE_URL = "https://opendart.fss.or.kr/api"
 KST = timezone(timedelta(hours=9))
 ET  = ZoneInfo('America/New_York')  # DST 자동 감지 (서머타임 EDT/표준시 EST)
 
-os.makedirs("/data", exist_ok=True)
+_DATA_DIR = os.environ.get("DATA_DIR", "/data")
+os.makedirs(_DATA_DIR, exist_ok=True)
 
-WATCHLIST_FILE    = "/data/watchlist.json"
-STOPLOSS_FILE     = "/data/stoploss.json"
-US_WATCHLIST_FILE = "/data/us_watchlist.json"
-DART_SEEN_FILE    = "/data/dart_seen.json"
-PORTFOLIO_FILE    = "/data/portfolio.json"
-WATCHALERT_FILE   = "/data/watchalert.json"
-WATCH_SENT_FILE      = "/data/watch_sent.json"
-STOPLOSS_SENT_FILE   = "/data/stoploss_sent.json"
-DECISION_LOG_FILE = "/data/decision_log.json"
-COMPARE_LOG_FILE  = "/data/compare_log.json"
-WATCHLIST_LOG_FILE = "/data/watchlist_log.json"
-EVENTS_FILE       = "/data/events.json"
-WEEKLY_BASE_FILE      = "/data/weekly_base.json"
-UNIVERSE_FILE         = "/data/stock_universe.json"
-CONSENSUS_CACHE_FILE      = "/data/consensus_cache.json"
-PORTFOLIO_HISTORY_FILE    = "/data/portfolio_history.json"
-TRADE_LOG_FILE            = "/data/trade_log.json"
-SECTOR_FLOW_CACHE_FILE    = "/data/sector_flow_cache.json"
-SECTOR_ROTATION_FILE      = "/data/sector_rotation.json"
-SUPPLY_HISTORY_FILE       = "/data/supply_history.json"
-REPORTS_FILE              = "/data/reports.json"
-REGIME_STATE_FILE         = "/data/regime_state.json"
+WATCHLIST_FILE    = f"{_DATA_DIR}/watchlist.json"
+STOPLOSS_FILE     = f"{_DATA_DIR}/stoploss.json"
+US_WATCHLIST_FILE = f"{_DATA_DIR}/us_watchlist.json"
+DART_SEEN_FILE    = f"{_DATA_DIR}/dart_seen.json"
+PORTFOLIO_FILE    = f"{_DATA_DIR}/portfolio.json"
+WATCHALERT_FILE   = f"{_DATA_DIR}/watchalert.json"
+WATCH_SENT_FILE      = f"{_DATA_DIR}/watch_sent.json"
+STOPLOSS_SENT_FILE   = f"{_DATA_DIR}/stoploss_sent.json"
+DECISION_LOG_FILE = f"{_DATA_DIR}/decision_log.json"
+COMPARE_LOG_FILE  = f"{_DATA_DIR}/compare_log.json"
+WATCHLIST_LOG_FILE = f"{_DATA_DIR}/watchlist_log.json"
+EVENTS_FILE       = f"{_DATA_DIR}/events.json"
+WEEKLY_BASE_FILE      = f"{_DATA_DIR}/weekly_base.json"
+UNIVERSE_FILE         = f"{_DATA_DIR}/stock_universe.json"
+CONSENSUS_CACHE_FILE      = f"{_DATA_DIR}/consensus_cache.json"
+PORTFOLIO_HISTORY_FILE    = f"{_DATA_DIR}/portfolio_history.json"
+TRADE_LOG_FILE            = f"{_DATA_DIR}/trade_log.json"
+SECTOR_FLOW_CACHE_FILE    = f"{_DATA_DIR}/sector_flow_cache.json"
+SECTOR_ROTATION_FILE      = f"{_DATA_DIR}/sector_rotation.json"
+SUPPLY_HISTORY_FILE       = f"{_DATA_DIR}/supply_history.json"
+REPORTS_FILE              = f"{_DATA_DIR}/reports.json"
+REGIME_STATE_FILE         = f"{_DATA_DIR}/regime_state.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
@@ -118,6 +122,7 @@ for _env_key, _filepath in _BACKUP_MAP.items():
                 print(f"[복원 실패] {_env_key}: {_e}")
 
 _token_cache = {"token": None, "expires": None}
+TOKEN_CACHE_FILE = f"{_DATA_DIR}/token_cache.json"
 
 
 def _is_us_ticker(ticker: str) -> bool:
@@ -852,8 +857,22 @@ def check_drawdown() -> dict:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def get_kis_token():
     now = datetime.now()
+    # 1) 메모리 캐시 확인
     if _token_cache["token"] and _token_cache["expires"] and _token_cache["expires"] > now:
         return _token_cache["token"]
+    # 2) 파일 캐시 확인 (재시작 후에도 23시간 재사용)
+    try:
+        if os.path.exists(TOKEN_CACHE_FILE):
+            with open(TOKEN_CACHE_FILE, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            exp = datetime.fromisoformat(cached.get("expires", "2000-01-01"))
+            if cached.get("token") and exp > now:
+                _token_cache["token"] = cached["token"]
+                _token_cache["expires"] = exp
+                return cached["token"]
+    except Exception:
+        pass
+    # 3) 신규 발급
     url = f"{KIS_BASE_URL}/oauth2/tokenP"
     body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
     async with aiohttp.ClientSession() as session:
@@ -861,8 +880,15 @@ async def get_kis_token():
             data = await resp.json()
             token = data.get("access_token")
             if token:
+                expires = now + timedelta(hours=23)
                 _token_cache["token"] = token
-                _token_cache["expires"] = now + timedelta(hours=20)
+                _token_cache["expires"] = expires
+                try:
+                    os.makedirs(os.path.dirname(TOKEN_CACHE_FILE), exist_ok=True)
+                    with open(TOKEN_CACHE_FILE, "w", encoding="utf-8") as f:
+                        json.dump({"token": token, "expires": expires.isoformat()}, f)
+                except Exception:
+                    pass
             return token
 
 
@@ -1170,7 +1196,22 @@ async def kis_us_stock_detail(symbol: str, token: str, excd: str = "") -> dict:
         _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
             "HHDFS76200200", token,
             {"AUTH": "", "EXCD": excd, "SYMB": symbol})
-        return d.get("output", {})
+        out = d.get("output", {})
+        p = float(out.get("last", 0) or out.get("t_xprc", 0) or 0)
+        if p > 0:
+            return out
+        fallback_codes = [c for c in ("NYS", "NAS", "AMS") if c != excd]
+        for fb in fallback_codes:
+            await asyncio.sleep(0.2)
+            _, d2 = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
+                "HHDFS76200200", token,
+                {"AUTH": "", "EXCD": fb, "SYMB": symbol})
+            out2 = d2.get("output", {})
+            p2 = float(out2.get("last", 0) or out2.get("t_xprc", 0) or 0)
+            if p2 > 0:
+                print(f"[excd fallback detail] {symbol}: {excd}→{fb} 성공")
+                return out2
+        return out  # 모든 거래소에서 0이면 원래 결과 반환
 
 
 async def kis_fluctuation_rank(token: str, market: str = "0000",
@@ -1642,6 +1683,17 @@ async def check_momentum_exit(ticker: str, token: str) -> dict:
             conditions.append({"condition": "52주고점대비-10%이상", "triggered": False, "detail": "데이터 없음"})
     except Exception as e:
         conditions.append({"condition": "52주고점대비-10%이상", "triggered": False, "detail": f"오류: {e}"})
+
+    # ── 조건 6: 추정수급 외인+기관 동시 순매도 ──
+    try:
+        est = await kis_investor_trend_estimate(ticker, token)
+        f_est = est.get("foreign_est_net", 0)
+        i_est = est.get("institution_est_net", 0)
+        both_est = f_est < 0 and i_est < 0
+        conditions.append({"condition": "추정수급외인+기관동시매도", "triggered": both_est,
+                            "detail": f"외인{f_est:+,} 기관{i_est:+,} (추정)"})
+    except Exception as e:
+        conditions.append({"condition": "추정수급외인+기관동시매도", "triggered": False, "detail": f"오류: {e}"})
 
     triggered = [c for c in conditions if c["triggered"]]
     return {
@@ -2136,13 +2188,14 @@ async def kis_daily_credit_balance(ticker: str, token: str, n: int = 20) -> list
 
     Returns: [{date, credit_balance, credit_ratio, change, ...}, ...]
     """
+    today = datetime.now(KST).strftime("%Y%m%d")
     async with aiohttp.ClientSession() as s:
         _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-credit-balance",
                               "FHPST04760000", token, {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20476",
             "FID_INPUT_ISCD": ticker,
-            "FID_INPUT_DATE_1": "",
+            "FID_INPUT_DATE_1": today,
         })
     items = d.get("output", d.get("output1", []))
     if isinstance(items, dict):
@@ -2150,12 +2203,12 @@ async def kis_daily_credit_balance(ticker: str, token: str, n: int = 20) -> list
     result = []
     for item in items[:n]:
         result.append({
-            "date": (item.get("bsop_date") or item.get("stck_bsop_date") or "").strip(),
-            "credit_balance": int(item.get("crdt_ldng_remn", 0) or 0),
-            "credit_ratio": float(item.get("crdt_ldng_remn_rate", 0) or 0),
-            "credit_new": int(item.get("crdt_ldng_new_qty", 0) or 0),
-            "credit_repay": int(item.get("crdt_ldng_repy_qty", 0) or 0),
-            "close": int(item.get("stck_prpr", 0) or item.get("stck_clpr", 0) or 0),
+            "date": (item.get("deal_date") or item.get("bsop_date") or "").strip(),
+            "credit_balance": int(item.get("whol_loan_rmnd_stcn", 0) or 0),
+            "credit_ratio": float(item.get("whol_loan_rmnd_rate", 0) or 0),
+            "credit_new": int(item.get("whol_loan_new_stcn", 0) or 0),
+            "credit_repay": int(item.get("whol_loan_rdmp_stcn", 0) or 0),
+            "close": int(item.get("stck_prpr", 0) or 0),
         })
     # 전일 대비 증감 계산
     for i, row in enumerate(result):
@@ -2188,11 +2241,11 @@ async def kis_daily_loan_trans(ticker: str, token: str, n: int = 20) -> list:
     result = []
     for item in items[:n]:
         result.append({
-            "date": (item.get("trns_date") or item.get("bsop_date") or "").strip(),
-            "loan_balance": int(item.get("loan_remn", 0) or item.get("stln_remn", 0) or 0),
-            "loan_new": int(item.get("loan_new_qty", 0) or item.get("stln_new_qty", 0) or 0),
-            "loan_repay": int(item.get("loan_repy_qty", 0) or item.get("stln_repy_qty", 0) or 0),
-            "loan_balance_amt": int(item.get("loan_remn_amt", 0) or 0),
+            "date": (item.get("bsop_date") or "").strip(),
+            "loan_balance": int(item.get("rmnd_stcn", 0) or 0),
+            "loan_new": int(item.get("new_stcn", 0) or 0),
+            "loan_repay": int(item.get("rdmp_stcn", 0) or 0),
+            "loan_balance_amt": int(item.get("rmnd_amt", 0) or 0),
         })
     # 전일 대비 증감
     for i, row in enumerate(result):
@@ -2298,22 +2351,22 @@ async def kis_overtime_fluctuation(token: str, sort: str = "rise",
             "FID_TRGT_CLS_CODE": "",
             "FID_TRGT_EXLS_CLS_CODE": "",
         })
-    items = d.get("output", d.get("output1", []))
+    items = d.get("output2", d.get("output", []))
     if isinstance(items, dict):
         items = [items]
     result = []
     for item in items[:n]:
-        ticker = (item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
+        ticker = (item.get("mksc_shrn_iscd") or item.get("stck_shrn_iscd") or "").strip()
         if not ticker:
             continue
         result.append({
             "rank": int(item.get("data_rank", 0) or 0),
             "ticker": ticker,
             "name": (item.get("hts_kor_isnm") or "").strip(),
-            "overtime_price": int(item.get("stck_prpr", 0) or item.get("ovtm_untp_prpr", 0) or 0),
-            "chg_pct": float(item.get("prdy_ctrt", 0) or item.get("ovtm_untp_prdy_ctrt", 0) or 0),
-            "volume": int(item.get("acml_vol", 0) or item.get("ovtm_untp_vol", 0) or 0),
-            "prev_close": int(item.get("stck_sdpr", 0) or 0),
+            "overtime_price": int(item.get("ovtm_untp_prpr", 0) or item.get("stck_prpr", 0) or 0),
+            "chg_pct": float(item.get("ovtm_untp_prdy_ctrt", 0) or item.get("prdy_ctrt", 0) or 0),
+            "volume": int(item.get("ovtm_untp_vol", 0) or item.get("acml_vol", 0) or 0),
+            "close": int(item.get("stck_prpr", 0) or 0),
         })
     return result
 
@@ -3075,7 +3128,7 @@ def filter_important_disclosures(disclosures, watchlist_names):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # DART corp_code 매핑 & 재무 조회
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-DART_CORP_MAP_FILE = "/data/dart_corp_map.json"
+DART_CORP_MAP_FILE = f"{_DATA_DIR}/dart_corp_map.json"
 
 
 async def build_dart_corp_map(universe: dict) -> dict:
@@ -3194,8 +3247,8 @@ async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | N
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # DART 사업보고서 본문 저장
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-DART_REPORTS_DIR = "/data/dart_reports"
-CORP_CODES_FILE  = "/data/corp_codes.json"
+DART_REPORTS_DIR = f"{_DATA_DIR}/dart_reports"
+CORP_CODES_FILE  = f"{_DATA_DIR}/corp_codes.json"
 
 
 async def load_corp_codes() -> dict:
@@ -3599,6 +3652,13 @@ async def backup_data_files() -> dict:
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
                     content = f.read().strip() or "{}"
+                # 빈 dict/list는 백업 스킵
+                try:
+                    parsed = json.loads(content)
+                    if parsed == {} or parsed == []:
+                        continue
+                except Exception:
+                    pass
                 files[fname] = {"content": content}
                 backed_up.append(fname)
             except Exception as e:
