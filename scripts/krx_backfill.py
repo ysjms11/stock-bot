@@ -141,7 +141,7 @@ def build_daily(date: str) -> dict | None:
     # 4) 공매도
     for mkt in ["KOSPI", "KOSDAQ"]:
         try:
-            df = stock.get_shorting_balance_by_date(date, date, market=mkt)
+            df = stock.get_shorting_balance_by_ticker(date, market=mkt)
             if not df.empty:
                 for ticker in df.index:
                     if ticker in stocks:

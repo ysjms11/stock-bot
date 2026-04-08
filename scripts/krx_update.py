@@ -650,7 +650,7 @@ def collect_supplement(date: str) -> dict:
     # 2) 공매도 잔고/비중
     for mkt in ["KOSPI", "KOSDAQ"]:
         try:
-            df = stock.get_shorting_balance_by_date(date, date, market=mkt)
+            df = stock.get_shorting_balance_by_ticker(date, market=mkt)
             if not df.empty:
                 for ticker in df.index:
                     row = df.loc[ticker]
@@ -742,8 +742,10 @@ def main():
             # GitHub Actions: pykrx 수급 수집 → 맥미니 merge
             supplement = collect_supplement(date)
             if not supplement:
-                raise RuntimeError("수급 데이터 수집 실패 (0종목)")
-            result = upload_supplement(date, supplement)
+                print("[WARN] 수급 데이터 0종목 — KRX 크롤링 차단 또는 장중")
+                result = {"ok": False, "date": date, "merged": 0, "note": "no data collected"}
+            else:
+                result = upload_supplement(date, supplement)
         elif args.local:
             # 맥미니 로컬: krx_crawler.update_daily_db() 사용
             import asyncio
