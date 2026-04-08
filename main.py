@@ -365,6 +365,48 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+        # ── [포트 건강] 규칙 위반 체크 ──
+        try:
+            pf = load_json(PORTFOLIO_FILE, {})
+            kr_pf = {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
+            us_pf = pf.get("us_stocks", {})
+            cash_krw = float(pf.get("cash_krw", 0) or 0)
+            cash_usd = float(pf.get("cash_usd", 0) or 0)
+
+            # 총 자산 계산 (간이)
+            total_kr = sum(float(v.get("avg_price", 0)) * float(v.get("qty", 0)) for v in kr_pf.values())
+            total_us = sum(float(v.get("avg_price", 0)) * float(v.get("qty", 0)) for v in us_pf.values())
+            total_asset = total_kr + (total_us * krw) + cash_krw + (cash_usd * krw)
+
+            health_warnings = []
+            if total_asset > 0:
+                # 단일종목 비중 35% 초과
+                for t, v in {**kr_pf, **us_pf}.items():
+                    val = float(v.get("avg_price", 0)) * float(v.get("qty", 0))
+                    if t in us_pf:
+                        val *= krw
+                    pct = val / total_asset * 100
+                    if pct > 35:
+                        health_warnings.append(f"⚠️ {v.get('name', t)} {pct:.0f}% → 한도 35% 초과")
+
+                # 현금 비중
+                cash_total = cash_krw + cash_usd * krw
+                cash_pct = cash_total / total_asset * 100
+                if cash_pct < 10:
+                    health_warnings.append(f"⚠️ 현금 {cash_pct:.1f}% → 최소 10% 미달")
+
+                # 레짐 체크
+                regime = load_json(REGIME_STATE_FILE, {})
+                if regime.get("regime") == "🔴" and cash_pct < 25:
+                    health_warnings.append(f"⚠️ 🔴 레짐 현금 {cash_pct:.1f}% → 25% 권장")
+
+            if health_warnings:
+                msg += "\n[포트 건강]\n" + "\n".join(health_warnings) + "\n"
+            else:
+                msg += "\n✅ 포트 건강: 이상 없음\n"
+        except Exception as e:
+            print(f"포트 건강 체크 오류: {e}")
+
         msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
@@ -797,7 +839,22 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
             if buy_alerts:
-                msg = "🟢🟢🟢 *매수 희망가 도달!* 🟢🟢🟢\n\n" + "\n\n".join(buy_alerts)
+                # 브리핑 추가
+                regime = load_json(REGIME_STATE_FILE, {})
+                regime_str = regime.get("regime", "?")
+                regime_ok = "매수 가능" if regime_str != "🔴" else "⚠️ 분할 1차만"
+                pf = load_json(PORTFOLIO_FILE, {})
+                cash_k = float(pf.get("cash_krw", 0) or 0)
+                cash_u = float(pf.get("cash_usd", 0) or 0)
+                events = load_json(EVENTS_FILE, {})
+                today_ev = events.get(now.strftime("%Y-%m-%d"), "")
+
+                extra = f"\n📊 레짐: {regime_str} → {regime_ok}"
+                extra += f"\n💰 현금: {cash_k:,.0f}원 / ${cash_u:,.0f}"
+                if today_ev:
+                    extra += f"\n⚠️ 이벤트: {today_ev}"
+
+                msg = "🟢🟢🟢 *매수 감시가 도달!* 🟢🟢🟢\n\n" + "\n\n".join(buy_alerts) + "\n" + extra + "\n\n→ 채팅에서 매수 검토"
                 try:
                     await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
                 except Exception as e:
@@ -1491,6 +1548,230 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         print(f"DART 체크 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림: 워치 변화 감지 (19:00)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        db = load_krx_db()
+        if not db:
+            return
+        stocks = db.get("stocks", {})
+        today = now.strftime("%Y-%m-%d")
+
+        # 대상: 보유 + 워치리스트
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        wa = load_watchalert()
+        watch_tickers = set()
+        for k in portfolio:
+            if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(portfolio[k], dict):
+                watch_tickers.add(k)
+        for k in wa:
+            if not _is_us_ticker(k):
+                watch_tickers.add(k)
+
+        # 당일 중복 방지
+        change_sent_file = f"{REGIME_STATE_FILE.rsplit('/', 1)[0]}/watch_change_sent.json"
+        change_sent = load_json(change_sent_file, {})
+        if change_sent.get("date") == today:
+            return
+
+        alerts = []
+        for ticker in watch_tickers:
+            s = stocks.get(ticker, {})
+            if not s:
+                continue
+            name = s.get("name", ticker)
+
+            # 감시가 근접 5%
+            if ticker in wa:
+                buy_p = float(wa[ticker].get("buy_price", 0) or 0)
+                cur = s.get("close", 0)
+                if buy_p > 0 and cur > 0:
+                    gap = (cur - buy_p) / buy_p * 100
+                    if 0 <= gap <= 5:
+                        alerts.append(f"👀 {name}: 감시가 {buy_p:,.0f}원 근접 ({gap:.1f}%)")
+
+            # 외인 매수 전환 (foreign_trend_5d >= 0.6)
+            ft5 = s.get("foreign_trend_5d")
+            ft20 = s.get("foreign_trend_20d")
+            if ft5 is not None and ft5 >= 0.6 and ft20 is not None and ft20 < 0.4:
+                alerts.append(f"🔥 {name}: 외인 매수 전환 (5d {ft5:.0%} vs 20d {ft20:.0%})")
+
+            # 공매도 비중 과열
+            sr = s.get("short_ratio", 0)
+            if sr and sr >= 10:
+                alerts.append(f"⚠️ {name}: 공매도 {sr:.1f}% 과열")
+
+            # 공매도 숏커버
+            sc5 = s.get("short_change_5d")
+            if sc5 is not None and sc5 <= -20:
+                alerts.append(f"📊 {name}: 숏커버 진행 ({sc5:+.1f}%)")
+
+            # 이평선 수렴
+            spread = s.get("ma_spread")
+            if spread is not None and abs(spread) < 3:
+                alerts.append(f"📊 {name}: 이평선 수렴 ({spread:+.1f}%)")
+
+            # RSI 과매도
+            rsi = s.get("rsi14")
+            if rsi is not None and rsi < 30:
+                alerts.append(f"📉 {name}: RSI {rsi:.1f} 과매도")
+
+        if alerts:
+            msg = f"📡 *워치 변화 감지* ({now.strftime('%m/%d')})\n\n" + "\n".join(alerts)
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+        save_json(change_sent_file, {"date": today, "sent": True})
+    except Exception as e:
+        print(f"watch_change_detect 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림: 레짐 전환 가이드 (전환 확정 시)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        regime = load_json(REGIME_STATE_FILE, {})
+        prev = regime.get("prev_regime", "")
+        curr = regime.get("regime", "")
+        score = regime.get("score", 0)
+        if not prev or not curr or prev == curr:
+            return
+
+        # 전환당 1회만
+        trans_file = f"{REGIME_STATE_FILE.rsplit('/', 1)[0]}/regime_transition_sent.json"
+        trans_sent = load_json(trans_file, {})
+        key = f"{prev}→{curr}"
+        if trans_sent.get("transition") == key:
+            return
+
+        guides = {
+            "🔴→🟡": "1. A등급 감시가 재평가\n2. B등급 이하 비중 초과분 트림 검토\n3. 신규 진입: 확신 높은 것만, 소규모 분할\n4. 현금 비율: 25% → 15% OK",
+            "🟡→🟢": "1. 핵심 섹터 적극 확대\n2. A등급 풀사이즈 가능\n3. 감시가 터치 시 즉시 대응",
+            "🟢→🟡": "1. 신규 소규모만\n2. 기존 포지션 관리 집중\n3. 손절선 점검",
+            "🟡→🔴": "1. 신규 동결\n2. 현금 25%+ 확보\n3. C/D등급 점검\n4. 손절선 15% → 10% 타이트",
+        }
+        guide = guides.get(key, "레짐 전환 확인 필요")
+
+        msg = f"🔄 *레짐 전환 확정* {prev} → {curr} ({score:.1f}점)\n\n📋 행동 가이드:\n{guide}"
+
+        # 감시가 근접 A등급
+        wa = load_watchalert()
+        near_a = []
+        for t, info in wa.items():
+            if info.get("grade", "").upper() == "A":
+                buy_p = float(info.get("buy_price", 0) or 0)
+                if buy_p > 0:
+                    near_a.append(f"• {info.get('name', t)} {buy_p:,.0f}")
+        if near_a:
+            msg += "\n\n👀 A등급 감시 종목:\n" + "\n".join(near_a[:5])
+
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        save_json(trans_file, {"transition": key, "date": datetime.now(KST).strftime("%Y-%m-%d")})
+    except Exception as e:
+        print(f"regime_transition_alert 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림: Sunday 30 리마인더 (일 19:00)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        now = datetime.now(KST)
+        msg = f"📋 *주간점검 Sunday 30 리마인더* ({now.strftime('%m/%d')})\n\n"
+
+        # 레짐
+        regime = load_json(REGIME_STATE_FILE, {})
+        r_emoji = regime.get("regime", "?")
+        r_score = regime.get("score", 0)
+        msg += f"[레짐] {r_emoji} {r_score:.1f}점\n"
+
+        # 포트 요약
+        pf = load_json(PORTFOLIO_FILE, {})
+        kr_total = sum(float(v.get("avg_price", 0)) * float(v.get("qty", 0))
+                       for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict))
+        us_pf = pf.get("us_stocks", {})
+        us_total = sum(float(v.get("avg_price", 0)) * float(v.get("qty", 0)) for v in us_pf.values())
+        cash_k = float(pf.get("cash_krw", 0) or 0)
+        cash_u = float(pf.get("cash_usd", 0) or 0)
+        msg += f"[포트] KR {kr_total/10000:,.0f}만 | US ${us_total:,.0f} | 현금 {cash_k:,.0f}원/${cash_u:,.0f}\n"
+
+        # 포트 건강 위반
+        warnings = []
+        total_asset = kr_total + cash_k  # 간이
+        if total_asset > 0:
+            for t, v in {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}.items():
+                val = float(v.get("avg_price", 0)) * float(v.get("qty", 0))
+                pct = val / total_asset * 100
+                if pct > 35:
+                    warnings.append(f"• {v.get('name', t)} {pct:.0f}% → 한도 35% 초과")
+
+        if warnings:
+            msg += "\n⚠️ 점검 필요:\n" + "\n".join(warnings) + "\n"
+
+        # 감시가 근접 TOP 3
+        wa = load_watchalert()
+        near = []
+        db = load_krx_db()
+        db_stocks = db.get("stocks", {}) if db else {}
+        for t, info in wa.items():
+            buy_p = float(info.get("buy_price", 0) or 0)
+            if buy_p <= 0:
+                continue
+            s = db_stocks.get(t, {})
+            cur = s.get("close", 0)
+            if cur > 0:
+                gap = (cur - buy_p) / buy_p * 100
+                if gap <= 10:
+                    near.append((info.get("name", t), buy_p, gap))
+        near.sort(key=lambda x: x[2])
+        if near:
+            msg += "\n👀 감시가 근접:\n"
+            for name, bp, gap in near[:3]:
+                msg += f"• {name} {bp:,.0f} ({gap:+.1f}%)\n"
+
+        # 이벤트
+        events = load_json(EVENTS_FILE, {})
+        next_week = []
+        for i in range(7):
+            d = (now + timedelta(days=i)).strftime("%Y-%m-%d")
+            ev = events.get(d, "")
+            if ev:
+                next_week.append(f"• {d[5:]} {ev}")
+        if next_week:
+            msg += "\n📅 이번 주 이벤트:\n" + "\n".join(next_week) + "\n"
+
+        # Sunday 30 체크리스트
+        msg += (
+            "\n━━━━━━━━━━━━━━━━━━\n"
+            "📋 *Sunday 30 체크리스트* (30분)\n\n"
+            "0~3분: 레짐+알림\n"
+            " □ get\\_regime → 변화?\n"
+            " □ get\\_alerts → triggered?\n\n"
+            "3~8분: 스마트머니 스캔\n"
+            " □ get\\_supply(combined\\_rank)\n"
+            " □ get\\_change\\_scan\n\n"
+            "8~15분: thesis 스캔\n"
+            " □ 웹서치: 산업 트렌드\n"
+            " □ get\\_macro(op\\_growth)\n\n"
+            "15~25분: 1종목 딥체크\n"
+            " □ get\\_stock\\_detail\n"
+            " □ get\\_consensus\n"
+            " □ manage\\_report\n\n"
+            "25~30분: 기록+결론\n"
+            " □ set\\_alert(decision)\n"
+            " □ 결론: 늘릴것/줄일것/유지"
+        )
+
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"sunday_30_reminder 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2531,6 +2812,9 @@ def main():
     jq.run_daily(collect_reports_daily,    time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
     # KRX 전종목 DB 갱신: GitHub Actions에서 크롤링 → /api/krx_upload로 업로드
     # jq.run_daily(update_krx_db_job, time=dtime(15, 55, tzinfo=KST), days=(0,1,2,3,4), name="krx_db")
+    jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
+    jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")
+    jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
 
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")
