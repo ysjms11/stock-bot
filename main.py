@@ -1638,17 +1638,21 @@ async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
     try:
-        regime = load_json(REGIME_STATE_FILE, {})
-        prev = regime.get("prev_regime", "")
-        curr = regime.get("regime", "")
-        score = regime.get("score", 0)
-        if not prev or not curr or prev == curr:
+        state = load_json(REGIME_STATE_FILE, {})
+        prev_en = state.get("prev_regime", "")
+        cur = state.get("current", {})
+        curr_en = cur.get("regime_en", cur.get("current", ""))
+        if not prev_en or not curr_en or prev_en == curr_en:
             return
+
+        emoji_map = {"offensive": "🟢", "neutral": "🟡", "crisis": "🔴"}
+        prev_e = emoji_map.get(prev_en, "?")
+        curr_e = emoji_map.get(curr_en, "?")
 
         # 전환당 1회만
         trans_file = f"{REGIME_STATE_FILE.rsplit('/', 1)[0]}/regime_transition_sent.json"
         trans_sent = load_json(trans_file, {})
-        key = f"{prev}→{curr}"
+        key = f"{prev_e}→{curr_e}"
         if trans_sent.get("transition") == key:
             return
 
@@ -1660,7 +1664,12 @@ async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
         }
         guide = guides.get(key, "레짐 전환 확인 필요")
 
-        msg = f"🔄 *레짐 전환 확정* {prev} → {curr} ({score:.1f}점)\n\n📋 행동 가이드:\n{guide}"
+        ind = cur.get("indicators", {})
+        sp = ind.get("sp500_vs_200ma", {})
+        vix = ind.get("vix", {})
+        msg = f"🔄 *레짐 전환 확정* {prev_e} → {curr_e}\n"
+        msg += f"S&P {sp.get('distance_pct', '?')}% from 200MA | VIX {vix.get('value', '?')}\n\n"
+        msg += f"📋 행동 가이드:\n{guide}"
 
         # 감시가 근접 A등급
         wa = load_watchalert()

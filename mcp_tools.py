@@ -2867,8 +2867,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 days=int(arguments.get("days", 5)),
                 regime=arguments.get("regime", ""),
                 reason=arguments.get("reason", ""),
-                kr_weight=float(arguments.get("kr_weight", 0.6)),
-                us_weight=float(arguments.get("us_weight", 0.4)),
             )
 
         elif name == "get_scan":
