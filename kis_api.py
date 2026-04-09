@@ -4500,8 +4500,8 @@ def _regime_emoji(regime_en: str) -> str:
     return {"offensive": "🟢 탐욕", "neutral": "🟡 중립", "crisis": "🔴 공포"}.get(regime_en, "🟡 중립")
 
 
-async def _fetch_usd_krw_modifier() -> dict:
-    """USD/KRW 환율 → kr_sizing_modifier."""
+async def _fetch_usd_krw_value() -> dict:
+    """USD/KRW 환율 (참고용, 레짐 판정에 미사용)."""
     usd_krw = None
     try:
         fx = await get_yahoo_quote("KRW=X")
@@ -4509,22 +4509,10 @@ async def _fetch_usd_krw_modifier() -> dict:
             usd_krw = float(fx.get("price", 0) or 0)
     except Exception:
         pass
-
-    if not usd_krw or usd_krw <= 0:
-        return {"usd_krw": None, "sizing_factor": 1.0, "note": "환율 조회 실패"}
-
-    if usd_krw < 1400:
-        factor, note = 1.0, "환율 안정 — 조정 없음"
-    elif usd_krw < 1450:
-        factor, note = 0.9, "한국종목 신규매수 10% 축소"
-    elif usd_krw < 1500:
-        factor, note = 0.8, "한국종목 신규매수 20% 축소"
-    elif usd_krw < 1550:
-        factor, note = 0.7, "한국종목 신규매수 30% 축소"
-    else:
-        factor, note = 0.5, "한국종목 신규매수 50% 축소"
-
-    return {"usd_krw": round(usd_krw, 1), "sizing_factor": factor, "note": note}
+    return {
+        "value": round(usd_krw, 1) if usd_krw else None,
+        "note": "참고용 (레짐 판정에 미사용)",
+    }
 
 
 def _calc_tranche_level(vix_val: float | None) -> int | None:
@@ -4553,7 +4541,7 @@ async def cmd_regime(mode: str = "current", days: int = 5,
         entry = {"date": today, "regime": regime, "override": True,
                  "reason": reason or "수동 강제"}
         state["current"] = {
-            "current": regime, "regime_en": regime, "score": None,
+            "current": regime,
             "days_in_regime": 1, "debounce_count": 99, "confirmed": True,
             "tranche_level": None, "last_updated": today,
             "override": True, "override_reason": reason or "수동 강제",
@@ -4577,7 +4565,7 @@ async def cmd_regime(mode: str = "current", days: int = 5,
     vix_val = indicators["vix"]["value"]
 
     cur = state.get("current", {}) or {}
-    prev_regime = cur.get("regime_en", cur.get("current", "neutral"))
+    prev_regime = cur.get("current", "neutral")
     debounce_count = int(cur.get("debounce_count", 0) or 0)
     days_in_regime = int(cur.get("days_in_regime", 0) or 0)
 
@@ -4620,14 +4608,12 @@ async def cmd_regime(mode: str = "current", days: int = 5,
     pending = new_regime if confirmed_regime != new_regime else None
     tranche = _calc_tranche_level(vix_val) if confirmed_regime == "crisis" else None
 
-    # USD/KRW
-    kr_modifier = await _fetch_usd_krw_modifier()
+    # USD/KRW (참고용, indicators에 포함)
+    indicators["usd_krw"] = await _fetch_usd_krw_value()
 
     # state 저장
     new_state_cur = {
         "current": confirmed_regime,
-        "regime_en": confirmed_regime,
-        "score": None,
         "days_in_regime": days_in_regime,
         "debounce_count": debounce_count,
         "confirmed": confirmed_regime == new_regime,
@@ -4635,7 +4621,6 @@ async def cmd_regime(mode: str = "current", days: int = 5,
         "pending_regime": pending,
         "last_updated": today,
         "indicators": indicators,
-        "kr_modifier": kr_modifier,
     }
     state["current"] = new_state_cur
     state["prev_regime"] = prev_regime  # 텔레그램 알림용
@@ -4662,10 +4647,8 @@ async def cmd_regime(mode: str = "current", days: int = 5,
     return {
         "regime": _regime_emoji(confirmed_regime),
         "regime_en": confirmed_regime,
-        "score": None,
         "indicators": indicators,
         "tranche_level": tranche,
-        "kr_modifier": kr_modifier,
         "debounce": {
             "current": confirmed_regime,
             "days": days_in_regime,

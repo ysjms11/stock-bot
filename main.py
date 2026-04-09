@@ -1641,7 +1641,7 @@ async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
         state = load_json(REGIME_STATE_FILE, {})
         prev_en = state.get("prev_regime", "")
         cur = state.get("current", {})
-        curr_en = cur.get("regime_en", cur.get("current", ""))
+        curr_en = cur.get("current", "")
         if not prev_en or not curr_en or prev_en == curr_en:
             return
 
