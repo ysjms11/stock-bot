@@ -767,65 +767,12 @@ def _fetch_safari_krx(date: str) -> dict:
             print(f"  [Safari] {label} {prefix}: {len(records)}종목")
             time.sleep(1)
 
-    # 3) 공매도 잔고 (MDCSTAT08501)
-    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
-        records = _safari_fetch("", {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT08501",
-            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
-            "strtDd": date, "endDd": date,
-        }, key=f"krx_short_{mkt_id}")
-        for r in records:
-            t = r.get("ISU_SRT_CD", r.get("ISU_CD", ""))
-            if len(t) != 6: continue
-            result.setdefault(t, {})
-            result[t]["short_balance"] = _pi(r.get("BAL_QTY", r.get("CVSHO_REMN_QTY", 0)))
-            result[t]["short_ratio"] = _pf(r.get("BAL_RTO", r.get("CVSHO_REMN_RTO", 0)))
-        print(f"  [Safari] {label} 공매도: {len(records)}종목")
-        time.sleep(1)
-
-    # 4) 외인 보유비율 (MDCSTAT03701)
-    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
-        records = _safari_fetch("", {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT03701",
-            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
-        }, key=f"krx_frgn_{mkt_id}")
-        for r in records:
-            t = r.get("ISU_SRT_CD", "")
-            if not t: continue
-            result.setdefault(t, {})
-            result[t]["foreign_hold_ratio"] = _pf(r.get("FRGN_HLDN_RTO", r.get("FRGN_TRDVOL_RTO", 0)))
-            result[t]["foreign_exhaust_rate"] = _pf(r.get("FRGN_LMT_EXHST_RTO", 0))
-        print(f"  [Safari] {label} 외인보유: {len(records)}종목")
-        time.sleep(1)
-
-    # 5) 신용잔고 (MDCSTAT02501)
-    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
-        records = _safari_fetch("", {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT02501",
-            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
-        }, key=f"krx_credit_{mkt_id}")
-        for r in records:
-            t = r.get("ISU_SRT_CD", "")
-            if not t: continue
-            result.setdefault(t, {})
-            result[t]["credit_balance"] = _pi(r.get("CRDT_REMN_QTY", r.get("TOTL_REMN_QTY", 0)))
-        print(f"  [Safari] {label} 신용잔고: {len(records)}종목")
-        time.sleep(1)
-
-    # 6) 대차잔고 (MDCSTAT08401)
-    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
-        records = _safari_fetch("", {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT08401",
-            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
-            "strtDd": date, "endDd": date,
-        }, key=f"krx_lend_{mkt_id}")
-        for r in records:
-            t = r.get("ISU_SRT_CD", r.get("ISU_CD", ""))
-            if len(t) != 6: continue
-            result.setdefault(t, {})
-            result[t]["lending_balance"] = _pi(r.get("BAL_QTY", r.get("LEND_REMN_QTY", 0)))
-        print(f"  [Safari] {label} 대차잔고: {len(records)}종목")
-        time.sleep(1)
+    # 3) 공매도 / 외인보유 / 신용잔고 / 대차잔고 — KRX 전종목 일괄 수집 불가
+    # - 공매도: KRX → 금융투자협회로 redirect, 별도 세션 필요
+    # - 외인보유: MDCSTAT03701은 종목별 시계열만 제공 (전종목 일괄 메뉴 없음)
+    # - 신용잔고: KRX 정보데이터시스템에 메뉴 없음
+    # - 대차잔고: 종목별 시계열만 제공
+    # → 필요 시 KIS API 종목별 호출로 보강 (kis_daily_short_sale 등)
 
     print(f"  [Safari] 총 {len(result)}종목 수집")
     return result
