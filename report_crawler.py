@@ -136,7 +136,9 @@ def crawl_wisereport_meta(ticker: str, name: str, existing_urls: set) -> list:
     headers["Referer"] = f"https://comp.wisereport.co.kr/company/c1080001.aspx?cmp_cd={ticker}"
     headers["X-Requested-With"] = "XMLHttpRequest"
     try:
-        resp = requests.get(url, headers=headers, params={"cmp_cd": ticker}, timeout=15)
+        # perPage=100으로 전체 가져오기 (기본 20건 → 최대 100건)
+        resp = requests.get(url, headers=headers,
+                            params={"cmp_cd": ticker, "perPage": "100"}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -144,6 +146,11 @@ def crawl_wisereport_meta(ticker: str, name: str, existing_urls: set) -> list:
         return []
 
     items = data.get("lists", [])
+    if items:
+        first_dt = items[0].get("ANL_DT", "?")
+        last_dt = items[-1].get("ANL_DT", "?")
+        total = data.get("tc", len(items))
+        print(f"[wise] {ticker}: {len(items)}건 수신 ({first_dt} ~ {last_dt}, 전체 {total}건)")
     reports = []
     for item in items:
         # 날짜: "26/04/09" → "2026-04-09"
