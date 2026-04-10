@@ -839,7 +839,7 @@ async def _fetch_kis_valuations(tickers: list) -> dict:
 
 
 async def _fetch_consensus_batch(tickers: list) -> dict:
-    """FnGuide 컨센서스 전종목 일괄 수집.
+    """FnGuide 컨센서스 병렬 수집 (sem=5).
     Returns: {ticker: {consensus_target, consensus_count}}
     """
     try:
@@ -851,27 +851,29 @@ async def _fetch_consensus_batch(tickers: list) -> dict:
     result = {}
     total = len(tickers)
     loop = asyncio.get_running_loop()
-    for i, ticker in enumerate(tickers):
-        try:
-            c = await loop.run_in_executor(None, fetch_fnguide_consensus, ticker)
-            if not c:
-                continue
-            ct = c.get("consensus_target", {})
-            if isinstance(ct, dict):
-                avg = int(ct.get("avg", 0) or 0)
-            else:
-                avg = int(ct or 0)
-            if avg > 0:
-                bt = c.get("broker_targets", [])
-                result[ticker] = {
-                    "consensus_target": avg,
-                    "consensus_count": len(bt) if bt else 0,
-                }
-        except Exception:
-            pass
-        if (i + 1) % 50 == 0:
-            print(f"[Consensus] 수집: {i+1}/{total}")
-        await asyncio.sleep(0.3)
+    sem = asyncio.Semaphore(5)
+    done = [0]  # mutable counter for progress
+
+    async def _fetch_one(ticker):
+        async with sem:
+            try:
+                c = await loop.run_in_executor(None, fetch_fnguide_consensus, ticker)
+                if c:
+                    ct = c.get("consensus_target", {})
+                    avg = int(ct.get("avg", 0) or 0) if isinstance(ct, dict) else int(ct or 0)
+                    if avg > 0:
+                        bt = c.get("broker_targets", [])
+                        result[ticker] = {
+                            "consensus_target": avg,
+                            "consensus_count": len(bt) if bt else 0,
+                        }
+            except Exception:
+                pass
+            done[0] += 1
+            if done[0] % 100 == 0:
+                print(f"[Consensus] 수집: {done[0]}/{total}")
+
+    await asyncio.gather(*[_fetch_one(t) for t in tickers])
 
     print(f"[Consensus] 수집 완료: {len(result)}/{total}종목")
     return result
@@ -930,26 +932,9 @@ async def update_daily_db(date: str = None) -> dict:
                 stocks[ticker].update(vals)
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Task 4: 컨센서스 (FnGuide — universe + 보유/워치만, 전종목 대신)
+    # Task 4: 컨센서스 (FnGuide, 병렬 sem=5 → 전종목 ~2분)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    try:
-        from kis_api import load_watchlist, load_watchalert, PORTFOLIO_FILE as _PF
-        uni = load_json(os.path.join(_DATA_DIR, "stock_universe.json"), {})
-        cons_tickers = list(uni.keys())
-        # 보유/워치 추가
-        for t in load_json(_PF, {}):
-            if t not in ("us_stocks", "cash_krw", "cash_usd") and t not in cons_tickers:
-                cons_tickers.append(t)
-        for t in load_watchlist():
-            if t not in cons_tickers:
-                cons_tickers.append(t)
-        for t in load_watchalert():
-            if t not in cons_tickers:
-                cons_tickers.append(t)
-    except Exception:
-        cons_tickers = all_tickers  # fallback: 전종목
-    print(f"[KRX] 컨센서스 대상: {len(cons_tickers)}종목 (universe+보유/워치)")
-    consensus_data = await _fetch_consensus_batch(cons_tickers)
+    consensus_data = await _fetch_consensus_batch(all_tickers)
     for ticker, vals in consensus_data.items():
         if ticker in stocks:
             close = stocks[ticker].get("close", 0)
