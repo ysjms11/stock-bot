@@ -21,8 +21,9 @@ _MAX_DAILY = 50       # 하루 최대 수집 건수
 _MAX_TEXT = 10000      # PDF 텍스트 최대 글자수
 _MAX_PDF_BYTES = 50 * 1024 * 1024  # PDF 최대 50MB
 _RETAIN_DAYS = 90      # 보관 기간
-_MAX_PER_TICKER = 5    # 종목당 최대 보관 건수
-_ALLOWED_PDF_DOMAINS = {"ssl.pstatic.net", "finance.naver.com", "stock.pstatic.net"}
+_MAX_PER_TICKER = 10   # 종목당 최대 보관 건수
+_ALLOWED_PDF_DOMAINS = {"ssl.pstatic.net", "finance.naver.com", "stock.pstatic.net",
+                        "consensus.hankyung.com"}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 파일 저장/로드 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -106,6 +107,84 @@ def crawl_naver_reports(ticker: str, name: str, existing_urls: set) -> list:
         # 날짜: "26.03.23" → "2026-03-23"
         raw_date = tds[4].get_text(strip=True)
         date_str = _parse_date(raw_date)
+
+        reports.append({
+            "date": date_str,
+            "ticker": ticker,
+            "name": name,
+            "source": source,
+            "title": title,
+            "pdf_url": pdf_url,
+        })
+
+    return reports
+
+
+def crawl_hankyung_reports(ticker: str, name: str, existing_urls: set) -> list:
+    """한경컨센서스에서 종목 리포트 목록 크롤링.
+
+    URL: https://consensus.hankyung.com/analysis/list?sdate=...&edate=...&search_text={ticker}&report_type=CO
+
+    테이블 구조 (9 td):
+      [0] 작성일 YYYY-MM-DD | [1] 제목(a href) | [2] 적정가격 | [3] 투자의견
+      [4] 작성자 | [5] 제공출처 | [6] 기업정보 | [7] 차트 | [8] 첨부파일(a)
+
+    Returns: [{"date", "ticker", "name", "source", "title", "pdf_url"}, ...]
+    """
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    sdate = (datetime.now(KST) - timedelta(days=180)).strftime("%Y-%m-%d")
+    url = "https://consensus.hankyung.com/analysis/list"
+    params = {
+        "sdate": sdate, "edate": today, "now_page": "1",
+        "search_text": ticker, "pagenum": "20", "report_type": "CO",
+    }
+    try:
+        resp = requests.get(url, headers=_HEADERS, params=params, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[hankyung] 요청 실패 ({ticker}): {e}")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    table = soup.find("table")
+    if not table:
+        return []
+
+    reports = []
+    for row in table.find_all("tr")[1:]:  # 헤더 제외
+        tds = row.find_all("td")
+        if len(tds) < 9:
+            continue
+
+        date_str = tds[0].get_text(strip=True)
+        if not date_str or "결과가 없습니다" in date_str:
+            continue
+
+        title_a = tds[1].find("a")
+        title_full = title_a.get_text(strip=True) if title_a else tds[1].get_text(strip=True)
+        # "HD한국조선해양(009540) ..." → 종목코드 부분 제거하고 제목만
+        title = title_full
+        if "(" in title and ")" in title:
+            # 종목코드와 종목명 부분 제거
+            try:
+                close_idx = title.index(")")
+                title = title[close_idx + 1:].strip()
+            except Exception:
+                pass
+
+        # PDF URL: tds[1] 또는 tds[8]에서 추출
+        pdf_a = tds[8].find("a") or title_a
+        if not pdf_a:
+            continue
+        pdf_href = pdf_a.get("href", "").strip()
+        if not pdf_href or "downpdf" not in pdf_href:
+            continue
+        pdf_url = "https://consensus.hankyung.com" + pdf_href if pdf_href.startswith("/") else pdf_href
+
+        if pdf_url in existing_urls:
+            continue
+
+        source = tds[5].get_text(strip=True)  # 제공출처
 
         reports.append({
             "date": date_str,
@@ -257,7 +336,22 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
         if count >= max_count:
             break
         try:
+            # 네이버증권 + 한경컨센서스 통합
             reports = crawl_naver_reports(ticker, name, existing_urls)
+            try:
+                reports.extend(crawl_hankyung_reports(ticker, name, existing_urls))
+            except Exception as e:
+                print(f"[hankyung] {name}({ticker}) 실패: {e}")
+            # 중복 제거 (URL 기준)
+            seen_urls = set()
+            unique_reports = []
+            for r in reports:
+                if r["pdf_url"] not in seen_urls:
+                    seen_urls.add(r["pdf_url"])
+                    unique_reports.append(r)
+            # 최신순 정렬
+            unique_reports.sort(key=lambda x: x.get("date", ""), reverse=True)
+            reports = unique_reports
             for r in reports:
                 if count >= max_count:
                     break
