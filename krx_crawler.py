@@ -43,6 +43,163 @@ _OPENAPI_ENDPOINTS = {
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 표준산업분류 → 실용 섹터 매핑
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_STD_SECTOR_MAP_PATH = f"{_DATA_DIR}/std_sector_map.json"
+
+# 6자리 코드 → 섹터명
+_STD_CODE_TO_SECTOR = {
+    # 반도체/전자
+    "032601": "반도체", "032602": "전자부품", "032603": "IT하드웨어",
+    "032604": "통신장비/가전", "032605": "영상/음향", "032606": "전자부품",
+    # 전력/에너지
+    "032801": "전력기기", "032802": "2차전지", "032803": "전선/케이블",
+    "032804": "전기장비", "032805": "가전", "032809": "전기장비",
+    # 자동차/운송장비
+    "033001": "자동차", "033002": "자동차부품", "033003": "자동차부품",
+    "033004": "자동차부품", "033101": "조선", "033102": "철도",
+    "033103": "항공우주/방산", "033109": "기타운송",
+    # 방산
+    "032502": "방산",
+    # 바이오/제약/의료
+    "032101": "바이오", "032102": "제약", "032103": "의료용품",
+    "032701": "의료기기", "032702": "정밀기기", "032703": "정밀기기",
+    # 화학
+    "032001": "화학", "032002": "화학", "032003": "화학",
+    "032004": "화학", "032005": "화학섬유",
+    # 금속/소재
+    "032401": "철강", "032402": "비철금속", "032403": "금속가공",
+    "032501": "금속가공", "032509": "금속가공",
+    "032201": "고무", "032202": "플라스틱",
+    "032301": "유리/세라믹", "032302": "세라믹", "032303": "시멘트/비금속",
+    "032309": "비금속",
+    # 기계
+    "032901": "일반기계",
+    # 식품/음료
+    "031001": "식품", "031002": "식품", "031003": "식품", "031004": "식품",
+    "031005": "식품", "031006": "식품", "031007": "식품", "031008": "식품",
+    "031009": "식품", "031101": "음료", "031102": "음료", "031201": "담배",
+    # 섬유/의류
+    "031301": "섬유", "031302": "섬유", "031303": "섬유", "031304": "섬유",
+    "031309": "섬유", "031401": "패션/의류", "031403": "패션/의류",
+    "031404": "패션/의류", "031501": "패션/의류", "031502": "패션/의류",
+    # 목재/종이/인쇄
+    "031601": "목재/종이", "031602": "목재/종이",
+    "031701": "목재/종이", "031702": "목재/종이", "031709": "목재/종이",
+    "031801": "인쇄", "031802": "인쇄",
+    # 정유/에너지
+    "031902": "정유",
+    # 전기/가스/환경
+    "043501": "전기/가스", "043502": "가스", "043503": "전기/가스",
+    "053802": "환경", "053803": "환경",
+    # 건설
+    "064101": "건설", "064102": "건설",
+    "064201": "건설", "064202": "건설", "064203": "건설", "064204": "건설",
+    # 유통/도매/소매
+    "074501": "유통", "074502": "유통",
+    "074601": "무역/상사", "074602": "무역/상사", "074603": "식품유통",
+    "074604": "유통", "074605": "유통", "074606": "유통",
+    "074607": "무역/상사", "074608": "무역/상사",
+    "074701": "유통/소매", "074702": "유통/소매", "074703": "유통/소매",
+    "074704": "유통/소매", "074705": "유통/소매", "074707": "유통/소매",
+    "074708": "유통/소매", "074709": "유통/소매",
+    # 운송/물류
+    "084902": "운송", "084903": "물류",
+    "085001": "해운", "085101": "항공", "085209": "물류",
+    # 호텔/외식
+    "095501": "레저/호텔", "095601": "외식",
+    # SW/게임/미디어
+    "105801": "출판/교육", "105802": "소프트웨어",
+    "105901": "엔터/미디어", "105902": "엔터/미디어",
+    "106002": "엔터/미디어", "106003": "엔터/미디어",
+    # IT/통신
+    "106102": "통신", "106201": "IT서비스",
+    "106301": "인터넷/플랫폼", "106309": "IT서비스",
+    # 금융
+    "116401": "은행", "116402": "투자",
+    "116501": "보험", "116502": "보험", "116601": "증권", "116602": "보험",
+    # 부동산
+    "126801": "리츠/부동산", "126802": "리츠/부동산",
+    # 전문서비스
+    "137103": "광고", "137104": "광고",
+    "137105": "지주", "137106": "지주",
+    "137201": "엔지니어링", "137209": "엔지니어링",
+    "137302": "디자인", "137309": "기타서비스",
+    # 생활서비스
+    "147401": "시설관리", "147502": "여행", "147503": "보안", "147509": "기타서비스",
+    "147601": "기타서비스", "147602": "기타서비스", "147603": "기타서비스",
+    # 교육
+    "168501": "교육", "168505": "교육", "168506": "교육", "168507": "교육",
+    # 농림어업
+    "010101": "농업", "010301": "수산",
+    # 엔터/레저
+    "189001": "엔터/미디어", "189101": "스포츠", "189102": "엔터/미디어",
+    # 기타
+    "033201": "가구/생활", "033301": "귀금속", "033302": "기타제조",
+    "033303": "스포츠용품", "033309": "기타제조",
+    "199503": "기타서비스", "199609": "기타서비스",
+}
+
+# 애매한 코드 → 이름 키워드로 세분화
+_SECTOR_KEYWORD_RULES = [
+    # 116409 기타금융 → 금융 vs 지주
+    ("116409", ["금융", "카드", "캐피탈"], "금융"),
+    ("116409", ["페이", "핀테크"], "핀테크"),
+    # 나머지 116409 → 지주 (default)
+    # 032902 특수기계 → 반도체장비 vs 로봇 vs 건설기계
+    ("032902", ["로봇", "로보틱스", "로보티즈"], "로봇"),
+    ("032902", ["건설기계", "밥캣"], "건설기계"),
+    # 나머지 032902 → 반도체장비 (default)
+    # 137001 R&D → 대부분 바이오
+    # 032004 기타화학 → 화장품 vs 소재
+    ("032004", ["아모레", "코스맥스", "코스메카", "콜마", "에이피알",
+                "LG생활", "달바", "뷰티"], "화장품/뷰티"),
+    ("032004", ["솔브레인", "나노신소재", "코스모신소재", "레이크머티리얼즈"], "전자소재"),
+    # 105802 SW → 게임 vs AI
+    ("105802", ["게임", "크래프톤", "넷마블", "엔씨소프트", "펄어비스",
+                "시프트업", "넥슨"], "게임"),
+    ("105802", ["루닛", "노타", "클로봇"], "AI"),
+]
+
+# 애매한 코드의 기본값 (키워드 매칭 안 될 때)
+_SECTOR_CODE_DEFAULTS = {
+    "116409": "지주", "032902": "반도체장비", "137001": "바이오",
+    "032004": "화학", "105802": "소프트웨어",
+}
+
+# 개별 종목 오버라이드 (매출비중 기준)
+_SECTOR_OVERRIDES = {
+    "005930": "반도체",  # 삼성전자
+    "005935": "반도체",  # 삼성전자우
+}
+
+
+def _classify_sector(ticker: str, name: str, std_code: str) -> str:
+    """표준산업분류코드 + 이름 키워드 → 실용 섹터명."""
+    if ticker in _SECTOR_OVERRIDES:
+        return _SECTOR_OVERRIDES[ticker]
+    if std_code in _STD_CODE_TO_SECTOR and std_code not in _SECTOR_CODE_DEFAULTS:
+        return _STD_CODE_TO_SECTOR[std_code]
+    for code, keywords, sector in _SECTOR_KEYWORD_RULES:
+        if std_code == code:
+            for kw in keywords:
+                if kw in name:
+                    return sector
+    if std_code in _SECTOR_CODE_DEFAULTS:
+        return _SECTOR_CODE_DEFAULTS[std_code]
+    return _STD_CODE_TO_SECTOR.get(std_code, "")
+
+
+def _load_std_sector_map() -> dict:
+    """std_sector_map.json 로드 → {ticker: {std_code, std_name}}."""
+    try:
+        with open(_STD_SECTOR_MAP_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 파싱 헬퍼
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def _pi(s) -> int:
@@ -729,7 +886,7 @@ def _fetch_safari_krx(date: str) -> dict:
     import time
     result = {}
 
-    # 1) PER/PBR/EPS/BPS/배당/업종 (MDCSTAT03501)
+    # 1) PER/PBR/EPS/BPS/배당 (MDCSTAT03501)
     for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
         records = _safari_fetch("", {
             "bld": "dbms/MDC/STAT/standard/MDCSTAT03501",
@@ -744,11 +901,26 @@ def _fetch_safari_krx(date: str) -> dict:
             result[t]["eps"] = _pf(r.get("EPS"))
             result[t]["bps"] = _pf(r.get("BPS"))
             result[t]["div_yield"] = _pf(r.get("DVD_YLD"))
+        print(f"  [Safari] {label} PER/PBR: {len(records)}종목")
+        time.sleep(1)
+
+    # 1-b) 업종분류 (MDCSTAT03901)
+    sector_count = 0
+    for mkt_id, label in [("STK", "KOSPI"), ("KSQ", "KOSDAQ")]:
+        records = _safari_fetch("", {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT03901",
+            "locale": "ko_KR", "mktId": mkt_id, "trdDd": date,
+        }, key=f"krx_sector_{mkt_id}")
+        for r in records:
+            t = r.get("ISU_SRT_CD", "")
+            if not t: continue
+            result.setdefault(t, {})
             idn = r.get("IDX_IND_NM", "")
             if idn:
                 result[t]["sector_name"] = idn
-        print(f"  [Safari] {label} PER/PBR: {len(records)}종목")
+                sector_count += 1
         time.sleep(1)
+    print(f"  [Safari] 업종분류: {sector_count}종목")
 
     # 2) 투자자별 순매수 (MDCSTAT02401)
     for inv_code, prefix in [("9000", "foreign"), ("7050", "inst"), ("8000", "indiv")]:
@@ -777,28 +949,6 @@ def _fetch_safari_krx(date: str) -> dict:
     print(f"  [Safari] 총 {len(result)}종목 수집")
     return result
 
-
-async def _fetch_sector_info(date: str) -> dict:
-    """KRX OPEN API 종목기본정보 → {ticker: {sector_name, list_shares}}"""
-    if not KRX_API_KEY:
-        return {}
-    result = {}
-    for cat, ep in [("sto", "stk_isu_base_info"), ("sto", "ksq_isu_base_info")]:
-        try:
-            async with aiohttp.ClientSession() as s:
-                records = await _krx_openapi_get(s, cat, ep, date)
-            for r in records:
-                ticker = str(r.get("ISU_SRT_CD", "")).strip()
-                if not ticker or len(ticker) != 6:
-                    continue
-                result[ticker] = {
-                    "sector_name": str(r.get("SECT_TP_NM", "")).strip(),
-                    "list_shares": _pi(r.get("LIST_SHRS")),
-                }
-            print(f"[KRX OPENAPI] {ep}: {len(records)}종목 섹터정보")
-        except Exception as e:
-            print(f"[KRX OPENAPI] {ep} 섹터정보 실패: {e}")
-    return result
 
 
 async def _fetch_kis_valuations(tickers: list) -> dict:
@@ -937,6 +1087,24 @@ async def update_daily_db(date: str = None) -> dict:
             stocks[ticker]["consensus_gap"] = round((target - close) / close * 100, 1) if close > 0 else 0
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Task 5: 실용 섹터 분류 (std_sector_map.json 기반)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    std_map = _load_std_sector_map()
+    sector_applied = 0
+    for ticker, s in stocks.items():
+        # Safari MDCSTAT03901 업종 → sector_krx로 보존
+        krx_sector = s.get("sector_name", "")
+        if krx_sector:
+            s["sector_krx"] = krx_sector
+        info = std_map.get(ticker)
+        if info:
+            classified = _classify_sector(ticker, s.get("name", ""), info.get("std_code", ""))
+            if classified:
+                s["sector_name"] = classified
+                sector_applied += 1
+    print(f"[KRX] 섹터 분류: {sector_applied}/{len(stocks)}종목")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
     # 기본값 + 비율 계산
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
     for s in stocks.values():
@@ -947,6 +1115,7 @@ async def update_daily_db(date: str = None) -> dict:
                      "foreign_exhaust_rate", "credit_balance", "lending_balance"]:
             s.setdefault(key, 0)
         s.setdefault("sector_name", "")
+        s.setdefault("sector_krx", "")
         s.setdefault("list_shares", 0)
         s.setdefault("consensus_target", 0)
         s.setdefault("consensus_count", 0)
