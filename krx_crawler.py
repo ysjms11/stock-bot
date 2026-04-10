@@ -930,9 +930,26 @@ async def update_daily_db(date: str = None) -> dict:
                 stocks[ticker].update(vals)
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Task 4: 컨센서스 (FnGuide, 병렬)
+    # Task 4: 컨센서스 (FnGuide — universe + 보유/워치만, 전종목 대신)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
-    consensus_data = await _fetch_consensus_batch(all_tickers)
+    try:
+        from kis_api import load_watchlist, load_watchalert, PORTFOLIO_FILE as _PF
+        uni = load_json(os.path.join(_DATA_DIR, "stock_universe.json"), {})
+        cons_tickers = list(uni.keys())
+        # 보유/워치 추가
+        for t in load_json(_PF, {}):
+            if t not in ("us_stocks", "cash_krw", "cash_usd") and t not in cons_tickers:
+                cons_tickers.append(t)
+        for t in load_watchlist():
+            if t not in cons_tickers:
+                cons_tickers.append(t)
+        for t in load_watchalert():
+            if t not in cons_tickers:
+                cons_tickers.append(t)
+    except Exception:
+        cons_tickers = all_tickers  # fallback: 전종목
+    print(f"[KRX] 컨센서스 대상: {len(cons_tickers)}종목 (universe+보유/워치)")
+    consensus_data = await _fetch_consensus_batch(cons_tickers)
     for ticker, vals in consensus_data.items():
         if ticker in stocks:
             close = stocks[ticker].get("close", 0)

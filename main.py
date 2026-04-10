@@ -13,7 +13,7 @@ from kis_api import (
     ws_manager, get_ws_tickers, close_session,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
-from krx_crawler import KRX_DB_DIR, _cleanup_old_db
+from krx_crawler import KRX_DB_DIR, _cleanup_old_db, load_krx_db
 
 
 async def _refresh_ws():
@@ -3133,17 +3133,43 @@ def _format_val(v):
 
 
 def _build_portfolio_html() -> str:
-    """portfolio.json → 보기 좋은 테이블."""
+    """portfolio.json + KRX DB 현재가 → 포트폴리오 테이블."""
     pf = load_json(PORTFOLIO_FILE, {})
     kr = {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
     us = pf.get("us_stocks", {})
 
+    # KRX DB에서 현재가
+    db = load_krx_db()
+    db_stocks = db.get("stocks", {}) if db else {}
+    db_date = db.get("date", "") if db else ""
+
     html = ""
+    kr_total_cost = kr_total_eval = 0
     if kr:
-        html += "<h3>🇰🇷 한국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th></tr></thead><tbody>"
+        html += f"<h3>🇰🇷 한국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th><th>현재가</th><th>손익</th></tr></thead><tbody>"
         for t, v in kr.items():
-            html += f"<tr><td>{v.get('name', t)}</td><td>{int(v.get('qty', 0)):,}</td><td>{int(v.get('avg_price', 0)):,}원</td></tr>"
+            qty = int(v.get("qty", 0))
+            avg = int(v.get("avg_price", 0))
+            cur = db_stocks.get(t, {}).get("close", 0)
+            cost = qty * avg
+            ev = qty * cur if cur else 0
+            kr_total_cost += cost
+            kr_total_eval += ev
+            if cur and avg:
+                pnl_pct = (cur - avg) / avg * 100
+                cls = "pos" if pnl_pct >= 0 else "neg"
+                pnl_str = f"<span class='{cls}'>{pnl_pct:+.1f}%</span>"
+                cur_str = f"{cur:,}원"
+            else:
+                pnl_str = "-"
+                cur_str = "-"
+            html += f"<tr><td>{v.get('name', t)}</td><td>{qty:,}</td><td>{avg:,}원</td><td>{cur_str}</td><td>{pnl_str}</td></tr>"
         html += "</tbody></table>"
+        if kr_total_cost > 0:
+            kr_pnl = (kr_total_eval - kr_total_cost) / kr_total_cost * 100
+            cls = "pos" if kr_pnl >= 0 else "neg"
+            html += f"<p>KR 합계: 평가 {kr_total_eval:,.0f}원 / 매입 {kr_total_cost:,.0f}원 = <span class='{cls}'>{kr_pnl:+.1f}%</span></p>"
+
     if us:
         html += "<h3>🇺🇸 미국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th></tr></thead><tbody>"
         for t, v in us.items():
@@ -3154,6 +3180,8 @@ def _build_portfolio_html() -> str:
     cash_u = float(pf.get("cash_usd", 0) or 0)
     if cash_k or cash_u:
         html += f"<p>💰 현금: {cash_k:,.0f}원 / ${cash_u:,.2f}</p>"
+    if db_date:
+        html += f"<p style='color:var(--fg2);font-size:0.85em'>현재가 기준: {db_date}</p>"
     return html or "<p>포트폴리오 비어있음</p>"
 
 
