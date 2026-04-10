@@ -13,8 +13,8 @@
 - [ ] 시스템 프롬프트 v4 프로젝트 적용 (다운로드 완료, 교체만)
 
 ### 봇 기능 추가
-- [ ] `/summary`에 events.json 기반 "이번 주/다음 주 일정" 섹션 추가
-- [ ] 어닝 D-3 텔레그램 알림 기능 추가
+- [x] ~~`/summary`에 events.json 기반 "이번 주/다음 주 일정" 섹션 추가~~ ✅
+- [x] ~~어닝 D-3 텔레그램 알림 기능 추가~~ ✅
 
 ---
 
@@ -44,6 +44,9 @@
 ## ✅ 완료 (4/10)
 
 ### 봇 버그/기능
+- [x] **장마감 요약 이벤트 섹션** — events.json 기반 7일 내 일정 (CPI/PPI/FOMC/어닝)
+- [x] **어닝 D-3 알림** — 매일 07:00 events.json 확정 일정 기반 (보유/워치 종목만)
+- [x] **GitHub Actions krx_update/krx_backfill 삭제** + supplement/api 코드 정리
 - [x] **웹 대시보드 /dash** (다크모드, 모바일 반응형)
   - markdown→HTML 변환, portfolio/watchalert/decision/trade/events 테이블
   - /dash/file/{filename} (.md/.txt/.json 렌더링, .py/.env 차단)
