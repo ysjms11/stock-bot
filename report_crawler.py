@@ -323,9 +323,9 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
     """
     data = load_reports()
     existing_urls = {r["pdf_url"] for r in data["reports"] if r.get("pdf_url")}
-    # 날짜+증권사+종목 복합키로 추가 중복 방지 (URL 변경 대비)
+    # 날짜+증권사+종목 복합키로 추가 중복 방지 (제목은 사이트별로 공백 등 차이가 있어 제외)
     existing_keys = {
-        (r.get("date", ""), r.get("source", ""), r.get("ticker", ""), r.get("title", ""))
+        (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
         for r in data["reports"]
     }
 
@@ -336,27 +336,33 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
         if count >= max_count:
             break
         try:
-            # 네이버증권 + 한경컨센서스 통합
-            reports = crawl_naver_reports(ticker, name, existing_urls)
+            # 한경컨센서스 + 네이버증권 통합 (한경 우선 — 메타데이터 풍부)
+            reports = []
             try:
                 reports.extend(crawl_hankyung_reports(ticker, name, existing_urls))
             except Exception as e:
                 print(f"[hankyung] {name}({ticker}) 실패: {e}")
-            # 중복 제거 (URL 기준)
+            reports.extend(crawl_naver_reports(ticker, name, existing_urls))
+
+            # 같은 배치 내 중복 제거 (date+source+ticker 기준, 먼저 들어온 것 우선)
+            seen_keys = set()
             seen_urls = set()
             unique_reports = []
             for r in reports:
-                if r["pdf_url"] not in seen_urls:
-                    seen_urls.add(r["pdf_url"])
-                    unique_reports.append(r)
+                k = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
+                if k in seen_keys or r["pdf_url"] in seen_urls:
+                    continue
+                seen_keys.add(k)
+                seen_urls.add(r["pdf_url"])
+                unique_reports.append(r)
             # 최신순 정렬
             unique_reports.sort(key=lambda x: x.get("date", ""), reverse=True)
             reports = unique_reports
             for r in reports:
                 if count >= max_count:
                     break
-                # 복합키 중복 체크
-                key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""), r.get("title", ""))
+                # 복합키 중복 체크 (date+source+ticker)
+                key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
                 if key in existing_keys:
                     continue
                 # PDF 텍스트 추출
