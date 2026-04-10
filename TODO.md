@@ -6,10 +6,14 @@
 ## 🔄 진행중 / PENDING
 
 ### 봇 개발
-- [ ] 과거 1년 백필 진행 상황 확인 (PID 19553, 백그라운드 실행 중)
 - [ ] Railway 완전 삭제
 - [ ] Oracle Cloud VM 해지 검토
 - [ ] GitHub API 연동 — Claude MCP로 직접 커밋/push (P2)
+
+### ✅ 정리 완료
+- [x] GitHub Actions krx_update.yml / krx_backfill.yml 삭제 (KRX 로그인 변경 이후 동작 안 함)
+- [x] scripts/krx_update.py의 collect_supplement / upload_supplement 제거
+- [x] main.py의 /api/krx_supplement 엔드포인트 제거
 
 ### 투자 PENDING
 - [ ] CRSP -29.6% → 25% 강제재평가 (딥서치 필요)
