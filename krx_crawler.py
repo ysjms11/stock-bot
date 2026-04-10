@@ -839,7 +839,7 @@ async def _fetch_kis_valuations(tickers: list) -> dict:
 
 
 async def _fetch_consensus_batch(tickers: list) -> dict:
-    """FnGuide 컨센서스 병렬 수집 (sem=5).
+    """FnGuide 컨센서스 직렬 수집.
     Returns: {ticker: {consensus_target, consensus_count}}
     """
     try:
@@ -851,29 +851,22 @@ async def _fetch_consensus_batch(tickers: list) -> dict:
     result = {}
     total = len(tickers)
     loop = asyncio.get_running_loop()
-    sem = asyncio.Semaphore(5)
-    done = [0]  # mutable counter for progress
-
-    async def _fetch_one(ticker):
-        async with sem:
-            try:
-                c = await loop.run_in_executor(None, fetch_fnguide_consensus, ticker)
-                if c:
-                    ct = c.get("consensus_target", {})
-                    avg = int(ct.get("avg", 0) or 0) if isinstance(ct, dict) else int(ct or 0)
-                    if avg > 0:
-                        bt = c.get("broker_targets", [])
-                        result[ticker] = {
-                            "consensus_target": avg,
-                            "consensus_count": len(bt) if bt else 0,
-                        }
-            except Exception:
-                pass
-            done[0] += 1
-            if done[0] % 100 == 0:
-                print(f"[Consensus] 수집: {done[0]}/{total}")
-
-    await asyncio.gather(*[_fetch_one(t) for t in tickers])
+    for i, ticker in enumerate(tickers):
+        try:
+            c = await loop.run_in_executor(None, fetch_fnguide_consensus, ticker)
+            if c:
+                ct = c.get("consensus_target", {})
+                avg = int(ct.get("avg", 0) or 0) if isinstance(ct, dict) else int(ct or 0)
+                if avg > 0:
+                    bt = c.get("broker_targets", [])
+                    result[ticker] = {
+                        "consensus_target": avg,
+                        "consensus_count": len(bt) if bt else 0,
+                    }
+        except Exception:
+            pass
+        if (i + 1) % 100 == 0:
+            print(f"[Consensus] 수집: {i+1}/{total}")
 
     print(f"[Consensus] 수집 완료: {len(result)}/{total}종목")
     return result
