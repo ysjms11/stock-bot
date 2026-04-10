@@ -1,5 +1,5 @@
 # 주식봇 개선 TODO
-> 업데이트: 2026-04-10 | 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
+> 업데이트: 2026-04-10 (저녁) | 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
 
 ---
 
@@ -59,6 +59,18 @@
 - [x] mcp_tools.py load_krx_db import 에러 수정 (로컬 import가 상위 가림)
 - [x] 백필 스크립트 맥미니 로컬 실행 (Safari KRX + KRX OPEN API)
 - [x] launchd com.stock-bot.krx-keepalive (25분마다 KRX 세션 연장 자동 클릭)
+- [x] keepalive 멀티탭 순회 강화 (KRX 탭이 어느 위치에 있어도 동작)
+- [x] 백필 232거래일 완료 (2025-04-23 ~ 2026-04-07, foreign_trend 5d/20d/60d 활성화)
+
+### 데이터 소스 조사 (결론: 현 상태 유지)
+- [x] **공매도/신용/외인보유 전종목 수집 시도 → 포기**
+  - KRX 정보데이터시스템: 공매도 → 금융투자협회 redirect, 외인/신용은 종목별만
+  - 공공데이터포털: 해당 데이터 없음, 네이버: 페이지 폐쇄
+  - KIS API: 가능하나 1.5초/호출 × 5400호출 = 60분/일 부담
+  - **결정**: 매일 전종목 수집 안 함. 딥서치 시점에 `get_market_signal(short_sale)` 개별 조회로 처리
+  - short_squeeze, credit_unwind, foreign_accumulation 프리셋은 비활성 상태 유지
+- [x] **와이즈리포트 / 한경 / 네이버 조사 완료** (3개 사이트 통합 적용)
+- [x] **씽크풀 / 팍스넷 / FnGuide 요약리포트 / 데이터고 조사** — 모두 부적합 (JS 렌더링 또는 데이터 없음)
 
 ---
 
