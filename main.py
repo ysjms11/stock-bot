@@ -408,6 +408,32 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"포트 건강 체크 오류: {e}")
 
+        # ── [이벤트] 7일 내 일정 (events.json) ──
+        try:
+            events = load_json(f"{_DATA_DIR}/events.json", {})
+            today = now.date()
+            upcoming = []
+            for key, date_str in events.items():
+                if not isinstance(date_str, str) or len(date_str) != 10:
+                    continue
+                try:
+                    ev_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                diff = (ev_date - today).days
+                if 0 <= diff <= 7:
+                    label = key.replace("_", " ")
+                    if diff == 0:
+                        upcoming.append(f"• {label} (오늘)")
+                    elif diff == 1:
+                        upcoming.append(f"• {label} (내일)")
+                    else:
+                        upcoming.append(f"• {label} (D-{diff}, {ev_date.strftime('%m/%d')})")
+            if upcoming:
+                msg += "\n[이벤트] 7일 내\n" + "\n".join(upcoming) + "\n"
+        except Exception as e:
+            print(f"이벤트 섹션 오류: {e}")
+
         msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
@@ -1278,12 +1304,74 @@ async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
 # 📅 실적 캘린더 알림 (매일 07:00 KST, 3일 전 알림)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
-    """포트폴리오+워치리스트 종목의 추정실적 분기 일정 확인.
-    KIS에 실적발표일 API가 없어 추정실적 데이터(분기 dt)로 대체.
-    다가올 분기 결산월 3일 전이면 알림."""
+    """포트폴리오+워치리스트 종목의 실적 일정 확인.
+    1) events.json 확정 일정 D-3 알림 (우선)
+    2) KIS 추정실적 분기 결산월 기반 (보조)
+    """
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
+
+    # ── events.json 기반 D-3 알림 (확정 일정) ──
+    try:
+        events = load_json(f"{_DATA_DIR}/events.json", {})
+        today = now.date()
+        # 보유/워치 티커 수집
+        wl = load_watchlist()
+        pf = load_json(PORTFOLIO_FILE, {})
+        us_wl = load_json(f"{_DATA_DIR}/us_watchlist.json", {})
+
+        known_tickers = set()
+        for t in wl:
+            known_tickers.add(t.upper())
+        for t, v in pf.items():
+            if t in ("cash_krw", "cash_usd"):
+                continue
+            if t == "us_stocks":
+                if isinstance(v, dict):
+                    known_tickers.update(k.upper() for k in v.keys())
+                continue
+            known_tickers.add(t.upper())
+        for t in us_wl:
+            known_tickers.add(t.upper())
+
+        ev_alerts = []
+        for key, date_str in events.items():
+            if not isinstance(date_str, str) or len(date_str) != 10:
+                continue
+            try:
+                ev_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            diff = (ev_date - today).days
+            if diff != 3:
+                continue  # D-3만
+
+            # 종목 실적 이벤트 (TICKER_label 형식)
+            if "_" in key:
+                ticker_candidate = key.split("_")[0].upper()
+                if ticker_candidate in known_tickers:
+                    label = key.replace("_", " ")
+                    ev_alerts.append(f"🔔 *{label}* → 3일 후 ({ev_date.strftime('%m/%d')})")
+                elif ticker_candidate.isupper() and len(ticker_candidate) <= 6:
+                    # 보유/워치 아닌 종목은 스킵
+                    continue
+                else:
+                    # 매크로 이벤트 형식 (예외)
+                    ev_alerts.append(f"🔔 *{key}* → 3일 후 ({ev_date.strftime('%m/%d')})")
+            else:
+                # 매크로 이벤트 (FOMC, CPI, PPI 등) — 전체 알림
+                ev_alerts.append(f"📢 *{key}* → 3일 후 ({ev_date.strftime('%m/%d')})")
+
+        if ev_alerts:
+            msg = "📅 *어닝/이벤트 D-3 알림*\n\n" + "\n".join(ev_alerts)
+            try:
+                await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            except Exception as e:
+                print(f"[earnings D-3] 전송 오류: {e}")
+    except Exception as e:
+        print(f"[earnings D-3] 오류: {e}")
+
     try:
         token = await get_kis_token()
         wl = load_watchlist()
