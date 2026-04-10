@@ -120,6 +120,85 @@ def crawl_naver_reports(ticker: str, name: str, existing_urls: set) -> list:
     return reports
 
 
+def crawl_wisereport_meta(ticker: str, name: str, existing_urls: set) -> list:
+    """와이즈리포트 JSON API에서 종목 리포트 메타데이터 수집 (PDF 본문 없음).
+
+    URL: https://comp.wisereport.co.kr/company/ajax/c1080001_data.aspx?cmp_cd={ticker}
+    응답: {"lists": [{RPT_ID, ANL_DT, RPT_TITLE, BRK_NM_KOR, ANL_NM_KOR,
+                     TARGET_PRC, RECOMM, COMMENT2, PRC_ACTION_TYP_NM, EPS_ACTION_TYP_NM, ...}]}
+
+    PDF는 유료라 다운로드 불가. 메타데이터(목표가, 투자의견, 요약, 변동) 만 reports.json에 저장.
+    pdf_url은 LoadReport URL 형태로 보존 (참고용).
+    extraction_status="meta_only"로 표시.
+    """
+    url = "https://comp.wisereport.co.kr/company/ajax/c1080001_data.aspx"
+    headers = dict(_HEADERS)
+    headers["Referer"] = f"https://comp.wisereport.co.kr/company/c1080001.aspx?cmp_cd={ticker}"
+    headers["X-Requested-With"] = "XMLHttpRequest"
+    try:
+        resp = requests.get(url, headers=headers, params={"cmp_cd": ticker}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"[wise] 요청 실패 ({ticker}): {e}")
+        return []
+
+    items = data.get("lists", [])
+    reports = []
+    for item in items:
+        # 날짜: "26/04/09" → "2026-04-09"
+        anl_dt = item.get("ANL_DT", "").strip()
+        if not anl_dt:
+            continue
+        date_str = _parse_date(anl_dt.replace("/", "."))
+
+        rpt_id = item.get("RPT_ID")
+        brk_cd = item.get("BRK_CD")
+        file_nm = item.get("FILE_NM", "")
+
+        # pdf_url: LoadReport (실제 다운은 유료라 실패함, 식별자 용도)
+        if rpt_id and brk_cd and file_nm:
+            pdf_url = f"https://www.wisereport.co.kr/comm/LoadReport.aspx?rpt_id={rpt_id}&brk_cd={brk_cd}&fpath={file_nm}&target=comp"
+        else:
+            pdf_url = f"https://comp.wisereport.co.kr/company/c1080001.aspx?cmp_cd={ticker}#rpt_{rpt_id}"
+
+        if pdf_url in existing_urls:
+            continue
+
+        # COMMENT2 (요약 ▶ 불릿) - HTML 태그 제거
+        comment2 = item.get("COMMENT2", "") or ""
+        # 간단한 태그 제거
+        import re as _re
+        summary = _re.sub(r"<[^>]+>", " ", comment2).replace("&nbsp;", " ")
+        summary = _re.sub(r"\s+", " ", summary).strip()
+
+        title = item.get("RPT_TITLE", "").strip()
+        broker = item.get("BRK_NM_KOR", "").strip()
+        analyst = item.get("ANL_NM_KOR", "").strip()
+        target_prc = item.get("TARGET_PRC", "").strip()
+        recomm = (item.get("RECOMM") or "").strip() if item.get("RECOMM") else ""
+
+        reports.append({
+            "date": date_str,
+            "ticker": ticker,
+            "name": name,
+            "source": broker,
+            "title": title,
+            "pdf_url": pdf_url,
+            # 와이즈리포트 메타데이터 추가 필드
+            "_wise_meta": True,
+            "analyst": analyst,
+            "target_price": target_prc,
+            "recommendation": recomm,
+            "summary": summary,
+            "target_action": item.get("PRC_ACTION_TYP_NM", ""),
+            "eps_action": item.get("EPS_ACTION_TYP_NM", ""),
+            "recomm_action": item.get("RECOMM_ACTION_TYP_NM", ""),
+        })
+
+    return reports
+
+
 def crawl_hankyung_reports(ticker: str, name: str, existing_urls: set) -> list:
     """한경컨센서스에서 종목 리포트 목록 크롤링.
 
@@ -336,13 +415,18 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
         if count >= max_count:
             break
         try:
-            # 한경컨센서스 + 네이버증권 통합 (한경 우선 — 메타데이터 풍부)
+            # 한경 + 네이버 + 와이즈 통합 (우선순위: 한경 → 네이버 → 와이즈)
+            # PDF 본문이 있는 한경/네이버를 우선, 와이즈는 메타데이터로 보강
             reports = []
             try:
                 reports.extend(crawl_hankyung_reports(ticker, name, existing_urls))
             except Exception as e:
                 print(f"[hankyung] {name}({ticker}) 실패: {e}")
             reports.extend(crawl_naver_reports(ticker, name, existing_urls))
+            try:
+                reports.extend(crawl_wisereport_meta(ticker, name, existing_urls))
+            except Exception as e:
+                print(f"[wise] {name}({ticker}) 실패: {e}")
 
             # 같은 배치 내 중복 제거 (date+source+ticker 기준, 먼저 들어온 것 우선)
             seen_keys = set()
@@ -365,10 +449,15 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
                 key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
                 if key in existing_keys:
                     continue
-                # PDF 텍스트 추출
-                full_text, status = extract_pdf_text(r["pdf_url"])
-                r["full_text"] = full_text
-                r["extraction_status"] = status
+                # 와이즈 메타데이터는 PDF 추출 스킵
+                if r.get("_wise_meta"):
+                    r["full_text"] = "[와이즈리포트 메타데이터만 — PDF는 유료]"
+                    r["extraction_status"] = "meta_only"
+                    r.pop("_wise_meta", None)
+                else:
+                    full_text, status = extract_pdf_text(r["pdf_url"])
+                    r["full_text"] = full_text
+                    r["extraction_status"] = status
                 r["collected_at"] = datetime.now(KST).isoformat()
                 new_reports.append(r)
                 existing_urls.add(r["pdf_url"])
