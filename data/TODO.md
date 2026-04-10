@@ -12,17 +12,14 @@
 - [ ] LITE 리서치 파일 생성
 - [ ] 시스템 프롬프트 v4 프로젝트 적용 (다운로드 완료, 교체만)
 
-### 봇 기능 추가
-- [x] ~~`/summary`에 events.json 기반 "이번 주/다음 주 일정" 섹션 추가~~ ✅
-- [x] ~~어닝 D-3 텔레그램 알림 기능 추가~~ ✅
-
 ---
 
 ## 🟡 진행중 / PENDING
 
 ### 봇 개발
-- [ ] Railway 완전 삭제 (이전 완료, 프로젝트만 삭제)
-- [ ] Oracle Cloud VM 해지 (더 이상 KRX 크롤링 안 함)
+- [ ] Railway 완전 삭제 (사용자 로그인)
+- [ ] Oracle Cloud VM 해지 (사용자 로그인)
+- [ ] 섹터명 보강 — KRX Safari MDCSTAT03901 테스트 (로그인 필요)
 - [ ] GitHub API 연동 — Claude MCP로 직접 커밋/push (P2)
 - [ ] 시장/섹터 전략 레포트 자동 수집 (P2)
 - [ ] bot_architecture.md 생성 (P2)
@@ -46,6 +43,9 @@
 ### 봇 버그/기능
 - [x] **장마감 요약 이벤트 섹션** — events.json 기반 7일 내 일정 (CPI/PPI/FOMC/어닝)
 - [x] **어닝 D-3 알림** — 매일 07:00 events.json 확정 일정 기반 (보유/워치 종목만)
+- [x] **대시보드 현재가/손익** — KRX DB 종가 로드, 녹색/빨간색 수익률 표시
+- [x] **컨센서스 수집 직렬 안정화** — 병렬 sem=5 시도 → 직렬로 확정 (FnGuide 차단 방지)
+- [x] **Gist 백업 정상 확인** — 409 에러 이미 해결됨 (11개 파일 정상)
 - [x] **GitHub Actions krx_update/krx_backfill 삭제** + supplement/api 코드 정리
 - [x] **웹 대시보드 /dash** (다크모드, 모바일 반응형)
   - markdown→HTML 변환, portfolio/watchalert/decision/trade/events 테이블
