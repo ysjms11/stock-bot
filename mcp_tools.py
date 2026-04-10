@@ -3,9 +3,11 @@ import os
 import re
 import asyncio
 import uuid
+import subprocess
 import aiohttp
 import traceback
 from datetime import datetime, timedelta
+from pathlib import Path
 from aiohttp import web
 
 from kis_api import *
@@ -645,7 +647,94 @@ MCP_TOOLS = [
                          "sort": {"type": "string", "description": "정렬 기준 필드명 (기본: 프리셋별 자동)"},
                      },
                      "required": []}},
+
+    # ── Git 도구 ──────────────────────────────────────────────
+    {"name": "git_status",
+     "description": "현재 git 저장소 상태 조회. 브랜치명, staged/modified/untracked 파일 목록 반환.",
+     "inputSchema": {"type": "object",
+                     "properties": {},
+                     "required": []}},
+
+    {"name": "git_diff",
+     "description": "git diff 결과 반환. staged=true 이면 --cached(스테이징 영역) diff. path 지정 시 해당 경로만. 50KB 초과 시 truncate.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "path":   {"type": "string",  "description": "특정 파일/디렉토리 경로 (선택)"},
+                         "staged": {"type": "boolean", "description": "true이면 --cached diff (기본 false)"},
+                     },
+                     "required": []}},
+
+    {"name": "git_log",
+     "description": "git 커밋 로그 조회. n개(기본 10, 최대 50) 반환. path 지정 시 해당 경로의 커밋만.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "n":    {"type": "integer", "description": "조회할 커밋 수 (기본 10, 최대 50)"},
+                         "path": {"type": "string",  "description": "특정 파일/디렉토리 경로 (선택)"},
+                     },
+                     "required": []}},
+
+    {"name": "git_commit",
+     "description": "지정한 파일을 staging하고 커밋. .py/.env 파일은 커밋 불가. message는 최대 500자.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "message": {"type": "string", "description": "커밋 메시지 (최대 500자)"},
+                         "files":   {"type": "array",  "items": {"type": "string"},
+                                     "description": "staging할 파일 경로 목록 (.py/.env 불가)"},
+                     },
+                     "required": ["message", "files"]}},
+
+    {"name": "git_push",
+     "description": "origin main 브랜치에 push. main 브랜치일 때만 허용.",
+     "inputSchema": {"type": "object",
+                     "properties": {},
+                     "required": []}},
 ]
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Git 헬퍼 함수
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_GIT_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+_GIT_ALLOWED_SUBCMDS = {"status", "diff", "log", "add", "commit", "push", "branch", "rev-parse"}
+_GIT_BLOCKED_FLAGS = {"--force", "-f", "--hard", "--reset", "--delete", "-D", "--force-with-lease"}
+
+
+def _run_git(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
+    """git 서브프로세스 실행. shell=True 금지, 화이트리스트/블랙리스트 검사 후 실행.
+    반환: (returncode, stdout, stderr)"""
+    if not args:
+        raise ValueError("git 인자가 없습니다")
+    subcmd = args[0]
+    if subcmd not in _GIT_ALLOWED_SUBCMDS:
+        raise ValueError(f"허용되지 않은 git 서브커맨드: {subcmd}")
+    for flag in args:
+        if flag in _GIT_BLOCKED_FLAGS:
+            raise ValueError(f"차단된 git 플래그: {flag}")
+    proc = subprocess.run(
+        ["git"] + args,
+        cwd=_GIT_REPO_DIR,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _validate_git_path(raw: str) -> str:
+    """경로 검증: ../ 차단, stock-bot 디렉토리 내부인지 확인. 정규화된 상대 경로 반환."""
+    if ".." in raw.split("/") or ".." in raw.split(os.sep):
+        raise ValueError(f"경로 traversal 차단: {raw!r}")
+    # 절대경로 정규화
+    abs_path = Path(_GIT_REPO_DIR) / raw
+    try:
+        resolved = abs_path.resolve()
+    except Exception:
+        raise ValueError(f"경로 정규화 실패: {raw!r}")
+    repo_resolved = Path(_GIT_REPO_DIR).resolve()
+    if not str(resolved).startswith(str(repo_resolved)):
+        raise ValueError(f"저장소 외부 경로 차단: {raw!r}")
+    return raw
 
 
 async def _execute_tool(name: str, arguments: dict) -> dict | list:
@@ -3218,6 +3307,146 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         except Exception:
                             pass
                     result = {"path": rel, "entries": entries}
+
+        # ── Git 도구 ──────────────────────────────────────────────
+        elif name == "git_status":
+            rc, stdout, stderr = await asyncio.to_thread(
+                _run_git, ["status", "--porcelain"]
+            )
+            if rc != 0:
+                result = {"error": f"git status 실패: {stderr.strip()}"}
+            else:
+                _, branch_out, _ = await asyncio.to_thread(
+                    _run_git, ["branch", "--show-current"]
+                )
+                branch = branch_out.strip()
+                staged, modified, untracked = [], [], []
+                for line in stdout.splitlines():
+                    if len(line) < 2:
+                        continue
+                    xy, fpath = line[:2], line[3:]
+                    if xy[0] in ("A", "M", "D", "R", "C"):
+                        staged.append(fpath.strip())
+                    if xy[1] in ("M", "D"):
+                        modified.append(fpath.strip())
+                    if xy == "??":
+                        untracked.append(fpath.strip())
+                result = {
+                    "branch":    branch,
+                    "clean":     stdout.strip() == "",
+                    "staged":    staged,
+                    "modified":  modified,
+                    "untracked": untracked,
+                }
+
+        elif name == "git_diff":
+            path_arg   = arguments.get("path", "").strip()
+            staged_arg = bool(arguments.get("staged", False))
+            git_args   = ["diff"]
+            if staged_arg:
+                git_args.append("--cached")
+            if path_arg:
+                validated = _validate_git_path(path_arg)
+                git_args += ["--", validated]
+            rc, stdout, stderr = await asyncio.to_thread(_run_git, git_args)
+            if rc != 0:
+                result = {"error": f"git diff 실패: {stderr.strip()}"}
+            else:
+                _MAX_DIFF = 50 * 1024  # 50KB
+                truncated = False
+                if len(stdout.encode()) > _MAX_DIFF:
+                    stdout = stdout.encode()[:_MAX_DIFF].decode(errors="replace")
+                    truncated = True
+                result = {
+                    "staged":    staged_arg,
+                    "path":      path_arg or None,
+                    "diff":      stdout,
+                    "truncated": truncated,
+                }
+
+        elif name == "git_log":
+            n        = min(int(arguments.get("n", 10) or 10), 50)
+            path_arg = arguments.get("path", "").strip()
+            git_args = ["log", "--oneline", "--no-decorate", f"-{n}"]
+            if path_arg:
+                validated = _validate_git_path(path_arg)
+                git_args += ["--", validated]
+            rc, stdout, stderr = await asyncio.to_thread(_run_git, git_args)
+            if rc != 0:
+                result = {"error": f"git log 실패: {stderr.strip()}"}
+            else:
+                commits = []
+                for line in stdout.splitlines():
+                    parts = line.split(" ", 1)
+                    if len(parts) == 2:
+                        commits.append({"hash": parts[0], "message": parts[1]})
+                result = {
+                    "n":       n,
+                    "path":    path_arg or None,
+                    "commits": commits,
+                }
+
+        elif name == "git_commit":
+            message = arguments.get("message", "").strip()
+            files   = arguments.get("files", [])
+            if not message:
+                result = {"error": "message가 비어 있습니다"}
+            elif len(message) > 500:
+                result = {"error": f"message가 500자 초과({len(message)}자)"}
+            elif not files:
+                result = {"error": "files 목록이 비어 있습니다"}
+            else:
+                # .py/.env 차단
+                blocked = [f for f in files if f.endswith(".py") or f.endswith(".env")]
+                if blocked:
+                    result = {"error": f".py/.env 파일 커밋 불가: {blocked}"}
+                else:
+                    try:
+                        validated_files = [_validate_git_path(f) for f in files]
+                    except ValueError as ve:
+                        result = {"error": str(ve)}
+                    else:
+                        rc_add, out_add, err_add = await asyncio.to_thread(
+                            _run_git, ["add"] + validated_files
+                        )
+                        if rc_add != 0:
+                            result = {"error": f"git add 실패: {err_add.strip()}"}
+                        else:
+                            rc_cm, out_cm, err_cm = await asyncio.to_thread(
+                                _run_git, ["commit", "-m", message]
+                            )
+                            if rc_cm != 0:
+                                result = {"error": f"git commit 실패: {err_cm.strip()}"}
+                            else:
+                                result = {
+                                    "ok":     True,
+                                    "files":  validated_files,
+                                    "output": out_cm.strip(),
+                                }
+
+        elif name == "git_push":
+            # 현재 브랜치 확인 — main만 허용
+            _, branch_out, _ = await asyncio.to_thread(
+                _run_git, ["branch", "--show-current"]
+            )
+            branch = branch_out.strip()
+            if branch != "main":
+                result = {"error": f"main 브랜치만 push 허용 (현재: {branch!r})"}
+            else:
+                rc, stdout, stderr = await asyncio.to_thread(
+                    _run_git, ["push", "origin", "main"]
+                )
+                # stderr에서 ghp_ 토큰 마스킹
+                masked_err = re.sub(r"ghp_[A-Za-z0-9]+", "***", stderr)
+                masked_out = re.sub(r"ghp_[A-Za-z0-9]+", "***", stdout)
+                if rc != 0:
+                    result = {"error": f"git push 실패: {masked_err.strip()}"}
+                else:
+                    result = {
+                        "ok":     True,
+                        "branch": branch,
+                        "output": (masked_out + masked_err).strip(),
+                    }
 
         else:
             result = {"error": f"unknown tool: {name}"}

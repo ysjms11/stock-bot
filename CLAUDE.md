@@ -101,7 +101,8 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | `/data/dart_screener_cache.json` | DART 스크리너 당일 캐시 | `{}` |
 | `/data/corp_codes.json` | OpenDART corp_code 매핑 캐시 (1일 1회 갱신) | `{}` |
 | `/data/dart_reports/*.txt` | DART 사업보고서 본문 txt 파일 | — |
-| `/data/krx_db/YYYYMMDD.json` | KRX 전종목 일별 DB (시세+수급+비율, 30일 보관) | — |
+| `/data/krx_db/YYYYMMDD.json` | KRX 전종목 일별 DB (시세+수급+비율, 보관 무제한) | — |
+| `/data/std_sector_map.json` | 표준산업분류코드 캐시 `{ticker: {std_code, std_name}}` (1회 수집) | `{}` |
 
 > 맥미니 로컬 `data/` 디렉토리 사용 (`DATA_DIR` 환경변수).
 > 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`, `BACKUP_STOPLOSS` 등).
@@ -210,6 +211,7 @@ elif name == "new_tool_name":
 - **KRX 크롤링 → GitHub Actions**: GitHub Actions에서 크롤링 후 `/api/krx_upload`로 업로드하는 구조. 설정: GitHub Secrets(`BOT_URL`, `BOT_API_KEY`) + 환경변수(`KRX_UPLOAD_KEY`).
 - **공매도/신용잔고 전종목 미수집**: KRX 정보데이터시스템(공매도→금융투자협회 redirect, 외인/신용은 종목별만), 공공데이터포털, 네이버(페이지 폐쇄) 모두 부적합. KIS API는 1.5초/호출이라 전종목 60분 부담. 결정: **딥서치 시점에 `get_market_signal(mode=short_sale, ticker=...)` 개별 조회**. `short_squeeze`/`credit_unwind`/`foreign_accumulation` 프리셋은 비활성 상태 유지.
 - **KRX Safari 세션 의존**: PER/PBR/수급은 Safari 카카오 로그인 필수. 30분 자동로그아웃 → `com.stock-bot.krx-keepalive` launchd가 25분마다 "연장" 버튼 클릭. 모든 윈도우/탭 순회.
+- **섹터 분류 2중 구조**: `sector_name`은 92개 실용 섹터(std_idst_clsf_cd 기반), `sector_krx`는 KRX 29개 원본 업종. `data/std_sector_map.json`에 전종목 코드 캐시. 신규 상장 종목은 map에 없으면 KRX 업종이 fallback.
 
 ---
 
