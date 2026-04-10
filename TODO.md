@@ -10,7 +10,6 @@
 - [ ] Railway 완전 삭제
 - [ ] Oracle Cloud VM 해지 검토
 - [ ] GitHub API 연동 — Claude MCP로 직접 커밋/push (P2)
-- [ ] 와이즈리포트 메타데이터만 추가 (PDF 유료, JSON API는 무료) — 보류
 
 ### 투자 PENDING
 - [ ] CRSP -29.6% → 25% 강제재평가 (딥서치 필요)
@@ -50,7 +49,11 @@
 - [x] _MAX_PER_TICKER 5 → 10
 - [x] 중복 제거 키 단순화 (date, source, ticker) — 한경 제목 공백 누락 대응
 - [x] 한경 우선 정렬 (메타데이터 풍부)
-- [x] 와이즈리포트 분석 (PDF 유료, JSON 메타데이터만 가능 → 보류)
+- [x] **와이즈리포트 메타데이터 통합** (JSON API, 한경/네이버에 없는 신영/다올/KB 보강)
+  - target_price, recommendation, summary, target_action 등 변동 트래킹
+  - extraction_status="meta_only", PDF 본문은 유료라 스킵
+  - 통합 우선순위: 한경 → 네이버 → 와이즈
+  - HD한국조선해양 26년 4월 5건 모두 수집 성공
 
 ### 봇 버그 수정
 - [x] mcp_tools.py load_krx_db import 에러 수정 (로컬 import가 상위 가림)
