@@ -32,7 +32,7 @@ from kis_api import (
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
 )
 
-from krx_crawler import load_krx_db, scan_stocks, _load_history, _compute_technicals
+from db_collector import load_krx_db, scan_stocks, _load_history
 
 try:
     from report_crawler import (
