@@ -1542,7 +1542,7 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
 # db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시 활성화)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def daily_collect_job(context):
-    """장후 KIS API 풀수집 (18:10 KST, 평일)."""
+    """장후 KIS API 풀수집 (18:30 KST, 평일)."""
     if not _HAS_DB_COLLECTOR:
         return
     try:
@@ -2985,7 +2985,7 @@ def main():
     # KRX 전종목 DB 갱신: GitHub Actions에서 크롤링 → /api/krx_upload로 업로드
     # jq.run_daily(update_krx_db_job, time=dtime(15, 55, tzinfo=KST), days=(0,1,2,3,4), name="krx_db")
     # db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시에만 실제 동작)
-    jq.run_daily(daily_collect_job,       time=dtime(18, 10, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
+    jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")

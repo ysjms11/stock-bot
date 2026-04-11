@@ -534,8 +534,18 @@ async def collect_daily(date: str = None) -> dict:
             print(f"[collect_daily] KRX {mkt} 실패: {e}")
         await asyncio.sleep(0.5)
 
+    # KRX 실패 시 stock_master에서 종목 리스트 fallback
     if not all_stocks:
-        return {"error": "KRX 데이터 없음", "date": date}
+        print("[collect_daily] KRX 데이터 없음 → stock_master fallback")
+        conn = _get_db()
+        rows = conn.execute("SELECT symbol, name, market FROM stock_master").fetchall()
+        if not rows:
+            conn.close()
+            return {"error": "KRX 데이터 없음 + stock_master 비어있음", "date": date}
+        for r in rows:
+            all_stocks[r["symbol"]] = {"ticker": r["symbol"], "name": r["name"], "market": r["market"]}
+        conn.close()
+        print(f"[collect_daily] stock_master에서 {len(all_stocks)}종목 로드")
 
     tickers = list(all_stocks.keys())
     report["total"] = len(tickers)
