@@ -3842,7 +3842,8 @@ function filterWatch() {
       const ticker = (r.dataset.ticker || '').toLowerCase();
       const grade = r.dataset.grade || '';
       const market = r.dataset.market || '';
-      const matchSearch = !q || name.includes(q) || ticker.includes(q);
+      const sectorName = (tbl.closest('.sector-group')?.dataset.sector || '').toLowerCase();
+      const matchSearch = !q || name.includes(q) || ticker.includes(q) || sectorName.includes(q);
       const matchFilter = currentFilter === 'all'
         || (currentFilter === 'kr' && market === 'kr')
         || (currentFilter === 'us' && market === 'us')
@@ -4070,7 +4071,7 @@ def _build_watchalert_v2_html() -> str:
         items = groups[sector]
         count = len(items)
         sector_esc = _html.escape(sector)
-        html += f'<div class="sector-group">'
+        html += f'<div class="sector-group" data-sector="{sector_esc}">'
         html += (f'<div class="sector-header">{sector_esc}'
                  f' <span style="color:var(--fg2);font-size:0.85em">({count}종목)</span></div>')
         html += ('<div class="table-wrap"><table class="watch-sector-table">'
