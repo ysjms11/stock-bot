@@ -894,8 +894,15 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     for ticker, info in kr_stocks.items():
                         qty = info.get("qty", 0)
                         avg = info.get("avg_price", 0)
-                        d = await kis_stock_price(ticker, token)
-                        cur = int(d.get("stck_prpr", 0) or 0)
+                        chg_today = None
+                        cached = ws_manager.get_cached_price(ticker)
+                        if cached is not None:
+                            cur = int(cached)
+                        else:
+                            d = await kis_stock_price(ticker, token)
+                            cur = int(d.get("stck_prpr", 0) or 0)
+                            chg_today = d.get("prdy_ctrt")
+                            await asyncio.sleep(0.3)
                         eval_amt = cur * qty
                         cost_amt = int(avg) * qty
                         pnl = eval_amt - cost_amt
@@ -906,14 +913,21 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "ticker": ticker, "name": info.get("name", ticker),
                             "qty": qty, "avg_price": avg, "cur_price": cur,
                             "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                            "chg_today": d.get("prdy_ctrt"),
+                            "chg_today": chg_today,
                         })
 
                     for symbol, info in us_stocks.items():
                         qty = info.get("qty", 0)
                         avg = info.get("avg_price", 0)
-                        d = await kis_us_stock_price(symbol, token)
-                        cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
+                        chg_today = None
+                        cached = ws_manager.get_cached_price(symbol)
+                        if cached is not None:
+                            cur = float(cached)
+                        else:
+                            d = await kis_us_stock_price(symbol, token)
+                            cur = float(d.get("last", 0) or d.get("stck_prpr", 0) or 0)
+                            chg_today = d.get("rate")
+                            await asyncio.sleep(0.3)
                         eval_amt = round(cur * qty, 2)
                         cost_amt = round(avg * qty, 2)
                         pnl = round(eval_amt - cost_amt, 2)
@@ -924,7 +938,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "ticker": symbol, "name": info.get("name", symbol),
                             "qty": qty, "avg_price": avg, "cur_price": cur,
                             "eval_amt": eval_amt, "pnl": pnl, "pnl_pct": pnl_pct,
-                            "chg_today": d.get("rate"),
+                            "chg_today": chg_today,
                         })
 
                     result = {

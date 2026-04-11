@@ -741,9 +741,13 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
             if token:
                 for ticker, info in kr_stops.items():
                     try:
-                        d = await get_stock_price(ticker, token)
-                        await asyncio.sleep(0.3)
-                        price = int(d.get("stck_prpr", 0))
+                        cached = ws_manager.get_cached_price(ticker)
+                        if cached is not None:
+                            price = int(cached)
+                        else:
+                            d = await get_stock_price(ticker, token)
+                            await asyncio.sleep(0.3)
+                            price = int(d.get("stck_prpr", 0))
                         sp = info.get("stop_price", 0)
                         if price > 0 and sp > 0 and price <= sp:
                             cnt = _get_stoploss_sent_count(sent, ticker, today)
@@ -770,11 +774,15 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     if is_us and us_stops:
         for sym, info in us_stops.items():
             try:
-                d = await get_yahoo_quote(sym)
-                await asyncio.sleep(0.3)
-                if not d:
-                    continue
-                price = float(d.get("price", 0) or 0)
+                cached = ws_manager.get_cached_price(sym)
+                if cached is not None:
+                    price = float(cached)
+                else:
+                    d = await get_yahoo_quote(sym)
+                    await asyncio.sleep(0.3)
+                    if not d:
+                        continue
+                    price = float(d.get("price", 0) or 0)
                 sp = info.get("stop_price", 0)
                 if price > 0 and sp > 0 and price <= sp:
                     cnt = _get_stoploss_sent_count(sent, sym, today)
@@ -838,14 +846,23 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                     if _is_us_ticker(ticker):
                         if not is_us:
                             continue
-                        d = await kis_us_stock_price(ticker, token_wa)
-                        cur = float(d.get("last", 0) or 0)
+                        cached = ws_manager.get_cached_price(ticker)
+                        if cached is not None:
+                            cur = float(cached)
+                        else:
+                            d = await kis_us_stock_price(ticker, token_wa)
+                            cur = float(d.get("last", 0) or 0)
+                            await asyncio.sleep(0.3)
                     else:
                         if not is_kr:
                             continue
-                        d = await get_stock_price(ticker, token_wa)
-                        cur = int(d.get("stck_prpr", 0) or 0)
-                    await asyncio.sleep(0.3)
+                        cached = ws_manager.get_cached_price(ticker)
+                        if cached is not None:
+                            cur = float(cached)
+                        else:
+                            d = await get_stock_price(ticker, token_wa)
+                            cur = int(d.get("stck_prpr", 0) or 0)
+                            await asyncio.sleep(0.3)
                     if cur > 0 and cur <= buy_price and watch_sent.get(ticker) != today_w:
                         watch_sent[ticker] = today_w
                         save_json(WATCH_SENT_FILE, watch_sent)
@@ -1912,8 +1929,13 @@ async def portfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 qty = info.get("qty", 0)
                 avg = float(info.get("avg_price", 0))
-                d = await kis_stock_price(t, token) if token else {}
-                cur = int(d.get("stck_prpr", 0) or 0)
+                cur = ws_manager.get_cached_price(t)
+                if cur is None:
+                    d = await kis_stock_price(t, token) if token else {}
+                    cur = int(d.get("stck_prpr", 0) or 0)
+                    await asyncio.sleep(0.3)
+                else:
+                    cur = int(cur)
                 eval_amt = cur * qty
                 cost_amt = int(avg) * qty
                 pnl = eval_amt - cost_amt
@@ -1922,7 +1944,6 @@ async def portfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_cost += cost_amt
                 icon = "🔺" if pnl >= 0 else "🔻"
                 msg += f"{icon} *{info.get('name', t)}* {qty}주\n  {cur:,}원 ({pnl_pct:+.1f}%) P&L {pnl:+,}원\n"
-                await asyncio.sleep(0.3)
             except Exception:
                 msg += f"⚪ *{info.get('name', t)}* — 조회실패\n"
         msg += "\n"
@@ -1932,15 +1953,19 @@ async def portfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 qty = info.get("qty", 0)
                 avg = float(info.get("avg_price", 0))
-                d = await kis_us_stock_price(sym, _guess_excd(sym), token) if token else {}
-                cur = float(d.get("last", 0) or 0)
+                cur = ws_manager.get_cached_price(sym)
+                if cur is None:
+                    d = await kis_us_stock_price(sym, token) if token else {}
+                    cur = float(d.get("last", 0) or 0)
+                    await asyncio.sleep(0.3)
+                else:
+                    cur = float(cur)
                 eval_amt = cur * qty
                 cost_amt = avg * qty
                 pnl = eval_amt - cost_amt
                 pnl_pct = (cur - avg) / avg * 100 if avg else 0
                 icon = "🔺" if pnl >= 0 else "🔻"
                 msg += f"{icon} *{info.get('name', sym)}* {qty}주\n  ${cur:,.2f} ({pnl_pct:+.1f}%) P&L ${pnl:+,.2f}\n"
-                await asyncio.sleep(0.3)
             except Exception:
                 msg += f"⚪ *{info.get('name', sym)}* — 조회실패\n"
         msg += "\n"
@@ -2259,7 +2284,7 @@ async def watchlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if mkt == "US":
                 if _is_us_market_hours_kst():
-                    d = await kis_us_stock_price(t, _guess_excd(t), token) if token else {}
+                    d = await kis_us_stock_price(t, token) if token else {}
                     cur = float(d.get("last") or 0)
                 # 미장마감이면 cur=0 유지
             else:
@@ -2550,7 +2575,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_cost += qty * avg * 1400
         try:
             if _is_us_market_hours_kst():
-                d = await kis_us_stock_price(sym, _guess_excd(sym), token) if token else {}
+                d = await kis_us_stock_price(sym, token) if token else {}
                 p = float(d.get("last") or 0)
                 total_eval += qty * p * 1400
             else:

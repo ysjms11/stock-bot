@@ -726,13 +726,17 @@ async def save_portfolio_snapshot(token: str) -> dict:
     us_eval_usd = 0.0
     for sym, info in us_stocks.items():
         try:
-            d = await _fetch_us_price_simple(sym, token)
-            price = float(d.get("last", 0) or 0)
+            cached = ws_manager.get_cached_price(sym)
+            if cached is not None:
+                price = float(cached)
+            else:
+                d = await _fetch_us_price_simple(sym, token)
+                price = float(d.get("last", 0) or 0)
+                await asyncio.sleep(0.2)
             qty   = info.get("qty", 0)
             eval_usd = round(price * qty, 2)
             us_eval_usd += eval_usd
             holdings[sym] = {"price": price, "qty": qty, "eval_usd": eval_usd}
-            await asyncio.sleep(0.2)
         except Exception:
             pass
 
