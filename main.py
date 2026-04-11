@@ -3397,8 +3397,6 @@ async def _build_portfolio_v2_html() -> str:
     cash_u = float(pf.get("cash_usd", 0) or 0)
     if cash_k or cash_u:
         html += f"<p>💰 현금: {cash_k:,.0f}원 / ${cash_u:,.2f}</p>"
-    if db_date:
-        html += f"<p style='color:var(--fg2);font-size:0.85em'>KR 현재가 기준: {db_date}</p>"
     return html or "<p>포트폴리오 비어있음</p>"
 
 
