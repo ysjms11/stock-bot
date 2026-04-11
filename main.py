@@ -4050,7 +4050,8 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     try:
         dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
         if dl:
-            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:10]
+            total_decisions = len(dl)
+            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:5]
             cards_html = ""
             for idx, (date, entry) in enumerate(recent):
                 regime_raw = str(entry.get("regime", "?"))
@@ -4105,7 +4106,11 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                     f'</details>'
                 )
             html += (f'<div class="section" id="decision">'
-                     f'<h2>📝 최근 투자판단</h2>'
+                     f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                     f'<h2 style="margin:0">📝 최근 투자판단</h2>'
+                     f'<a href="/dash/decisions" style="color:var(--accent);text-decoration:none;font-size:0.85em">'
+                     f'전체 {total_decisions}건 보기 →</a>'
+                     f'</div>'
                      f'{cards_html}'
                      f'</div>')
     except Exception:
@@ -4203,6 +4208,81 @@ async def _handle_dash_research_file(request: web.Request) -> web.Response:
         return web.Response(text=f"Error: {e}", status=500)
 
 
+async def _handle_dash_decisions(request: web.Request) -> web.Response:
+    """GET /dash/decisions — 투자판단 전체 로그."""
+    html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>투자판단 기록</title>{_DASH_V2_CSS}</head><body>'
+            f'<div style="margin-bottom:16px">'
+            f'<a href="/dash-v2" style="color:var(--accent);text-decoration:none">← 대시보드</a>'
+            f'</div>')
+
+    try:
+        dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
+        total = len(dl)
+        html += f'<h1>📝 투자판단 기록 ({total}건)</h1>'
+
+        for date in sorted(dl.keys(), reverse=True):
+            entry = dl[date]
+            regime_raw = str(entry.get("regime", "?"))
+            regime_esc = _html.escape(regime_raw)
+
+            if "강세" in regime_raw or "bull" in regime_raw.lower():
+                badge_cls = "badge-bull"
+            elif "약세" in regime_raw or "bear" in regime_raw.lower():
+                badge_cls = "badge-bear"
+            else:
+                badge_cls = "badge-neutral"
+
+            actions_list = entry.get("actions", [])
+            if not actions_list and entry.get("summary"):
+                actions_list = [str(entry["summary"])]
+
+            preview_txt = _html.escape((actions_list[0] if actions_list else "")[:60])
+
+            actions_html = ""
+            for act in actions_list:
+                actions_html += f"<li>{_html.escape(str(act))}</li>"
+            actions_block = f'<ul class="decision-actions">{actions_html}</ul>' if actions_html else ""
+
+            notes_raw = entry.get("notes", "")
+            notes_block = (f'<div class="decision-notes">{_html.escape(str(notes_raw))}</div>'
+                           if notes_raw else "")
+
+            grades = entry.get("grades", {})
+            grades_lines = ""
+            if isinstance(grades, dict):
+                for ticker, ginfo in grades.items():
+                    if isinstance(ginfo, dict):
+                        g = _html.escape(str(ginfo.get("grade", "")))
+                        reason = _html.escape(str(ginfo.get("reason", "")))
+                        grades_lines += (f'<div><strong>{_html.escape(ticker)}</strong>: '
+                                         f'<span class="badge badge-{g}">{g}</span> {reason}</div>')
+                    else:
+                        grades_lines += f'<div><strong>{_html.escape(ticker)}</strong>: {_html.escape(str(ginfo))}</div>'
+            grades_block = f'<div class="decision-grades">{grades_lines}</div>' if grades_lines else ""
+
+            html += (
+                f'<details class="decision-card">'
+                f'<summary>'
+                f'<span class="decision-date">{_html.escape(date)}</span>'
+                f'<span class="badge {badge_cls}">{regime_esc}</span>'
+                f'<span class="decision-preview">{preview_txt}</span>'
+                f'</summary>'
+                f'<div class="decision-body">'
+                f'{actions_block}'
+                f'{notes_block}'
+                f'{grades_block}'
+                f'</div>'
+                f'</details>'
+            )
+    except Exception as e:
+        html += f'<p style="color:red">로드 실패: {_html.escape(str(e))}</p>'
+
+    html += "</body></html>"
+    return web.Response(text=html, content_type="text/html")
+
+
 async def _run_all(app, port):
     # MCP aiohttp 서버 시작
     mcp_app = web.Application(client_max_size=50 * 1024 * 1024)  # 50MB for KRX upload
@@ -4213,6 +4293,7 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash", _handle_dash)
     mcp_app.router.add_get("/dash/file/{filename}", _handle_dash_file)
     mcp_app.router.add_get("/dash-v2", _handle_dash_v2)
+    mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
     mcp_app.router.add_get("/dash/file/research/{filename}", _handle_dash_research_file)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
