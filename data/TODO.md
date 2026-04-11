@@ -1,16 +1,18 @@
-# TODO — 2026-04-10 최종
+# TODO — 2026-04-11 최종
 > 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
 
 ---
 
 ## 🔴 즉시 (다음 세션)
 
+### 봇 코드 수정
+- [x] **get_regime 코드 수정** — 2지표(S&P 200MA + VIX) 조건부 로직 반영
+
 ### 투자 판단
-- [ ] **CPI 결과 확인 (4/10 21:30 KST)** → NVDA/AMD 단기 방향성
-- [ ] 보유 5종목 딥리서치 + 리서치 파일 (HD조선해양/효성중공업/LS ELECTRIC/HD현대일렉트릭/CRSP)
-- [ ] 보유 7종목 손절/목표 메모(thesis) 추가 (현재 NVDA만 있음)
-- [ ] LITE 리서치 파일 생성
-- [ ] 시스템 프롬프트 v4 프로젝트 적용 (다운로드 완료, 교체만)
+- [ ] **전종목 등급 재평가** (새 3질문 기준: 해자/수요/이익가속)
+- [ ] **전종목 감시가 재설정** (등급별 RR 역산 기반)
+- [ ] 삼성전자 ICMS + NAND + HBM 통합 분석
+- [x] LITE 리서치 파일 생성 (data/research/LITE.md)
 
 ---
 
@@ -19,112 +21,68 @@
 ### 봇 개발
 - [ ] Railway 완전 삭제 (사용자 로그인)
 - [ ] Oracle Cloud VM 해지 (사용자 로그인)
-- [x] 섹터명 보강 — KRX 29개→92개 실용 섹터 (반도체/조선/전력기기 등 구분)
-- [ ] GitHub API 연동 — Claude MCP로 직접 커밋/push (P2)
-- [ ] 시장/섹터 전략 레포트 자동 수집 (P2)
 - [ ] bot_architecture.md 생성 (P2)
+- [ ] 시장/섹터 전략 레포트 자동 수집 (P2)
 
 ### 투자 PENDING
-- [ ] CRSP -5.2% → thesis 재검증 (딥리서치)
-- [ ] HD조선 51% → **섹터한도 50% 초과** 대응 (비중축소 or 한도상향)
-- [ ] 포트 등급-비중 반비례 문제 구조조정
 - [ ] LITE 5/6 FQ3 실적 전후 추매 판단
-- [ ] 삼성전자 ICMS + NAND + HBM 통합 분석
 - [ ] AMD 4/28 Q1 실적 후 등급 재평가 (B+→A 검토 조건: Q3 DC $6B+)
 - [ ] NVDA 5/28 Q1 실적 후 확인 (가이던스 $78B)
-- [ ] 워치 44개 → 20개 이하 축소
 - [ ] 촉매 발생 시 감시가 재설정 룰 확정 (RR 역산 기반)
 - [ ] 레짐 🟡 전환 시 A등급 감시가 재평가
 
 ---
 
-## ✅ 완료 (4/10)
+## ✅ 완료 (4/11)
+
+### 투자 시스템
+- [x] **시스템 프롬프트 v4 프로젝트 적용** — 4개 규칙 체계 확정
+- [x] **보유 10종목 전체 손절/목표/thesis 메모 등록완료**
+  - KR: HD조선/효성/LS/HD일렉/SK하이닉스/삼성전자
+  - US: NVDA/AMD/CRSP/LITE
+- [x] **보유 5종목 딥리서치 완료** (대화 내)
+  - HD조선해양/효성중공업/LS ELECTRIC/HD현대일렉트릭/CRSP
+- [x] CPI 결과 확인 (4/10)
+- [x] 등급체계 확정: 3질문(해자/수요/이익가속) → A/B+/B/C
+- [x] 감시가 공식 확정: 등급별 RR 역산 (A=1:2, B+=1:2.5, B=1:3)
+- [x] HD현대일렉트릭 등급 확정 B→B+ (리포트 5건 확보)
+- [x] 보유 전종목 추매 감시가 등록
 
 ### 봇 버그/기능
-- [x] **섹터명 보강** — KIS API std_idst_clsf_cd 전종목 수집 → 92개 실용 섹터
-  - 표준산업분류 6자리 매핑 + 이름 키워드 자동 세분화 (지주/반도체장비/게임/화장품 등)
-  - 삼성전자 반도체 오버라이드 (매출비중 기준)
-  - Safari MDCSTAT03901 업종분류 추가 (sector_krx 보존)
-  - data/std_sector_map.json 1회 캐시 (신규상장만 추가)
-  - 과거 DB 232개 백필 완료
-- [x] **장마감 요약 이벤트 섹션** — events.json 기반 7일 내 일정 (CPI/PPI/FOMC/어닝)
-- [x] **어닝 D-3 알림** — 매일 07:00 events.json 확정 일정 기반 (보유/워치 종목만)
-- [x] **대시보드 현재가/손익** — KRX DB 종가 로드, 녹색/빨간색 수익률 표시
-- [x] **컨센서스 수집 직렬 안정화** — 병렬 sem=5 시도 → 직렬로 확정 (FnGuide 차단 방지)
-- [x] **Gist 백업 정상 확인** — 409 에러 이미 해결됨 (11개 파일 정상)
-- [x] **GitHub Actions krx_update/krx_backfill 삭제** + supplement/api 코드 정리
-- [x] **웹 대시보드 /dash** (다크모드, 모바일 반응형)
-  - markdown→HTML 변환, portfolio/watchalert/decision/trade/events 테이블
-  - /dash/file/{filename} (.md/.txt/.json 렌더링, .py/.env 차단)
-- [x] **get_regime v2** (11지표 → S&P 200MA + VIX 2지표 조건부)
-  - 디바운스 + VIX 트랜치 + USD/KRW 참고용
-- [x] **리포트 크롤러 통합** (한경 + 네이버 + 와이즈리포트)
-  - HD한국조선해양 26년 3~4월 리포트 7건 모두 수집
-  - 와이즈 perPage=100 추가 → 1년치 86건
-  - 중복 제거 키 단순화 (date, source, ticker)
-- [x] **공매도/신용/외인보유 수집 조사 → 보류**
-  - KRX 정보데이터시스템: 공매도 → 금융투자협회 redirect, 외인/신용 종목별만
-  - 공공데이터포털/네이버: 불가
-  - KIS API: 가능하나 1.5초/호출 부담
-  - 결정: 딥서치 시점에 get_market_signal(short_sale) 개별 조회
-- [x] **백필 232거래일 완료** (2025-04-23 ~ 2026-04-07)
-  - foreign_trend_5d/20d/60d 활성화 (105종목 매칭)
-- [x] **KRX Safari keepalive 멀티탭 순회 강화**
-- [x] **GitHub Actions krx_update.yml / krx_backfill.yml 삭제**
-  - scripts collect_supplement/upload_supplement 제거
-  - main.py /api/krx_supplement 엔드포인트 제거
-- [x] **mcp_tools.py load_krx_db import 에러 수정** (로컬 import가 상위 가림)
-
-### 투자 판단
-- [x] NVDA 딥서치 → 12주 매수 @ $183.68, 확신등급 A
-- [x] NVDA 봇 기록 (trade T004 + 손절$140/목표$274 + decision + 리서치파일)
-- [x] AMD 딥서치 → 목표 $235→$280, 등급 B→B+, 전량홀드
-- [x] AMD 봇 기록 (메모 + decision + 리서치파일)
-- [x] data/research/ 폴더 (NVDA.md, AMD.md)
-- [x] events.json 어닝 일정 (AMD 4/28, NVDA 5/28, LITE 5/6, CRSP 5/7)
-- [x] NVDA 워치리스트 매수감시 → 보유종목 손절/목표 전환
+- [x] **Git MCP 도구 5개** — git_status/diff/log/commit/push
+- [x] **섹터명 보강** — KRX 29개→92개 실용 섹터
+- [x] **장마감 요약 이벤트 섹션** — events.json 기반
+- [x] **어닝 D-3 알림**
+- [x] **대시보드 현재가/손익**
+- [x] **Gist 백업 정상 확인** — 409 에러 해결됨
+- [x] **get_regime v2** (2지표 조건부)
+- [x] **리포트 크롤러 통합** (한경+네이버+와이즈)
+- [x] **백필 232거래일 완료**
+- [x] **웹 대시보드 /dash**
+- [x] NVDA 딥서치 → 12주 매수, 확신등급 A
+- [x] AMD 딥서치 → B→B+, 전량홀드
+- [x] data/research/ (NVDA.md, AMD.md)
 
 ---
 
-## ✅ 완료 (4/9)
-
-- [x] 딥리서치 12건 (진입전략/사이징/레짐시스템/지표최적화/프롬프트검증/레짐점수설계)
-- [x] 투자 철학 근본 재검토 → 4개 핵심 규칙 확정
-- [x] 시스템 프롬프트 v4 완성 (7번 재작성, 충돌 수정, 단순화)
-- [x] 봇 get_regime 전면 재설계 (11개→2개 지표, 조건부 로직)
-- [x] FILES.md / HANDOVER.md / regime_update_notes.md 저장
-- [x] decision_log 3건 기록
-
----
-
-## ✅ 완료 (4/8 이전)
+## ✅ 완료 (4/9 이전)
 
 ### 인프라
-- [x] 맥미니 M4 서버 이전 (Railway → 맥미니 + Cloudflare Tunnel + arcbot-server.org)
-- [x] launchd 자동시작 (com.stock-bot.main, krx-update, krx-keepalive, cloudflared)
+- [x] 맥미니 M4 서버 이전 (Railway → 맥미니 + Cloudflare Tunnel)
+- [x] launchd 자동시작
 - [x] KRX OPEN API 8개 서비스 승인 + 시세 자동 수집
-- [x] Safari 카카오 로그인 + keepalive 25분 주기 연장
+- [x] Safari 카카오 로그인 + keepalive
 
 ### KRX DB v2
-- [x] 설계서 data/krx_db_design.md (62개 필드)
-- [x] KRX OPEN API 시세 + Safari 세션 (PER/PBR/수급)
-- [x] FnGuide 컨센서스 전종목 509종목
-- [x] 기술적 지표 (MA5~200, RSI14, 볼린저, 52주, YTD, VP 60d/250d)
-- [x] 추세 점수 다구간 (volume_ratio, ma_spread_change, rsi_change, eps_change)
-- [x] 섹터 상대강도 + earnings_gap
+- [x] 62개 필드 설계 + 전종목 수집
+- [x] FnGuide 컨센서스 509종목
+- [x] 기술적 지표 + 추세 점수 + 섹터 상대강도
 
 ### MCP 도구 (28개)
-- [x] get_change_scan (12개 프리셋, 임계값 파라미터화)
-- [x] read_file / write_file / list_files
-- [x] watch_grade / 모멘텀경고 16:30 이동 + 추정수급
-- [x] credit/lending/after_hours 필드 매핑
+- [x] 전체 완성
 
 ### 텔레그램 알림
-- [x] 포트 건강 체크 (15:40 장마감 요약에 추가)
-- [x] 워치 변화 감지 (19:00 평일)
-- [x] 레짐 전환 가이드 (전환 확정 시)
-- [x] 감시가 터치 브리핑 (레짐/현금/이벤트 포함)
-- [x] Sunday 30 리마인더 (일요일 19:00)
+- [x] 전체 완성 (손절/감시가/장마감/워치변화/레짐전환/Sunday30)
 
 ---
 
@@ -164,5 +122,3 @@
 4. MCP 도구 추가 시 mcp_tools.py 스키마 등록 필수
 5. Agent Team: architect(Opus) → dev(Sonnet) → reviewer(Codex)
 6. 데이터 보관 무제한
-</content>
-</invoke>

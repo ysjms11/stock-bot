@@ -1,0 +1,733 @@
+# Stock-Bot MCP 도구 상세 레퍼런스
+> 업데이트: 2026-04-11 | 총 33개 도구 | 서버: 맥미니 M4 + Cloudflare Tunnel
+
+===========================================
+## 1. get_regime — 시장 레짐 판정
+===========================================
+
+설명: KR/US 복합점수(0~100) 기반 🟢공격/🟡중립/🔴위기 판정
+
+파라미터:
+- mode: "current"(기본) / "history" / "override"
+- days: history 모드 시 조회 일수 (기본 5)
+- kr_weight: 한국 비중 0~1 (기본 0.6)
+- us_weight: 미국 비중 0~1 (기본 0.4)
+- regime: override 시 강제 레짐 ("crisis"/"neutral"/"offensive")
+- reason: override 사유
+
+반환: regime(🔴/🟡/🟢), combined_score, kr/us 각 신호별 z-score, 디바운스 상태, turbulence
+
+사용 예:
+- 일일점검: get_regime → 점수 변화 확인
+- 쇼크 강제: get_regime(mode="override", regime="crisis", reason="이란 확전")
+- 히스토리: get_regime(mode="history", days=10) → 최근 10일 레짐 추이
+
+
+===========================================
+## 2. get_alerts — 알림 목록 조회
+===========================================
+
+설명: 손절/목표 근접 + 매수감시 + 최근 decision_log
+
+파라미터:
+- brief: true 시 memo/changelog 제거, 핵심만
+
+반환:
+- alerts: 보유종목 손절/목표 거리 (gap_pct, target_pct)
+- watch_alerts: 매수감시 목록 (buy_price, cur_price, gap_pct, triggered)
+- recent_decisions: 최근 투자판단 기록
+
+사용 예:
+- 일일점검: get_alerts(brief=true) → triggered 있나? 손절 근접?
+- 상세확인: get_alerts → 전체 memo 포함
+
+
+===========================================
+## 3. get_stock_detail — 종목 상세
+===========================================
+
+설명: 현재가/PER/PBR/수급/일봉. 한국/미국 자동 판별.
+
+파라미터:
+- ticker: 종목코드 ("005930") 또는 미국 ("NVDA")
+- tickers: 콤마 구분 다종목 ("005930,000660") 최대 20개
+- period: 일봉 조회 ("D60"=60일, "D30", "W20"=20주)
+- mode: "volume_profile" / "after_hours" / "orderbook"
+- bins: VP 가격 구간 수 (기본 20)
+- delay: 다종목 시 딜레이 (기본 0.3초)
+
+반환:
+- 기본: price, chg, vol, per, pbr, eps, w52h, w52l, investor(수급 20일)
+- volume_profile: POC, VA상단/하단, 가격대별 거래량 분포
+- orderbook: 매수/매도 10호가 + 잔량 + 비율
+- after_hours: 시간외 현재가/등락률
+
+사용 예:
+- 빠른 체크: get_stock_detail(ticker="005930")
+- 다종목 일괄: get_stock_detail(tickers="005930,000660,329180")
+- 매물대: get_stock_detail(ticker="005930", mode="volume_profile")
+- 3년 매물대: get_stock_detail(ticker="005930", mode="volume_profile", period="Y3")
+- 일봉 60일: get_stock_detail(ticker="005930", period="D60")
+- 호가: get_stock_detail(ticker="005930", mode="orderbook")
+
+
+===========================================
+## 4. get_supply — 수급 분석
+===========================================
+
+설명: 투자자별(외인/기관/개인) 수급 데이터
+
+파라미터:
+- mode (필수):
+  - "daily": 당일 확정 수급
+  - "history": N일 수급 추세 (연속매수/매도 카운트)
+  - "estimate": 장중 추정 수급
+  - "foreign_rank": 외인 순매수 TOP
+  - "combined_rank": 외인+기관 합산 TOP
+  - "broker_rank": 증권사별 매매 종목 TOP
+- ticker: daily/history/estimate 시 필수
+- days: history 일수 (기본 5, 최대 30)
+- n: rank 결과 수
+- sort: combined_rank/broker_rank 정렬 ("buy"/"sell")
+- broker: broker_rank 시 증권사코드
+
+반환:
+- daily: 외인/기관/개인 순매수수량/금액
+- history: 일별 수급 + 연속 매수/매도 일수
+- estimate: 장중 추정치 (장 마감 후에만 유효)
+- rank: 순위 목록
+
+사용 예:
+- 당일수급: get_supply(mode="daily", ticker="005930")
+- 10일추세: get_supply(mode="history", ticker="005930", days=10)
+- 스마트머니: get_supply(mode="combined_rank", n=20)
+- 증권사별: get_supply(mode="broker_rank", sort="buy", n=10)
+
+주의: mode=history는 장 마감 후에만 데이터 반환. 장중 빈 배열 정상.
+
+
+===========================================
+## 5. get_consensus — 컨센서스
+===========================================
+
+설명: FnGuide 기반 증권사 목표주가/투자의견
+
+파라미터:
+- ticker (필수): 한국 6자리 종목코드
+- brief: true 시 리포트/브로커 최근 5건만
+
+반환: 증권사 수, 매수/중립/매도 비율, 평균 목표가, 최고/최저 목표가, 개별 브로커 목표가
+
+사용 예:
+- get_consensus(ticker="005930")
+- get_consensus(ticker="237690", brief=true)
+
+
+===========================================
+## 6. get_market_signal — 시장 시그널
+===========================================
+
+설명: 공매도/신용/대차/VI/프로그램매매
+
+파라미터:
+- mode (필수): "short_sale" / "credit" / "lending" / "vi" / "program_trade"
+- ticker: short_sale/credit/lending 시 필수
+- days: 조회 일수 (기본 20, 최대 60)
+- market: program_trade 시 시장 ("kospi"/"kosdaq")
+
+반환:
+- short_sale: 일별 공매도량/잔고/비중, 10% 과열 경고
+- credit: 일별 신용잔고/신용비율/신규/상환
+- lending: 일별 대차잔고/신규/상환
+- vi: VI 발동 종목 목록
+- program_trade: 프로그램매매 투자자별 순매수
+
+사용 예:
+- 공매도추이: get_market_signal(mode="short_sale", ticker="267260", days=30)
+- 신용잔고: get_market_signal(mode="credit", ticker="005930")
+- VI현황: get_market_signal(mode="vi")
+
+
+===========================================
+## 7. get_macro — 매크로 지표
+===========================================
+
+설명: 매크로 대시보드 + 스크리너 통합
+
+파라미터:
+- mode:
+  - 생략: KOSPI/KOSDAQ/환율 기본
+  - "dashboard": VIX/WTI/금/구리/DXY/US10Y/외인수급/이벤트 전체
+  - "sector_etf": 섹터 ETF 시세 (8개)
+  - "us_sector": 미국 섹터 ETF (SPY/QQQ/XLK 등)
+  - "convergence": 이평선 수렴 스크리너 (이격도 포함)
+  - "convergence2": 코스닥 위주 하위호환
+  - "op_growth": KIS 영업이익 증가율 스크리너
+  - "op_turnaround": KIS 적자→흑자 전환
+  - "dart_op_growth": DART 기반 연간 OP 성장률
+  - "dart_turnaround": DART 기반 적자→흑자
+- market: convergence 시 "all"/"kospi"/"kosdaq"
+- sort: "spread"/"disp_20"/"disp_60" 또는 "yoy"/"qoq"/"trend"
+- spread: 이평 수렴 기준 % (기본 5.0)
+- min_growth: 영업이익 최소 증가율 % (기본 50)
+
+반환: 모드별 상이
+
+사용 예:
+- 대시보드: get_macro(mode="dashboard")
+- 이평수렴: get_macro(mode="convergence", spread=3, sort="disp_20")
+- 실적급증: get_macro(mode="op_growth", min_growth=100)
+- 턴어라운드: get_macro(mode="op_turnaround")
+
+
+===========================================
+## 8. get_scan — 전종목 스냅샷 스크리너
+===========================================
+
+설명: krx_db 기반 전종목(2,700개) 필터링
+
+파라미터:
+- preset: "relative_strength" / "small_cap_buy" / "value" / "momentum" / "oversold" / "foreign_streak"
+- market_cap_min/max: 시총 범위 (억원)
+- chg_pct_min/max: 등락률 범위 (%)
+- per_min/max: PER 범위
+- pbr_max: PBR 상한
+- foreign_ratio_min: 외인 수급비율 최소
+- fi_ratio_min: 외인+기관 합산 최소
+- turnover_min: 회전율 최소 (%)
+- sort: 정렬 기준 (foreign_ratio/fi_ratio/chg_pct/turnover/market_cap)
+- n: 결과 수 (기본 30, 최대 100)
+- market: "kospi"/"kosdaq"/"all"
+- date: YYYYMMDD (생략 시 최신 DB)
+
+프리셋 상세:
+- relative_strength: 시장평균+3% AND fi_ratio>0 (하락장 버틴 종목)
+- small_cap_buy: 시총 500~5000억 AND foreign_ratio>0.1%
+- value: PER 0~10 AND PBR 0~1 AND 시총>1000억
+- momentum: 등락률>3% AND 회전율>1%
+- oversold: 등락률 -7% 이하
+- foreign_streak: 5일 연속 외인 순매수 + 시총 500억+
+
+사용 예:
+- 저평가: get_scan(preset="value")
+- 커스텀: get_scan(per_max=15, market_cap_min=5000, fi_ratio_min=0.1, sort="fi_ratio")
+- 소형주: get_scan(preset="small_cap_buy", market="kosdaq")
+
+
+===========================================
+## 9. get_change_scan — 변화 감지 스캔 🆕
+===========================================
+
+설명: krx_db N일치 비교로 "변화"를 감지. 천천히 좋아지는 종목 발굴.
+
+파라미터:
+- preset: 아래 12개 중 선택
+- n: 결과 수 (기본 30)
+- market: "kospi"/"kosdaq"/"all"
+- 각 프리셋별 임계값 파라미터 (기본값 있음, 변경 가능)
+
+프리셋 목록:
+1. ma_convergence — 이평선 수렴 (곧 터짐)
+   조건: MA spread <3% + 30일간 수렴 가속
+   파라미터: spread_max=3
+
+2. volume_spike — 거래량 폭발
+   조건: 10일 평균 거래량 / 20일전 대비 2배+
+   파라미터: ratio_min=2.0
+
+3. earnings_disconnect — 실적 좋은데 주가 안 오름
+   조건: EPS 90일 +30% 이상인데 YTD 수익률 보합/하락
+   파라미터: gap_min=30
+
+4. consensus_undervalued — 컨센서스 대비 저평가
+   조건: 목표가 괴리 40%+ AND 커버 3명+
+   파라미터: gap_min=40
+
+5. oversold_bounce — 과매도 반등 시작
+   조건: RSI < 30 + 전일보다 RSI 상승
+   파라미터: rsi_max=30
+
+6. vp_support — 매물대 지지 구간
+   조건: VP position < 0.2 (VA 하단 근접)
+   파라미터: position_max=0.2
+
+7. golden_cross — 골든크로스 발생
+   조건: 오늘 MA5>MA20 + 어제 MA5<MA20
+
+8. sector_leader — 섹터 내 최강
+   조건: 섹터 상대강도 > 5%
+   파라미터: strength_min=5
+
+9. w52_breakout — 52주 신고가 근접
+   조건: 52주 위치 > 0.95
+   파라미터: position_min=0.95
+
+10. short_squeeze — 숏커버 진행 중
+    조건: 공매도 잔고 10일 -30% 이상 감소
+    파라미터: short_change_min=-30
+
+11. credit_unwind — 신용 정리 중 (매도 압력 해소)
+    조건: 신용잔고 5일 연속 감소
+    파라미터: credit_days=5
+
+12. foreign_reversal — 외인 매수 전환
+    조건: 5일 매도 → 매수 전환
+
+13. foreign_accumulation — 외인 보유비율 급증
+    조건: 외인 보유비율 5일 +1%p 이상 증가
+
+사용 예:
+- 이평수렴: get_change_scan(preset="ma_convergence")
+- 임계값 조정: get_change_scan(preset="volume_spike", ratio_min=3.0)
+- 복합: "earnings_disconnect 결과 → foreign_reversal 교차"
+
+데이터 요구사항: 과거 데이터 축적 필요.
+- 5일 후: MA5, foreign_reversal
+- 14일 후: RSI
+- 20일 후: 볼린저, golden_cross, 추세 점수
+- 60일 후: 매물대(60d), MA60
+- 250일 후: 매물대(250d), MA200, 52주 위치
+
+
+===========================================
+## 10. get_sector — 섹터 분석
+===========================================
+
+설명: 업종별 자금 흐름 + 로테이션 감지
+
+파라미터:
+- mode: "flow"(기본) / "rotation"
+
+반환:
+- flow: WI26 업종별 외인+기관 순매수, 섹터 ETF 시세
+- rotation: 전일 대비 자금 이동 방향
+
+사용 예:
+- 자금흐름: get_sector(mode="flow")
+- 로테이션: get_sector(mode="rotation")
+
+
+===========================================
+## 11. get_finance_rank — 재무비율 순위
+===========================================
+
+설명: 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/순이익률/부채비율/매출성장률)
+
+사용 예:
+- ROE 상위: get_finance_rank(mode="roe", n=30)
+
+
+===========================================
+## 12. get_highlow — 52주 고저 근접
+===========================================
+
+설명: 52주 신고가/신저가 근접 종목 순위
+
+파라미터:
+- mode: "high"(기본) / "low"
+- gap_min/gap_max: 괴리율 범위 (%)
+- market: "0000"=전체 / "0001"=거래소 / "1001"=코스닥
+- n: 결과 수 (기본 30)
+
+사용 예:
+- 신고가 5%이내: get_highlow(mode="high", gap_max=5)
+- 신저가 근접: get_highlow(mode="low", gap_max=10)
+
+
+===========================================
+## 13. get_rank — 순위 조회
+===========================================
+
+설명: 등락률/체결강도/거래량/시간외/배당 순위
+
+파라미터:
+- type (필수): "price" / "us_price" / "volume" / "scan" / "after_hours" / "dividend"
+- sort: "rise"/"fall" (price/us_price/after_hours)
+- market: price용 "all"/"kospi"/"kosdaq", dividend용 "0"/"1"/"3"
+- exchange: us_price용 "NAS"/"NYS"/"AMS"
+- n: 결과 수 (기본 20)
+
+사용 예:
+- 한국 상승률: get_rank(type="price", sort="rise")
+- 미국 하락률: get_rank(type="us_price", sort="fall", exchange="NAS")
+- 체결강도: get_rank(type="volume")
+- 배당: get_rank(type="dividend")
+
+
+===========================================
+## 14. get_broker — 거래원(증권사)
+===========================================
+
+설명: 종목별 증권사 매수/매도 상위 5곳
+
+사용 예:
+- get_broker(ticker="005930")
+
+
+===========================================
+## 15. get_news — 종목 뉴스
+===========================================
+
+설명: 종목 뉴스 헤드라인 + 감성분석 (한국/미국)
+
+사용 예:
+- get_news(ticker="005930")
+- get_news(ticker="NVDA")
+
+
+===========================================
+## 16. get_consensus — 컨센서스 (위 5번 참조)
+===========================================
+
+
+===========================================
+## 17. get_backtest — 백테스트
+===========================================
+
+설명: 52주 일봉으로 전략별 시뮬레이션. B&H 벤치마크 비교.
+
+파라미터:
+- ticker (필수): 종목코드 또는 미국 티커
+- strategy: "ma_cross"(기본) / "momentum_exit" / "supply_follow" / "bollinger" / "hybrid"
+- period: "D250"(52주) / "D120" / "D60" / "Y1"/"Y2"/"Y3"
+
+전략 설명:
+- ma_cross: 이평선 골든/데드크로스 매매
+- momentum_exit: 모멘텀 종료 시 매도
+- supply_follow: 수급 추종 (10일 제한)
+- bollinger: 볼린저밴드 상하단 매매
+- hybrid: 복합 전략
+
+반환: 수익률, 승률, MDD, 매매 내역, B&H 대비 비교
+
+사용 예:
+- get_backtest(ticker="005930", strategy="ma_cross")
+- get_backtest(ticker="NVDA", period="Y3", strategy="hybrid")
+
+
+===========================================
+## 18. get_portfolio — 포트폴리오
+===========================================
+
+설명: 보유 종목 조회/수정 (한국+미국, 현금)
+
+파라미터:
+- 조회: 파라미터 없음
+- 설정: mode="set", market="KR"/"US", holdings={종목: {name, qty, avg_price}}, cash_krw, cash_usd
+
+반환: 종목별 현재가/손익/비중 + 현금 + 총 포트 가치
+
+사용 예:
+- 조회: get_portfolio
+- KR 설정: get_portfolio(mode="set", market="KR", holdings={"005930": {"name":"삼성전자","qty":18,"avg_price":193500}}, cash_krw=4110000)
+
+
+===========================================
+## 19. get_portfolio_history — 포트 히스토리
+===========================================
+
+설명: 일별 포트폴리오 스냅샷 + 드로다운 분석
+
+파라미터:
+- days: 최근 N일 (기본 30, 최대 365)
+- brief: true 시 holdings 제거
+
+반환: 일별 총자산/드로다운/투자규칙 경고
+
+사용 예:
+- get_portfolio_history(days=30)
+- get_portfolio_history(days=90, brief=true)
+
+
+===========================================
+## 20. get_trade_stats — 매매 성과 분석
+===========================================
+
+설명: 매매 기록 기반 성과 분석
+
+반환: 승률, 평균 수익률, 평균 손실, 평균 보유기간, 최고/최악 매매, 태그별 분석
+
+사용 예:
+- get_trade_stats
+
+
+===========================================
+## 21. simulate_trade — 매매 시뮬레이션
+===========================================
+
+설명: 가상 매수/매도 후 포트 변화 미리보기
+
+파라미터:
+- buys: [{ticker, qty, price(선택)}]
+- sells: [{ticker, qty, price(선택)}]
+
+반환: 매매 전/후 비중 변화, 섹터 집중도, 현금 변화, RR비
+
+사용 예:
+- 매수: simulate_trade(buys=[{"ticker":"NVDA","qty":12,"price":171}])
+- 매도: simulate_trade(sells=[{"ticker":"329180","qty":10}])
+- 동시: simulate_trade(buys=[{"ticker":"NVDA","qty":12}], sells=[{"ticker":"CRSP","qty":70}])
+
+
+===========================================
+## 22. set_alert — 알림/기록 관리
+===========================================
+
+설명: 손절목표/매수감시/투자판단/매매기록/종목비교/삭제
+
+모드별 파라미터:
+
+[손절/목표 등록] (log_type 생략)
+- ticker, name, stop_price, target_price, memo
+
+[매수감시 등록] (log_type 생략)
+- ticker, name, buy_price, watch_grade(A/B+/B/B-/C+/C/D), memo
+- stop_price, target_price도 같이 등록 가능
+
+[투자판단 기록] (log_type="decision")
+- date, regime, grades(종목별 등급), actions(액션 목록), notes, watchlist
+
+[매매기록] (log_type="trade")
+- ticker, side("buy"/"sell"), qty, price, grade, reason, memo, target_price
+
+[종목비교] (log_type="compare")
+- held_ticker, held_score, candidate_ticker, candidate_score, reasoning
+
+[알림삭제] (log_type="delete")
+- ticker, market("KR"/"US")
+
+사용 예:
+- 손절: set_alert(ticker="267260", name="HD현대일렉트릭", stop_price=800000, target_price=1100000)
+- 감시: set_alert(ticker="NVDA", name="NVIDIA", buy_price=171, watch_grade="A", memo="킬질문통과")
+- 판단: set_alert(log_type="decision", date="2026-04-08", regime="🔴위기", grades={"005930":{"grade":"B","reason":"실적서프라이즈"}}, actions=["현금보유유지"])
+- 매매: set_alert(log_type="trade", ticker="NVDA", side="buy", qty=12, price=171, grade="A", reason="킬질문통과")
+- 삭제: set_alert(log_type="delete", ticker="CRSP", market="US")
+
+
+===========================================
+## 23. manage_watch — 워치리스트 관리
+===========================================
+
+설명: 한국+미국 워치리스트 추가/제거
+
+파라미터:
+- action (필수): "add" / "remove"
+- ticker (필수): 종목코드 또는 미국 티커
+- name: 종목명 (add 시 필수)
+- alert_type: remove 시 "watchlist"(기본) / "buy_alert"
+
+사용 예:
+- 추가: manage_watch(action="add", ticker="005930", name="삼성전자")
+- 제거: manage_watch(action="remove", ticker="005930")
+- 매수감시만 제거: manage_watch(action="remove", ticker="NVDA", alert_type="buy_alert")
+
+
+===========================================
+## 24. manage_report — 브로커 리포트
+===========================================
+
+설명: 증권사 리포트 수집/목록/상세
+
+파라미터:
+- action: "collect" / "list"
+- ticker: 종목코드
+- days: list 시 최근 N일 (기본 7)
+- brief: true 시 요약만
+
+사용 예:
+- 수집: manage_report(action="collect", ticker="005930")
+- 목록: manage_report(action="list", ticker="005930", days=7)
+- 상세: manage_report(action="list", ticker="005930") → fulltext 포함
+
+
+===========================================
+## 25. get_dart — DART 공시
+===========================================
+
+설명: DART 전자공시 조회/사업보고서 저장/읽기
+
+파라미터:
+- mode:
+  - 생략: 워치리스트 최근 3일 공시
+  - "report": 사업보고서 본문 txt 저장 (ticker 지정 가능)
+  - "report_list": 저장된 txt 파일 목록
+  - "read": 저장된 사업보고서 읽기 (ticker 필수)
+- ticker: report/read 시 종목코드
+
+사용 예:
+- 공시확인: get_dart
+- 보고서저장: get_dart(mode="report", ticker="005930")
+- 보고서읽기: get_dart(mode="read", ticker="005930")
+- 7단계 딥서치: get_dart(mode="report") → get_dart(mode="read", ticker="005930")
+
+
+===========================================
+## 26. backup_data — Gist 백업
+===========================================
+
+설명: data/*.json을 GitHub Gist에 백업/복원
+
+사용 예:
+- 백업: backup_data(action="backup")
+- 복원: backup_data(action="restore")
+- 상태: backup_data(action="status")
+
+
+===========================================
+## 27. read_file — 파일 읽기
+===========================================
+
+설명: stock-bot 디렉토리 내 파일 읽기
+
+제한: .md/.py/.json/.txt만, .env 불가, 100KB 이하, ../ 차단
+
+사용 예:
+- read_file(path="CLAUDE.md")
+- read_file(path="data/krx_db_design.md")
+- read_file(path="TODO.md")
+
+
+===========================================
+## 28. write_file — 파일 쓰기
+===========================================
+
+설명: stock-bot 디렉토리 내 파일 쓰기
+
+제한: .md/.json/.txt만, .py/.env 불가, 200KB 이하, ../ 차단
+
+사용 예:
+- write_file(path="TODO.md", content="# TODO\n- [ ] 할일")
+- write_file(path="data/memo.json", content='{"key":"value"}')
+
+
+===========================================
+## 29. list_files — 파일 목록
+===========================================
+
+설명: stock-bot 디렉토리 내 파일/폴더 목록 (depth 2)
+
+사용 예:
+- list_files → 루트 목록
+- list_files(path="data") → data 폴더 내용
+- list_files(path="data/krx_db") → DB 파일 목록
+
+
+===========================================
+## 30. get_broker — 거래원 (위 14번 참조)
+===========================================
+
+
+===========================================
+## 31. git_status — Git 상태 조회
+===========================================
+
+설명: 현재 브랜치 상태 및 변경 파일 목록 조회
+
+파라미터: 없음
+
+반환: branch, clean, staged[], modified[], untracked[]
+
+사용 예:
+- git_status
+
+
+===========================================
+## 32. git_diff — 변경내용 조회
+===========================================
+
+설명: 작업 디렉토리 또는 스테이징 영역의 diff 조회
+
+파라미터:
+- path: 특정 파일/디렉토리 (optional)
+- staged: true 시 스테이징 영역 diff (optional, boolean)
+
+반환: diff 텍스트 (50KB 제한)
+
+사용 예:
+- git_diff
+- git_diff(path="kis_api.py")
+- git_diff(staged=true)
+
+
+===========================================
+## 33. git_log — 커밋 로그 조회
+===========================================
+
+설명: 최근 커밋 히스토리 조회
+
+파라미터:
+- n: 조회 수 (optional, 기본 10, 최대 50)
+- path: 특정 파일 한정 (optional)
+
+반환: commits[{hash, message}]
+
+사용 예:
+- git_log
+- git_log(n=20)
+- git_log(path="main.py")
+
+
+===========================================
+## 34. git_commit — 커밋 생성
+===========================================
+
+설명: 지정한 파일을 스테이징 후 커밋
+
+파라미터:
+- message (필수): 커밋 메시지 (최대 500자)
+- files (필수): 커밋할 파일 경로 배열
+
+제한: .py/.env 파일 차단, path traversal 차단
+
+사용 예:
+- git_commit(message="docs: TODO 업데이트", files=["TODO.md"])
+
+
+===========================================
+## 35. git_push — Push
+===========================================
+
+설명: origin/main 브랜치로 push
+
+파라미터: 없음 (origin/main 고정)
+
+제한: main 브랜치만 허용
+
+사용 예:
+- git_push
+
+
+===========================================
+## 데이터 수집 스케줄 (KRX DB v2)
+===========================================
+
+매일 15:55 KST 자동 수집 (맥미니 launchd):
+
+| 순서 | 소스 | 데이터 | 소요시간 |
+|------|------|--------|----------|
+| 1 | KRX OPEN API | 시세/시총/섹터 | ~5초 |
+| 2 | KRX 크롤링 (Safari) | PER/PBR/EPS/BPS/배당 | ~3초 |
+| 3 | KRX 크롤링 | 외인/기관/개인 수급 | ~10초 |
+| 4 | KRX 크롤링 | 공매도 잔고/비중 | ~3초 |
+| 5 | KRX 크롤링 | 외인 보유비율 | ~3초 |
+| 6 | KRX 크롤링 | 신용잔고/대차잔고 | ~3초 |
+| 7 | FnGuide | 컨센서스 전종목 | ~14분 |
+| 8 | 계산 | 이평선/RSI/볼린저/매물대/추세 | ~30초 |
+
+총 약 26분. 보관 무제한. 일별 ~4.6MB.
+
+
+===========================================
+## 텔레그램 자동 알림
+===========================================
+
+| 시간 | 알림 | 조건 |
+|------|------|------|
+| 15:40 | 한국 장마감 요약 | 매일 자동 |
+| 16:30 | 모멘텀 경고 | 5가지 중 2개+ 해당 시 |
+| 06:00 | 미국 장마감 요약 | 매일 자동 |
+| 수시 | 손절가/목표가 도달 | 현재가가 설정가 터치 시 |
+| 수시 | 매수감시 도달 | 현재가가 감시가 이하 시 |
+| 수시 | DART 공시 | [긴급]/[주의]/[참고] 태깅 |
+| 수시 | 수급 이탈 경고 | 외인 3일 연속 순매도 시 |
+| 수시 | 주간 손실 한도 | 포트 -3%/-4% 도달 시 |

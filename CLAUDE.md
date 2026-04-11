@@ -113,7 +113,7 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 
 ---
 
-## MCP 도구 목록 (28개)
+## MCP 도구 목록 (33개)
 
 | # | 이름 | mode/type | 설명 |
 |---|------|-----------|------|
@@ -162,6 +162,11 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | 26 | `write_file` | | stock-bot 디렉토리 내 파일 쓰기 (.md/.json/.txt, .py/.env 불가, 200KB, ../ 차단) |
 | 27 | `list_files` | | stock-bot 디렉토리 내 파일/폴더 목록 (이름·크기·수정일, depth 2, ../ 차단) |
 | 28 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout, 복합 콤마 구분) |
+| 29 | `git_status` | | Git 브랜치/변경파일 조회 |
+| 30 | `git_diff` | | 변경내용 조회 (path, staged 옵션) |
+| 31 | `git_log` | | 최근 커밋 로그 |
+| 32 | `git_commit` | | 파일 지정 커밋 (.py/.env 차단) |
+| 33 | `git_push` | | origin/main push |
 
 ---
 
