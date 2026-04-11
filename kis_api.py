@@ -3254,28 +3254,9 @@ async def search_dart_disclosures(days_back=1):
 
 
 def filter_important_disclosures(disclosures, watchlist_names):
-    """워치리스트 기업의 중요 공시만 필터링"""
-    important = []
-    for d in disclosures:
-        corp_name = d.get("corp_name", "")
-        report_nm = d.get("report_nm", "")
-
-        # 워치리스트 기업인지 확인
-        is_watched = any(name in corp_name for name in watchlist_names)
-        if not is_watched:
-            continue
-
-        # 중요 키워드 매칭
-        is_important = any(kw in report_nm for kw in DART_KEYWORDS)
-        # 주요사항보고서(B), 발행공시(C)는 항상 중요
-        pblntf_ty = d.get("pblntf_ty", "")
-        if pblntf_ty in ("B", "C"):
-            is_important = True
-
-        if is_important:
-            important.append(d)
-
-    return important
+    """관심 기업의 공시 전부 반환 (키워드 필터 제거, 나중에 필요시 추가)."""
+    return [d for d in disclosures
+            if any(name in d.get("corp_name", "") for name in watchlist_names if name)]
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

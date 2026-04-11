@@ -1661,9 +1661,15 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
         if not disclosures:
             return
 
-        # 워치리스트 기업명 목록
+        # 관심 기업명 목록 (워치리스트 + 포트폴리오 + watchalert)
         watchlist = load_watchlist()
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        wa = load_json(WATCHALERT_FILE, {})
         wl_names = list(watchlist.values())
+        wl_names += [v.get("name", "") for k, v in portfolio.items()
+                     if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)]
+        wl_names += [v.get("name", "") for v in wa.values() if isinstance(v, dict)]
+        wl_names = list(set(n for n in wl_names if n))
 
         # 중요 공시 필터링
         important = filter_important_disclosures(disclosures, wl_names)
