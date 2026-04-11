@@ -3910,11 +3910,14 @@ def _build_watchalert_v2_html() -> str:
         is_us = not ticker.isdigit()
         market = "us" if is_us else "kr"
         price_str = f"${bp:,.2f}" if is_us else f"{int(bp):,}원"
-        # 현재가 (SQLite DB 기준, US는 DB에 없으므로 "-")
+        # 현재가 (WS 캐시 → SQLite DB fallback)
         cur = cur_prices.get(ticker, 0)
-        if cur and not is_us:
-            cur_str = f"{int(cur):,}원"
-            gap_pct = (cur - bp) / bp * 100 if bp else 0
+        if cur:
+            if is_us:
+                cur_str = f"${float(cur):,.2f}"
+            else:
+                cur_str = f"{int(cur):,}원"
+            gap_pct = (float(cur) - bp) / bp * 100 if bp else 0
             gap_cls = "pos" if gap_pct >= 0 else "neg"
             gap_str = f"<span class='{gap_cls}'>{gap_pct:+.1f}%</span>"
         else:
