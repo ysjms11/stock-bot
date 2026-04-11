@@ -3269,12 +3269,12 @@ def _build_portfolio_html() -> str:
 
 
 async def _build_portfolio_v2_html() -> str:
-    """portfolio.json + KRX DB(KR) + KIS API(US) 현재가 → 포트폴리오 테이블 (v2 전용)."""
+    """portfolio.json + KRX DB(KR) + KIS API(US) 현재가 → 증권사 앱 스타일 포트폴리오 (v2 전용)."""
     pf = load_json(PORTFOLIO_FILE, {})
     kr = {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
     us = pf.get("us_stocks", {})
 
-    # WebSocket 캐시 우선 → REST fallback
+    # ── KR 현재가: WebSocket 캐시 우선 → REST fallback ──
     kr_prices: dict[str, int] = {}
     rest_needed = []
     for t in kr.keys():
@@ -3298,36 +3298,10 @@ async def _build_portfolio_v2_html() -> str:
         except Exception:
             pass
 
-    html = ""
-    kr_total_cost = kr_total_eval = 0
-    if kr:
-        html += "<h3>🇰🇷 한국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th><th>현재가</th><th>손익</th></tr></thead><tbody>"
-        for t, v in kr.items():
-            qty = int(v.get("qty", 0))
-            avg = int(v.get("avg_price", 0))
-            cur = kr_prices.get(t, 0)
-            cost = qty * avg
-            ev = qty * cur if cur else 0
-            kr_total_cost += cost
-            kr_total_eval += ev
-            if cur and avg:
-                pnl_pct = (cur - avg) / avg * 100
-                cls = "pos" if pnl_pct >= 0 else "neg"
-                pnl_str = f"<span class='{cls}'>{pnl_pct:+.1f}%</span>"
-                cur_str = f"{cur:,}원"
-            else:
-                pnl_str = "-"
-                cur_str = "-"
-            html += f"<tr><td>{v.get('name', t)}</td><td>{qty:,}</td><td>{avg:,}원</td><td>{cur_str}</td><td>{pnl_str}</td></tr>"
-        html += "</tbody></table>"
-        if kr_total_cost > 0:
-            kr_pnl = (kr_total_eval - kr_total_cost) / kr_total_cost * 100
-            cls = "pos" if kr_pnl >= 0 else "neg"
-            html += f"<p>KR 합계: 평가 {kr_total_eval:,.0f}원 / 매입 {kr_total_cost:,.0f}원 = <span class='{cls}'>{kr_pnl:+.1f}%</span></p>"
-
+    # ── US 현재가: WebSocket 캐시 우선 → REST fallback ──
+    us_prices: dict[str, float] = {}
+    usd_krw = 0.0
     if us:
-        # WebSocket 캐시 우선 → REST fallback (US)
-        us_prices: dict[str, float] = {}
         us_rest_needed = []
         for sym in us.keys():
             cached = ws_manager.get_cached_price(sym)
@@ -3351,53 +3325,135 @@ async def _build_portfolio_v2_html() -> str:
                 pass
 
         # 환율 조회 (Yahoo Finance KRW=X)
-        usd_krw = 0.0
         try:
             fx = await asyncio.wait_for(get_yahoo_quote("KRW=X"), timeout=5)
             usd_krw = float(fx.get("price", 0) or 0) if fx else 0.0
         except Exception:
             pass
 
-        us_total_cost_usd = us_total_eval_usd = 0.0
-        html += "<h3>🇺🇸 미국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th><th>현재가</th><th>손익%</th><th>평가(원화)</th></tr></thead><tbody>"
+    # ── 합계 계산 ──
+    cash_k = float(pf.get("cash_krw", 0) or 0)
+    cash_u = float(pf.get("cash_usd", 0) or 0)
+
+    kr_total_cost = kr_total_eval = 0
+    for t, v in kr.items():
+        qty = int(v.get("qty", 0))
+        avg = int(v.get("avg_price", 0))
+        cur = kr_prices.get(t, 0)
+        kr_total_cost += qty * avg
+        kr_total_eval += qty * cur if cur else 0
+
+    us_total_cost_usd = us_total_eval_usd = 0.0
+    for sym, info in us.items():
+        qty = float(info.get("qty", 0) or 0)
+        avg = float(info.get("avg_price", 0) or 0)
+        cur = us_prices.get(sym, 0.0)
+        us_total_cost_usd += qty * avg
+        us_total_eval_usd += qty * cur if cur else 0.0
+
+    us_eval_krw = us_total_eval_usd * usd_krw if usd_krw else 0.0
+    us_cost_krw = us_total_cost_usd * usd_krw if usd_krw else 0.0
+    cash_total_krw = cash_k + (cash_u * usd_krw if usd_krw else 0.0)
+
+    grand_eval = kr_total_eval + us_eval_krw + cash_total_krw
+    grand_cost = kr_total_cost + us_cost_krw
+    grand_pnl = grand_eval - grand_cost - cash_total_krw   # 현금은 손익 계산 제외
+    grand_pnl_pct = grand_pnl / grand_cost * 100 if grand_cost else 0.0
+
+    def _pc(val: float) -> str:
+        return "pos" if val >= 0 else "neg"
+
+    def _sign(val: float) -> str:
+        return "+" if val >= 0 else ""
+
+    # ── 상단 요약 카드 ──
+    pnl_cls = _pc(grand_pnl)
+    html = '<div class="pf-summary">'
+    html += f'<div class="pf-total">{grand_eval:,.0f}원</div>'
+    html += f'<div class="pf-pnl {pnl_cls}">{_sign(grand_pnl)}{grand_pnl:,.0f}원 ({_sign(grand_pnl_pct)}{grand_pnl_pct:.1f}%)</div>'
+
+    cash_parts = []
+    if cash_k:
+        cash_parts.append(f"KRW {cash_k:,.0f}원")
+    if cash_u:
+        cash_parts.append(f"USD ${cash_u:,.2f}")
+    if cash_parts:
+        html += f'<div class="pf-cash">현금 {" | ".join(cash_parts)}</div>'
+    html += '</div>'
+
+    # ── 🇰🇷 한국 섹션 ──
+    if kr:
+        kr_pnl = kr_total_eval - kr_total_cost
+        kr_pnl_pct = kr_pnl / kr_total_cost * 100 if kr_total_cost else 0.0
+        kr_pnl_cls = _pc(kr_pnl)
+        html += '<div class="pf-section-header">'
+        html += '<span class="pf-section-title">🇰🇷 한국 주식</span>'
+        html += (f'<span class="pf-section-summary">'
+                 f'평가 {kr_total_eval:,.0f}원'
+                 f' &nbsp; <span class="{kr_pnl_cls}">{_sign(kr_pnl)}{kr_pnl:,.0f}원 ({_sign(kr_pnl_pct)}{kr_pnl_pct:.1f}%)</span>'
+                 f'</span>')
+        html += '</div>'
+
+        for t, v in kr.items():
+            qty = int(v.get("qty", 0))
+            avg = int(v.get("avg_price", 0))
+            cur = kr_prices.get(t, 0)
+            name = _html.escape(v.get("name", t))
+            ev = qty * cur if cur else 0
+            pnl_amt = ev - qty * avg if cur else 0
+            pnl_pct = (cur - avg) / avg * 100 if (cur and avg) else 0.0
+            pc = _pc(pnl_amt)
+
+            cur_str = f"{cur:,}원" if cur else "-"
+            pnl_str = (f'<span class="{pc}">{_sign(pnl_amt)}{pnl_amt:,.0f}원 {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
+                       if cur else "-")
+            detail = f"{qty:,}주 | 평단 {avg:,}원 | 평가 {ev:,.0f}원" if cur else f"{qty:,}주 | 평단 {avg:,}원"
+
+            html += '<div class="pf-card">'
+            html += f'<div class="pf-left"><div class="pf-name">{name}</div><div class="pf-detail">{detail}</div></div>'
+            html += f'<div class="pf-right"><div class="pf-price">{cur_str}</div><div class="pf-pnl-row">{pnl_str}</div></div>'
+            html += '</div>'
+
+    # ── 🇺🇸 미국 섹션 ──
+    if us:
+        us_pnl_usd = us_total_eval_usd - us_total_cost_usd
+        us_pnl_pct = us_pnl_usd / us_total_cost_usd * 100 if us_total_cost_usd else 0.0
+        us_pnl_cls = _pc(us_pnl_usd)
+        fx_str = f" (USD/KRW {usd_krw:,.1f})" if usd_krw else ""
+        eval_krw_str = f" = {us_eval_krw:,.0f}원" if usd_krw else ""
+
+        html += '<div class="pf-section-header" style="margin-top:16px">'
+        html += f'<span class="pf-section-title">🇺🇸 미국 주식{fx_str}</span>'
+        html += (f'<span class="pf-section-summary">'
+                 f'평가 ${us_total_eval_usd:,.2f}{eval_krw_str}'
+                 f' &nbsp; <span class="{us_pnl_cls}">{_sign(us_pnl_usd)}${us_pnl_usd:,.2f} ({_sign(us_pnl_pct)}{us_pnl_pct:.1f}%)</span>'
+                 f'</span>')
+        html += '</div>'
+
         for sym, info in us.items():
             qty = float(info.get("qty", 0) or 0)
             avg = float(info.get("avg_price", 0) or 0)
             cur = us_prices.get(sym, 0.0)
-            cost_usd = qty * avg
-            eval_usd = qty * cur if cur else 0.0
-            us_total_cost_usd += cost_usd
-            us_total_eval_usd += eval_usd
+            name = _html.escape(info.get("name", sym))
+            ev_usd = qty * cur if cur else 0.0
+            pnl_usd = ev_usd - qty * avg if cur else 0.0
+            pnl_pct = (cur - avg) / avg * 100 if (cur and avg) else 0.0
+            pc = _pc(pnl_usd)
 
             cur_str = f"${cur:,.2f}" if cur else "-"
-            if cur and avg:
-                pnl_pct = (cur - avg) / avg * 100
-                cls = "pos" if pnl_pct >= 0 else "neg"
-                pnl_str = f"<span class='{cls}'>{pnl_pct:+.1f}%</span>"
-            else:
-                pnl_str = "-"
-            if eval_usd and usd_krw:
-                eval_krw_str = f"{eval_usd * usd_krw:,.0f}원"
-            else:
-                eval_krw_str = "-"
-            html += (f"<tr><td>{_html.escape(info.get('name', sym))} ({_html.escape(sym)})</td>"
-                     f"<td>{qty:,.0f}</td><td>${avg:,.2f}</td><td>{cur_str}</td>"
-                     f"<td>{pnl_str}</td><td>{eval_krw_str}</td></tr>")
-        html += "</tbody></table>"
-        if us_total_cost_usd > 0:
-            us_pnl = (us_total_eval_usd - us_total_cost_usd) / us_total_cost_usd * 100
-            cls = "pos" if us_pnl >= 0 else "neg"
-            eval_krw_total = f" ({us_total_eval_usd * usd_krw:,.0f}원)" if usd_krw else ""
-            html += (f"<p>US 합계: 평가 ${us_total_eval_usd:,.2f}{eval_krw_total} / "
-                     f"매입 ${us_total_cost_usd:,.2f} = <span class='{cls}'>{us_pnl:+.1f}%</span></p>")
-        if usd_krw:
-            html += f"<p style='color:var(--fg2);font-size:0.85em'>USD/KRW: {usd_krw:,.1f}</p>"
+            pnl_str = (f'<span class="{pc}">{_sign(pnl_usd)}${pnl_usd:,.2f} {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
+                       if cur else "-")
+            ev_krw_part = f" | 평가 {ev_usd * usd_krw:,.0f}원" if (ev_usd and usd_krw) else ""
+            detail = f"{qty:,.0f}주 | 평단 ${avg:,.2f}{ev_krw_part}"
 
-    cash_k = float(pf.get("cash_krw", 0) or 0)
-    cash_u = float(pf.get("cash_usd", 0) or 0)
-    if cash_k or cash_u:
-        html += f"<p>💰 현금: {cash_k:,.0f}원 / ${cash_u:,.2f}</p>"
-    return html or "<p>포트폴리오 비어있음</p>"
+            html += '<div class="pf-card">'
+            html += f'<div class="pf-left"><div class="pf-name">{name} <span style="color:var(--fg2);font-size:0.8em">({_html.escape(sym)})</span></div><div class="pf-detail">{detail}</div></div>'
+            html += f'<div class="pf-right"><div class="pf-price">{cur_str}</div><div class="pf-pnl-row">{pnl_str}</div></div>'
+            html += '</div>'
+
+    if not kr and not us:
+        return "<p>포트폴리오 비어있음</p>"
+    return html
 
 
 def _build_watchalert_html() -> str:
@@ -3599,6 +3655,21 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .badge-buy{background:rgba(102,187,106,0.15);color:var(--green)}
 .badge-sell{background:rgba(239,83,80,0.15);color:var(--red)}
 .pos{color:var(--green)}.neg{color:var(--red)}
+.pf-summary{background:var(--bg);border-radius:12px;padding:16px;margin-bottom:16px;text-align:center}
+.pf-total{font-size:1.8em;font-weight:700;margin:4px 0}
+.pf-pnl{font-size:1.2em;font-weight:600}
+.pf-cash{font-size:0.85em;color:var(--fg2);margin-top:8px}
+.pf-section-header{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:8px}
+.pf-section-title{font-weight:600}
+.pf-section-summary{font-size:0.85em;color:var(--fg2);text-align:right}
+.pf-card{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.pf-card:last-child{border-bottom:none}
+.pf-left{}
+.pf-name{font-weight:600;font-size:0.95em}
+.pf-detail{font-size:0.8em;color:var(--fg2);margin-top:2px}
+.pf-right{text-align:right}
+.pf-price{font-weight:600}
+.pf-pnl-row{font-size:0.85em;margin-top:2px}
 .dday{font-weight:700;color:var(--accent)}
 .dday-0{font-weight:700;color:var(--red);animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:0.6}}
