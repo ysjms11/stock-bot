@@ -4057,6 +4057,8 @@ def _build_docs_v2_html() -> str:
         doc_files = []
 
     for f in doc_files:
+        if f == "TODO.md":
+            continue  # TODO는 독립 탭에 있으므로 문서 카드에서 제외
         icon, desc = _DOC_META_V2.get(f, ("📄", ""))
         html += (f'<a href="/dash/file/{f}" class="doc-card">'
                  f'<div class="doc-icon">{icon}</div>'
@@ -4101,6 +4103,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
              '<a href="#watch">👀 감시종목</a>'
              '<a href="#decision">📝 투자판단</a>'
              '<a href="#trade">💼 매매</a>'
+             '<a href="#todo">📋 TODO</a>'
              '<a href="#docs">📚 문서</a>'
              '</nav>')
 
@@ -4213,24 +4216,21 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    # 6. 문서
-    try:
-        html += f'<div class="section" id="docs"><h2>📚 문서</h2>{_build_docs_v2_html()}</div>'
-    except Exception:
-        html += '<div class="section" id="docs"><h2>📚 문서</h2><p>로드 실패</p></div>'
-
-    # 7. TODO (접힘)
+    # 6. TODO
     try:
         todo_path = os.path.join(_DATA_DIR, "TODO.md")
         if os.path.exists(todo_path):
             with open(todo_path, encoding="utf-8") as f:
                 todo_md = f.read()
-            html += (f'<details class="section">'
-                     f'<summary><h2 style="display:inline">📋 TODO</h2></summary>'
-                     f'<div style="margin-top:12px">{_md_to_html(todo_md)}</div>'
-                     f'</details>')
+            html += f'<div class="section" id="todo"><h2>📋 TODO</h2>{_md_to_html(todo_md)}</div>'
     except Exception:
         pass
+
+    # 7. 문서
+    try:
+        html += f'<div class="section" id="docs"><h2>📚 문서</h2>{_build_docs_v2_html()}</div>'
+    except Exception:
+        html += '<div class="section" id="docs"><h2>📚 문서</h2><p>로드 실패</p></div>'
 
     html += _dash_v2_js()
     html += "</body></html>"
