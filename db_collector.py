@@ -382,6 +382,24 @@ def _sync_stock_master(conn: sqlite3.Connection, market_data: list[dict]):
     conn.commit()
 
 
+def _update_master_from_basic(conn: sqlite3.Connection, phase1_results: dict):
+    """Phase 1 기본시세 응답에서 sector_krx + 신규 종목 섹터 갱신."""
+    std_map = _load_std_sector_map()
+    for ticker, data in phase1_results.items():
+        sector_krx = data.get("bstp_kor_isnm", "")
+        if not sector_krx:
+            continue
+        # sector_krx 저장
+        conn.execute("""
+            UPDATE stock_master SET sector_krx = ? WHERE symbol = ?
+        """, (sector_krx, ticker))
+        # 정밀 섹터가 비어있으면 KRX 업종으로 fallback
+        row = conn.execute("SELECT sector FROM stock_master WHERE symbol = ?", (ticker,)).fetchone()
+        if row and not row["sector"]:
+            conn.execute("UPDATE stock_master SET sector = ? WHERE symbol = ?", (sector_krx, ticker))
+    conn.commit()
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Phase별 배치 수집
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -582,6 +600,12 @@ async def collect_daily(date: str = None) -> dict:
         report["phases"]["basic"] = {
             "success": p1["success"], "failed": p1["failed"],
         }
+
+        # Phase 1 후: sector_krx 자동 갱신 (신규 상장 종목 섹터 fallback)
+        try:
+            _update_master_from_basic(conn, p1["results"])
+        except Exception as e:
+            print(f"[collect_daily] sector_krx 갱신 실패: {e}")
 
         # Phase 2: 시간외 (FHPST02320000)
         print(f"[collect_daily] Phase 2/4 — 시간외")
