@@ -3408,25 +3408,44 @@ async def _build_portfolio_v2_html() -> str:
                  f'</span>')
         html += '</div>'
 
+        # 정렬 버튼
+        html += ('<div class="pf-sort-bar">'
+                 '<button class="pf-sort-btn active" data-section="kr" data-sort="eval">평가금순</button>'
+                 '<button class="pf-sort-btn" data-section="kr" data-sort="pnl-pct">수익률순</button>'
+                 '<button class="pf-sort-btn" data-section="kr" data-sort="pnl-amt">손익금순</button>'
+                 '</div>')
+
+        # 평가금 내림차순 정렬
+        kr_items = []
         for t, v in kr.items():
             qty = int(v.get("qty", 0))
             avg = int(v.get("avg_price", 0))
             cur = kr_prices.get(t, 0)
-            name = _html.escape(v.get("name", t))
-            ev = qty * cur if cur else 0
-            pnl_amt = ev - qty * avg if cur else 0
+            ev = qty * cur if cur else qty * avg  # 현재가 없으면 매입금
+            pnl_amt = (qty * cur - qty * avg) if cur else 0
             pnl_pct = (cur - avg) / avg * 100 if (cur and avg) else 0.0
+            kr_items.append((t, v, qty, avg, cur, ev, pnl_amt, pnl_pct))
+        kr_items.sort(key=lambda x: x[5], reverse=True)
+
+        html += '<div id="pf-kr-list">'
+        for t, v, qty, avg, cur, ev, pnl_amt, pnl_pct in kr_items:
+            name = _html.escape(v.get("name", t))
             pc = _pc(pnl_amt)
+            cost = qty * avg
 
             cur_str = f"{cur:,}원" if cur else "-"
+            ev_str = f"{ev:,.0f}원"
             pnl_str = (f'<span class="{pc}">{_sign(pnl_amt)}{pnl_amt:,.0f}원 {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
                        if cur else "-")
-            detail = f"{qty:,}주 | 평단 {avg:,}원 | 평가 {ev:,.0f}원" if cur else f"{qty:,}주 | 평단 {avg:,}원"
+            detail = f"{qty:,}주 × {avg:,}원 = {cost:,.0f}원"
 
-            html += '<div class="pf-card">'
-            html += f'<div class="pf-left"><div class="pf-name">{name}</div><div class="pf-detail">{detail}</div></div>'
-            html += f'<div class="pf-right"><div class="pf-price">{cur_str}</div><div class="pf-pnl-row">{pnl_str}</div></div>'
-            html += '</div>'
+            html += (f'<div class="pf-card" data-eval="{ev}" data-pnl-pct="{pnl_pct:.4f}" data-pnl-amt="{pnl_amt}">'
+                     f'<div class="pf-left"><div class="pf-name">{name}</div><div class="pf-detail">{detail}</div></div>'
+                     f'<div class="pf-right"><div class="pf-price">{cur_str}</div>'
+                     f'<div class="pf-eval">{ev_str}</div>'
+                     f'<div class="pf-pnl-row">{pnl_str}</div></div>'
+                     f'</div>')
+        html += '</div>'
 
     # ── 🇺🇸 미국 섹션 ──
     if us:
@@ -3444,26 +3463,48 @@ async def _build_portfolio_v2_html() -> str:
                  f'</span>')
         html += '</div>'
 
+        # 정렬 버튼
+        html += ('<div class="pf-sort-bar">'
+                 '<button class="pf-sort-btn active" data-section="us" data-sort="eval">평가금순</button>'
+                 '<button class="pf-sort-btn" data-section="us" data-sort="pnl-pct">수익률순</button>'
+                 '<button class="pf-sort-btn" data-section="us" data-sort="pnl-amt">손익금순</button>'
+                 '</div>')
+
+        # 평가금(USD) 내림차순 정렬
+        us_items = []
         for sym, info in us.items():
             qty = float(info.get("qty", 0) or 0)
             avg = float(info.get("avg_price", 0) or 0)
             cur = us_prices.get(sym, 0.0)
-            name = _html.escape(info.get("name", sym))
-            ev_usd = qty * cur if cur else 0.0
-            pnl_usd = ev_usd - qty * avg if cur else 0.0
+            ev_usd = qty * cur if cur else qty * avg  # 현재가 없으면 매입금
+            pnl_usd = (qty * cur - qty * avg) if cur else 0.0
             pnl_pct = (cur - avg) / avg * 100 if (cur and avg) else 0.0
+            # 정렬용 평가금은 원화 환산값 우선, 없으면 USD 그대로
+            ev_sort = ev_usd * usd_krw if usd_krw else ev_usd
+            us_items.append((sym, info, qty, avg, cur, ev_usd, pnl_usd, pnl_pct, ev_sort))
+        us_items.sort(key=lambda x: x[8], reverse=True)
+
+        html += '<div id="pf-us-list">'
+        for sym, info, qty, avg, cur, ev_usd, pnl_usd, pnl_pct, ev_sort in us_items:
+            name = _html.escape(info.get("name", sym))
             pc = _pc(pnl_usd)
+            cost_usd = qty * avg
 
             cur_str = f"${cur:,.2f}" if cur else "-"
+            ev_usd_str = f"${ev_usd:,.2f}"
+            ev_krw_str = f" ({ev_usd * usd_krw:,.0f}원)" if (ev_usd and usd_krw) else ""
             pnl_str = (f'<span class="{pc}">{_sign(pnl_usd)}${pnl_usd:,.2f} {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
                        if cur else "-")
-            ev_krw_part = f" | 평가 {ev_usd * usd_krw:,.0f}원" if (ev_usd and usd_krw) else ""
-            detail = f"{qty:,.0f}주 | 평단 ${avg:,.2f}{ev_krw_part}"
+            detail = f"{qty:,.0f}주 × ${avg:,.2f} = ${cost_usd:,.2f}"
 
-            html += '<div class="pf-card">'
-            html += f'<div class="pf-left"><div class="pf-name">{name} <span style="color:var(--fg2);font-size:0.8em">({_html.escape(sym)})</span></div><div class="pf-detail">{detail}</div></div>'
-            html += f'<div class="pf-right"><div class="pf-price">{cur_str}</div><div class="pf-pnl-row">{pnl_str}</div></div>'
-            html += '</div>'
+            html += (f'<div class="pf-card" data-eval="{ev_sort:.2f}" data-pnl-pct="{pnl_pct:.4f}" data-pnl-amt="{pnl_usd:.4f}">'
+                     f'<div class="pf-left"><div class="pf-name">{name} <span style="color:var(--fg2);font-size:0.8em">({_html.escape(sym)})</span></div>'
+                     f'<div class="pf-detail">{detail}</div></div>'
+                     f'<div class="pf-right"><div class="pf-price">{cur_str}</div>'
+                     f'<div class="pf-eval">{ev_usd_str}{ev_krw_str}</div>'
+                     f'<div class="pf-pnl-row">{pnl_str}</div></div>'
+                     f'</div>')
+        html += '</div>'
 
     if not kr and not us:
         return "<p>포트폴리오 비어있음</p>"
@@ -3688,7 +3729,11 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .pf-detail{font-size:0.8em;color:var(--fg2);margin-top:2px}
 .pf-right{text-align:right}
 .pf-price{font-weight:600}
+.pf-eval{font-size:0.85em;color:var(--fg2);margin-top:1px}
 .pf-pnl-row{font-size:0.85em;margin-top:2px}
+.pf-sort-bar{display:flex;gap:4px;margin-bottom:8px}
+.pf-sort-btn{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--fg2);cursor:pointer;font-size:0.75em;transition:background 0.2s,color 0.2s}
+.pf-sort-btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
 .dday{font-weight:700;color:var(--accent)}
 .dday-0{font-weight:700;color:var(--red);animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:0.6}}
@@ -3806,6 +3851,29 @@ filterBtns.forEach(btn => {
     btn.classList.add('active');
     currentFilter = btn.dataset.filter;
     filterWatch();
+  });
+});
+
+// 4. 포트폴리오 정렬
+document.querySelectorAll('.pf-sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const section = btn.dataset.section; // 'kr' or 'us'
+    const sortKey = btn.dataset.sort;    // 'eval', 'pnl-pct', 'pnl-amt'
+    const container = document.getElementById('pf-' + section + '-list');
+    if (!container) return;
+    const cards = [...container.querySelectorAll('.pf-card')];
+    const attr = sortKey === 'eval' ? 'eval'
+               : sortKey === 'pnl-pct' ? 'pnlPct'
+               : 'pnlAmt';
+    cards.sort((a, b) => {
+      const av = parseFloat(a.dataset[attr] || 0);
+      const bv = parseFloat(b.dataset[attr] || 0);
+      return bv - av;
+    });
+    cards.forEach(c => container.appendChild(c));
+    // 같은 section의 버튼만 토글
+    btn.closest('.pf-sort-bar').querySelectorAll('.pf-sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
   });
 });
 </script>"""
