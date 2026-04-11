@@ -752,3 +752,363 @@
 | get_trade_stats | 이번 달 거래 없으면 모두 null |
 | read_file | 경로는 data/TODO.md 처럼 stock-bot 루트 기준 상대경로 |
 | set_alert / manage_watch / write_file / git_commit / git_push | 데이터 변경 도구 — 스키마만 수록 |
+
+---
+
+# 데이터 파일 구조
+> 각 파일의 실제 레코드 1개 샘플. 전체 필드 확인용.
+
+## KRX DB 레코드 (1종목)
+> data/krx_db/YYYYMMDD.json → stocks.{ticker} (전체 필드)
+```json
+{
+  "ticker": "005930",
+  "name": "삼성전자",
+  "market": "kospi",
+  "close": 196500,
+  "chg_pct": 1.76,
+  "volume": 30848053,
+  "trade_value": 6062043969600,
+  "market_cap": 1163208851673000,
+  "per": 39.7,
+  "pbr": 3.39,
+  "eps": 4950.0,
+  "bps": 57951.0,
+  "div_yield": 0.74,
+  "foreign_net_qty": -2727272,
+  "foreign_net_amt": -538002024900,
+  "inst_net_qty": 577919,
+  "inst_net_amt": 112930735950,
+  "indiv_net_qty": 275532,
+  "indiv_net_amt": 58473003200,
+  "foreign_hold_ratio": 0.0,
+  "foreign_exhaust_rate": 0.0,
+  "credit_balance": 0,
+  "consensus_target": 268720,
+  "consensus_count": 25,
+  "consensus_gap": 36.8,
+  "short_balance": 0,
+  "short_ratio": 0,
+  "lending_balance": 0,
+  "sector_name": "반도체",
+  "list_shares": 0,
+  "turnover": 0.5211,
+  "foreign_ratio": -0.0463,
+  "inst_ratio": 0.0097,
+  "fi_ratio": -0.0365,
+  "ma5": 188760.0,
+  "ma10": 183610.0,
+  "ma20": 188225.0,
+  "ma60": 174661.67,
+  "ma120": 140016.67,
+  "ma200": 111925.0,
+  "rsi14": 65.29,
+  "bb_upper": 206494.0,
+  "bb_lower": 169956.0,
+  "ma_spread": 8.07,
+  "w52_high": 218000,
+  "w52_low": 53900,
+  "w52_position": 0.869,
+  "ytd_return": 63.89,
+  "sector_rel_strength": null,
+  "volume_ratio_5d": 0.98,
+  "volume_ratio_20d": 0.72,
+  "volume_ratio_10d": 1.2,
+  "ma_spread_change_10d": -11.5,
+  "ma_spread_change_30d": -30.12,
+  "rsi_change_5d": 4.48,
+  "rsi_change_20d": 0.95,
+  "eps_change_90d": 0.0,
+  "earnings_gap": -63.89,
+  "foreign_trend_5d": 0.4,
+  "foreign_trend_20d": 0.2,
+  "foreign_trend_60d": 0.2833,
+  "short_change_5d": null,
+  "short_change_20d": null,
+  "credit_change_5d": null,
+  "credit_change_20d": null,
+  "foreign_hold_change_5d": null,
+  "vp_poc_60d": 187850,
+  "vp_va_high_60d": 193880,
+  "vp_va_low_60d": 137600,
+  "vp_position_60d": 1.0466,
+  "vp_poc_250d": 58002,
+  "vp_va_high_250d": 193385,
+  "vp_va_low_250d": 53900,
+  "vp_position_250d": 1.0223,
+  "vp_poc": 58002,
+  "vp_va_high": 193385,
+  "vp_va_low": 53900,
+  "vp_position": 1.0223,
+  "sector_rank": null,
+  "sector_krx": "전기·전자"
+}
+```
+
+---
+
+## portfolio.json
+> {ticker: {name, qty, avg_price}, us_stocks: {ticker: {...}}, cash_krw, cash_usd}
+```json
+{
+  "000660": {"name": "SK하이닉스", "qty": 4, "avg_price": 851000},
+  "005930": {"name": "삼성전자", "qty": 18, "avg_price": 178100},
+  "...": "...",
+  "us_stocks": {
+    "NVDA": {"name": "NVIDIA", "qty": 12, "avg_price": 183.68},
+    "AMD": {"name": "AMD", "qty": 17, "avg_price": 201.67},
+    "...": "..."
+  },
+  "cash_krw": 4112719.0,
+  "cash_usd": 5491.48
+}
+```
+
+---
+
+## watchalert.json
+> {ticker: {name, buy_price, memo, grade, market, created_at, updated_at, created}}
+```json
+{
+  "103140": {
+    "name": "풍산",
+    "buy_price": 85000.0,
+    "memo": "방산탄약+구리 듀얼. 11명전원매수 목표156K(+80%). PER10배...",
+    "grade": "",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "",
+    "created": "2026-04-01 06:24"
+  }
+}
+```
+
+---
+
+## stoploss.json
+> {ticker: {name, stop_price, entry_price, target_price}, us_stocks: {ticker: {...}}}
+```json
+{
+  "009540": {
+    "name": "HD조선해양",
+    "stop_price": 330000.0,
+    "entry_price": 0,
+    "target_price": 560000.0
+  },
+  "us_stocks": {
+    "NVDA": {
+      "name": "NVIDIA",
+      "stop_price": 140.0,
+      "target_price": 274.0
+    }
+  }
+}
+```
+
+---
+
+## decision_log.json
+> {날짜: {date, regime, grades, actions, watchlist, notes, saved_at}}
+```json
+{
+  "2026-03-18": {
+    "date": "2026-03-18",
+    "regime": "경계",
+    "grades": {
+      "HD한국조선해양": "A",
+      "효성중공업": "B",
+      "LS ELECTRIC": "A",
+      "AMD": "B",
+      "CRSP": "C"
+    },
+    "actions": [
+      "LS 목표가 850000→970000 봇 업데이트 완료",
+      "LS 2주 시간외 익절 완료 (833,000)"
+    ],
+    "watchlist": [
+      "NVDA $155 (AI GPU1위, RR1:2.3)",
+      "풍산 100,000"
+    ],
+    "notes": "야간점검: 폭등일(KOSPI+5%) 추격매수 금지.",
+    "saved_at": "2026-03-18 19:24"
+  }
+}
+```
+
+---
+
+## trade_log.json
+> {trades: [{id, ticker, name, market, side, qty, price, date, grade_at_trade, reason, target_price, linked_buy_id}]}
+```json
+{
+  "trades": [
+    {
+      "id": "T004",
+      "ticker": "NVDA",
+      "name": "NVIDIA",
+      "market": "US",
+      "side": "buy",
+      "qty": 12,
+      "price": 183.68,
+      "date": "2026-04-10",
+      "grade_at_trade": "A",
+      "reason": "FwdPE 21.9x 동종대비 20%할인, PEG 0.32, Big4 CapEx $600B+ 사이클",
+      "target_price": 274.0,
+      "linked_buy_id": null
+    }
+  ]
+}
+```
+
+---
+
+## events.json
+> {이벤트명: "YYYY-MM-DD"} — 매크로 이벤트 캘린더
+```json
+{
+  "FOMC": "2026-04-28",
+  "CPI": "2026-04-10",
+  "PPI": "2026-04-11"
+}
+```
+
+---
+
+## portfolio_history.json
+> [{date, total_eval_krw, cash_krw, cash_usd, usd_krw_rate, total_asset_krw, kr_eval, us_eval_krw, holdings, cash_weight_pct}]
+```json
+{
+  "date": "2026-04-09",
+  "total_eval_krw": 50806928,
+  "cash_krw": 4112719,
+  "cash_usd": 7695.64,
+  "usd_krw_rate": 1480.5,
+  "total_asset_krw": 66312734,
+  "kr_eval": 38282000,
+  "us_eval_krw": 12524928,
+  "holdings": {
+    "009540": {"price": 391000, "qty": 50, "eval": 19550000, "weight_pct": 29.5},
+    "NVDA": {"price": 0, "qty": 12, "eval_usd": 0, "weight_pct": 0.0},
+    "...": "..."
+  },
+  "cash_weight_pct": 23.4
+}
+```
+
+---
+
+## consensus_cache.json
+> {updated: ISO8601, kr: {ticker: {name, avg, high, low, buy, hold, sell, prev_avg}}}
+```json
+{
+  "updated": "2026-04-05T07:05:32+0900",
+  "kr": {
+    "000660": {
+      "name": "SK하이닉스",
+      "avg": 1360800,
+      "high": 1700000,
+      "low": 970000,
+      "buy": 25,
+      "hold": 0,
+      "sell": 0
+    },
+    "005930": {
+      "name": "삼성전자",
+      "avg": 258320,
+      "high": 320000,
+      "low": 190000,
+      "buy": 25,
+      "hold": 0,
+      "sell": 0
+    }
+  }
+}
+```
+
+---
+
+## regime_state.json
+> {history: [{date, regime, ...scores}], current: {current, days_in_regime, confirmed, indicators}}
+```json
+{
+  "history": [
+    {"date": "2026-04-09", "regime": "neutral", "sp_distance_pct": -0.51, "vix": 21.37},
+    {"date": "2026-04-10", "regime": "neutral", "sp_distance_pct": 2.49, "vix": 19.49}
+  ],
+  "current": {
+    "current": "neutral",
+    "days_in_regime": 6,
+    "debounce_count": 6,
+    "confirmed": true,
+    "tranche_level": null,
+    "pending_regime": null,
+    "last_updated": "2026-04-11",
+    "indicators": {
+      "sp500_vs_200ma": {"price": 6816.89, "sma200": 6662.62, "distance_pct": 2.32, "sma200_slope": "rising", "signal": "🟡"},
+      "vix": {"value": 19.23, "vix3m": 21.86, "term_ratio": 0.8797, "backwardation": false, "signal": "🟢"},
+      "usd_krw": {"value": 1482.7, "note": "참고용 (레짐 판정에 미사용)"}
+    }
+  }
+}
+```
+
+---
+
+## std_sector_map.json
+> {ticker: {std_code, std_name}} — KRX 표준산업분류 매핑
+```json
+{
+  "006840": {"std_code": "116409", "std_name": "기타 금융업"},
+  "282330": {"std_code": "074701", "std_name": "종합 소매업"},
+  "000120": {"std_code": "084903", "std_name": "도로 화물 운송업"}
+}
+```
+
+---
+
+## reports.json
+> {reports: [{date, ticker, name, source, title, pdf_url, full_text, extraction_status, collected_at}]}
+```json
+{
+  "reports": [
+    {
+      "date": "2026-04-10",
+      "ticker": "298040",
+      "name": "효성중공업",
+      "source": "SK증권",
+      "title": "765kV 모멘텀 본격화",
+      "pdf_url": "https://consensus.hankyung.com/analysis/downpdf?report_idx=648267",
+      "full_text": "2026-04-10\n효성중공업 (298040/KS)\n765kV 모멘텀 본격화...(전문)",
+      "extraction_status": "success",
+      "collected_at": "2026-04-11T02:19:17.118218+09:00"
+    }
+  ]
+}
+```
+
+---
+
+## data/research/NVDA.md (파일 포맷 예시)
+> 종목별 리서치 메모. 마크다운 자유형식. 파일명 = ticker.md
+```markdown
+# NVIDIA (NVDA) — 확신등급 A
+
+## 포지션
+- 매수일: 2026-04-10
+- 수량: 12주 @ $183.68 (투자원금 $2,204)
+- 손절: $140 (-24%) | 목표: $274 (+49%)
+
+## 핵심 Thesis (이게 깨지면 판다)
+1. AI 인프라 독점: CUDA 생태계(개발자400만+, 앱3000+) 대체 불가. 학습 점유율 90%+
+2. CapEx 슈퍼사이클: Big4 합산 $588~640B (YoY +63~78%). 수요>공급 상태 지속
+3. 제품 전환 모멘텀: Blackwell 풀스로틀 + Rubin H2 2026 양산. 백로그 $1T
+
+## 밸류에이션 (2026-04-10 기준)
+| 지표 | 수치 |
+|------|------|
+| FY2027E 매출 | $360.7B (+67%) |
+| FY2027E EPS | $8.30 (GAAP) |
+| FwdPE (FY2027) | 21.9x (동종 중위수 26.8x 대비 20% 할인) |
+| PEG (단년) | 0.32 |
+| 애널리스트 컨센 | $274 (43명, Strong Buy) |
+```
