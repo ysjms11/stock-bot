@@ -3535,8 +3535,8 @@ def _build_watchalert_html() -> str:
     return html
 
 
-async def _handle_dash(request: web.Request) -> web.Response:
-    """GET /dash — 메인 대시보드."""
+async def _handle_dash_v1(request: web.Request) -> web.Response:
+    """GET /dash — 메인 대시보드 (v1, 백업용)."""
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stock Bot Dashboard</title>{_DASH_CSS}</head><body>
 <h1>📊 Stock Bot Dashboard</h1>
@@ -4441,7 +4441,7 @@ async def _run_all(app, port):
     mcp_app.router.add_post("/mcp/messages", mcp_messages_handler)
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     mcp_app.router.add_post("/api/krx_upload", _handle_krx_upload)
-    mcp_app.router.add_get("/dash", _handle_dash)
+    mcp_app.router.add_get("/dash", _handle_dash_v2)
     mcp_app.router.add_get("/dash/file/{filename}", _handle_dash_file)
     mcp_app.router.add_get("/dash-v2", _handle_dash_v2)
     mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
