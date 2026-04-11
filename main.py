@@ -3534,19 +3534,24 @@ async def _handle_dash(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    # 💼 매매기록 최근 10건
+    # 💼 매매기록 최근 5건
     try:
         tl = load_json(f"{_DATA_DIR}/trade_log.json", [])
         trades = tl if isinstance(tl, list) else tl.get("trades", [])
         if trades:
-            recent_t = trades[-10:][::-1]
-            html += '<div class="section"><h2>💼 최근 매매</h2><table><thead><tr><th>날짜</th><th>종목</th><th>매매</th><th>가격</th><th>수량</th></tr></thead><tbody>'
-            for t in recent_t:
-                side = "매수" if t.get("side") == "buy" else "매도"
-                name_ = _html.escape(str(t.get('name', t.get('ticker', '?'))))
-                date_ = _html.escape(str(t.get('date', '?')))
-                html += f"<tr><td>{date_}</td><td>{name_}</td><td>{side}</td><td>{t.get('price', '?'):,}</td><td>{t.get('qty', '?')}</td></tr>"
-            html += "</tbody></table></div>"
+            total_trades = len(trades)
+            recent_t = list(reversed(trades))[:5]
+            trade_cards = ""
+            for idx, t in enumerate(recent_t):
+                trade_cards += _build_trade_card(t, is_open=(idx == 0))
+            html += (f'<div class="section">'
+                     f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                     f'<h2 style="margin:0">💼 최근 매매</h2>'
+                     f'<a href="/dash/trades" style="color:#4A9EFF;text-decoration:none;font-size:0.85em">'
+                     f'전체 {total_trades}건 보기 →</a>'
+                     f'</div>'
+                     f'{trade_cards}'
+                     f'</div>')
     except Exception:
         pass
 
@@ -4121,29 +4126,19 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
         tl = load_json(f"{_DATA_DIR}/trade_log.json", [])
         trades = tl if isinstance(tl, list) else tl.get("trades", [])
         if trades:
-            recent_t = trades[-10:][::-1]
-            html += ('<div class="section" id="trade"><h2>💼 최근 매매</h2>'
-                     '<div class="table-wrap"><table><thead><tr>'
-                     '<th>날짜</th><th>종목</th><th>매매</th><th>가격</th><th>수량</th>'
-                     '</tr></thead><tbody>')
-            for t in recent_t:
-                side_cls = "badge-buy" if t.get("side") == "buy" else "badge-sell"
-                side_txt = "매수" if t.get("side") == "buy" else "매도"
-                price_val = t.get("price", 0)
-                ticker = t.get("ticker", "")
-                is_us = bool(ticker) and not ticker.isdigit()
-                try:
-                    if is_us:
-                        price_disp = f"${float(price_val):,.2f}"
-                    else:
-                        price_disp = f"{int(price_val):,}원"
-                except (TypeError, ValueError):
-                    price_disp = str(price_val)
-                html += (f'<tr><td>{_html.escape(str(t.get("date", "?")))}</td>'
-                         f'<td>{_html.escape(str(t.get("name", ticker)))}</td>'
-                         f'<td><span class="badge {side_cls}">{side_txt}</span></td>'
-                         f'<td>{price_disp}</td><td>{t.get("qty", "?")}</td></tr>')
-            html += "</tbody></table></div></div>"
+            total_trades = len(trades)
+            recent_t = list(reversed(trades))[:5]
+            trade_cards = ""
+            for idx, t in enumerate(recent_t):
+                trade_cards += _build_trade_card(t, is_open=(idx == 0))
+            html += (f'<div class="section" id="trade">'
+                     f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                     f'<h2 style="margin:0">💼 최근 매매</h2>'
+                     f'<a href="/dash/trades" style="color:var(--accent);text-decoration:none;font-size:0.85em">'
+                     f'전체 {total_trades}건 보기 →</a>'
+                     f'</div>'
+                     f'{trade_cards}'
+                     f'</div>')
     except Exception:
         pass
 
@@ -4211,6 +4206,86 @@ async def _handle_dash_research_file(request: web.Request) -> web.Response:
         import traceback
         print(f"[Dash] research file 오류: {e}\n{traceback.format_exc()}")
         return web.Response(text=f"Error: {e}", status=500)
+
+
+def _build_trade_card(t: dict, is_open: bool = False) -> str:
+    """trade_log 1건 → details 카드 HTML."""
+    ticker = t.get("ticker", "")
+    is_us = bool(ticker) and not ticker.isdigit()
+    side_cls = "badge-buy" if t.get("side") == "buy" else "badge-sell"
+    side_txt = "매수" if t.get("side") == "buy" else "매도"
+    price = t.get("price", 0)
+    try:
+        price_str = f"${float(price):,.2f}" if is_us else f"{int(price):,}원"
+    except (TypeError, ValueError):
+        price_str = str(price)
+    qty = t.get("qty", 0)
+    name = _html.escape(str(t.get("name", ticker)))
+    date = _html.escape(str(t.get("date", "?")))
+    grade = _html.escape(str(t.get("grade_at_trade", "")))
+    reason = _html.escape(str(t.get("reason", "")))
+    target = t.get("target_price", 0)
+    stop = t.get("stop_price", 0)
+
+    open_attr = " open" if is_open else ""
+
+    # grade 뱃지
+    grade_key = grade.replace("+", "p").replace("-", "m")
+    grade_html = f'<span class="badge badge-{grade_key}">{grade}</span>' if grade else ""
+
+    # 목표/손절 메타
+    meta_parts = []
+    if grade:
+        meta_parts.append(f"등급: {grade_html}")
+    if target:
+        try:
+            t_str = f"${float(target):,.2f}" if is_us else f"{int(target):,}원"
+        except (TypeError, ValueError):
+            t_str = str(target)
+        meta_parts.append(f"목표: {t_str}")
+    if stop:
+        try:
+            s_str = f"${float(stop):,.2f}" if is_us else f"{int(stop):,}원"
+        except (TypeError, ValueError):
+            s_str = str(stop)
+        meta_parts.append(f"손절: {s_str}")
+    meta_html = (f'<div style="font-size:0.85em;margin-bottom:6px">'
+                 f'{" | ".join(meta_parts)}</div>') if meta_parts else ""
+
+    reason_html = f'<div class="decision-notes">{reason}</div>' if reason else ""
+
+    return (f'<details class="decision-card"{open_attr}><summary>'
+            f'<span class="decision-date">{date}</span>'
+            f'<span class="badge {side_cls}">{side_txt}</span>'
+            f'<span style="font-weight:600">{name}</span>'
+            f'<span style="color:var(--fg2);font-size:0.85em">{price_str} × {qty}</span>'
+            f'</summary><div class="decision-body">'
+            f'{meta_html}{reason_html}'
+            f'</div></details>')
+
+
+async def _handle_dash_trades(request: web.Request) -> web.Response:
+    """GET /dash/trades — 매매 기록 전체."""
+    html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>매매 기록</title>{_DASH_V2_CSS}</head><body>'
+            f'<div style="margin-bottom:16px">'
+            f'<a href="/dash-v2" style="color:var(--accent);text-decoration:none">← 대시보드</a>'
+            f'</div>')
+    try:
+        tl = load_json(f"{_DATA_DIR}/trade_log.json", [])
+        trades = tl if isinstance(tl, list) else tl.get("trades", [])
+        total = len(trades)
+        html += f'<h1>💼 매매 기록 ({total}건)</h1>'
+        if trades:
+            for t in reversed(trades):
+                html += _build_trade_card(t, is_open=False)
+        else:
+            html += '<p>매매 기록이 없습니다.</p>'
+    except Exception as e:
+        html += f'<p style="color:red">로드 실패: {_html.escape(str(e))}</p>'
+    html += "</body></html>"
+    return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_dash_decisions(request: web.Request) -> web.Response:
@@ -4299,6 +4374,7 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash/file/{filename}", _handle_dash_file)
     mcp_app.router.add_get("/dash-v2", _handle_dash_v2)
     mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
+    mcp_app.router.add_get("/dash/trades", _handle_dash_trades)
     mcp_app.router.add_get("/dash/file/research/{filename}", _handle_dash_research_file)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
