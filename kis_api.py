@@ -2958,6 +2958,11 @@ class KisRealtimeManager:
         """WebSocket 캐시에서 최신 체결가 반환. 없으면 None."""
         return self._price_cache.get(ticker)
 
+    def set_cached_price(self, ticker: str, price):
+        """외부에서 캐시에 가격 저장 (REST fallback 등)."""
+        if price and price > 0:
+            self._price_cache[ticker] = price
+
 
 # KisRealtimeManager 싱글톤
 ws_manager = KisRealtimeManager()

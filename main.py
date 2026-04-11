@@ -763,6 +763,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                             d = await get_stock_price(ticker, token)
                             await asyncio.sleep(0.3)
                             price = int(d.get("stck_prpr", 0))
+                            if price > 0:
+                                ws_manager.set_cached_price(ticker, price)
                         sp = info.get("stop_price", 0)
                         if price > 0 and sp > 0 and price <= sp:
                             cnt = _get_stoploss_sent_count(sent, ticker, today)
@@ -798,6 +800,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                     if not d:
                         continue
                     price = float(d.get("price", 0) or 0)
+                    if price > 0:
+                        ws_manager.set_cached_price(sym, price)
                 sp = info.get("stop_price", 0)
                 if price > 0 and sp > 0 and price <= sp:
                     cnt = _get_stoploss_sent_count(sent, sym, today)
@@ -868,6 +872,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                             d = await kis_us_stock_price(ticker, token_wa)
                             cur = float(d.get("last", 0) or 0)
                             await asyncio.sleep(0.3)
+                            if cur > 0:
+                                ws_manager.set_cached_price(ticker, cur)
                     else:
                         if not is_kr:
                             continue
@@ -878,6 +884,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                             d = await get_stock_price(ticker, token_wa)
                             cur = int(d.get("stck_prpr", 0) or 0)
                             await asyncio.sleep(0.3)
+                            if cur > 0:
+                                ws_manager.set_cached_price(ticker, int(cur))
                     if cur > 0 and cur <= buy_price and watch_sent.get(ticker) != today_w:
                         watch_sent[ticker] = today_w
                         save_json(WATCH_SENT_FILE, watch_sent)
@@ -3849,15 +3857,23 @@ def _build_watchalert_v2_html() -> str:
     if not wa:
         return "<p>감시 종목 없음</p>"
 
-    # SQLite에서 최신 종가 로드 (API 호출 0)
+    # 현재가: WS 캐시(장중 실시간 + stoploss 갱신) → SQLite DB fallback
     cur_prices = {}
+    # 1차: WS 캐시 (check_stoploss에서 10분마다 갱신됨)
+    for ticker, _ in wa.items():
+        cached = ws_manager.get_cached_price(ticker)
+        if cached is not None:
+            cur_prices[ticker] = cached
+    # 2차: 캐시에 없는 종목은 SQLite DB에서
     try:
         from db_collector import _get_db
         conn = _get_db()
         latest = conn.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()[0]
         if latest:
             rows = conn.execute("SELECT symbol, close FROM daily_snapshot WHERE trade_date=?", (latest,)).fetchall()
-            cur_prices = {r["symbol"]: r["close"] for r in rows}
+            for r in rows:
+                if r["symbol"] not in cur_prices:
+                    cur_prices[r["symbol"]] = r["close"]
         conn.close()
     except Exception:
         pass
