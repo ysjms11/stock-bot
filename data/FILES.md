@@ -12,6 +12,14 @@
 | **INVESTMENT_RULES.md** | 투자 규칙 & 운영 매뉴얼 (등급체계/포트규칙/레짐) | A등급 최대 20%, D등급 즉시 손절 등 |
 | **HANDOVER.md** | 세션 인계 가이드 | 새 세션 시작 시 컨텍스트 복원 절차 |
 
+## 🐍 핵심 소스 파일
+
+| 파일 | 내용 |
+|------|------|
+| **db_collector.py** | KIS API 풀수집 + SQLite DB 저장 + 기술지표 계산 + 스캐너 (~1700줄) |
+| **data/stock.db** | SQLite DB (277MB, stock_master + daily_snapshot + financial_snapshot + 뷰) |
+| **data/db_schema.sql** | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) |
+
 ## 💰 투자 현황 파일
 
 | 파일 | 내용 | 예시 |

@@ -48,3 +48,23 @@
 [600+]      _execute_tool() (if/elif 체인)
 [끝]        MCP 서버 (_handle_jsonrpc, SSE, messages)
 ```
+
+## db_collector.py 구조
+
+```
+[1~55]      imports, 상수 (DB_PATH, KST, _DATA_DIR)
+[56~82]     SQLite 연결 (_get_db, _init_schema)
+[83~210]    KRX OPEN API + 파싱 (_krx_openapi_get, _krx_post, _parse_market_records, fetch_krx_market_data)
+[210~362]   섹터 매핑 (_classify_sector, _load_std_sector_map, KIS 기본정보 수집 헬퍼)
+[363~402]   stock_master 관리 (_sync_stock_master, _update_master_from_basic)
+[403~523]   배치 수집 (_collect_phase, _store_daily_snapshot)
+[524~661]   collect_daily() 메인 함수
+[662~827]   기술지표 헬퍼 (_ma, _rsi, _calc_vp, _volume_ratio, _spread_at, _rsi_at, _macd, _atr, _volatility_20d)
+[829~1051]  히스토리 로드 & 기술지표 계산 (_load_history_from_db, _compute_technicals_sqlite)
+[1052~1120] 기술지표 DB 저장 (_compute_and_update)
+[1121~1221] load_krx_db() 하위호환 함수
+[1222~1312] 스캐너 헬퍼 (_load_history, _get_foreign_streak_data_db, _summarize_filters)
+[1313~1466] scan_stocks() 스캐너 (15개 프리셋 + 복합 필터)
+[1467~1646] collect_financial_weekly() + _update_financial_derived()
+[1647~1699] backup_to_icloud()
+```
