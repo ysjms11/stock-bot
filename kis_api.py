@@ -2753,16 +2753,13 @@ class KisRealtimeManager:
     async def _run_loop(self):
         while self._running:
             now = datetime.now(KST)
-            if now.weekday() < 5:   # 평일이면 항상 연결 (KR 시간외 + US 야간 대응)
-                try:
-                    await self._connect_and_run()
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    print(f"[WS] 오류: {e}, 30초 후 재연결...")
-                await asyncio.sleep(30)
-            else:
-                await asyncio.sleep(60)   # 주말: 1분마다 체크
+            try:
+                await self._connect_and_run()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[WS] 오류: {e}, 30초 후 재연결...")
+            await asyncio.sleep(30)
 
     async def _connect_and_run(self):
         self.reset_fired()
