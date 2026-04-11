@@ -3702,6 +3702,21 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .toggle{cursor:pointer;user-select:none}
 details summary{cursor:pointer;user-select:none}
 details summary h2{display:inline}
+.decision-card{background:var(--bg);border-radius:8px;padding:8px 12px;margin-bottom:8px;border:1px solid var(--border)}
+.decision-card[open]{border-color:var(--accent)}
+.decision-card summary{cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;list-style:none}
+.decision-card summary::-webkit-details-marker{display:none}
+.decision-date{font-weight:600;font-size:0.9em;min-width:90px}
+.decision-preview{color:var(--fg2);font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.decision-body{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.decision-actions{margin-bottom:8px}
+.decision-actions li{font-size:0.85em;margin:2px 0;list-style:none;padding-left:12px}
+.decision-actions li::before{content:"→ ";color:var(--accent)}
+.decision-notes{font-size:0.82em;color:var(--fg2);background:rgba(255,255,255,0.02);padding:8px;border-radius:4px;margin-bottom:8px}
+.decision-grades{font-size:0.82em}
+.badge-neutral{background:rgba(255,193,7,0.15);color:#ffc107}
+.badge-bull{background:rgba(102,187,106,0.15);color:var(--green)}
+.badge-bear{background:rgba(239,83,80,0.15);color:var(--red)}
 @media(max-width:600px){body{padding:8px;padding-top:72px}.tab-nav{font-size:0.8em}table{font-size:0.8em}.doc-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}}
 </style>
 """
@@ -4035,14 +4050,64 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     try:
         dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
         if dl:
-            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:5]
-            html += ('<div class="section" id="decision"><h2>📝 최근 투자판단</h2>'
-                     '<div class="table-wrap"><table><thead><tr><th>날짜</th><th>레짐</th><th>액션</th></tr></thead><tbody>')
-            for date, entry in recent:
-                regime = _html.escape(str(entry.get("regime", "?")))
-                actions = _html.escape(", ".join(entry.get("actions", [])) or str(entry.get("summary", ""))[:60])
-                html += f"<tr><td>{_html.escape(date)}</td><td>{regime}</td><td>{actions}</td></tr>"
-            html += "</tbody></table></div></div>"
+            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:10]
+            cards_html = ""
+            for idx, (date, entry) in enumerate(recent):
+                regime_raw = str(entry.get("regime", "?"))
+                regime_esc = _html.escape(regime_raw)
+                # 레짐 뱃지 클래스
+                if "강세" in regime_raw or "bull" in regime_raw.lower():
+                    badge_cls = "badge-bull"
+                elif "약세" in regime_raw or "bear" in regime_raw.lower():
+                    badge_cls = "badge-bear"
+                else:
+                    badge_cls = "badge-neutral"
+                # 액션 목록
+                actions_list = entry.get("actions", [])
+                if not actions_list and entry.get("summary"):
+                    actions_list = [str(entry["summary"])]
+                # 프리뷰: 첫 액션 축약
+                preview_txt = _html.escape((actions_list[0] if actions_list else "")[:60])
+                # 액션 li
+                actions_html = ""
+                for act in actions_list:
+                    actions_html += f"<li>{_html.escape(str(act))}</li>"
+                actions_block = f'<ul class="decision-actions">{actions_html}</ul>' if actions_html else ""
+                # notes
+                notes_raw = entry.get("notes", "")
+                notes_block = (f'<div class="decision-notes">{_html.escape(str(notes_raw))}</div>'
+                               if notes_raw else "")
+                # grades
+                grades = entry.get("grades", {})
+                grades_lines = ""
+                if isinstance(grades, dict):
+                    for ticker, ginfo in grades.items():
+                        if isinstance(ginfo, dict):
+                            g = _html.escape(str(ginfo.get("grade", "")))
+                            reason = _html.escape(str(ginfo.get("reason", "")))
+                            grades_lines += f'<div><strong>{_html.escape(ticker)}</strong>: <span class="badge badge-{g}">{g}</span> {reason}</div>'
+                        else:
+                            grades_lines += f'<div><strong>{_html.escape(ticker)}</strong>: {_html.escape(str(ginfo))}</div>'
+                grades_block = f'<div class="decision-grades">{grades_lines}</div>' if grades_lines else ""
+                open_attr = " open" if idx == 0 else ""
+                cards_html += (
+                    f'<details class="decision-card"{open_attr}>'
+                    f'<summary>'
+                    f'<span class="decision-date">{_html.escape(date)}</span>'
+                    f'<span class="badge {badge_cls}">{regime_esc}</span>'
+                    f'<span class="decision-preview">{preview_txt}</span>'
+                    f'</summary>'
+                    f'<div class="decision-body">'
+                    f'{actions_block}'
+                    f'{notes_block}'
+                    f'{grades_block}'
+                    f'</div>'
+                    f'</details>'
+                )
+            html += (f'<div class="section" id="decision">'
+                     f'<h2>📝 최근 투자판단</h2>'
+                     f'{cards_html}'
+                     f'</div>')
     except Exception:
         pass
 
