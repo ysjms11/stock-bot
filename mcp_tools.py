@@ -45,6 +45,14 @@ except ImportError:
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
 
+_MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
+
+def _check_mcp_auth(request) -> bool:
+    if not _MCP_AUTH_TOKEN:
+        return True
+    auth = request.headers.get("Authorization", "")
+    return auth == f"Bearer {_MCP_AUTH_TOKEN}"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # DART 스크리너 당일 결과 캐시
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -737,14 +745,23 @@ def _validate_git_path(raw: str) -> str:
     return raw
 
 
+_NO_TOKEN_TOOLS = frozenset({
+    "read_file", "write_file", "list_files",
+    "git_status", "git_diff", "git_log", "git_commit", "git_push",
+    "backup_data",
+})
+
+
 async def _execute_tool(name: str, arguments: dict) -> dict | list:
     """툴 실행 → 결과 반환 (에러 시 {"error": ...})"""
     arguments = arguments or {}
     print(f"툴 호출: {name} {arguments}")
     try:
-        token = await get_kis_token()
-        if not token:
-            raise RuntimeError("KIS 토큰 발급 실패")
+        token = None
+        if name not in _NO_TOKEN_TOOLS:
+            token = await get_kis_token()
+            if not token:
+                return {"error": "KIS 토큰 발급 실패"}
 
         if name == "get_rank":
             rank_type = arguments.get("type", "scan").strip().lower()
@@ -3507,6 +3524,8 @@ async def _handle_jsonrpc(body: dict) -> dict | None:
 
 async def mcp_sse_handler(request: web.Request) -> web.StreamResponse:
     """GET /mcp  → SSE 스트림 수립, endpoint 이벤트 전송"""
+    if not _check_mcp_auth(request):
+        return web.Response(status=401, text="Unauthorized")
     session_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
     _mcp_sessions[session_id] = queue
@@ -3552,6 +3571,8 @@ async def mcp_sse_handler(request: web.Request) -> web.StreamResponse:
 
 async def mcp_messages_handler(request: web.Request) -> web.Response:
     """POST /mcp/messages?sessionId=UUID  → JSON-RPC 수신 후 SSE로 응답"""
+    if not _check_mcp_auth(request):
+        return web.Response(status=401, text="Unauthorized")
     session_id = request.rel_url.query.get("sessionId")
     queue = _mcp_sessions.get(session_id)
     if not queue:

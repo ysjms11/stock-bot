@@ -1067,12 +1067,24 @@ async def update_daily_db(date: str = None) -> dict:
     # Task 3: KIS API PER/PBR fallback (Safari 실패 시)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
     kis_count = 0
+    supply_krx_count = 0
     if not safari_ok:
         kis_data = await _fetch_kis_valuations(all_tickers)
         kis_count = len(kis_data)
         for ticker, vals in kis_data.items():
             if ticker in stocks:
                 stocks[ticker].update(vals)
+
+        # 수급 fallback: KRX OPEN API (MDCSTAT02401) — Safari 불필요
+        print("[KRX] 수급 fallback: KRX OPEN API 투자자별 순매수 수집")
+        for mkt in ["STK", "KSQ"]:
+            investor_data = await fetch_krx_investor_data(date, mkt)
+            for ticker, vals in investor_data.items():
+                if ticker in stocks:
+                    stocks[ticker].update(vals)
+            supply_krx_count += len(investor_data)
+            await asyncio.sleep(0.5)
+        print(f"[KRX] 수급 fallback 완료: {supply_krx_count}종목")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━
     # Task 4: 컨센서스 (FnGuide, 병렬 sem=5 → 전종목 ~2분)
@@ -1161,7 +1173,7 @@ async def update_daily_db(date: str = None) -> dict:
     cons_count = len(consensus_data)
     safari_count = len(safari_data)
     val_src = f"safari_krx({safari_count})" if safari_ok else f"KIS_API({kis_count})"
-    supply_src = f"safari_krx({safari_count})" if safari_ok else "unavailable"
+    supply_src = f"safari_krx({safari_count})" if safari_ok else f"KRX_OPENAPI({supply_krx_count})"
     db = {
         "date": date,
         "updated_at": datetime.now(KST).isoformat(),

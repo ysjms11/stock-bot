@@ -64,6 +64,16 @@ _KR_SECTORS = {
 _SECTOR_LIMIT = 50   # 섹터 한도 %
 _STOCK_LIMIT  = 35   # 단일종목 한도 %
 
+_REGIME_EMOJI = {"offensive": "🟢", "neutral": "🟡", "crisis": "🔴"}
+
+
+def _read_regime() -> tuple[str, str]:
+    """regime_state.json에서 (regime_en, emoji) 반환."""
+    state = load_json(REGIME_STATE_FILE, {})
+    cur = state.get("current", {})
+    regime_en = cur.get("current", "neutral")
+    return regime_en, _REGIME_EMOJI.get(regime_en, "⚪")
+
 
 def _extract_grade(entry: dict, ticker: str, name: str) -> str | None:
     """decision_log entry에서 종목의 확신등급 추출"""
@@ -398,9 +408,9 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                     health_warnings.append(f"⚠️ 현금 {cash_pct:.1f}% → 최소 10% 미달")
 
                 # 레짐 체크
-                regime = load_json(REGIME_STATE_FILE, {})
-                if regime.get("regime") == "🔴" and cash_pct < 25:
-                    health_warnings.append(f"⚠️ 🔴 레짐 현금 {cash_pct:.1f}% → 25% 권장")
+                regime_en, regime_e = _read_regime()
+                if regime_en == "crisis" and cash_pct < 25:
+                    health_warnings.append(f"⚠️ {regime_e} 레짐 현금 {cash_pct:.1f}% → 25% 권장")
 
             if health_warnings:
                 msg += "\n[포트 건강]\n" + "\n".join(health_warnings) + "\n"
@@ -885,9 +895,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                     pass
             if buy_alerts:
                 # 브리핑 추가
-                regime = load_json(REGIME_STATE_FILE, {})
-                regime_str = regime.get("regime", "?")
-                regime_ok = "매수 가능" if regime_str != "🔴" else "⚠️ 분할 1차만"
+                regime_en, regime_str = _read_regime()
+                regime_ok = "매수 가능" if regime_en != "crisis" else "⚠️ 분할 1차만"
                 pf = load_json(PORTFOLIO_FILE, {})
                 cash_k = float(pf.get("cash_krw", 0) or 0)
                 cash_u = float(pf.get("cash_usd", 0) or 0)
@@ -1803,10 +1812,10 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
         msg = f"📋 *주간점검 Sunday 30 리마인더* ({now.strftime('%m/%d')})\n\n"
 
         # 레짐
-        regime = load_json(REGIME_STATE_FILE, {})
-        r_emoji = regime.get("regime", "?")
-        r_score = regime.get("score", 0)
-        msg += f"[레짐] {r_emoji} {r_score:.1f}점\n"
+        r_en, r_emoji = _read_regime()
+        state_cur = load_json(REGIME_STATE_FILE, {}).get("current", {})
+        r_score = float(state_cur.get("debounce_count", 0) or 0)
+        msg += f"[레짐] {r_emoji} ({r_en}) {r_score:.0f}일차\n"
 
         # 포트 요약
         pf = load_json(PORTFOLIO_FILE, {})
@@ -2478,7 +2487,7 @@ async def setstop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🇺🇸 *{name}* 손절 ${stop:,.2f}{tp}\n장중 자동 체크", parse_mode="Markdown")
     else:
-        stops[ticker] = {"name": name, "stop_price": stop, "entry_price": fourth}
+        stops[ticker] = {"name": name, "stop_price": stop, "entry_price": fourth, "target_price": fourth}
         save_json(STOPLOSS_FILE, stops)
         await _refresh_ws()
         lp = f" (진입가 대비 {((stop - fourth) / fourth * 100):.1f}%)" if fourth > 0 else ""
@@ -2622,11 +2631,8 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     # ── 레짐 ──
-    regime_state = load_json(REGIME_STATE_FILE, {"current": {}})
-    regime_cur = regime_state.get("current", {})
-    regime_name = regime_cur.get("regime", "")
-    regime_emoji = {"offensive": "🟢", "neutral": "🟡", "defensive": "🔴"}.get(regime_name, "⚪")
-    regime_kr = {"offensive": "공격", "neutral": "중립", "defensive": "방어"}.get(regime_name, "미정")
+    regime_name, regime_emoji = _read_regime()
+    regime_kr = {"offensive": "공격", "neutral": "중립", "crisis": "위기"}.get(regime_name, "미정")
 
     # ── 메시지 조립 ──
     msg = "📊 *전체현황*\n\n"
@@ -3139,23 +3145,29 @@ def _json_to_table(data, title: str = "") -> str:
     """JSON 데이터를 HTML 테이블로."""
     if isinstance(data, list) and data and isinstance(data[0], dict):
         keys = list(data[0].keys())
-        rows = "".join("<tr>" + "".join(f"<td>{v}</td>" for v in [r.get(k, "") for k in keys]) + "</tr>" for r in data[:50])
-        header = "".join(f"<th>{k}</th>" for k in keys)
+        rows = "".join(
+            "<tr>" + "".join(f"<td>{_html.escape(str(r.get(k, '')))}</td>" for k in keys) + "</tr>"
+            for r in data[:50]
+        )
+        header = "".join(f"<th>{_html.escape(str(k))}</th>" for k in keys)
         return f"<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table>"
     elif isinstance(data, dict):
-        rows = "".join(f"<tr><td><strong>{k}</strong></td><td>{_format_val(v)}</td></tr>" for k, v in list(data.items())[:100])
+        rows = "".join(
+            f"<tr><td><strong>{_html.escape(str(k))}</strong></td><td>{_format_val(v)}</td></tr>"
+            for k, v in list(data.items())[:100]
+        )
         return f"<table>{rows}</table>"
-    return f"<pre>{json.dumps(data, ensure_ascii=False, indent=2)[:5000]}</pre>"
+    return f"<pre>{_html.escape(json.dumps(data, ensure_ascii=False, indent=2)[:5000])}</pre>"
 
 
 def _format_val(v):
     if isinstance(v, dict):
-        return "<code>" + json.dumps(v, ensure_ascii=False)[:200] + "</code>"
+        return "<code>" + _html.escape(json.dumps(v, ensure_ascii=False)[:200]) + "</code>"
     if isinstance(v, list):
         return f"[{len(v)} items]"
     if isinstance(v, (int, float)) and abs(v) >= 10000:
         return f"{v:,.0f}"
-    return str(v)
+    return _html.escape(str(v))
 
 
 def _build_portfolio_html() -> str:
@@ -3189,7 +3201,7 @@ def _build_portfolio_html() -> str:
             else:
                 pnl_str = "-"
                 cur_str = "-"
-            html += f"<tr><td>{v.get('name', t)}</td><td>{qty:,}</td><td>{avg:,}원</td><td>{cur_str}</td><td>{pnl_str}</td></tr>"
+            html += f"<tr><td>{_html.escape(v.get('name', t))}</td><td>{qty:,}</td><td>{avg:,}원</td><td>{cur_str}</td><td>{pnl_str}</td></tr>"
         html += "</tbody></table>"
         if kr_total_cost > 0:
             kr_pnl = (kr_total_eval - kr_total_cost) / kr_total_cost * 100
@@ -3199,7 +3211,7 @@ def _build_portfolio_html() -> str:
     if us:
         html += "<h3>🇺🇸 미국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th></tr></thead><tbody>"
         for t, v in us.items():
-            html += f"<tr><td>{v.get('name', t)} ({t})</td><td>{int(v.get('qty', 0)):,}</td><td>${float(v.get('avg_price', 0)):,.2f}</td></tr>"
+            html += f"<tr><td>{_html.escape(v.get('name', t))} ({_html.escape(t)})</td><td>{int(v.get('qty', 0)):,}</td><td>${float(v.get('avg_price', 0)):,.2f}</td></tr>"
         html += "</tbody></table>"
 
     cash_k = float(pf.get("cash_krw", 0) or 0)
@@ -3359,7 +3371,8 @@ def _build_watchalert_html() -> str:
     html = "<table><thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>등급</th><th>메모</th></tr></thead><tbody>"
     for i in items[:30]:
         bp = f"${i['buy_price']:,.2f}" if _is_us_ticker(i["ticker"]) else f"{i['buy_price']:,.0f}원"
-        html += f"<tr><td>{i['name']}</td><td>{i['ticker']}</td><td>{bp}</td><td>{i['grade']}</td><td>{i['memo']}</td></tr>"
+        html += (f"<tr><td>{_html.escape(i['name'])}</td><td>{_html.escape(i['ticker'])}</td>"
+                 f"<td>{bp}</td><td>{_html.escape(i['grade'])}</td><td>{_html.escape(i['memo'])}</td></tr>")
     html += "</tbody></table>"
     if len(items) > 30:
         html += f"<p>... 외 {len(items) - 30}종목</p>"
@@ -3401,7 +3414,9 @@ async def _handle_dash(request: web.Request) -> web.Response:
             for date, entry in recent:
                 regime = entry.get("regime", "?")
                 actions = ", ".join(entry.get("actions", [])) or entry.get("summary", "")[:60]
-                html += f"<tr><td>{date}</td><td>{regime}</td><td>{actions}</td></tr>"
+                html += (f"<tr><td>{_html.escape(str(date))}</td>"
+                         f"<td>{_html.escape(str(regime))}</td>"
+                         f"<td>{_html.escape(str(actions))}</td></tr>")
             html += "</tbody></table></div>"
     except Exception:
         pass
@@ -3415,7 +3430,9 @@ async def _handle_dash(request: web.Request) -> web.Response:
             html += '<div class="section"><h2>💼 최근 매매</h2><table><thead><tr><th>날짜</th><th>종목</th><th>매매</th><th>가격</th><th>수량</th></tr></thead><tbody>'
             for t in recent_t:
                 side = "매수" if t.get("side") == "buy" else "매도"
-                html += f"<tr><td>{t.get('date', '?')}</td><td>{t.get('name', t.get('ticker', '?'))}</td><td>{side}</td><td>{t.get('price', '?'):,}</td><td>{t.get('qty', '?')}</td></tr>"
+                name_ = _html.escape(str(t.get('name', t.get('ticker', '?'))))
+                date_ = _html.escape(str(t.get('date', '?')))
+                html += f"<tr><td>{date_}</td><td>{name_}</td><td>{side}</td><td>{t.get('price', '?'):,}</td><td>{t.get('qty', '?')}</td></tr>"
             html += "</tbody></table></div>"
     except Exception:
         pass
@@ -3426,7 +3443,7 @@ async def _handle_dash(request: web.Request) -> web.Response:
         if events:
             html += '<div class="section"><h2>📅 이벤트</h2><table><thead><tr><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
             for date in sorted(events.keys()):
-                html += f"<tr><td>{date}</td><td>{events[date]}</td></tr>"
+                html += f"<tr><td>{_html.escape(str(date))}</td><td>{_html.escape(str(events[date]))}</td></tr>"
             html += "</tbody></table></div>"
     except Exception:
         pass
@@ -3440,7 +3457,7 @@ async def _handle_dash(request: web.Request) -> web.Response:
         if doc_files:
             html += '<div class="section"><h2>📚 문서</h2><ul>'
             for f in doc_files:
-                html += f'<li><a href="/dash/file/{f}">{f}</a></li>'
+                html += f'<li><a href="/dash/file/{_html.escape(f)}">{_html.escape(f)}</a></li>'
             html += "</ul></div>"
     except Exception:
         pass
@@ -3469,10 +3486,11 @@ async def _handle_dash_file(request: web.Request) -> web.Response:
         with open(filepath, encoding="utf-8") as f:
             content = f.read()
 
+        safe_filename = _html.escape(filename)
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{filename}</title>{_DASH_CSS}</head><body>
+<title>{safe_filename}</title>{_DASH_CSS}</head><body>
 <div class="nav"><a href="/dash">← 대시보드</a></div>
-<h1>{filename}</h1>"""
+<h1>{safe_filename}</h1>"""
 
         if filename.endswith(".md") or filename.endswith(".txt"):
             html += _md_to_html(content)
@@ -3486,9 +3504,9 @@ async def _handle_dash_file(request: web.Request) -> web.Response:
                 else:
                     html += _json_to_table(data)
             except Exception:
-                html += f"<pre>{content[:10000]}</pre>"
+                html += f"<pre>{_html.escape(content[:10000])}</pre>"
         else:
-            html += f"<pre>{content[:10000]}</pre>"
+            html += f"<pre>{_html.escape(content[:10000])}</pre>"
 
         html += "</body></html>"
         return web.Response(text=html, content_type="text/html")
@@ -3944,9 +3962,9 @@ async def _handle_dash_research_file(request: web.Request) -> web.Response:
             try:
                 html += _json_to_table(json.loads(content))
             except Exception:
-                html += f"<pre>{content[:10000]}</pre>"
+                html += f"<pre>{_html.escape(content[:10000])}</pre>"
         else:
-            html += f"<pre>{content[:10000]}</pre>"
+            html += f"<pre>{_html.escape(content[:10000])}</pre>"
 
         html += "</body></html>"
         return web.Response(text=html, content_type="text/html")
