@@ -4129,13 +4129,18 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
             for t in recent_t:
                 side_cls = "badge-buy" if t.get("side") == "buy" else "badge-sell"
                 side_txt = "매수" if t.get("side") == "buy" else "매도"
-                price_val = t.get("price", "?")
+                price_val = t.get("price", 0)
+                ticker = t.get("ticker", "")
+                is_us = bool(ticker) and not ticker.isdigit()
                 try:
-                    price_disp = f"{int(price_val):,}"
+                    if is_us:
+                        price_disp = f"${float(price_val):,.2f}"
+                    else:
+                        price_disp = f"{int(price_val):,}원"
                 except (TypeError, ValueError):
                     price_disp = str(price_val)
                 html += (f'<tr><td>{_html.escape(str(t.get("date", "?")))}</td>'
-                         f'<td>{_html.escape(str(t.get("name", t.get("ticker", "?"))))}</td>'
+                         f'<td>{_html.escape(str(t.get("name", ticker)))}</td>'
                          f'<td><span class="badge {side_cls}">{side_txt}</span></td>'
                          f'<td>{price_disp}</td><td>{t.get("qty", "?")}</td></tr>')
             html += "</tbody></table></div></div>"
