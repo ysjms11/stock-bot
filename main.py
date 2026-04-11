@@ -3433,11 +3433,12 @@ async def _build_portfolio_v2_html() -> str:
             pc = _pc(pnl_amt)
             cost = qty * avg
 
-            cur_str = f"{cur:,}원" if cur else "-"
-            ev_str = f"{ev:,.0f}원"
-            pnl_str = (f'<span class="{pc}">{_sign(pnl_amt)}{pnl_amt:,.0f}원 {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
+            cur_str = (f'<span class="pf-label">현재가</span>{cur:,}원' if cur else "-")
+            ev_str = f'<span class="pf-label">평가</span>{ev:,.0f}원'
+            pnl_str = (f'<span class="pf-label">손익</span><span class="{pc}">{_sign(pnl_amt)}{pnl_amt:,.0f}원 {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
                        if cur else "-")
-            detail = f"{qty:,}주 × {avg:,}원 = {cost:,.0f}원"
+            detail = (f'{qty:,}주 · <span class="pf-label">평단</span>{avg:,}원 · '
+                      f'<span class="pf-label">매입</span>{cost:,.0f}원')
 
             html += (f'<div class="pf-card" data-eval="{ev}" data-pnl-pct="{pnl_pct:.4f}" data-pnl-amt="{pnl_amt}">'
                      f'<div class="pf-left"><div class="pf-name">{name}</div><div class="pf-detail">{detail}</div></div>'
@@ -3490,12 +3491,13 @@ async def _build_portfolio_v2_html() -> str:
             pc = _pc(pnl_usd)
             cost_usd = qty * avg
 
-            cur_str = f"${cur:,.2f}" if cur else "-"
-            ev_usd_str = f"${ev_usd:,.2f}"
+            cur_str = (f'<span class="pf-label">현재가</span>${cur:,.2f}' if cur else "-")
+            ev_usd_str = f'<span class="pf-label">평가</span>${ev_usd:,.2f}'
             ev_krw_str = f" ({ev_usd * usd_krw:,.0f}원)" if (ev_usd and usd_krw) else ""
-            pnl_str = (f'<span class="{pc}">{_sign(pnl_usd)}${pnl_usd:,.2f} {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
+            pnl_str = (f'<span class="pf-label">손익</span><span class="{pc}">{_sign(pnl_usd)}${pnl_usd:,.2f} {_sign(pnl_pct)}{pnl_pct:.1f}%</span>'
                        if cur else "-")
-            detail = f"{qty:,.0f}주 × ${avg:,.2f} = ${cost_usd:,.2f}"
+            detail = (f'{qty:,.0f}주 · <span class="pf-label">평단</span>${avg:,.2f} · '
+                      f'<span class="pf-label">매입</span>${cost_usd:,.2f}')
 
             html += (f'<div class="pf-card" data-eval="{ev_sort:.2f}" data-pnl-pct="{pnl_pct:.4f}" data-pnl-amt="{pnl_usd:.4f}">'
                      f'<div class="pf-left"><div class="pf-name">{name} <span style="color:var(--fg2);font-size:0.8em">({_html.escape(sym)})</span></div>'
@@ -3731,6 +3733,7 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .pf-price{font-weight:600}
 .pf-eval{font-size:0.85em;color:var(--fg2);margin-top:1px}
 .pf-pnl-row{font-size:0.85em;margin-top:2px}
+.pf-label{font-size:0.7em;color:var(--fg2);margin-right:2px}
 .pf-sort-bar{display:flex;gap:4px;margin-bottom:8px}
 .pf-sort-btn{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--fg2);cursor:pointer;font-size:0.75em;transition:background 0.2s,color 0.2s}
 .pf-sort-btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
