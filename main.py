@@ -3755,6 +3755,11 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .toggle{cursor:pointer;user-select:none}
 details summary{cursor:pointer;user-select:none}
 details summary h2{display:inline}
+.sector-group{margin-bottom:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.sector-group[open]{border-color:rgba(79,195,247,0.3)}
+.sector-header{padding:8px 12px;cursor:pointer;font-weight:600;font-size:0.9em;background:var(--bg);list-style:none;display:flex;align-items:center;gap:6px}
+.sector-header::-webkit-details-marker{display:none}
+.watch-sector-table{margin:0}
 .decision-card{background:var(--bg);border-radius:8px;padding:8px 12px;margin-bottom:8px;border:1px solid var(--border)}
 .decision-card[open]{border-color:var(--accent)}
 .decision-card summary{cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;list-style:none}
@@ -3820,31 +3825,38 @@ if (refreshTime) refreshTime.textContent = new Date().toLocaleTimeString('ko-KR'
 
 // 3. 감시종목 검색/필터
 const searchInput = document.getElementById('watch-search');
-const watchTable = document.getElementById('watch-table');
 const filterBtns = document.querySelectorAll('.filter-btn');
 const watchCount = document.getElementById('watch-count');
 let currentFilter = 'all';
 
 function filterWatch() {
-  if (!watchTable) return;
+  const tables = document.querySelectorAll('.watch-sector-table');
+  if (!tables.length) return;
   const q = (searchInput ? searchInput.value : '').toLowerCase();
-  const rows = watchTable.querySelectorAll('tbody tr');
-  let visible = 0;
-  rows.forEach(r => {
-    const name = (r.dataset.name || '').toLowerCase();
-    const ticker = (r.dataset.ticker || '').toLowerCase();
-    const grade = r.dataset.grade || '';
-    const market = r.dataset.market || '';
-    const matchSearch = !q || name.includes(q) || ticker.includes(q);
-    const matchFilter = currentFilter === 'all'
-      || (currentFilter === 'kr' && market === 'kr')
-      || (currentFilter === 'us' && market === 'us')
-      || grade.startsWith(currentFilter);
-    const show = matchSearch && matchFilter;
-    r.style.display = show ? '' : 'none';
-    if (show) visible++;
+  let visible = 0, total = 0;
+  tables.forEach(tbl => {
+    const rows = tbl.querySelectorAll('tbody tr');
+    let groupVisible = 0;
+    rows.forEach(r => {
+      const name = (r.dataset.name || '').toLowerCase();
+      const ticker = (r.dataset.ticker || '').toLowerCase();
+      const grade = r.dataset.grade || '';
+      const market = r.dataset.market || '';
+      const matchSearch = !q || name.includes(q) || ticker.includes(q);
+      const matchFilter = currentFilter === 'all'
+        || (currentFilter === 'kr' && market === 'kr')
+        || (currentFilter === 'us' && market === 'us')
+        || grade.startsWith(currentFilter);
+      const show = matchSearch && matchFilter;
+      r.style.display = show ? '' : 'none';
+      if (show) { visible++; groupVisible++; }
+      total++;
+    });
+    // 그룹 내 visible 종목이 없으면 details 자체를 숨김
+    const details = tbl.closest('.sector-group');
+    if (details) details.style.display = groupVisible === 0 ? 'none' : '';
   });
-  if (watchCount) watchCount.textContent = visible + '/' + rows.length + '종목';
+  if (watchCount) watchCount.textContent = visible + '/' + total + '종목';
 }
 
 if (searchInput) searchInput.addEventListener('input', filterWatch);
@@ -3942,8 +3954,20 @@ def _build_events_v2_html() -> str:
     return html
 
 
+_US_SECTOR_MAP = {
+    "NVDA": "반도체", "AMD": "반도체", "AVGO": "반도체", "MRVL": "반도체", "ON": "반도체",
+    "LITE": "광통신", "GLW": "광통신",
+    "VRT": "전력기기", "ETN": "전력기기", "NVT": "전력기기", "MOD": "전력기기",
+    "BWXT": "방산/원전", "LEU": "방산/원전",
+    "TSLA": "자동차", "META": "인터넷/플랫폼", "PANW": "사이버보안",
+    "UNH": "헬스케어", "ASTS": "통신/우주", "TTD": "광고/미디어",
+    "XYL": "환경/수처리", "CRSP": "바이오",
+}
+
+
 def _build_watchalert_v2_html() -> str:
-    """감시종목 전체 표시 + 현재가 + 검색 + 등급 필터 + 뱃지."""
+    """감시종목 섹터별 그룹핑 + 현재가 + 검색 + 등급 필터 + 뱃지."""
+    from collections import defaultdict
     wa = load_json(WATCHALERT_FILE, {})
     if not wa:
         return "<p>감시 종목 없음</p>"
@@ -3955,7 +3979,8 @@ def _build_watchalert_v2_html() -> str:
         cached = ws_manager.get_cached_price(ticker)
         if cached is not None:
             cur_prices[ticker] = cached
-    # 2차: 캐시에 없는 종목은 SQLite DB에서
+    # 2차: 캐시에 없는 종목은 SQLite DB에서 (KR 섹터 정보도 함께 수집)
+    kr_sector_map: dict[str, str] = {}
     try:
         from db_collector import _get_db
         conn = _get_db()
@@ -3965,18 +3990,38 @@ def _build_watchalert_v2_html() -> str:
             for r in rows:
                 if r["symbol"] not in cur_prices:
                     cur_prices[r["symbol"]] = r["close"]
+        # 섹터 정보
+        try:
+            sec_rows = conn.execute("SELECT symbol, sector FROM stock_master").fetchall()
+            kr_sector_map = {r["symbol"]: r["sector"] for r in sec_rows if r["sector"]}
+        except Exception:
+            pass
         conn.close()
     except Exception:
         pass
 
-    # 등급순 → 같은 등급 내에서 buy_price 내림차순
-    items = sorted(
-        wa.items(),
-        key=lambda x: (
+    # 종목별 섹터 부여 후 그룹핑
+    groups: dict[str, list] = defaultdict(list)
+    for ticker, info in wa.items():
+        is_us = not ticker.isdigit()
+        if is_us:
+            sector = _US_SECTOR_MAP.get(ticker, "기타")
+        else:
+            sector = kr_sector_map.get(ticker, "기타")
+        groups[sector].append((ticker, info))
+
+    # 각 그룹 내 등급순 → 같은 등급 내 buy_price 내림차순
+    for sector in groups:
+        groups[sector].sort(key=lambda x: (
             _GRADE_ORDER.get(x[1].get("grade", ""), 7),
             -float(x[1].get("buy_price", 0) or 0),
-        ),
-    )
+        ))
+
+    # 섹터 정렬: 종목 수 많은 순
+    sorted_sectors = sorted(groups.keys(), key=lambda s: -len(groups[s]))
+
+    total = sum(len(v) for v in groups.values())
+    all_items = [(t, i) for s in sorted_sectors for t, i in groups[s]]
 
     # 검색 + 필터 UI
     html = '<input id="watch-search" class="search-box" placeholder="종목명 또는 코드 검색...">'
@@ -3984,15 +4029,13 @@ def _build_watchalert_v2_html() -> str:
     html += '<button class="filter-btn active" data-filter="all">전체</button>'
     html += '<button class="filter-btn" data-filter="kr">🇰🇷</button>'
     html += '<button class="filter-btn" data-filter="us">🇺🇸</button>'
-    grades = sorted(set(v.get("grade", "") for _, v in items if v.get("grade")))
+    grades = sorted(set(v.get("grade", "") for _, v in all_items if v.get("grade")))
     for g in grades:
         html += f'<button class="filter-btn" data-filter="{g}">{g}</button>'
-    html += f'<span id="watch-count" style="margin-left:auto;color:var(--fg2);font-size:0.8em">{len(items)}/{len(items)}종목</span>'
+    html += f'<span id="watch-count" style="margin-left:auto;color:var(--fg2);font-size:0.8em">{total}/{total}종목</span>'
     html += '</div>'
 
-    # 테이블 (현재가 + 괴리율 컬럼 추가)
-    html += '<div class="table-wrap"><table id="watch-table"><thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>현재가</th><th>괴리</th><th>등급</th><th>등록일</th><th>메모</th></tr></thead><tbody>'
-    for ticker, info in items:
+    def _render_row(ticker: str, info: dict) -> str:
         name = _html.escape(info.get("name", ticker))
         bp = float(info.get("buy_price", 0) or 0)
         grade = _html.escape(info.get("grade", ""))
@@ -4001,33 +4044,43 @@ def _build_watchalert_v2_html() -> str:
         is_us = not ticker.isdigit()
         market = "us" if is_us else "kr"
         price_str = f"${bp:,.2f}" if is_us else f"{int(bp):,}원"
-        # 현재가 (WS 캐시 → SQLite DB fallback)
         cur = cur_prices.get(ticker, 0)
         if cur:
-            if is_us:
-                cur_str = f"${float(cur):,.2f}"
-            else:
-                cur_str = f"{int(cur):,}원"
+            cur_str = f"${float(cur):,.2f}" if is_us else f"{int(cur):,}원"
             gap_pct = (float(cur) - bp) / bp * 100 if bp else 0
             gap_cls = "pos" if gap_pct >= 0 else "neg"
             gap_str = f"<span class='{gap_cls}'>{gap_pct:+.1f}%</span>"
         else:
             cur_str = "-"
             gap_str = "-"
-        # 등록일: updated_at 우선, 없으면 created
         reg_date = info.get("updated_at") or info.get("created", "")
         reg_date_esc = _html.escape(str(reg_date)[:10]) if reg_date else "-"
-        # 클래스명에서 +/-를 p/m으로 변환
         grade_key = grade.replace("+", "p").replace("-", "m")
         badge_cls = f"badge-{grade_key}" if grade else ""
         grade_html = f'<span class="badge {badge_cls}">{grade}</span>' if grade else ""
-        html += (f'<tr data-name="{name}" data-ticker="{ticker_esc}" data-grade="{grade}" data-market="{market}">'
-                 f'<td>{name}</td><td>{ticker_esc}</td><td>{price_str}</td>'
-                 f'<td>{cur_str}</td><td>{gap_str}</td>'
-                 f'<td>{grade_html}</td>'
-                 f'<td style="font-size:0.8em;color:var(--fg2)">{reg_date_esc}</td>'
-                 f'<td style="font-size:0.8em;color:var(--fg2)">{memo}</td></tr>')
-    html += '</tbody></table></div>'
+        return (f'<tr data-name="{name}" data-ticker="{ticker_esc}" data-grade="{grade}" data-market="{market}">'
+                f'<td>{name}</td><td>{ticker_esc}</td><td>{price_str}</td>'
+                f'<td>{cur_str}</td><td>{gap_str}</td>'
+                f'<td>{grade_html}</td>'
+                f'<td style="font-size:0.8em;color:var(--fg2)">{reg_date_esc}</td>'
+                f'<td style="font-size:0.8em;color:var(--fg2)">{memo}</td></tr>')
+
+    # 섹터별 그룹 렌더링
+    for sector in sorted_sectors:
+        items = groups[sector]
+        count = len(items)
+        open_attr = " open" if count >= 5 else ""
+        sector_esc = _html.escape(sector)
+        html += f'<details class="sector-group"{open_attr}>'
+        html += (f'<summary class="sector-header">{sector_esc}'
+                 f' <span style="color:var(--fg2);font-size:0.85em">({count}종목)</span></summary>')
+        html += ('<div class="table-wrap"><table class="watch-sector-table">'
+                 '<thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>현재가</th>'
+                 '<th>괴리</th><th>등급</th><th>등록일</th><th>메모</th></tr></thead><tbody>')
+        for ticker, info in items:
+            html += _render_row(ticker, info)
+        html += '</tbody></table></div></details>'
+
     return html
 
 
