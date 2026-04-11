@@ -1088,6 +1088,31 @@
 
 ---
 
+## 신규 API 함수 (db_collector용)
+
+### kis_overtime_daily
+**입력**: `ticker="005930", token`
+**출력**:
+```json
+{"ovtm_close": 206000, "ovtm_change_pct": 0.0, "ovtm_volume": 0}
+```
+
+### kis_income_statement
+**입력**: `ticker="005930", token`
+**출력**:
+```json
+[{"report_period": "202512", "revenue": 3336059.0, "cost_of_sales": 2022355.0, "gross_profit": 1313704.0, "operating_profit": 436011.0, "op_profit": 494815.0, "net_income": 452068.0}]
+```
+
+### kis_balance_sheet
+**입력**: `ticker="005930", token`
+**출력**:
+```json
+[{"report_period": "202512", "current_assets": 2476846.0, "fixed_assets": 3192575.0, "total_assets": 5669421.0, "current_liab": 1064113.0, "fixed_liab": 242104.0, "total_liab": 1306218.0, "capital": 8975.0, "total_equity": 4363203.0}]
+```
+
+---
+
 ## data/research/NVDA.md (파일 포맷 예시)
 > 종목별 리서치 메모. 마크다운 자유형식. 파일명 = ticker.md
 ```markdown

@@ -24,6 +24,16 @@
 7. **KRX Safari keepalive 멀티탭 순회 강화**
 8. **mcp_tools.py load_krx_db import 에러 수정**
 
+### 아키텍처 변경 (이 세션 이후)
+- **KRX DB: JSON → SQLite 전환** (`data/krx.db`, 3테이블 112컬럼)
+  - `daily_prices`: 시세/밸류에이션/수급 (기존 JSON 호환)
+  - `financials`: 손익계산서 + 재무상태표 (KIS API `kis_income_statement` / `kis_balance_sheet`)
+  - `overtime_prices`: 시간외 종가/등락률/거래량 (`kis_overtime_daily`)
+- **db_collector.py 신규** (~1700줄): KIS API 풀수집 + SQLite 저장 + 지표 계산 통합
+- **WebSocket 통합**: KR 실시간 + US 폴링 + 24시간 연속 관리
+- **대시보드 v2**: 포트폴리오 현재가/손익 증권사 스타일 렌더링
+- **파일 구조 5파일로 확장**: `kis_api.py` / `main.py` / `mcp_tools.py` / `krx_crawler.py` / `db_collector.py`
+
 ### 투자
 - NVDA 12주 매수 @ $183.68, 등급 A (trade T004 + 손절 $140/목표 $274)
 - AMD 딥서치 → 목표 $235→$280, 등급 B→B+, 전량홀드
@@ -109,15 +119,19 @@
 
 ## 데이터 수집 인프라
 
-| 데이터 | 소스 | 수집 주기 |
-|--------|------|----------|
-| 시세 (OHLCV/시총) | KRX OPEN API | 매일 15:55 (launchd) |
-| PER/PBR/EPS/BPS | Safari KRX (카카오 로그인) | 매일 15:55 |
-| 외인/기관/개인 수급 | Safari KRX | 매일 15:55 |
-| 컨센서스 목표가 | FnGuide 크롤링 | 매일 15:55 |
-| 공매도/신용/외인보유 | KIS API | 딥서치 시 개별 조회 |
-| 증권사 리포트 | 한경+네이버+와이즈 | 매일 수집 |
-| KRX DB 축적 | 232일 (2025-04-23 ~) | 보관 무제한 |
+| 데이터 | 소스 | 수집 주기 | 저장 |
+|--------|------|----------|------|
+| 시세 (OHLCV/시총) | KIS API (`db_collector.py`) | 매일 15:55 (launchd) | SQLite daily_prices |
+| PER/PBR/EPS/BPS | KIS API 풀수집 | 매일 15:55 | SQLite daily_prices |
+| 외인/기관/개인 수급 | KIS API 풀수집 | 매일 15:55 | SQLite daily_prices |
+| 손익계산서/재무상태표 | KIS API (`kis_income_statement` / `kis_balance_sheet`) | 매일 15:55 | SQLite financials |
+| 시간외 데이터 | KIS API (`kis_overtime_daily`) | 매일 15:55 | SQLite overtime_prices |
+| 컨센서스 목표가 | FnGuide 크롤링 | 매일 15:55 | SQLite daily_prices |
+| 공매도/신용/외인보유 | KIS API | 딥서치 시 개별 조회 | — |
+| 증권사 리포트 | 한경+네이버+와이즈 | 매일 수집 | data/reports/ |
+| KRX DB 축적 | 232일 (2025-04-23 ~) | 보관 무제한 | data/krx.db |
+
+> **이전 방식 (JSON)**: `data/krx_db/YYYYMMDD.json` → SQLite 전환으로 폐기. 설계서는 `data/krx_db_design.md` (레거시 참조용 유지).
 
 ---
 
@@ -127,9 +141,10 @@
 - **도메인**: arcbot-server.org (Cloudflare Tunnel)
 - **launchd 실행 중**:
   - com.stock-bot.main (텔레그램 봇 + MCP)
-  - com.stock-bot.krx-update (매일 15:55 KRX DB 갱신)
-  - com.stock-bot.krx-keepalive (25분마다 KRX 세션 연장)
+  - com.stock-bot.krx-update (매일 15:55 KRX DB 갱신 — `db_collector.py` 실행)
+  - com.stock-bot.krx-keepalive (25분마다 KRX Safari 세션 연장)
   - com.stock-bot.cloudflared (터널)
+- **DB 파일**: `data/krx.db` (SQLite, 3테이블 112컬럼)
 - **GitHub**: ysjms11/stock-bot, main 브랜치
 - **최근 커밋**: `f400095` chore: GitHub Actions KRX workflows 삭제
 
