@@ -8,6 +8,22 @@ KRX 전종목 일별 데이터 크롤러
 - KRX OPEN API (openapi.krx.co.kr) 우선, 실패 시 크롤링 fallback
 """
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# db_collector.py 호환 래퍼 — 기존 import 유지용
+# db_collector.py가 있으면 SQLite 버전 함수로 덮어씀
+# 없으면 아래 기존 JSON 코드가 그대로 동작
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+try:
+    from db_collector import (
+        load_krx_db, scan_stocks, _load_history,
+        KRX_DB_DIR, DB_PATH,
+        collect_daily, collect_financial_weekly,
+    )
+    # _compute_technicals는 re-export하지 않음 — 기존 (date, stocks) 시그니처 유지
+    _USE_SQLITE = True
+except ImportError:
+    _USE_SQLITE = False
+
 import aiohttp
 import asyncio
 import json

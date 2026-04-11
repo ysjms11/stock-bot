@@ -1,0 +1,1610 @@
+"""
+DB 수집기 — KIS API 풀수집 + SQLite DB
+- 매일: 기본시세 + 시간외 + 수급 + 공매도 → daily_snapshot
+- 주 1회: 손익계산서 + 대차대조표 → financial_quarterly
+- 기술지표 계산 → daily_snapshot UPDATE
+- FnGuide 컨센서스 → daily_snapshot UPDATE
+
+파일 구조:
+  [1~70]    imports + 상수
+  [71~130]  SQLite 연결 / 스키마 초기화
+  [131~160] Rate Limiter
+  [161~240] KRX OPEN API 함수 (krx_crawler.py에서 복사)
+  [241~330] 섹터 분류 (krx_crawler.py에서 복사)
+  [331~390] 종목 마스터 UPSERT
+  [391~430] _collect_phase — 전종목 배치 수집
+  [431~530] _store_daily_snapshot — daily_snapshot INSERT
+  [531~560] collect_daily — 메인 수집 함수
+  [561+]    하위호환 심볼 (main.py import용)
+"""
+
+import sqlite3
+import asyncio
+import aiohttp
+import os
+import json
+import numpy as np
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from dataclasses import dataclass, field
+
+KST = ZoneInfo("Asia/Seoul")
+_DATA_DIR = os.environ.get("DATA_DIR", "/data")
+DB_PATH = f"{_DATA_DIR}/stock.db"
+
+# 하위호환 (main.py import용)
+KRX_DB_DIR = f"{_DATA_DIR}/krx_db"
+
+# KRX OPEN API 상수 (krx_crawler.py와 동일)
+KRX_OPENAPI_BASE = "https://data-dbg.krx.co.kr/svc/apis"
+KRX_API_KEY = os.environ.get("KRX_API_KEY", "")
+
+_OPENAPI_ENDPOINTS = {
+    "market_STK": ("sto", "stk_bydd_trd"),
+    "market_KSQ": ("sto", "ksq_bydd_trd"),
+}
+
+KRX_JSON_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+KRX_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Referer": "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101",
+}
+
+_STD_SECTOR_MAP_PATH = f"{_DATA_DIR}/std_sector_map.json"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Rate limiter 전역 세마포어
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_RATE_SEM = None  # collect_daily 시작 시 초기화
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# SQLite 연결 / 스키마 초기화
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _get_db() -> sqlite3.Connection:
+    """SQLite 연결. WAL 모드, FK 활성화. 스키마 자동 생성."""
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.row_factory = sqlite3.Row  # dict-like 접근
+    _init_schema(conn)
+    return conn
+
+
+def _init_schema(conn: sqlite3.Connection):
+    """data/db_schema.sql 실행."""
+    schema_path = os.path.join(os.path.dirname(__file__), "data", "db_schema.sql")
+    with open(schema_path, encoding="utf-8") as f:
+        conn.executescript(f.read())
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Rate Limiter
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def _rate_limited(coro):
+    """초당 8건 제한 (세마포어 + 0.13s 슬립)."""
+    async with _RATE_SEM:
+        result = await coro
+        await asyncio.sleep(0.13)
+        return result
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# KRX OPEN API (krx_crawler.py에서 복사)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _pi(s) -> int:
+    """KRX comma-formatted string → int"""
+    if not s or s == "-" or s == "":
+        return 0
+    return int(str(s).replace(",", "").replace("+", "").strip() or "0")
+
+
+def _pf(s) -> float:
+    """KRX string → float"""
+    if not s or s == "-" or s == "":
+        return 0.0
+    return float(str(s).replace(",", "").replace("+", "").strip() or "0")
+
+
+async def _krx_openapi_get(session: aiohttp.ClientSession, category: str,
+                            endpoint: str, date: str) -> list:
+    """KRX OPEN API GET 요청. Returns OutBlock_1 리스트."""
+    url = f"{KRX_OPENAPI_BASE}/{category}/{endpoint}"
+    params = {"AUTH_KEY": KRX_API_KEY, "basDd": date}
+    async with session.get(url, params=params,
+                           timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        if resp.status == 401:
+            raise RuntimeError("KRX OPEN API 인증 실패 (401)")
+        if resp.status == 429:
+            raise RuntimeError("KRX OPEN API 호출 한도 초과 (429)")
+        if resp.status != 200:
+            text = await resp.text()
+            raise RuntimeError(f"KRX OPEN API HTTP {resp.status}: {text[:200]}")
+        data = await resp.json(content_type=None)
+        records = data.get("OutBlock_1", [])
+        if not records:
+            raise RuntimeError(f"KRX OPEN API 빈 응답 ({endpoint})")
+        return records
+
+
+async def _krx_post(session: aiohttp.ClientSession, form: dict) -> dict:
+    """KRX 크롤링 POST 요청."""
+    async with session.post(KRX_JSON_URL, data=form, headers=KRX_HEADERS,
+                            timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        if resp.status != 200:
+            text = await resp.text()
+            raise RuntimeError(f"KRX HTTP {resp.status}: {text[:200]}")
+        return await resp.json(content_type=None)
+
+
+def _parse_market_records(records: list, market: str) -> list[dict]:
+    """시세 레코드 파싱 (OPEN API / 크롤링 공통).
+    OPEN API: ISU_CD(6자리), ISU_NM
+    크롤링:   ISU_SRT_CD(6자리), ISU_ABBRV
+    """
+    mkt_label = "kospi" if market == "STK" else "kosdaq"
+    result = []
+    for r in records:
+        raw = str(r.get("ISU_SRT_CD") or r.get("ISU_CD", "")).strip()
+        # ISIN(KR7XXXXXX000) → 6자리 추출
+        if len(raw) == 12 and raw.startswith("KR"):
+            ticker = raw[3:9]
+        else:
+            ticker = raw
+        if not ticker or len(ticker) != 6:
+            continue
+        name = str(r.get("ISU_ABBRV") or r.get("ISU_NM", "")).strip()
+        result.append({
+            "ticker": ticker,
+            "name": name,
+            "market": mkt_label,
+            "close": _pi(r.get("TDD_CLSPRC")),
+            "chg_pct": _pf(r.get("FLUC_RT")),
+            "volume": _pi(r.get("ACC_TRDVOL")),
+            "trade_value": _pi(r.get("ACC_TRDVAL")),
+            "market_cap": _pi(r.get("MKTCAP")),
+        })
+    return result
+
+
+async def fetch_krx_market_data(date: str, market: str = "STK") -> list[dict]:
+    """전종목 시세. KRX OPEN API 우선, 실패 시 크롤링 fallback."""
+    # 1차: KRX OPEN API
+    if KRX_API_KEY:
+        ep = _OPENAPI_ENDPOINTS.get(f"market_{market}")
+        if ep:
+            try:
+                async with aiohttp.ClientSession() as s:
+                    records = await _krx_openapi_get(s, ep[0], ep[1], date)
+                result = _parse_market_records(records, market)
+                print(f"[KRX OPENAPI] {market} 시세: {len(result)}종목")
+                return result
+            except Exception as e:
+                print(f"[KRX OPENAPI] {market} 시세 실패: {e} → 크롤링 fallback")
+
+    # 2차: 크롤링 (data.krx.co.kr)
+    form = {
+        "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
+        "locale": "ko_KR",
+        "mktId": market,
+        "trdDd": date,
+        "share": "1",
+        "money": "1",
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            body = await _krx_post(s, form)
+        records = body.get("OutBlock_1", [])
+        if not records:
+            raise RuntimeError("empty OutBlock_1")
+        result = _parse_market_records(records, market)
+        print(f"[KRX] {market} 시세: {len(result)}종목")
+        return result
+    except Exception as e:
+        print(f"[KRX] {market} 시세 직접호출 실패: {e}")
+        return []
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 섹터 분류 (krx_crawler.py에서 복사)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 6자리 표준산업분류코드 → 섹터명
+_STD_CODE_TO_SECTOR = {
+    # 반도체/전자
+    "032601": "반도체", "032602": "전자부품", "032603": "IT하드웨어",
+    "032604": "통신장비/가전", "032605": "영상/음향", "032606": "전자부품",
+    # 전력/에너지
+    "032801": "전력기기", "032802": "2차전지", "032803": "전선/케이블",
+    "032804": "전기장비", "032805": "가전", "032809": "전기장비",
+    # 자동차/운송장비
+    "033001": "자동차", "033002": "자동차부품", "033003": "자동차부품",
+    "033004": "자동차부품", "033101": "조선", "033102": "철도",
+    "033103": "항공우주/방산", "033109": "기타운송",
+    # 방산
+    "032502": "방산",
+    # 바이오/제약/의료
+    "032101": "바이오", "032102": "제약", "032103": "의료용품",
+    "032701": "의료기기", "032702": "정밀기기", "032703": "정밀기기",
+    # 화학
+    "032001": "화학", "032002": "화학", "032003": "화학",
+    "032004": "화학", "032005": "화학섬유",
+    # 금속/소재
+    "032401": "철강", "032402": "비철금속", "032403": "금속가공",
+    "032501": "금속가공", "032509": "금속가공",
+    "032201": "고무", "032202": "플라스틱",
+    "032301": "유리/세라믹", "032302": "세라믹", "032303": "시멘트/비금속",
+    "032309": "비금속",
+    # 기계
+    "032901": "일반기계",
+    # 식품/음료
+    "031001": "식품", "031002": "식품", "031003": "식품", "031004": "식품",
+    "031005": "식품", "031006": "식품", "031007": "식품", "031008": "식품",
+    "031009": "식품", "031101": "음료", "031102": "음료", "031201": "담배",
+    # 섬유/의류
+    "031301": "섬유", "031302": "섬유", "031303": "섬유", "031304": "섬유",
+    "031309": "섬유", "031401": "패션/의류", "031403": "패션/의류",
+    "031404": "패션/의류", "031501": "패션/의류", "031502": "패션/의류",
+    # 목재/종이/인쇄
+    "031601": "목재/종이", "031602": "목재/종이",
+    "031701": "목재/종이", "031702": "목재/종이", "031709": "목재/종이",
+    "031801": "인쇄", "031802": "인쇄",
+    # 정유/에너지
+    "031902": "정유",
+    # 전기/가스/환경
+    "043501": "전기/가스", "043502": "가스", "043503": "전기/가스",
+    "053802": "환경", "053803": "환경",
+    # 건설
+    "064101": "건설", "064102": "건설",
+    "064201": "건설", "064202": "건설", "064203": "건설", "064204": "건설",
+    # 유통/도매/소매
+    "074501": "유통", "074502": "유통",
+    "074601": "무역/상사", "074602": "무역/상사", "074603": "식품유통",
+    "074604": "유통", "074605": "유통", "074606": "유통",
+    "074607": "무역/상사", "074608": "무역/상사",
+    "074701": "유통/소매", "074702": "유통/소매", "074703": "유통/소매",
+    "074704": "유통/소매", "074705": "유통/소매", "074707": "유통/소매",
+    "074708": "유통/소매", "074709": "유통/소매",
+    # 운송/물류
+    "084902": "운송", "084903": "물류",
+    "085001": "해운", "085101": "항공", "085209": "물류",
+    # 호텔/외식
+    "095501": "레저/호텔", "095601": "외식",
+    # SW/게임/미디어
+    "105801": "출판/교육", "105802": "소프트웨어",
+    "105901": "엔터/미디어", "105902": "엔터/미디어",
+    "106002": "엔터/미디어", "106003": "엔터/미디어",
+    # IT/통신
+    "106102": "통신", "106201": "IT서비스",
+    "106301": "인터넷/플랫폼", "106309": "IT서비스",
+    # 금융
+    "116401": "은행", "116402": "투자",
+    "116501": "보험", "116502": "보험", "116601": "증권", "116602": "보험",
+    # 부동산
+    "126801": "리츠/부동산", "126802": "리츠/부동산",
+    # 전문서비스
+    "137103": "광고", "137104": "광고",
+    "137105": "지주", "137106": "지주",
+    "137201": "엔지니어링", "137209": "엔지니어링",
+    "137302": "디자인", "137309": "기타서비스",
+    # 생활서비스
+    "147401": "시설관리", "147502": "여행", "147503": "보안", "147509": "기타서비스",
+    "147601": "기타서비스", "147602": "기타서비스", "147603": "기타서비스",
+    # 교육
+    "168501": "교육", "168505": "교육", "168506": "교육", "168507": "교육",
+    # 농림어업
+    "010101": "농업", "010301": "수산",
+    # 엔터/레저
+    "189001": "엔터/미디어", "189101": "스포츠", "189102": "엔터/미디어",
+    # 기타
+    "033201": "가구/생활", "033301": "귀금속", "033302": "기타제조",
+    "033303": "스포츠용품", "033309": "기타제조",
+    "199503": "기타서비스", "199609": "기타서비스",
+}
+
+# 애매한 코드 → 이름 키워드로 세분화
+_SECTOR_KEYWORD_RULES = [
+    # 116409 기타금융 → 금융 vs 지주
+    ("116409", ["금융", "카드", "캐피탈"], "금융"),
+    ("116409", ["페이", "핀테크"], "핀테크"),
+    # 032902 특수기계 → 반도체장비 vs 로봇 vs 건설기계
+    ("032902", ["로봇", "로보틱스", "로보티즈"], "로봇"),
+    ("032902", ["건설기계", "밥캣"], "건설기계"),
+    # 032004 기타화학 → 화장품 vs 소재
+    ("032004", ["아모레", "코스맥스", "코스메카", "콜마", "에이피알",
+                "LG생활", "달바", "뷰티"], "화장품/뷰티"),
+    ("032004", ["솔브레인", "나노신소재", "코스모신소재", "레이크머티리얼즈"], "전자소재"),
+    # 105802 SW → 게임 vs AI
+    ("105802", ["게임", "크래프톤", "넷마블", "엔씨소프트", "펄어비스",
+                "시프트업", "넥슨"], "게임"),
+    ("105802", ["루닛", "노타", "클로봇"], "AI"),
+]
+
+# 애매한 코드의 기본값 (키워드 매칭 안 될 때)
+_SECTOR_CODE_DEFAULTS = {
+    "116409": "지주", "032902": "반도체장비", "137001": "바이오",
+    "032004": "화학", "105802": "소프트웨어",
+}
+
+# 개별 종목 오버라이드 (매출비중 기준)
+_SECTOR_OVERRIDES = {
+    "005930": "반도체",  # 삼성전자
+    "005935": "반도체",  # 삼성전자우
+}
+
+
+def _classify_sector(ticker: str, name: str, std_code: str) -> str:
+    """표준산업분류코드 + 이름 키워드 → 실용 섹터명."""
+    if ticker in _SECTOR_OVERRIDES:
+        return _SECTOR_OVERRIDES[ticker]
+    if std_code in _STD_CODE_TO_SECTOR and std_code not in _SECTOR_CODE_DEFAULTS:
+        return _STD_CODE_TO_SECTOR[std_code]
+    for code, keywords, sector in _SECTOR_KEYWORD_RULES:
+        if std_code == code:
+            for kw in keywords:
+                if kw in name:
+                    return sector
+    if std_code in _SECTOR_CODE_DEFAULTS:
+        return _SECTOR_CODE_DEFAULTS[std_code]
+    return _STD_CODE_TO_SECTOR.get(std_code, "")
+
+
+def _load_std_sector_map() -> dict:
+    """std_sector_map.json 로드 → {ticker: {std_code, std_name}}."""
+    try:
+        with open(_STD_SECTOR_MAP_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 종목 마스터 UPSERT
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _sync_stock_master(conn: sqlite3.Connection, market_data: list[dict]):
+    """시세 데이터에서 종목 마스터 UPSERT."""
+    std_map = _load_std_sector_map()
+    for item in market_data:
+        ticker = item["ticker"]
+        name = item.get("name", "")
+        market = item.get("market", "")
+        info = std_map.get(ticker, {})
+        sector = _classify_sector(ticker, name, info.get("std_code", ""))
+        conn.execute("""
+            INSERT INTO stock_master (symbol, name, market, sector, std_code, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(symbol) DO UPDATE SET
+                name=excluded.name, market=excluded.market,
+                sector=excluded.sector, updated_at=excluded.updated_at
+        """, (ticker, name, market, sector, info.get("std_code", "")))
+    conn.commit()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase별 배치 수집
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def _collect_phase(name: str, tickers: list, token: str,
+                          session: aiohttp.ClientSession, fetch_fn) -> dict:
+    """한 Phase 전종목 수집.
+    Returns {"results": {ticker: data}, "success": N, "failed": N}
+    """
+    results = {}
+    failed = 0
+
+    async def _fetch_one(ticker):
+        try:
+            return ticker, await _rate_limited(fetch_fn(ticker, token, session))
+        except Exception:
+            return ticker, None
+
+    tasks = [_fetch_one(t) for t in tickers]
+    completed = await asyncio.gather(*tasks)
+
+    for ticker, data in completed:
+        if data is not None:
+            results[ticker] = data
+        else:
+            failed += 1
+
+    return {"results": results, "success": len(results), "failed": failed}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# daily_snapshot INSERT
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
+                           krx_data: dict, p1: dict, p2: dict, p3: dict, p4: dict):
+    """4개 Phase 결과를 daily_snapshot에 INSERT OR REPLACE."""
+    p1r = p1["results"]
+    p2r = p2["results"]
+    p3r = p3["results"]
+    p4r = p4["results"]
+
+    for ticker, krx in krx_data.items():
+        try:
+            basic = p1r.get(ticker, {})
+            overtime = p2r.get(ticker, {})
+            supply_raw = p3r.get(ticker, [])
+            short_raw = p4r.get(ticker, [])
+
+            # supply / short 는 리스트 반환 → 최신 1행
+            supply = supply_raw[0] if isinstance(supply_raw, list) and supply_raw else {}
+            short = short_raw[0] if isinstance(short_raw, list) and short_raw else {}
+
+            # KIS 기본시세 필드 → KRX fallback
+            close = int(basic.get("stck_prpr", 0) or 0)
+            if close == 0:
+                close = krx.get("close", 0)
+
+            conn.execute("""
+                INSERT OR REPLACE INTO daily_snapshot (
+                    trade_date, symbol,
+                    close, open, high, low, change_pct,
+                    volume, trade_value, market_cap,
+                    per, pbr, eps, bps, div_yield,
+                    w52_high, w52_low, foreign_own_pct, listing_shares, turnover,
+                    foreign_net_qty, foreign_net_amt, inst_net_qty, inst_net_amt,
+                    indiv_net_qty, indiv_net_amt,
+                    short_volume, short_ratio,
+                    ovtm_close, ovtm_change_pct, ovtm_volume,
+                    collected_at
+                ) VALUES (
+                    ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    datetime('now')
+                )
+            """, (
+                date, ticker,
+                close,
+                int(basic.get("stck_oprc", 0) or 0) or krx.get("open", 0),
+                int(basic.get("stck_hgpr", 0) or 0) or krx.get("high", 0),
+                int(basic.get("stck_lwpr", 0) or 0) or krx.get("low", 0),
+                float(basic.get("prdy_ctrt", 0) or 0) or krx.get("chg_pct", 0),
+                int(basic.get("acml_vol", 0) or 0) or krx.get("volume", 0),
+                int(basic.get("acml_tr_pbmn", 0) or 0) or krx.get("trade_value", 0),
+                int(basic.get("hts_avls", 0) or 0),  # 억원
+                float(basic.get("per", 0) or 0),
+                float(basic.get("pbr", 0) or 0),
+                float(basic.get("eps", 0) or 0),
+                float(basic.get("bps", 0) or 0),
+                0.0,  # div_yield — 별도 계산
+                int(basic.get("w52_hgpr", 0) or 0),
+                int(basic.get("w52_lwpr", 0) or 0),
+                float(basic.get("hts_frgn_ehrt", 0) or 0),
+                int(basic.get("lstn_stcn", 0) or 0),
+                float(basic.get("vol_tnrt", 0) or 0),
+                # 수급 (kis_investor_trend_history 변환 키)
+                int(supply.get("foreign_net", 0) or 0),
+                0,  # foreign_net_amt — 히스토리 API에 금액 없음
+                int(supply.get("institution_net", 0) or 0),
+                0,  # inst_net_amt
+                int(supply.get("individual_net", 0) or 0),
+                0,  # indiv_net_amt
+                # 공매도 (FHPST04830000 응답 필드)
+                int(short.get("short_vol", 0) or 0),
+                float(short.get("short_ratio", 0) or 0),
+                # 시간외 (kis_overtime_daily 반환 필드)
+                int(overtime.get("ovtm_close", 0) or 0),
+                float(overtime.get("ovtm_change_pct", 0) or 0),
+                int(overtime.get("ovtm_volume", 0) or 0),
+            ))
+        except Exception as e:
+            print(f"[DB] {ticker} snapshot INSERT 실패: {e}")
+
+    conn.commit()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 메인 수집 함수
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def collect_daily(date: str = None) -> dict:
+    """매일 장후 전종목 수집.
+    Phase: KRX시세 → stock_master UPSERT → KIS기본시세 → 시간외 → 수급 → 공매도
+           → daily_snapshot INSERT → 기술지표 계산 (→ Part 2)
+
+    Returns:
+        {"date": str, "phases": {...}, "total": int, "duration": float}
+    """
+    global _RATE_SEM
+    _RATE_SEM = asyncio.Semaphore(8)
+
+    if date is None:
+        date = datetime.now(KST).strftime("%Y%m%d")
+
+    report: dict = {"date": date, "phases": {}, "total": 0, "duration": 0.0}
+    start = datetime.now()
+
+    # 1. KRX OPEN API → 전종목 시세 (STK + KSQ, 각 2콜)
+    all_stocks: dict = {}
+    for mkt in ["STK", "KSQ"]:
+        try:
+            records = await fetch_krx_market_data(date, mkt)
+            for r in records:
+                all_stocks[r["ticker"]] = r
+        except Exception as e:
+            print(f"[collect_daily] KRX {mkt} 실패: {e}")
+        await asyncio.sleep(0.5)
+
+    if not all_stocks:
+        return {"error": "KRX 데이터 없음", "date": date}
+
+    tickers = list(all_stocks.keys())
+    report["total"] = len(tickers)
+    print(f"[collect_daily] {date} — 전종목 {len(tickers)}개 수집 시작")
+
+    # 2. stock_master UPSERT
+    conn = _get_db()
+    try:
+        _sync_stock_master(conn, list(all_stocks.values()))
+    except Exception as e:
+        print(f"[collect_daily] stock_master UPSERT 실패: {e}")
+
+    # 3. KIS API Phase별 배치 수집
+    from kis_api import (
+        get_kis_token,
+        kis_stock_price,
+        kis_overtime_daily,
+        kis_investor_trend_history,
+        kis_daily_short_sale,
+    )
+
+    token = await get_kis_token()
+    if not token:
+        conn.close()
+        return {"error": "KIS 토큰 발급 실패", "date": date}
+
+    async with aiohttp.ClientSession() as session:
+        # Phase 1: KIS 기본시세 + 밸류에이션 (FHKST01010100)
+        print(f"[collect_daily] Phase 1/4 — 기본시세 {len(tickers)}종목")
+        p1 = await _collect_phase(
+            "basic", tickers, token, session,
+            lambda t, tok, s: kis_stock_price(t, tok, session=s),
+        )
+        report["phases"]["basic"] = {
+            "success": p1["success"], "failed": p1["failed"],
+        }
+
+        # Phase 2: 시간외 (FHPST02320000)
+        print(f"[collect_daily] Phase 2/4 — 시간외")
+        p2 = await _collect_phase(
+            "overtime", tickers, token, session,
+            lambda t, tok, s: kis_overtime_daily(t, tok, session=s),
+        )
+        report["phases"]["overtime"] = {
+            "success": p2["success"], "failed": p2["failed"],
+        }
+
+        # Phase 3: 투자자 수급 1일 (FHPTJ04160001)
+        print(f"[collect_daily] Phase 3/4 — 수급")
+        p3 = await _collect_phase(
+            "supply", tickers, token, session,
+            lambda t, tok, s: kis_investor_trend_history(t, tok, n_days=1, session=s),
+        )
+        report["phases"]["supply"] = {
+            "success": p3["success"], "failed": p3["failed"],
+        }
+
+        # Phase 4: 공매도 1일 (FHPST04830000)
+        print(f"[collect_daily] Phase 4/4 — 공매도")
+        p4 = await _collect_phase(
+            "short", tickers, token, session,
+            lambda t, tok, s: kis_daily_short_sale(t, tok, n=1, session=s),
+        )
+        report["phases"]["short"] = {
+            "success": p4["success"], "failed": p4["failed"],
+        }
+
+    # 4. daily_snapshot INSERT
+    print(f"[collect_daily] daily_snapshot INSERT")
+    _store_daily_snapshot(conn, date, all_stocks, p1, p2, p3, p4)
+
+    # 5. 기술지표 계산 + UPDATE
+    try:
+        _compute_and_update(conn, date)
+    except Exception as e:
+        print(f"[collect_daily] 기술지표 계산 실패: {e}")
+
+    # 6. FnGuide 컨센서스 UPDATE (Part 2에서 구현)
+    # _update_consensus(conn, date, tickers)
+
+    conn.close()
+    report["duration"] = (datetime.now() - start).total_seconds()
+    print(
+        f"[collect_daily] 완료 — {len(tickers)}종목 "
+        f"({report['duration']:.1f}s)"
+    )
+    return report
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Part 2 — 기술지표 계산 + 하위호환 심볼 + 재무
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _ma(arr, n):
+    """Simple MA. Returns None if insufficient data."""
+    if len(arr) < n:
+        return None
+    return round(float(np.mean(arr[:n])), 2)
+
+
+def _rsi(closes, period=14):
+    """RSI calculation. Returns None if insufficient data."""
+    if len(closes) < period + 1:
+        return None
+    changes = [closes[i] - closes[i + 1] for i in range(min(len(closes) - 1, period * 3))]
+    gains = [max(c, 0) for c in changes]
+    losses = [max(-c, 0) for c in changes]
+    if len(gains) < period:
+        return None
+    avg_gain = np.mean(gains[:period])
+    avg_loss = np.mean(losses[:period])
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - 100 / (1 + rs), 2)
+
+
+def _calc_vp(closes: list, volumes: list, n: int, n_bins: int = 20) -> dict:
+    """매물대 계산. Returns {poc, va_high, va_low, position} or all None."""
+    null = {"poc": None, "va_high": None, "va_low": None, "position": None}
+    actual = min(n, len(closes))
+    if actual < 30 or len(volumes) < actual:
+        return null
+    cs = closes[:actual]
+    vs = volumes[:actual]
+    p_min, p_max = min(cs), max(cs)
+    if p_max <= p_min:
+        return null
+    bin_size = (p_max - p_min) / n_bins
+    bins = [0.0] * n_bins
+    for c, v in zip(cs, vs):
+        idx = min(int((c - p_min) / bin_size), n_bins - 1)
+        bins[idx] += v
+    poc_idx = int(np.argmax(bins))
+    total_vol = sum(bins)
+    if total_vol == 0:
+        return null
+    target_vol = total_vol * 0.7
+    sorted_bins = sorted(range(n_bins), key=lambda i: bins[i], reverse=True)
+    va_vol = 0
+    va_indices = []
+    for bi in sorted_bins:
+        va_vol += bins[bi]
+        va_indices.append(bi)
+        if va_vol >= target_vol:
+            break
+    va_low_idx = min(va_indices)
+    va_high_idx = max(va_indices)
+    va_high = round(p_min + (va_high_idx + 1) * bin_size)
+    va_low = round(p_min + va_low_idx * bin_size)
+    cur = closes[0] if closes else 0
+    rng = va_high - va_low
+    return {
+        "poc": round(p_min + (poc_idx + 0.5) * bin_size),
+        "va_high": va_high,
+        "va_low": va_low,
+        "position": round((cur - va_low) / rng, 4) if rng > 0 else None,
+    }
+
+
+def _volume_ratio(volumes: list, recent: int, prev_offset: int):
+    """최근 recent일 평균 / 그 이전 recent일 평균."""
+    total = recent + prev_offset
+    if len(volumes) < total:
+        return None
+    r = np.mean(volumes[:recent]) if any(v > 0 for v in volumes[:recent]) else 0
+    p = np.mean(volumes[prev_offset:total]) if any(v > 0 for v in volumes[prev_offset:total]) else 0
+    return round(r / p, 2) if p > 0 else None
+
+
+def _spread_at(closes: list, offset: int):
+    """offset일 전 시점의 MA spread (MA5-MA60)/MA60."""
+    if len(closes) < offset + 60:
+        return None
+    ma5 = _ma(closes[offset:], 5)
+    ma60 = _ma(closes[offset:], 60)
+    if ma5 and ma60 and ma60 > 0:
+        return (ma5 - ma60) / ma60 * 100
+    return None
+
+
+def _rsi_at(closes: list, offset: int, period: int = 14):
+    """offset일 전 시점의 RSI."""
+    if len(closes) < offset + period + 1:
+        return None
+    return _rsi(closes[offset:], period)
+
+
+def _macd(closes: list, fast: int = 12, slow: int = 26, signal: int = 9):
+    """MACD(fast, slow, signal). Returns (macd, signal_line, histogram) or (None, None, None)."""
+    if len(closes) < slow + signal:
+        return None, None, None
+    # EMA 계산 (closes는 최신→과거 순 → 역순으로)
+    rev = list(reversed(closes[:slow + signal + 10]))
+
+    def _ema(arr, period):
+        k = 2.0 / (period + 1)
+        ema = arr[0]
+        for v in arr[1:]:
+            ema = v * k + ema * (1 - k)
+        return ema
+
+    # 전체 시계열에 대한 EMA 계산
+    def _ema_series(arr, period):
+        k = 2.0 / (period + 1)
+        result = [arr[0]]
+        for v in arr[1:]:
+            result.append(v * k + result[-1] * (1 - k))
+        return result
+
+    rev_all = list(reversed(closes[:slow + signal + 20]))
+    if len(rev_all) < slow:
+        return None, None, None
+    ema_fast_s = _ema_series(rev_all, fast)
+    ema_slow_s = _ema_series(rev_all, slow)
+    if len(ema_fast_s) < slow or len(ema_slow_s) < slow:
+        return None, None, None
+    macd_line = [f - s for f, s in zip(ema_fast_s[slow - 1:], ema_slow_s[slow - 1:])]
+    if len(macd_line) < signal:
+        return None, None, None
+    signal_line = _ema_series(macd_line, signal)[-1]
+    macd_val = macd_line[-1]
+    hist = round(macd_val - signal_line, 4)
+    return round(macd_val, 4), round(signal_line, 4), hist
+
+
+def _atr(closes: list, highs: list, lows: list, period: int = 14):
+    """ATR(period). closes/highs/lows는 최신→과거 순. Returns None if insufficient."""
+    # db_collector에서는 high/low가 daily_snapshot에 있으나
+    # history에는 close만 있으므로 close 기반 근사 ATR 계산
+    if len(closes) < period + 1:
+        return None
+    trs = []
+    for i in range(period):
+        c_prev = closes[i + 1] if i + 1 < len(closes) else closes[i]
+        h = highs[i] if i < len(highs) else closes[i]
+        l = lows[i] if i < len(lows) else closes[i]
+        tr = max(h - l, abs(h - c_prev), abs(l - c_prev))
+        trs.append(tr)
+    return round(float(np.mean(trs)), 2) if trs else None
+
+
+def _volatility_20d(closes: list):
+    """20일 종가 표준편차 / 평균 (변동성). Returns None if insufficient."""
+    if len(closes) < 20:
+        return None
+    c = closes[:20]
+    mean = float(np.mean(c))
+    if mean == 0:
+        return None
+    return round(float(np.std(c, ddof=0)) / mean * 100, 4)
+
+
+def _load_history_from_db(conn: sqlite3.Connection, target_date: str, n_days: int = 260):
+    """SQLite daily_snapshot에서 과거 N일 시계열 로드.
+    Returns: ({ticker: {close: [], volume: [], eps: [], foreign_net_amt: [], short_volume: [],
+                         high: [], low: []}}, [날짜리스트(최신→과거)])
+    """
+    date_rows = conn.execute("""
+        SELECT DISTINCT trade_date FROM daily_snapshot
+        WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?
+    """, (target_date, n_days + 1)).fetchall()
+    dates = [r[0] for r in date_rows]
+
+    if len(dates) < 2:
+        return {}, dates
+
+    oldest = dates[-1]
+    rows = conn.execute("""
+        SELECT symbol, trade_date, close, high, low, volume, eps,
+               foreign_net_amt, short_volume, foreign_own_pct
+        FROM daily_snapshot
+        WHERE trade_date >= ? AND trade_date <= ?
+        ORDER BY trade_date ASC
+    """, (oldest, target_date)).fetchall()
+
+    # 종목별 그룹핑 (ASC 순서 → 나중에 reverse해서 최신→과거 순으로)
+    tmp = {}
+    for r in rows:
+        sym = r["symbol"]
+        if sym not in tmp:
+            tmp[sym] = {"close": [], "volume": [], "eps": [],
+                        "foreign_net_amt": [], "short_volume": [],
+                        "high": [], "low": [], "foreign_own_pct": []}
+        h = tmp[sym]
+        h["close"].append(r["close"] or 0)
+        h["volume"].append(r["volume"] or 0)
+        h["eps"].append(r["eps"] or 0)
+        h["foreign_net_amt"].append(r["foreign_net_amt"] or 0)
+        h["short_volume"].append(r["short_volume"] or 0)
+        h["high"].append(r["high"] or 0)
+        h["low"].append(r["low"] or 0)
+        h["foreign_own_pct"].append(r["foreign_own_pct"] or 0)
+
+    # 최신→과거 순으로 역순
+    history = {}
+    for sym, h in tmp.items():
+        history[sym] = {k: list(reversed(v)) for k, v in h.items()}
+
+    return history, dates  # dates는 이미 DESC(최신→과거)
+
+
+def _compute_technicals_sqlite(date: str, stocks: dict, history: dict, dates: list):
+    """기술지표 + 추세 점수 + 매물대를 stocks dict에 in-place 추가.
+    krx_crawler._compute_technicals 로직 기반, SQLite 입출력.
+    추가 지표: MACD(12,26,9), ATR(14), volatility_20d, bb_width.
+    """
+    n_days = len(dates)
+    print(f"[Tech/SQLite] 과거 {n_days}일 로드, 지표 계산 시작")
+
+    # 연초 날짜 (YTD 계산용)
+    year = date[:4]
+    ytd_idx = None
+    for i, d in enumerate(dates):
+        if d[:4] < year:
+            ytd_idx = i
+            break
+
+    # 섹터 평균 등락률 계산
+    sector_chg = {}
+    for s in stocks.values():
+        sec = s.get("sector_name", "")
+        if sec:
+            sector_chg.setdefault(sec, []).append(s.get("chg_pct", 0) or 0)
+    sector_avg = {sec: round(float(np.mean(vals)), 4) for sec, vals in sector_chg.items() if vals}
+
+    for ticker, s in stocks.items():
+        h = history.get(ticker, {})
+        closes = h.get("close", [])
+        volumes = h.get("volume", [])
+        highs = h.get("high", [])
+        lows = h.get("low", [])
+        eps_hist = h.get("eps", [])
+        cur = s.get("close", 0)
+
+        # ── 이평선 ──
+        s["ma5"] = _ma(closes, 5)
+        s["ma10"] = _ma(closes, 10)
+        s["ma20"] = _ma(closes, 20)
+        s["ma60"] = _ma(closes, 60)
+        s["ma120"] = _ma(closes, 120)
+        s["ma200"] = _ma(closes, 200)
+
+        # ── RSI(14) ──
+        s["rsi14"] = _rsi(closes, 14)
+
+        # ── 볼린저밴드 (MA20 ± 2σ) + bb_width ──
+        if len(closes) >= 20:
+            m20 = float(np.mean(closes[:20]))
+            std20 = float(np.std(closes[:20], ddof=0))
+            s["bb_upper"] = round(m20 + 2 * std20, 0)
+            s["bb_lower"] = round(m20 - 2 * std20, 0)
+            s["bb_width"] = round((s["bb_upper"] - s["bb_lower"]) / m20 * 100, 4) if m20 > 0 else None
+        else:
+            s["bb_upper"] = s["bb_lower"] = s["bb_width"] = None
+
+        # ── MA spread ──
+        ma5v = s["ma5"]
+        ma60v = s["ma60"]
+        s["ma_spread"] = round((ma5v - ma60v) / ma60v * 100, 2) if ma5v and ma60v and ma60v > 0 else None
+
+        # ── 52주 고/저/position ──
+        if len(closes) >= 60:
+            w52_slice = closes[:min(250, len(closes))]
+            w52h = max(w52_slice)
+            w52l = min(w52_slice)
+            s["w52_position"] = round((cur - w52l) / (w52h - w52l), 4) if w52h > w52l else None
+        else:
+            s["w52_position"] = None
+
+        # ── YTD 수익률 ──
+        if ytd_idx is not None and ytd_idx < len(closes) and closes[ytd_idx] > 0:
+            s["ytd_return"] = round((cur - closes[ytd_idx]) / closes[ytd_idx] * 100, 2)
+        else:
+            s["ytd_return"] = None
+
+        # ── 섹터 상대강도 ──
+        sec = s.get("sector_name", "")
+        chg_pct = s.get("chg_pct", 0) or 0
+        s["sector_rel_strength"] = round(chg_pct - sector_avg[sec], 2) if sec and sec in sector_avg else None
+
+        # ── 추세: volume_ratio 5d/10d/20d ──
+        s["volume_ratio_5d"] = _volume_ratio(volumes, 5, 5)
+        s["volume_ratio_10d"] = _volume_ratio(volumes, 10, 10)
+        s["volume_ratio_20d"] = _volume_ratio(volumes, 20, 20)
+
+        # ── 추세: ma_spread_change 10d/30d ──
+        cur_spread = s["ma_spread"]
+        for nd in (10, 30):
+            key = f"ma_spread_change_{nd}d"
+            prev = _spread_at(closes, nd)
+            s[key] = round(cur_spread - prev, 2) if cur_spread is not None and prev is not None else None
+
+        # ── 추세: rsi_change 5d/20d ──
+        rsi_now = s["rsi14"]
+        for nd in (5, 20):
+            key = f"rsi_change_{nd}d"
+            prev_rsi = _rsi_at(closes, nd)
+            s[key] = round(rsi_now - prev_rsi, 2) if rsi_now is not None and prev_rsi is not None else None
+
+        # ── 추세: eps_change_90d + earnings_gap ──
+        ep_idx = min(89, len(eps_hist) - 1) if len(eps_hist) >= 2 else -1
+        if ep_idx >= 1 and eps_hist[0] != 0 and eps_hist[ep_idx] != 0:
+            s["eps_change_90d"] = round((eps_hist[0] - eps_hist[ep_idx]) / abs(eps_hist[ep_idx]) * 100, 2)
+            ytd = s.get("ytd_return")
+            s["earnings_gap"] = round(s["eps_change_90d"] - ytd, 2) if ytd is not None else None
+        else:
+            s["eps_change_90d"] = s["earnings_gap"] = None
+
+        # ── 수급 추세: foreign_trend Nd ──
+        frgn_hist = h.get("foreign_net_amt", [])
+        for nd in (5, 20, 60):
+            key = f"foreign_trend_{nd}d"
+            if len(frgn_hist) >= nd:
+                buy_days = sum(1 for x in frgn_hist[:nd] if x > 0)
+                s[key] = round(buy_days / nd, 4)
+            else:
+                s[key] = None
+
+        # ── 수급 비율: foreign_ratio / inst_ratio / fi_ratio ──
+        fown = s.get("foreign_own_pct") or h.get("foreign_own_pct", [None])[0]
+        s["foreign_ratio"] = fown
+        s["inst_ratio"] = s.get("inst_ratio")
+        fi_r = None
+        fr_v = s.get("foreign_net_amt") or 0
+        ir_v = s.get("inst_net_amt") or 0
+        vol = s.get("trade_value") or 0
+        if vol and vol > 0:
+            fi_r = round((fr_v + ir_v) / vol * 100, 4)
+        s["fi_ratio"] = fi_r
+
+        # ── 수급 추세: short_change Nd (SQLite: short_volume 기반) ──
+        short_hist = h.get("short_volume", [])
+        for nd in (5, 20):
+            key = f"short_change_{nd}d"
+            if len(short_hist) >= nd + 1 and short_hist[nd] > 0:
+                s[key] = round((short_hist[0] - short_hist[nd]) / short_hist[nd] * 100, 2)
+            else:
+                s[key] = None
+
+        # ── 매물대 60d / 250d ──
+        for period, suffix in [(60, "_60d"), (250, "_250d")]:
+            vp = _calc_vp(closes, volumes, period)
+            s[f"vp_poc{suffix}"] = vp["poc"]
+            s[f"vp_va_high{suffix}"] = vp["va_high"]
+            s[f"vp_va_low{suffix}"] = vp["va_low"]
+            s[f"vp_position{suffix}"] = vp["position"]
+
+        # ── MACD(12, 26, 9) ──
+        macd_val, macd_sig, macd_hist = _macd(closes)
+        s["macd"] = macd_val
+        s["macd_signal"] = macd_sig
+        s["macd_hist"] = macd_hist
+
+        # ── ATR(14) ──
+        s["atr14"] = _atr(closes, highs, lows, 14)
+
+        # ── volatility_20d ──
+        s["volatility_20d"] = _volatility_20d(closes)
+
+    # ── 섹터 내 순위 계산 ──
+    sector_stocks = {}
+    for ticker, s in stocks.items():
+        sec = s.get("sector_name", "")
+        if sec:
+            sector_stocks.setdefault(sec, []).append((ticker, s.get("chg_pct", 0) or 0))
+    for sec, members in sector_stocks.items():
+        members.sort(key=lambda x: x[1], reverse=True)
+        for rank, (ticker, _) in enumerate(members, 1):
+            stocks[ticker]["sector_rank"] = rank
+    for s in stocks.values():
+        s.setdefault("sector_rank", None)
+
+    print(f"[Tech/SQLite] 지표 계산 완료: {len(stocks)}종목")
+
+
+def _compute_and_update(conn: sqlite3.Connection, date: str):
+    """기술지표 계산 후 daily_snapshot UPDATE."""
+    # 1. 과거 데이터 로드
+    history, dates = _load_history_from_db(conn, date, 260)
+
+    # 2. 당일 종목 데이터 + 섹터명 조인
+    rows = conn.execute("""
+        SELECT d.*, m.name, m.market, m.sector as sector_name
+        FROM daily_snapshot d
+        LEFT JOIN stock_master m ON d.symbol = m.symbol
+        WHERE d.trade_date = ?
+    """, (date,)).fetchall()
+    stocks = {r["symbol"]: dict(r) for r in rows}
+
+    if not stocks:
+        print(f"[Tech/SQLite] {date} 데이터 없음, 지표 계산 스킵")
+        return
+
+    # 3. 기술지표 계산
+    _compute_technicals_sqlite(date, stocks, history, dates)
+
+    # 4. UPDATE
+    for ticker, s in stocks.items():
+        try:
+            conn.execute("""
+                UPDATE daily_snapshot SET
+                    ma5=?, ma10=?, ma20=?, ma60=?, ma120=?, ma200=?, ma_spread=?,
+                    rsi14=?, bb_upper=?, bb_lower=?, bb_width=?,
+                    macd=?, macd_signal=?, macd_hist=?,
+                    atr14=?, volatility_20d=?,
+                    w52_position=?, ytd_return=?,
+                    vp_poc_60d=?, vp_va_high_60d=?, vp_va_low_60d=?, vp_position_60d=?,
+                    vp_poc_250d=?, vp_va_high_250d=?, vp_va_low_250d=?, vp_position_250d=?,
+                    volume_ratio_5d=?, volume_ratio_10d=?, volume_ratio_20d=?,
+                    ma_spread_change_10d=?, ma_spread_change_30d=?,
+                    rsi_change_5d=?, rsi_change_20d=?,
+                    eps_change_90d=?, earnings_gap=?,
+                    foreign_trend_5d=?, foreign_trend_20d=?, foreign_trend_60d=?,
+                    foreign_ratio=?, inst_ratio=?, fi_ratio=?,
+                    short_change_5d=?, short_change_20d=?,
+                    sector_rel_strength=?, sector_rank=?
+                WHERE trade_date=? AND symbol=?
+            """, (
+                s.get("ma5"), s.get("ma10"), s.get("ma20"),
+                s.get("ma60"), s.get("ma120"), s.get("ma200"), s.get("ma_spread"),
+                s.get("rsi14"), s.get("bb_upper"), s.get("bb_lower"), s.get("bb_width"),
+                s.get("macd"), s.get("macd_signal"), s.get("macd_hist"),
+                s.get("atr14"), s.get("volatility_20d"),
+                s.get("w52_position"), s.get("ytd_return"),
+                s.get("vp_poc_60d"), s.get("vp_va_high_60d"),
+                s.get("vp_va_low_60d"), s.get("vp_position_60d"),
+                s.get("vp_poc_250d"), s.get("vp_va_high_250d"),
+                s.get("vp_va_low_250d"), s.get("vp_position_250d"),
+                s.get("volume_ratio_5d"), s.get("volume_ratio_10d"), s.get("volume_ratio_20d"),
+                s.get("ma_spread_change_10d"), s.get("ma_spread_change_30d"),
+                s.get("rsi_change_5d"), s.get("rsi_change_20d"),
+                s.get("eps_change_90d"), s.get("earnings_gap"),
+                s.get("foreign_trend_5d"), s.get("foreign_trend_20d"), s.get("foreign_trend_60d"),
+                s.get("foreign_ratio"), s.get("inst_ratio"), s.get("fi_ratio"),
+                s.get("short_change_5d"), s.get("short_change_20d"),
+                s.get("sector_rel_strength"), s.get("sector_rank"),
+                date, ticker,
+            ))
+        except Exception as e:
+            print(f"[Tech/SQLite] {ticker} UPDATE 실패: {e}")
+    conn.commit()
+    print(f"[Tech/SQLite] {date} UPDATE 완료: {len(stocks)}종목")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 하위호환 함수 — mcp_tools.py / main.py 호환
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def load_krx_db(date: str = None) -> dict | None:
+    """기존 JSON 포맷과 호환되는 dict 반환. mcp_tools.py 하위호환.
+    Returns: {date, stocks: {ticker: {...}}, count, market_summary}
+    """
+    conn = _get_db()
+    try:
+        if date is None:
+            row = conn.execute(
+                "SELECT MAX(trade_date) as d FROM daily_snapshot"
+            ).fetchone()
+            date = row["d"] if row and row["d"] else None
+        if not date:
+            return None
+
+        rows = conn.execute("""
+            SELECT d.*, m.name, m.market, m.sector as sector_name, m.sector_krx
+            FROM daily_snapshot d
+            LEFT JOIN stock_master m ON d.symbol = m.symbol
+            WHERE d.trade_date = ?
+        """, (date,)).fetchall()
+
+        if not rows:
+            return None
+
+        stocks = {}
+        for r in rows:
+            d = dict(r)
+            ticker = d.pop("symbol", None)
+            if not ticker:
+                continue
+            d["ticker"] = ticker
+            # 컬럼명 호환 매핑
+            d["chg_pct"] = d.get("change_pct", 0) or 0
+            # market_cap: SQLite는 억원 단위 → 원으로 변환 (기존 JSON 호환)
+            mcap = d.get("market_cap", 0) or 0
+            d["market_cap"] = mcap * 100_000_000
+            # foreign_ratio / inst_ratio / fi_ratio
+            if d.get("foreign_ratio") is None:
+                d["foreign_ratio"] = d.get("foreign_own_pct", 0) or 0
+            if d.get("inst_ratio") is None:
+                d["inst_ratio"] = 0
+            if d.get("fi_ratio") is None:
+                fi_r = None
+                fr_v = d.get("foreign_net_amt", 0) or 0
+                ir_v = d.get("inst_net_amt", 0) or 0
+                tv = d.get("trade_value", 0) or 0
+                if tv > 0:
+                    fi_r = round((fr_v + ir_v) / tv * 100, 4)
+                d["fi_ratio"] = fi_r
+            # 하위호환 vp 키 (250d 기준)
+            d["vp_poc"] = d.get("vp_poc_250d")
+            d["vp_va_high"] = d.get("vp_va_high_250d")
+            d["vp_va_low"] = d.get("vp_va_low_250d")
+            d["vp_position"] = d.get("vp_position_250d")
+            # turnover 호환
+            if d.get("turnover") is None:
+                d["turnover"] = d.get("vol_tnrt", 0) or 0
+            stocks[ticker] = d
+
+        # market_summary 계산
+        chg_list_kospi = [s.get("chg_pct", 0) or 0
+                          for s in stocks.values() if s.get("market") == "kospi"]
+        chg_list_kosdaq = [s.get("chg_pct", 0) or 0
+                           for s in stocks.values() if s.get("market") == "kosdaq"]
+        market_summary = {
+            "kospi_avg_chg": round(float(np.mean(chg_list_kospi)), 4) if chg_list_kospi else 0,
+            "kosdaq_avg_chg": round(float(np.mean(chg_list_kosdaq)), 4) if chg_list_kosdaq else 0,
+        }
+
+        return {
+            "date": date,
+            "stocks": stocks,
+            "count": len(stocks),
+            "market_summary": market_summary,
+        }
+    finally:
+        conn.close()
+
+
+def _load_history(target_date: str = None, n_days: int = 250):
+    """mcp_tools.py 호환. 과거 N일 데이터 SQLite에서 로드.
+    Returns: ({ticker: {close: [], volume: [], ...}}, [날짜리스트])
+    """
+    conn = _get_db()
+    try:
+        if target_date is None:
+            row = conn.execute(
+                "SELECT MAX(trade_date) as d FROM daily_snapshot"
+            ).fetchone()
+            target_date = row["d"] if row and row["d"] else None
+        if not target_date:
+            return {}, []
+        return _load_history_from_db(conn, target_date, n_days)
+    finally:
+        conn.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# scan_stocks — krx_crawler.py에서 복사 (load_krx_db 포맷 호환)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PRESETS = {
+    "relative_strength": {
+        "description": "시장평균 대비 등락률 +3% 이상 AND fi_ratio>0 (하락장에서 버틴 종목)",
+        "sort": "fi_ratio",
+    },
+    "small_cap_buy": {
+        "description": "시총 500~5000억 AND foreign_ratio>0.1% (소형주 외인매수)",
+        "filters": {"market_cap_min": 500, "market_cap_max": 5000, "foreign_ratio_min": 0.1},
+        "sort": "foreign_ratio",
+    },
+    "value": {
+        "description": "PER>0 AND PER<10 AND PBR>0 AND PBR<1 AND 시총>1000억 (저평가)",
+        "filters": {"per_min": 0.01, "per_max": 10, "pbr_min": 0.01, "pbr_max": 1,
+                    "market_cap_min": 1000},
+        "sort": "pbr",
+    },
+    "momentum": {
+        "description": "chg_pct>3% AND turnover>1% (모멘텀)",
+        "filters": {"chg_pct_min": 3, "turnover_min": 1},
+        "sort": "chg_pct",
+    },
+    "oversold": {
+        "description": "등락률 -7% 이하 (낙폭과대)",
+        "filters": {"chg_pct_max": -7},
+        "sort": "chg_pct",
+    },
+    "foreign_streak": {
+        "description": "최근 5일 연속 외인 순매수, 시총 500억 이상 (multi-day)",
+        "filters": {"market_cap_min": 500},
+        "sort": "cum_foreign_ratio",
+    },
+}
+
+
+def _get_foreign_streak_data_db(target_date: str, days: int = 5):
+    """SQLite에서 최근 N일 연속 외인 순매수 종목 + 누적 foreign_own_pct.
+    Returns: ({ticker: cum_foreign_ratio}, days_available)
+    """
+    conn = _get_db()
+    try:
+        date_rows = conn.execute("""
+            SELECT DISTINCT trade_date FROM daily_snapshot
+            WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?
+        """, (target_date, days)).fetchall()
+        if not date_rows:
+            return {}, 0
+        dates_avail = [r[0] for r in date_rows]
+        days_available = len(dates_avail)
+
+        cum_ratio = {}
+        candidates = None
+        for d in dates_avail:
+            rows = conn.execute("""
+                SELECT symbol, foreign_net_amt, foreign_own_pct
+                FROM daily_snapshot WHERE trade_date = ?
+            """, (d,)).fetchall()
+            daily_positive = set()
+            for r in rows:
+                if (r["foreign_net_amt"] or 0) > 0:
+                    daily_positive.add(r["symbol"])
+                    cum_ratio[r["symbol"]] = (
+                        cum_ratio.get(r["symbol"], 0) + (r["foreign_own_pct"] or 0)
+                    )
+            if candidates is None:
+                candidates = daily_positive
+            else:
+                candidates &= daily_positive
+
+        result = {t: round(cum_ratio.get(t, 0), 4) for t in (candidates or set())}
+        return result, days_available
+    finally:
+        conn.close()
+
+
+def _summarize_filters(filters: dict) -> dict:
+    """필터 요약 (내부 표시용)."""
+    summary = {}
+    keys = ["market_cap_min", "market_cap_max", "chg_pct_min", "chg_pct_max",
+            "foreign_ratio_min", "fi_ratio_min", "per_min", "per_max",
+            "pbr_min", "pbr_max", "turnover_min", "sort", "n", "market"]
+    for k in keys:
+        v = filters.get(k)
+        if v is not None:
+            summary[k] = v
+    return summary
+
+
+def scan_stocks(db: dict, filters: dict, preset: str = None) -> dict:
+    """필터 조건으로 종목 스캔.
+
+    filters keys:
+        market_cap_min/max (억원), chg_pct_min/max (%), foreign_ratio_min,
+        fi_ratio_min, per_min/max, pbr_max, turnover_min,
+        sort (str), n (int), market (kospi/kosdaq/all)
+
+    Returns: {date, preset, filters, count, results: [...]}
+    """
+    stocks = db.get("stocks", {})
+    date = db.get("date", "")
+
+    # ── 프리셋 적용 ──
+    preset_desc = None
+    if preset and preset in PRESETS:
+        p = PRESETS[preset]
+        preset_desc = p.get("description", "")
+        pf = p.get("filters", {})
+        merged = {**pf}
+        for k, v in filters.items():
+            if v is not None:
+                merged[k] = v
+        filters = merged
+        if "sort" not in filters or filters.get("sort") is None:
+            filters["sort"] = p.get("sort", "fi_ratio")
+
+    # 필터 파라미터
+    mcap_min = float(filters.get("market_cap_min", 0)) * 100_000_000    # 억원 → 원
+    mcap_max = float(filters.get("market_cap_max", 9999999)) * 100_000_000
+    chg_min = float(filters.get("chg_pct_min", -30))
+    chg_max = float(filters.get("chg_pct_max", 30))
+    fr_min = float(filters.get("foreign_ratio_min", -999))
+    fi_min = float(filters.get("fi_ratio_min", -999))
+    per_min = float(filters.get("per_min", 0))
+    per_max = float(filters.get("per_max", 9999))
+    pbr_min = float(filters.get("pbr_min", 0))
+    pbr_max = float(filters.get("pbr_max", 9999))
+    turn_min = float(filters.get("turnover_min", 0))
+    sort_by = filters.get("sort", "fi_ratio")
+    n = int(filters.get("n", 30))
+    n = max(1, min(n, 100))
+    market_filter = filters.get("market", "all")
+
+    # 시장 평균 등락률
+    summary = db.get("market_summary", {})
+    market_avg_chg = round(
+        (summary.get("kospi_avg_chg", 0) + summary.get("kosdaq_avg_chg", 0)) / 2, 2)
+
+    # relative_strength: 동적 chg_pct_min
+    if preset == "relative_strength":
+        if "chg_pct_min" not in filters or filters["chg_pct_min"] == chg_min:
+            chg_min = market_avg_chg + 3.0
+        fi_min = max(fi_min, 0)
+
+    # foreign_streak: 연속 매수 종목 + 누적 비율
+    streak_data = None
+    days_available = 0
+    if preset == "foreign_streak":
+        streak_days = max(2, int(filters.get("streak_days", 5)))
+        streak_data, days_available = _get_foreign_streak_data_db(date, streak_days)
+        if days_available < streak_days:
+            preset_desc = f"최근 {days_available}/{streak_days}일 연속 외인 순매수 (DB 부족)"
+        if not streak_data:
+            return {
+                "date": date,
+                "preset": preset,
+                "preset_description": preset_desc,
+                "filters": _summarize_filters(filters),
+                "market_avg_chg": market_avg_chg,
+                "days_available": days_available,
+                "total_matched": 0,
+                "count": 0,
+                "results": [],
+                "note": f"연속 매수 종목 없음 (가용 DB: {days_available}/{streak_days}일)",
+            }
+
+    # ── 필터링 ──
+    results = []
+    for ticker, s in stocks.items():
+        mcap = s.get("market_cap", 0) or 0
+        if mcap < mcap_min or mcap > mcap_max:
+            continue
+        chg = s.get("chg_pct", 0) or 0
+        if chg < chg_min or chg > chg_max:
+            continue
+        fr = s.get("foreign_ratio", 0) or 0
+        if fr < fr_min:
+            continue
+        fi = s.get("fi_ratio") or 0
+        if fi < fi_min:
+            continue
+        per = s.get("per", 0) or 0
+        if per_min > 0 and (per < per_min or per > per_max):
+            continue
+        if per_max < 9999 and per > per_max:
+            continue
+        pbr = s.get("pbr", 0) or 0
+        if pbr_min > 0 and pbr < pbr_min:
+            continue
+        if pbr_max < 9999 and pbr > pbr_max:
+            continue
+        turn = s.get("turnover", 0) or 0
+        if turn < turn_min:
+            continue
+        if market_filter != "all":
+            if s.get("market", "") != market_filter:
+                continue
+        if streak_data is not None and ticker not in streak_data:
+            continue
+
+        item = {
+            "ticker": ticker,
+            "name": s.get("name", ticker),
+            "market": s.get("market", ""),
+            "close": s.get("close", 0),
+            "chg_pct": chg,
+            "market_cap": round(mcap / 100_000_000),  # 원 → 억원
+            "per": per,
+            "pbr": pbr,
+            "foreign_ratio": fr,
+            "inst_ratio": s.get("inst_ratio", 0) or 0,
+            "fi_ratio": fi,
+            "turnover": turn,
+        }
+        if streak_data is not None:
+            item["cum_foreign_ratio"] = streak_data.get(ticker, 0)
+        results.append(item)
+
+    # ── 정렬 ──
+    reverse = True
+    if sort_by in ("per", "pbr"):
+        reverse = False
+    if sort_by == "chg_pct" and preset == "oversold":
+        reverse = False
+    results.sort(key=lambda x: x.get(sort_by, 0) or 0, reverse=reverse)
+    total_matched = len(results)
+    results = results[:n]
+
+    out = {
+        "date": date,
+        "preset": preset,
+        "preset_description": preset_desc,
+        "filters": _summarize_filters(filters),
+        "market_avg_chg": market_avg_chg,
+        "total_matched": total_matched,
+        "count": len(results),
+        "results": results,
+    }
+    if preset == "foreign_streak":
+        out["days_available"] = days_available
+    return out
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 재무 수집 (주 1회)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def collect_financial_weekly(date: str = None) -> dict:
+    """손익계산서 + 대차대조표 수집 → financial_quarterly UPSERT.
+    주 1회 실행. KIS API kis_income_statement / kis_balance_sheet 사용.
+    """
+    global _RATE_SEM
+    _RATE_SEM = asyncio.Semaphore(8)
+
+    conn = _get_db()
+    tickers = [r["symbol"] for r in conn.execute(
+        "SELECT symbol FROM stock_master"
+    ).fetchall()]
+
+    if not tickers:
+        conn.close()
+        return {"error": "stock_master 비어 있음"}
+
+    from kis_api import get_kis_token
+
+    token = await get_kis_token()
+    if not token:
+        conn.close()
+        return {"error": "KIS 토큰 발급 실패"}
+
+    success_is = 0
+    success_bs = 0
+
+    async with aiohttp.ClientSession() as session:
+        # Phase A: 손익계산서
+        print(f"[Finance] Phase A — 손익계산서 {len(tickers)}종목")
+        for i, ticker in enumerate(tickers):
+            try:
+                from kis_api import kis_income_statement
+                rows_is = await _rate_limited(
+                    kis_income_statement(ticker, token, session=session)
+                )
+                for r in (rows_is or []):
+                    rp = r.get("report_period", "")
+                    if not rp:
+                        continue
+                    conn.execute("""
+                        INSERT OR REPLACE INTO financial_quarterly (
+                            symbol, report_period, revenue, cost_of_sales, gross_profit,
+                            operating_profit, op_profit, net_income, collected_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    """, (
+                        ticker, rp,
+                        r.get("revenue"), r.get("cost_of_sales"), r.get("gross_profit"),
+                        r.get("operating_profit"), r.get("op_profit"), r.get("net_income"),
+                    ))
+                success_is += 1
+            except Exception:
+                pass
+            if (i + 1) % 200 == 0:
+                print(f"[Finance] 손익계산서: {i+1}/{len(tickers)}")
+                conn.commit()
+
+        conn.commit()
+
+        # Phase B: 대차대조표
+        print(f"[Finance] Phase B — 대차대조표 {len(tickers)}종목")
+        for i, ticker in enumerate(tickers):
+            try:
+                from kis_api import kis_balance_sheet
+                rows_bs = await _rate_limited(
+                    kis_balance_sheet(ticker, token, session=session)
+                )
+                for r in (rows_bs or []):
+                    rp = r.get("report_period", "")
+                    if not rp:
+                        continue
+                    conn.execute("""
+                        UPDATE financial_quarterly SET
+                            current_assets=?, fixed_assets=?, total_assets=?,
+                            current_liab=?, fixed_liab=?, total_liab=?,
+                            capital=?, total_equity=?,
+                            collected_at=datetime('now')
+                        WHERE symbol=? AND report_period=?
+                    """, (
+                        r.get("current_assets"), r.get("fixed_assets"), r.get("total_assets"),
+                        r.get("current_liab"), r.get("fixed_liab"), r.get("total_liab"),
+                        r.get("capital"), r.get("total_equity"),
+                        ticker, rp,
+                    ))
+                success_bs += 1
+            except Exception:
+                pass
+            if (i + 1) % 200 == 0:
+                print(f"[Finance] 대차대조표: {i+1}/{len(tickers)}")
+                conn.commit()
+
+        conn.commit()
+
+    # 재무 파생값 → daily_snapshot UPDATE
+    _update_financial_derived(conn, date)
+    conn.close()
+
+    print(f"[Finance] 완료 — IS:{success_is}/{len(tickers)}, BS:{success_bs}/{len(tickers)}")
+    return {
+        "tickers": len(tickers),
+        "income_statement": success_is,
+        "balance_sheet": success_bs,
+    }
+
+
+def _update_financial_derived(conn: sqlite3.Connection, date: str = None):
+    """financial_quarterly 최신 분기 → daily_snapshot 재무 파생 컬럼 UPDATE."""
+    if date is None:
+        row = conn.execute("SELECT MAX(trade_date) as d FROM daily_snapshot").fetchone()
+        date = row["d"] if row and row["d"] else None
+    if not date:
+        return
+
+    # 각 종목의 최신 분기 재무
+    financials = conn.execute("""
+        SELECT f.* FROM financial_quarterly f
+        INNER JOIN (
+            SELECT symbol, MAX(report_period) as max_period
+            FROM financial_quarterly
+            GROUP BY symbol
+        ) latest ON f.symbol = latest.symbol AND f.report_period = latest.max_period
+    """).fetchall()
+
+    updated = 0
+    for f in financials:
+        sym = f["symbol"]
+        rev = f["revenue"] or 0
+        op = f["operating_profit"] or 0
+        ni = f["net_income"] or 0
+        ta = f["total_assets"] or 0
+        tl = f["total_liab"] or 0
+        te = f["total_equity"] or 0
+
+        op_margin = round(op / rev * 100, 4) if rev else None
+        net_margin = round(ni / rev * 100, 4) if rev else None
+        debt_ratio = round(tl / te * 100, 4) if te else None
+        roe = round(ni / te * 100, 4) if te else None
+
+        # 전분기 대비 성장률
+        prev = conn.execute("""
+            SELECT revenue, operating_profit FROM financial_quarterly
+            WHERE symbol=? AND report_period < ?
+            ORDER BY report_period DESC LIMIT 1
+        """, (sym, f["report_period"])).fetchone()
+
+        rev_growth = None
+        op_growth = None
+        if prev:
+            prev_rev = prev["revenue"] or 0
+            prev_op = prev["operating_profit"] or 0
+            if prev_rev and abs(prev_rev) > 0:
+                rev_growth = round((rev - prev_rev) / abs(prev_rev) * 100, 4)
+            if prev_op and abs(prev_op) > 0:
+                op_growth = round((op - prev_op) / abs(prev_op) * 100, 4)
+
+        try:
+            conn.execute("""
+                UPDATE daily_snapshot SET
+                    revenue=?, operating_profit=?, net_income=?,
+                    total_assets=?, total_liabilities=?, total_equity=?,
+                    operating_margin=?, net_margin=?, debt_ratio=?, roe=?,
+                    revenue_growth=?, op_growth=?
+                WHERE trade_date=? AND symbol=?
+            """, (
+                rev, op, ni, ta, tl, te,
+                op_margin, net_margin, debt_ratio, roe,
+                rev_growth, op_growth,
+                date, sym,
+            ))
+            updated += 1
+        except Exception as e:
+            print(f"[Finance] {sym} 재무파생 UPDATE 실패: {e}")
+
+    conn.commit()
+    print(f"[Finance] 재무 파생값 UPDATE 완료: {updated}종목 ({date})")

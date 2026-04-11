@@ -980,12 +980,16 @@ async def _kis_get(session, path, tr_id, token, params):
     return 500, {}
 
 
-async def kis_stock_price(ticker, token):
-    async with aiohttp.ClientSession() as s:
+async def kis_stock_price(ticker, token, session=None):
+    s = session or aiohttp.ClientSession()
+    try:
         _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-price",
             "FHKST01010100", token,
             {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
         return d.get("output", {})
+    finally:
+        if session is None:
+            await s.close()
 
 
 async def kis_stock_info(ticker, token):
@@ -1272,14 +1276,15 @@ async def kis_fluctuation_rank(token: str, market: str = "0000",
     return result
 
 
-async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5) -> list:
+async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5, session=None) -> list:
     """종목별 투자자 일별 수급 히스토리 (FHPTJ04160001).
 
     Returns: [{date, foreign_net, institution_net, individual_net,
                foreign_buy, foreign_sell}, ...] 최신순, 최대 n_days일
     """
     today = datetime.now(KST).strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
+    s = session or aiohttp.ClientSession()
+    try:
         _, d = await _kis_get(s,
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
             "FHPTJ04160001", token,
@@ -1290,6 +1295,9 @@ async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5) -
                 "FID_ORG_ADJ_PRC":        "",
                 "FID_ETC_CLS_CODE":       "",
             })
+    finally:
+        if session is None:
+            await s.close()
     rows = d.get("output1") if d else None
     if not isinstance(rows, list):
         rows = []
@@ -1837,7 +1845,7 @@ async def kis_foreign_institution_total(token: str, sort: str = "buy", n: int = 
     return result
 
 
-async def kis_daily_short_sale(ticker: str, token: str, n: int = 10) -> list:
+async def kis_daily_short_sale(ticker: str, token: str, n: int = 10, session=None) -> list:
     """국내주식 공매도 일별추이 (FHPST04830000).
 
     Returns: [{date, short_vol, total_vol, short_ratio, close}, ...]
@@ -1846,7 +1854,8 @@ async def kis_daily_short_sale(ticker: str, token: str, n: int = 10) -> list:
     try:
         today = datetime.now(KST).strftime("%Y%m%d")
         start = (datetime.now(KST) - timedelta(days=int(n * 1.6))).strftime("%Y%m%d")
-        async with aiohttp.ClientSession() as s:
+        s = session or aiohttp.ClientSession()
+        try:
             _, d = await _kis_get(s,
                 "/uapi/domestic-stock/v1/quotations/daily-short-sale",
                 "FHPST04830000", token,
@@ -1856,6 +1865,9 @@ async def kis_daily_short_sale(ticker: str, token: str, n: int = 10) -> list:
                     "FID_INPUT_DATE_1":       start,
                     "FID_INPUT_DATE_2":       today,
                 })
+        finally:
+            if session is None:
+                await s.close()
         result = []
         for row in d.get("output2", [])[:n]:
             result.append({
@@ -2260,17 +2272,21 @@ async def kis_daily_loan_trans(ticker: str, token: str, n: int = 20) -> list:
     return result
 
 
-async def kis_overtime_price(ticker: str, token: str) -> dict:
+async def kis_overtime_price(ticker: str, token: str, session=None) -> dict:
     """시간외 현재가 (FHPST02300000).
 
     Returns: {ticker, overtime_price, overtime_chg_rate, overtime_vol, ...}
     """
-    async with aiohttp.ClientSession() as s:
+    s = session or aiohttp.ClientSession()
+    try:
         _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-overtime-price",
                               "FHPST02300000", token, {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": ticker,
         })
+    finally:
+        if session is None:
+            await s.close()
     out = d.get("output", {})
     if isinstance(out, list):
         out = out[0] if out else {}
@@ -2284,6 +2300,95 @@ async def kis_overtime_price(ticker: str, token: str) -> dict:
         "base_price": int(out.get("stck_sdpr", 0) or 0),
         "chg_pct": float(out.get("prdy_ctrt", 0) or 0),
     }
+
+
+async def kis_overtime_daily(ticker: str, token: str, session=None) -> dict:
+    """시간외 일자별 주가 (FHPST02320000). 최근 30일."""
+    s = session or aiohttp.ClientSession()
+    try:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice",
+            "FHPST02320000", token,
+            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+        rows = d.get("output2", [])
+        if not rows:
+            return {}
+        r = rows[0]  # 최신 1일
+        return {
+            "ovtm_close": int(r.get("ovtm_untp_prpr", 0) or 0),
+            "ovtm_change_pct": float(r.get("ovtm_untp_prdy_ctrt", 0) or 0),
+            "ovtm_volume": int(r.get("ovtm_untp_vol", 0) or 0),
+        }
+    finally:
+        if session is None:
+            await s.close()
+
+
+async def kis_income_statement(ticker: str, token: str, session=None) -> list:
+    """손익계산서 분기별 (FHKST66430200). 최근 ~30분기."""
+    s = session or aiohttp.ClientSession()
+    try:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/finance/income-statement",
+            "FHKST66430200", token,
+            {"FID_DIV_CLS_CODE": "1", "fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+        rows = d.get("output", [])
+        result = []
+        for r in rows:
+            period = str(r.get("stac_yymm", ""))
+            if not period:
+                continue
+            def _pf(v):
+                try:
+                    return float(v)
+                except Exception:
+                    return 0.0
+            result.append({
+                "report_period":  period,
+                "revenue":        _pf(r.get("sale_account")),
+                "cost_of_sales":  _pf(r.get("sale_cost")),
+                "gross_profit":   _pf(r.get("sale_totl_prfi")),
+                "operating_profit": _pf(r.get("bsop_prti")),
+                "op_prfi":        _pf(r.get("op_prfi")),
+                "net_income":     _pf(r.get("thtr_ntin")),
+            })
+        return result
+    finally:
+        if session is None:
+            await s.close()
+
+
+async def kis_balance_sheet(ticker: str, token: str, session=None) -> list:
+    """대차대조표 분기별 (FHKST66430100). 최근 ~30분기."""
+    s = session or aiohttp.ClientSession()
+    try:
+        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/finance/balance-sheet",
+            "FHKST66430100", token,
+            {"FID_DIV_CLS_CODE": "1", "fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+        rows = d.get("output", [])
+        result = []
+        for r in rows:
+            period = str(r.get("stac_yymm", ""))
+            if not period:
+                continue
+            def _pf(v):
+                try:
+                    return float(v)
+                except Exception:
+                    return 0.0
+            result.append({
+                "report_period":  period,
+                "current_assets": _pf(r.get("cras")),
+                "fixed_assets":   _pf(r.get("fxas")),
+                "total_assets":   _pf(r.get("total_aset")),
+                "current_liab":   _pf(r.get("flow_lblt")),
+                "fixed_liab":     _pf(r.get("fix_lblt")),
+                "total_liab":     _pf(r.get("total_lblt")),
+                "capital":        _pf(r.get("cpfn")),
+                "total_equity":   _pf(r.get("total_cptl")),
+            })
+        return result
+    finally:
+        if session is None:
+            await s.close()
 
 
 async def kis_asking_price(ticker: str, token: str) -> dict:

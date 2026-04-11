@@ -15,6 +15,11 @@ from kis_api import (
     fetch_us_earnings_calendar, fetch_us_sector_etf,
 )
 from krx_crawler import KRX_DB_DIR, _cleanup_old_db, load_krx_db
+try:
+    from db_collector import collect_daily, collect_financial_weekly
+    _HAS_DB_COLLECTOR = True
+except ImportError:
+    _HAS_DB_COLLECTOR = False
 
 
 async def _refresh_ws():
@@ -1533,6 +1538,38 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
 # update_krx_db_job 비활성화 — GitHub Actions에서 크롤링 후 /api/krx_upload로 업로드
 # async def update_krx_db_job(context): ...
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시 활성화)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def daily_collect_job(context):
+    """장후 KIS API 풀수집 (18:10 KST, 평일)."""
+    if not _HAS_DB_COLLECTOR:
+        return
+    try:
+        report = await collect_daily()
+        if "error" not in report:
+            msg = (f"📊 DB 수집 완료\n"
+                   f"종목: {report['total']}\n"
+                   f"소요: {report['duration']:.0f}초")
+            for phase, pr in report.get("phases", {}).items():
+                msg += f"\n  {phase}: {pr['success']}✓ {pr['failed']}✗"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        else:
+            await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ DB 수집 실패: {report['error']}")
+    except Exception as e:
+        print(f"[daily_collect] 오류: {e}")
+
+
+async def weekly_financial_job(context):
+    """주 1회 재무 수집 (일요일 07:15 KST)."""
+    if not _HAS_DB_COLLECTOR:
+        return
+    try:
+        await collect_financial_weekly()
+        await context.bot.send_message(chat_id=CHAT_ID, text="📊 주간 재무 수집 완료")
+    except Exception as e:
+        print(f"[weekly_financial] 오류: {e}")
+
 KRX_UPLOAD_KEY = os.environ.get("KRX_UPLOAD_KEY", "")
 
 
@@ -2942,6 +2979,9 @@ def main():
     jq.run_daily(collect_reports_daily,    time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
     # KRX 전종목 DB 갱신: GitHub Actions에서 크롤링 → /api/krx_upload로 업로드
     # jq.run_daily(update_krx_db_job, time=dtime(15, 55, tzinfo=KST), days=(0,1,2,3,4), name="krx_db")
+    # db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시에만 실제 동작)
+    jq.run_daily(daily_collect_job,       time=dtime(18, 10, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
+    jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")
     jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
