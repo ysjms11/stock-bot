@@ -1554,6 +1554,11 @@ async def daily_collect_job(context):
             for phase, pr in report.get("phases", {}).items():
                 msg += f"\n  {phase}: {pr['success']}✓ {pr['failed']}✗"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+            try:
+                from db_collector import backup_to_icloud
+                backup_to_icloud()
+            except Exception as e:
+                print(f"[backup] iCloud 백업 실패: {e}")
         else:
             await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ DB 수집 실패: {report['error']}")
     except Exception as e:
