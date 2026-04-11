@@ -4069,17 +4069,16 @@ def _build_watchalert_v2_html() -> str:
     for sector in sorted_sectors:
         items = groups[sector]
         count = len(items)
-        open_attr = " open" if count >= 5 else ""
         sector_esc = _html.escape(sector)
-        html += f'<details class="sector-group"{open_attr}>'
-        html += (f'<summary class="sector-header">{sector_esc}'
-                 f' <span style="color:var(--fg2);font-size:0.85em">({count}종목)</span></summary>')
+        html += f'<div class="sector-group">'
+        html += (f'<div class="sector-header">{sector_esc}'
+                 f' <span style="color:var(--fg2);font-size:0.85em">({count}종목)</span></div>')
         html += ('<div class="table-wrap"><table class="watch-sector-table">'
                  '<thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>현재가</th>'
                  '<th>괴리</th><th>등급</th><th>등록일</th><th>메모</th></tr></thead><tbody>')
         for ticker, info in items:
             html += _render_row(ticker, info)
-        html += '</tbody></table></div></details>'
+        html += '</tbody></table></div></div>'
 
     return html
 
