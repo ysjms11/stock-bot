@@ -3844,10 +3844,24 @@ def _build_events_v2_html() -> str:
 
 
 def _build_watchalert_v2_html() -> str:
-    """감시종목 전체 표시 + 검색 + 등급 필터 + 뱃지."""
+    """감시종목 전체 표시 + 현재가 + 검색 + 등급 필터 + 뱃지."""
     wa = load_json(WATCHALERT_FILE, {})
     if not wa:
         return "<p>감시 종목 없음</p>"
+
+    # SQLite에서 최신 종가 로드 (API 호출 0)
+    cur_prices = {}
+    try:
+        from db_collector import _get_db
+        conn = _get_db()
+        latest = conn.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()[0]
+        if latest:
+            rows = conn.execute("SELECT symbol, close FROM daily_snapshot WHERE trade_date=?", (latest,)).fetchall()
+            cur_prices = {r["symbol"]: r["close"] for r in rows}
+        conn.close()
+    except Exception:
+        pass
+
     # 등급순 → 같은 등급 내에서 buy_price 내림차순
     items = sorted(
         wa.items(),
@@ -3869,8 +3883,8 @@ def _build_watchalert_v2_html() -> str:
     html += f'<span id="watch-count" style="margin-left:auto;color:var(--fg2);font-size:0.8em">{len(items)}/{len(items)}종목</span>'
     html += '</div>'
 
-    # 테이블 (등록일 컬럼 추가)
-    html += '<div class="table-wrap"><table id="watch-table"><thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>등급</th><th>등록일</th><th>메모</th></tr></thead><tbody>'
+    # 테이블 (현재가 + 괴리율 컬럼 추가)
+    html += '<div class="table-wrap"><table id="watch-table"><thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>현재가</th><th>괴리</th><th>등급</th><th>등록일</th><th>메모</th></tr></thead><tbody>'
     for ticker, info in items:
         name = _html.escape(info.get("name", ticker))
         bp = float(info.get("buy_price", 0) or 0)
@@ -3880,6 +3894,16 @@ def _build_watchalert_v2_html() -> str:
         is_us = not ticker.isdigit()
         market = "us" if is_us else "kr"
         price_str = f"${bp:,.2f}" if is_us else f"{int(bp):,}원"
+        # 현재가 (SQLite DB 기준, US는 DB에 없으므로 "-")
+        cur = cur_prices.get(ticker, 0)
+        if cur and not is_us:
+            cur_str = f"{int(cur):,}원"
+            gap_pct = (cur - bp) / bp * 100 if bp else 0
+            gap_cls = "pos" if gap_pct >= 0 else "neg"
+            gap_str = f"<span class='{gap_cls}'>{gap_pct:+.1f}%</span>"
+        else:
+            cur_str = "-"
+            gap_str = "-"
         # 등록일: updated_at 우선, 없으면 created
         reg_date = info.get("updated_at") or info.get("created", "")
         reg_date_esc = _html.escape(str(reg_date)[:10]) if reg_date else "-"
@@ -3889,6 +3913,7 @@ def _build_watchalert_v2_html() -> str:
         grade_html = f'<span class="badge {badge_cls}">{grade}</span>' if grade else ""
         html += (f'<tr data-name="{name}" data-ticker="{ticker_esc}" data-grade="{grade}" data-market="{market}">'
                  f'<td>{name}</td><td>{ticker_esc}</td><td>{price_str}</td>'
+                 f'<td>{cur_str}</td><td>{gap_str}</td>'
                  f'<td>{grade_html}</td>'
                  f'<td style="font-size:0.8em;color:var(--fg2)">{reg_date_esc}</td>'
                  f'<td style="font-size:0.8em;color:var(--fg2)">{memo}</td></tr>')
