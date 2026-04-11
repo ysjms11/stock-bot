@@ -117,7 +117,7 @@
 
 ## 구현 시 주의사항
 1. 맥미니 로컬 data/ (DATA_DIR 환경변수)
-2. KIS API 초당 20회 제한 (sleep 0.3)
+2. KIS API 초당 10건 제한 (sleep 0.3 → 실사용 초당 ~3.3건)
 3. KRX Safari 카카오 로그인 필수 — keepalive 25분 연장
 4. MCP 도구 추가 시 mcp_tools.py 스키마 등록 필수
 5. Agent Team: architect(Opus) → dev(Sonnet) → reviewer(Codex)

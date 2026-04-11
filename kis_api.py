@@ -2695,23 +2695,27 @@ async def get_kis_ws_approval_key() -> str:
 
 
 class KisRealtimeManager:
-    """KIS WebSocket 국내주식 실시간 체결가 매니저
-    평일 09:00~16:00 KST에만 연결. 끊김 시 30초 후 자동 재연결.
-    미국 주식은 _is_us_ticker() 로 걸러서 구독하지 않음.
+    """KIS WebSocket 실시간 체결가 매니저
+    - KR 통합체결가: H0UNCNT0 (KRX+NXT), 시간외: H0STOUP0 (16:00~18:00)
+    - US 체결가: HDFSCNT0 (미국 장중)
+    - 평일 상시 연결 (KR 시간외 + US 야간 대응). 끊김 시 30초 후 자동 재연결.
     """
     _WS_URL = "wss://ops.koreainvestment.com:21000"
 
     def __init__(self):
-        self._subscribed: set = set()
+        self._subscribed: set = set()       # KR 종목 set
+        self._subscribed_us: set = set()    # US 종목 set
         self._ws = None
         self._alert_cb = None
         self._running = False
         self._task = None
         self._fired: dict = {}  # {ticker: set(alert_types)} — 당일 발송 추적
+        self._price_cache: dict = {}  # {ticker: int|float} — 최신 체결가 캐시
 
     async def start(self, alert_callback, tickers: set):
         self._alert_cb = alert_callback
-        self._subscribed = {t for t in tickers if not _is_us_ticker(t)}
+        self._subscribed    = {t for t in tickers if not _is_us_ticker(t)}
+        self._subscribed_us = {t for t in tickers if _is_us_ticker(t)}
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
 
@@ -2721,16 +2725,27 @@ class KisRealtimeManager:
             self._task.cancel()
 
     async def update_tickers(self, new_tickers: set):
-        """구독 종목 변경 (KR만 필터링)"""
-        kr_new    = {t for t in new_tickers if not _is_us_ticker(t)}
-        to_add    = kr_new - self._subscribed
-        to_remove = self._subscribed - kr_new
-        self._subscribed = kr_new
+        """구독 종목 변경 (KR + US 모두 지원)"""
+        kr_new = {t for t in new_tickers if not _is_us_ticker(t)}
+        us_new = {t for t in new_tickers if _is_us_ticker(t)}
+        kr_add    = kr_new - self._subscribed
+        kr_remove = self._subscribed - kr_new
+        us_add    = us_new - self._subscribed_us
+        us_remove = self._subscribed_us - us_new
+        self._subscribed    = kr_new
+        self._subscribed_us = us_new
         if self._ws and not self._ws.closed:
-            for t in to_add:
-                await self._send_sub(t, "1")
-            for t in to_remove:
-                await self._send_sub(t, "0")
+            key = await get_kis_ws_approval_key()
+            for t in kr_add:
+                await self._send_sub_raw(self._ws, key, t, "1", "H0UNCNT0")
+            for t in kr_remove:
+                await self._send_sub_raw(self._ws, key, t, "0", "H0UNCNT0")
+            for t in us_add:
+                tr_key = f"D{_guess_excd(t)}{t}"
+                await self._send_sub_raw(self._ws, key, tr_key, "1", "HDFSCNT0")
+            for t in us_remove:
+                tr_key = f"D{_guess_excd(t)}{t}"
+                await self._send_sub_raw(self._ws, key, tr_key, "0", "HDFSCNT0")
 
     def reset_fired(self):
         self._fired = {}
@@ -2738,7 +2753,7 @@ class KisRealtimeManager:
     async def _run_loop(self):
         while self._running:
             now = datetime.now(KST)
-            if now.weekday() < 5 and 9 <= now.hour < 16:
+            if now.weekday() < 5:   # 평일이면 항상 연결 (KR 시간외 + US 야간 대응)
                 try:
                     await self._connect_and_run()
                 except asyncio.CancelledError:
@@ -2747,7 +2762,7 @@ class KisRealtimeManager:
                     print(f"[WS] 오류: {e}, 30초 후 재연결...")
                 await asyncio.sleep(30)
             else:
-                await asyncio.sleep(60)   # 장외: 1분마다 체크
+                await asyncio.sleep(60)   # 주말: 1분마다 체크
 
     async def _connect_and_run(self):
         self.reset_fired()
@@ -2755,16 +2770,27 @@ class KisRealtimeManager:
         if not key:
             print("[WS] 접속키 없음, 스킵")
             return
+        kr_count = len(self._subscribed)
+        us_count = len(self._subscribed_us)
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
                 self._WS_URL, heartbeat=30,
                 timeout=aiohttp.ClientTimeout(total=None)
             ) as ws:
                 self._ws = ws
-                print(f"[WS] 연결됨 ({len(self._subscribed)}개 구독)")
+                print(f"[WS] 연결됨 (KR {kr_count}개 + US {us_count}개 구독)")
+                # KR 통합 체결가 구독 (H0UNCNT0)
                 for t in list(self._subscribed):
-                    await self._send_sub_raw(ws, key, t, "1")
+                    await self._send_sub_raw(ws, key, t, "1", "H0UNCNT0")
                     await asyncio.sleep(0.05)
+                # US 체결가 구독 (HDFSCNT0)
+                for t in list(self._subscribed_us):
+                    try:
+                        tr_key = f"D{_guess_excd(t)}{t}"
+                        await self._send_sub_raw(ws, key, tr_key, "1", "HDFSCNT0")
+                        await asyncio.sleep(0.05)
+                    except Exception as e:
+                        print(f"[WS] US 구독 오류 ({t}): {e}")
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         await self._on_text(msg.data)
@@ -2773,43 +2799,58 @@ class KisRealtimeManager:
                         break
         self._ws = None
 
-    async def _send_sub_raw(self, ws, key, ticker, tr_type):
+    async def _send_sub_raw(self, ws, key, ticker, tr_type, tr_id="H0UNCNT0"):
         await ws.send_json({
             "header": {
                 "approval_key": key, "custtype": "P",
                 "tr_type": tr_type, "content-type": "utf-8",
             },
-            "body": {"input": {"tr_id": "H0STCNT0", "tr_key": ticker}},
+            "body": {"input": {"tr_id": tr_id, "tr_key": ticker}},
         })
 
-    async def _send_sub(self, ticker, tr_type):
-        if self._ws and not self._ws.closed:
-            key = await get_kis_ws_approval_key()
-            await self._send_sub_raw(self._ws, key, ticker, tr_type)
-
     async def _on_text(self, raw: str):
-        # 포맷: "0|H0STCNT0|001|종목코드^체결시간^현재가^..."
+        # 포맷: "0|TR_ID|001|필드1^필드2^..."
         if raw.startswith("{"):
             return   # JSON ACK 무시
         parts = raw.split("|")
-        if len(parts) < 4 or parts[1] != "H0STCNT0":
+        if len(parts) < 4:
             return
-        count = int(parts[2])
+        tr_id = parts[1]
+        if tr_id not in ("H0UNCNT0", "H0STCNT0", "H0STOUP0", "HDFSCNT0"):
+            return
+        try:
+            count = int(parts[2])
+        except (ValueError, IndexError):
+            return
         all_fields = parts[3].split("^")
         if count == 0 or not all_fields:
             return
-        per_rec = len(all_fields) // count
+        per_rec = len(all_fields) // max(count, 1)
         for i in range(count):
             f = all_fields[i * per_rec: (i + 1) * per_rec]
-            if len(f) < 3:
-                continue
-            ticker = f[0]
             try:
-                price = int(f[2])
-            except (ValueError, IndexError):
+                if tr_id == "HDFSCNT0":
+                    # US: SYMB=f[0], LAST=f[10]
+                    if len(f) < 11:
+                        continue
+                    ticker = f[0]
+                    price = float(f[10])
+                else:
+                    # KR (H0UNCNT0 / H0STCNT0 / H0STOUP0): ticker=f[0], price=f[2]
+                    if len(f) < 3:
+                        continue
+                    ticker = f[0]
+                    price = int(f[2])
+                if price > 0:
+                    self._price_cache[ticker] = price
+                    if self._alert_cb:
+                        await self._alert_cb(ticker, price)
+            except Exception:
                 continue
-            if price > 0 and self._alert_cb:
-                await self._alert_cb(ticker, price)
+
+    def get_cached_price(self, ticker: str):
+        """WebSocket 캐시에서 최신 체결가 반환. 없으면 None."""
+        return self._price_cache.get(ticker)
 
 
 # KisRealtimeManager 싱글톤
@@ -2817,20 +2858,26 @@ ws_manager = KisRealtimeManager()
 
 
 def get_ws_tickers() -> set:
-    """WebSocket 구독 대상 KR 종목 수집 (포트폴리오 + 손절 + 워치알러트 + 워치리스트)"""
+    """WebSocket 구독 대상 종목 수집 (KR + US: 포트폴리오 + 손절 + 워치알러트 + 워치리스트)"""
     tickers = set()
-    for t in load_json(PORTFOLIO_FILE, {}):
-        if t != "us_stocks" and not _is_us_ticker(t):
+    pf = load_json(PORTFOLIO_FILE, {})
+    for t in pf:
+        if t not in ("us_stocks", "cash_krw", "cash_usd"):
             tickers.add(t)
-    for t in load_stoploss():
-        if t != "us_stocks" and not _is_us_ticker(t):
+    for sym in pf.get("us_stocks", {}):
+        tickers.add(sym)
+    sl = load_stoploss()
+    for t in sl:
+        if t != "us_stocks":
             tickers.add(t)
+    for sym in sl.get("us_stocks", {}):
+        tickers.add(sym)
     for t in load_watchalert():
-        if not _is_us_ticker(t):
-            tickers.add(t)
+        tickers.add(t)
     for t in load_watchlist():
-        if not _is_us_ticker(t):
-            tickers.add(t)
+        tickers.add(t)
+    for t in load_json(US_WATCHLIST_FILE, {}):
+        tickers.add(t)
     return tickers
 
 

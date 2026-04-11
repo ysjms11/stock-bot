@@ -2,6 +2,7 @@ import os
 import json
 import re
 import asyncio
+import html as _html
 from datetime import datetime, timedelta, time as dtime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -3185,6 +3186,140 @@ def _build_portfolio_html() -> str:
     return html or "<p>포트폴리오 비어있음</p>"
 
 
+async def _build_portfolio_v2_html() -> str:
+    """portfolio.json + KRX DB(KR) + KIS API(US) 현재가 → 포트폴리오 테이블 (v2 전용)."""
+    pf = load_json(PORTFOLIO_FILE, {})
+    kr = {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
+    us = pf.get("us_stocks", {})
+
+    # WebSocket 캐시 우선 → REST fallback
+    kr_prices: dict[str, int] = {}
+    rest_needed = []
+    for t in kr.keys():
+        cached = ws_manager.get_cached_price(t)
+        if cached is not None:
+            kr_prices[t] = cached
+        else:
+            rest_needed.append(t)
+    if rest_needed:
+        try:
+            token = await asyncio.wait_for(get_kis_token(), timeout=5)
+            for t in rest_needed:
+                try:
+                    data = await asyncio.wait_for(kis_stock_price(t, token), timeout=5)
+                    price = int(data.get("stck_prpr", 0) or 0)
+                    if price:
+                        kr_prices[t] = price
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+        except Exception:
+            pass
+
+    html = ""
+    kr_total_cost = kr_total_eval = 0
+    if kr:
+        html += "<h3>🇰🇷 한국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th><th>현재가</th><th>손익</th></tr></thead><tbody>"
+        for t, v in kr.items():
+            qty = int(v.get("qty", 0))
+            avg = int(v.get("avg_price", 0))
+            cur = kr_prices.get(t, 0)
+            cost = qty * avg
+            ev = qty * cur if cur else 0
+            kr_total_cost += cost
+            kr_total_eval += ev
+            if cur and avg:
+                pnl_pct = (cur - avg) / avg * 100
+                cls = "pos" if pnl_pct >= 0 else "neg"
+                pnl_str = f"<span class='{cls}'>{pnl_pct:+.1f}%</span>"
+                cur_str = f"{cur:,}원"
+            else:
+                pnl_str = "-"
+                cur_str = "-"
+            html += f"<tr><td>{v.get('name', t)}</td><td>{qty:,}</td><td>{avg:,}원</td><td>{cur_str}</td><td>{pnl_str}</td></tr>"
+        html += "</tbody></table>"
+        if kr_total_cost > 0:
+            kr_pnl = (kr_total_eval - kr_total_cost) / kr_total_cost * 100
+            cls = "pos" if kr_pnl >= 0 else "neg"
+            html += f"<p>KR 합계: 평가 {kr_total_eval:,.0f}원 / 매입 {kr_total_cost:,.0f}원 = <span class='{cls}'>{kr_pnl:+.1f}%</span></p>"
+
+    if us:
+        # WebSocket 캐시 우선 → REST fallback (US)
+        us_prices: dict[str, float] = {}
+        us_rest_needed = []
+        for sym in us.keys():
+            cached = ws_manager.get_cached_price(sym)
+            if cached is not None:
+                us_prices[sym] = float(cached)
+            else:
+                us_rest_needed.append(sym)
+        if us_rest_needed:
+            try:
+                token = await asyncio.wait_for(get_kis_token(), timeout=5)
+                for sym in us_rest_needed:
+                    try:
+                        data = await asyncio.wait_for(kis_us_stock_price(sym, token), timeout=5)
+                        price = float(data.get("last", 0) or 0)
+                        if price:
+                            us_prices[sym] = price
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        # 환율 조회 (Yahoo Finance KRW=X)
+        usd_krw = 0.0
+        try:
+            fx = await asyncio.wait_for(get_yahoo_quote("KRW=X"), timeout=5)
+            usd_krw = float(fx.get("price", 0) or 0) if fx else 0.0
+        except Exception:
+            pass
+
+        us_total_cost_usd = us_total_eval_usd = 0.0
+        html += "<h3>🇺🇸 미국</h3><table><thead><tr><th>종목</th><th>수량</th><th>평단가</th><th>현재가</th><th>손익%</th><th>평가(원화)</th></tr></thead><tbody>"
+        for sym, info in us.items():
+            qty = float(info.get("qty", 0) or 0)
+            avg = float(info.get("avg_price", 0) or 0)
+            cur = us_prices.get(sym, 0.0)
+            cost_usd = qty * avg
+            eval_usd = qty * cur if cur else 0.0
+            us_total_cost_usd += cost_usd
+            us_total_eval_usd += eval_usd
+
+            cur_str = f"${cur:,.2f}" if cur else "-"
+            if cur and avg:
+                pnl_pct = (cur - avg) / avg * 100
+                cls = "pos" if pnl_pct >= 0 else "neg"
+                pnl_str = f"<span class='{cls}'>{pnl_pct:+.1f}%</span>"
+            else:
+                pnl_str = "-"
+            if eval_usd and usd_krw:
+                eval_krw_str = f"{eval_usd * usd_krw:,.0f}원"
+            else:
+                eval_krw_str = "-"
+            html += (f"<tr><td>{_html.escape(info.get('name', sym))} ({_html.escape(sym)})</td>"
+                     f"<td>{qty:,.0f}</td><td>${avg:,.2f}</td><td>{cur_str}</td>"
+                     f"<td>{pnl_str}</td><td>{eval_krw_str}</td></tr>")
+        html += "</tbody></table>"
+        if us_total_cost_usd > 0:
+            us_pnl = (us_total_eval_usd - us_total_cost_usd) / us_total_cost_usd * 100
+            cls = "pos" if us_pnl >= 0 else "neg"
+            eval_krw_total = f" ({us_total_eval_usd * usd_krw:,.0f}원)" if usd_krw else ""
+            html += (f"<p>US 합계: 평가 ${us_total_eval_usd:,.2f}{eval_krw_total} / "
+                     f"매입 ${us_total_cost_usd:,.2f} = <span class='{cls}'>{us_pnl:+.1f}%</span></p>")
+        if usd_krw:
+            html += f"<p style='color:var(--fg2);font-size:0.85em'>USD/KRW: {usd_krw:,.1f}</p>"
+
+    cash_k = float(pf.get("cash_krw", 0) or 0)
+    cash_u = float(pf.get("cash_usd", 0) or 0)
+    if cash_k or cash_u:
+        html += f"<p>💰 현금: {cash_k:,.0f}원 / ${cash_u:,.2f}</p>"
+    if db_date:
+        html += f"<p style='color:var(--fg2);font-size:0.85em'>KR 현재가 기준: {db_date}</p>"
+    return html or "<p>포트폴리오 비어있음</p>"
+
+
 def _build_watchalert_html() -> str:
     """watchalert.json → 감시가 테이블."""
     wa = load_watchalert()
@@ -3338,6 +3473,464 @@ async def _handle_dash_file(request: web.Request) -> web.Response:
         return web.Response(text=f"Error: {e}", status=500)
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 웹 대시보드 v2 (/dash-v2)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_DASH_V2_CSS = """
+<style>
+:root{--bg:#1a1a2e;--bg2:#16213e;--fg:#e0e0e0;--fg2:#a0a0b0;--accent:#4fc3f7;--red:#ef5350;--green:#66bb6a;--border:#2a2a4a}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,sans-serif;padding:16px;padding-top:72px;max-width:900px;margin:0 auto;line-height:1.6}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+h1{font-size:1.5em;margin:16px 0 8px}
+h2{font-size:1.2em;margin:0 0 12px;color:var(--fg)}
+h3{font-size:1.0em;margin:12px 0 4px;color:var(--accent)}
+p{margin:8px 0}
+code{background:var(--bg2);padding:2px 6px;border-radius:3px;font-family:'SF Mono',monospace;font-size:0.9em}
+pre{background:var(--bg2);padding:12px;border-radius:6px;overflow-x:auto;margin:8px 0;font-size:0.85em;border:1px solid var(--border)}
+pre code{background:none;padding:0}
+ul,ol{margin:8px 0 8px 20px}li{margin:2px 0}
+.check{display:flex;align-items:center;gap:6px;margin:2px 0}
+.check input{width:16px;height:16px;accent-color:var(--accent)}
+.tab-nav{position:sticky;top:0;z-index:100;background:var(--bg);display:flex;gap:4px;padding:8px 0;border-bottom:2px solid var(--border);overflow-x:auto;margin-bottom:0}
+.tab-nav a{padding:6px 14px;border-radius:16px;white-space:nowrap;font-size:0.85em;color:var(--fg2);text-decoration:none;transition:background 0.2s,color 0.2s}
+.tab-nav a:hover{background:var(--bg2);color:var(--fg)}
+.tab-nav a.active{background:var(--accent);color:#000;font-weight:600}
+.section{background:var(--bg2);border-radius:8px;padding:16px;margin:16px 0;border:1px solid var(--border);scroll-margin-top:60px;transition:border-color 0.2s}
+.section:hover{border-color:rgba(79,195,247,0.3)}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:0.9em}
+thead th{color:var(--accent);font-weight:600;font-size:0.85em;padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+tbody td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+tbody tr:hover{background:rgba(255,255,255,0.03)}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.75em;font-weight:600}
+.badge-A{background:rgba(239,83,80,0.2);color:#ef5350}
+.badge-Bp{background:rgba(255,167,38,0.2);color:#ffa726}
+.badge-B{background:rgba(102,187,106,0.2);color:#66bb6a}
+.badge-Bm{background:rgba(120,144,156,0.2);color:#78909c}
+.badge-C{background:rgba(120,144,156,0.2);color:#78909c}
+.badge-buy{background:rgba(102,187,106,0.15);color:var(--green)}
+.badge-sell{background:rgba(239,83,80,0.15);color:var(--red)}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.dday{font-weight:700;color:var(--accent)}
+.dday-0{font-weight:700;color:var(--red);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:0.6}}
+.doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.doc-card{background:var(--bg);border-radius:8px;padding:12px;border:1px solid var(--border);text-decoration:none;color:var(--fg);transition:border-color 0.2s,transform 0.2s;display:block}
+.doc-card:hover{border-color:var(--accent);transform:translateY(-2px);text-decoration:none}
+.doc-icon{font-size:1.5em;margin-bottom:4px}
+.doc-name{font-size:0.85em;font-weight:600}
+.doc-desc{font-size:0.75em;color:var(--fg2)}
+.search-box{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--fg);font-size:0.9em;margin-bottom:8px}
+.search-box:focus{outline:none;border-color:var(--accent)}
+.filter-bar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center}
+.filter-btn{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--fg2);cursor:pointer;font-size:0.75em;transition:background 0.2s,color 0.2s}
+.filter-btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
+.refresh-bar{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:0.75em;color:var(--fg2);margin-bottom:8px}
+.toggle{cursor:pointer;user-select:none}
+details summary{cursor:pointer;user-select:none}
+details summary h2{display:inline}
+@media(max-width:600px){body{padding:8px;padding-top:72px}.tab-nav{font-size:0.8em}table{font-size:0.8em}.doc-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}}
+</style>
+"""
+
+
+def _dash_v2_js() -> str:
+    """대시보드 v2 JS (탭 하이라이트 + 자동새로고침 + 감시종목 검색/필터)."""
+    return """<script>
+// 1. 탭 하이라이트 (IntersectionObserver)
+const sections = document.querySelectorAll('.section[id]');
+const tabs = document.querySelectorAll('.tab-nav a');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      tabs.forEach(t => t.classList.remove('active'));
+      const tab = document.querySelector('.tab-nav a[href="#' + e.target.id + '"]');
+      if (tab) tab.classList.add('active');
+    }
+  });
+}, { rootMargin: '-60px 0px -70% 0px' });
+sections.forEach(s => obs.observe(s));
+
+// 2. 자동 새로고침
+let refreshInterval = null;
+const REFRESH_MS = 300000;
+const refreshToggle = document.getElementById('refresh-toggle');
+const refreshTime = document.getElementById('refresh-time');
+
+function startRefresh() {
+  refreshInterval = setInterval(() => location.reload(), REFRESH_MS);
+  localStorage.setItem('autoRefresh', 'on');
+  if (refreshToggle) refreshToggle.textContent = '⏸ 자동갱신 끄기';
+}
+function stopRefresh() {
+  clearInterval(refreshInterval);
+  localStorage.setItem('autoRefresh', 'off');
+  if (refreshToggle) refreshToggle.textContent = '▶ 자동갱신 켜기';
+}
+if (refreshToggle) {
+  refreshToggle.addEventListener('click', () => {
+    if (localStorage.getItem('autoRefresh') === 'off') startRefresh();
+    else stopRefresh();
+  });
+}
+if (localStorage.getItem('autoRefresh') !== 'off') startRefresh();
+else stopRefresh();
+if (refreshTime) refreshTime.textContent = new Date().toLocaleTimeString('ko-KR');
+
+// 3. 감시종목 검색/필터
+const searchInput = document.getElementById('watch-search');
+const watchTable = document.getElementById('watch-table');
+const filterBtns = document.querySelectorAll('.filter-btn');
+const watchCount = document.getElementById('watch-count');
+let currentFilter = 'all';
+
+function filterWatch() {
+  if (!watchTable) return;
+  const q = (searchInput ? searchInput.value : '').toLowerCase();
+  const rows = watchTable.querySelectorAll('tbody tr');
+  let visible = 0;
+  rows.forEach(r => {
+    const name = (r.dataset.name || '').toLowerCase();
+    const ticker = (r.dataset.ticker || '').toLowerCase();
+    const grade = r.dataset.grade || '';
+    const market = r.dataset.market || '';
+    const matchSearch = !q || name.includes(q) || ticker.includes(q);
+    const matchFilter = currentFilter === 'all'
+      || (currentFilter === 'kr' && market === 'kr')
+      || (currentFilter === 'us' && market === 'us')
+      || grade.startsWith(currentFilter);
+    const show = matchSearch && matchFilter;
+    r.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  if (watchCount) watchCount.textContent = visible + '/' + rows.length + '종목';
+}
+
+if (searchInput) searchInput.addEventListener('input', filterWatch);
+filterBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    filterBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    filterWatch();
+  });
+});
+</script>"""
+
+
+def _build_events_v2_html() -> str:
+    """이벤트 D-day 카운트 + 과거/미래 분리.
+
+    events.json 형식 지원:
+      - {"FOMC": "2026-04-28"}  (key=이벤트명, val=날짜) ← 신규
+      - {"2026-04-28": "FOMC"}  (key=날짜, val=이벤트명) ← 구버전 호환
+      - {"이란": "진행중"}       (날짜 없음 → 기타)
+    """
+    events = load_json(f"{_DATA_DIR}/events.json", {})
+    if not events:
+        return "<p>등록된 이벤트 없음</p>"
+    today = datetime.now(KST).date()
+    future, past = [], []
+    for key, val in events.items():
+        # 키-값 중 어느 쪽이 날짜인지 판별
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', str(val)):
+            event_name, date_str = key, str(val)
+        elif re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
+            event_name, date_str = str(val), key
+        else:
+            # 날짜 없음 → 미래 목록 맨 뒤
+            future.append((str(key), str(val), None))
+            continue
+        try:
+            d = datetime.strptime(date_str, "%Y-%m-%d").date()
+            delta = (d - today).days
+            if delta >= 0:
+                future.append((event_name, date_str, delta))
+            else:
+                past.append((event_name, date_str, delta))
+        except Exception:
+            future.append((event_name, date_str, None))
+
+    # 미래: D-day 오름차순 (None은 맨 뒤)
+    future.sort(key=lambda x: (x[2] is None, x[2] if x[2] is not None else 9999))
+    # 과거: 최근 먼저 (delta 내림차순 → 절댓값 오름차순)
+    past.sort(key=lambda x: x[2] if x[2] is not None else -9999, reverse=True)
+
+    html = ""
+    if future:
+        html += '<div class="table-wrap"><table><thead><tr><th>D-day</th><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
+        for event_name, ds, delta in future:
+            if delta is None:
+                dday_cls, dday_text = "dday", "—"
+            elif delta == 0:
+                dday_cls, dday_text = "dday-0", "D-DAY"
+            else:
+                dday_cls, dday_text = "dday", f"D-{delta}"
+            html += f'<tr><td class="{dday_cls}">{dday_text}</td><td>{_html.escape(ds)}</td><td>{_html.escape(event_name)}</td></tr>'
+        html += '</tbody></table></div>'
+
+    if past:
+        html += f'<details><summary style="color:var(--fg2);font-size:0.85em;margin-top:12px;padding:4px 0">지난 이벤트 ({len(past)}건)</summary>'
+        html += '<div class="table-wrap"><table><thead><tr><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
+        for event_name, ds, _ in past:
+            html += f'<tr style="color:var(--fg2)"><td>{_html.escape(ds)}</td><td>{_html.escape(event_name)}</td></tr>'
+        html += '</tbody></table></div></details>'
+    return html
+
+
+def _build_watchalert_v2_html() -> str:
+    """감시종목 전체 표시 + 검색 + 등급 필터 + 뱃지."""
+    wa = load_json(WATCHALERT_FILE, {})
+    if not wa:
+        return "<p>감시 종목 없음</p>"
+    # 등급순 → 같은 등급 내에서 buy_price 내림차순
+    items = sorted(
+        wa.items(),
+        key=lambda x: (
+            _GRADE_ORDER.get(x[1].get("grade", ""), 7),
+            -float(x[1].get("buy_price", 0) or 0),
+        ),
+    )
+
+    # 검색 + 필터 UI
+    html = '<input id="watch-search" class="search-box" placeholder="종목명 또는 코드 검색...">'
+    html += '<div class="filter-bar">'
+    html += '<button class="filter-btn active" data-filter="all">전체</button>'
+    html += '<button class="filter-btn" data-filter="kr">🇰🇷</button>'
+    html += '<button class="filter-btn" data-filter="us">🇺🇸</button>'
+    grades = sorted(set(v.get("grade", "") for _, v in items if v.get("grade")))
+    for g in grades:
+        html += f'<button class="filter-btn" data-filter="{g}">{g}</button>'
+    html += f'<span id="watch-count" style="margin-left:auto;color:var(--fg2);font-size:0.8em">{len(items)}/{len(items)}종목</span>'
+    html += '</div>'
+
+    # 테이블 (등록일 컬럼 추가)
+    html += '<div class="table-wrap"><table id="watch-table"><thead><tr><th>종목</th><th>코드</th><th>감시가</th><th>등급</th><th>등록일</th><th>메모</th></tr></thead><tbody>'
+    for ticker, info in items:
+        name = _html.escape(info.get("name", ticker))
+        bp = float(info.get("buy_price", 0) or 0)
+        grade = _html.escape(info.get("grade", ""))
+        memo = _html.escape(str(info.get("memo", ""))[:60])
+        ticker_esc = _html.escape(ticker)
+        is_us = not ticker.isdigit()
+        market = "us" if is_us else "kr"
+        price_str = f"${bp:,.2f}" if is_us else f"{int(bp):,}원"
+        # 등록일: updated_at 우선, 없으면 created
+        reg_date = info.get("updated_at") or info.get("created", "")
+        reg_date_esc = _html.escape(str(reg_date)[:10]) if reg_date else "-"
+        # 클래스명에서 +/-를 p/m으로 변환
+        grade_key = grade.replace("+", "p").replace("-", "m")
+        badge_cls = f"badge-{grade_key}" if grade else ""
+        grade_html = f'<span class="badge {badge_cls}">{grade}</span>' if grade else ""
+        html += (f'<tr data-name="{name}" data-ticker="{ticker_esc}" data-grade="{grade}" data-market="{market}">'
+                 f'<td>{name}</td><td>{ticker_esc}</td><td>{price_str}</td>'
+                 f'<td>{grade_html}</td>'
+                 f'<td style="font-size:0.8em;color:var(--fg2)">{reg_date_esc}</td>'
+                 f'<td style="font-size:0.8em;color:var(--fg2)">{memo}</td></tr>')
+    html += '</tbody></table></div>'
+    return html
+
+
+_DOC_META_V2 = {
+    "TODO.md": ("📋", "할일 목록"),
+    "INVESTMENT_RULES.md": ("📏", "투자 규칙"),
+    "HANDOVER.md": ("🤝", "인수인계"),
+    "bot_guide.md": ("📖", "도구 사용법"),
+    "bot_reference.txt": ("📘", "도구 파라미터"),
+    "bot_scenarios.md": ("🎯", "활용 시나리오"),
+    "bot_samples.md": ("🔬", "입출력 샘플"),
+    "FILES.md": ("📁", "파일 설명서"),
+    "krx_db_design.md": ("🗄️", "KRX DB 설계"),
+    "regime_update_notes.md": ("📝", "레짐 수정노트"),
+}
+
+
+def _build_docs_v2_html() -> str:
+    """문서 카드 그리드 + research/ 서브폴더."""
+    html = '<div class="doc-grid">'
+    try:
+        doc_files = sorted(
+            f for f in os.listdir(_DATA_DIR)
+            if f.endswith((".md", ".txt")) and not f.startswith(".")
+        )
+    except Exception:
+        doc_files = []
+
+    for f in doc_files:
+        icon, desc = _DOC_META_V2.get(f, ("📄", ""))
+        html += (f'<a href="/dash/file/{f}" class="doc-card">'
+                 f'<div class="doc-icon">{icon}</div>'
+                 f'<div class="doc-name">{f}</div>'
+                 f'<div class="doc-desc">{desc}</div></a>')
+    html += '</div>'
+
+    research_dir = os.path.join(_DATA_DIR, "research")
+    try:
+        research_files = sorted(
+            f for f in os.listdir(research_dir)
+            if f.endswith(".md") and not f.startswith(".")
+        ) if os.path.isdir(research_dir) else []
+    except Exception:
+        research_files = []
+
+    if research_files:
+        html += '<h3 style="margin-top:16px">📊 종목 리서치</h3><div class="doc-grid">'
+        for f in research_files:
+            name = f.replace(".md", "")
+            html += (f'<a href="/dash/file/research/{f}" class="doc-card">'
+                     f'<div class="doc-icon">📊</div>'
+                     f'<div class="doc-name">{name}</div>'
+                     f'<div class="doc-desc">딥리서치</div></a>')
+        html += '</div>'
+    return html
+
+
+async def _handle_dash_v2(request: web.Request) -> web.Response:
+    """GET /dash-v2 — 개선된 대시보드 v2."""
+    html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>Stock Bot Dashboard v2</title>{_DASH_V2_CSS}</head><body>')
+    html += '<h1>📊 Stock Bot</h1>'
+    html += ('<div class="refresh-bar">'
+             '<span>갱신: <span id="refresh-time">-</span></span>'
+             '<span id="refresh-toggle" class="toggle">⏸ 자동갱신 끄기</span>'
+             '</div>')
+    html += ('<nav class="tab-nav">'
+             '<a href="#portfolio" class="active">💰 포트폴리오</a>'
+             '<a href="#events">📅 이벤트</a>'
+             '<a href="#watch">👀 감시종목</a>'
+             '<a href="#decision">📝 투자판단</a>'
+             '<a href="#trade">💼 매매</a>'
+             '<a href="#docs">📚 문서</a>'
+             '</nav>')
+
+    # 1. 포트폴리오
+    try:
+        html += f'<div class="section" id="portfolio"><h2>💰 포트폴리오</h2>{await _build_portfolio_v2_html()}</div>'
+    except Exception:
+        html += '<div class="section" id="portfolio"><h2>💰 포트폴리오</h2><p>로드 실패</p></div>'
+
+    # 2. 이벤트
+    try:
+        html += f'<div class="section" id="events"><h2>📅 이벤트</h2>{_build_events_v2_html()}</div>'
+    except Exception:
+        html += '<div class="section" id="events"><h2>📅 이벤트</h2><p>로드 실패</p></div>'
+
+    # 3. 감시종목
+    try:
+        html += f'<div class="section" id="watch"><h2>👀 감시종목</h2>{_build_watchalert_v2_html()}</div>'
+    except Exception:
+        html += '<div class="section" id="watch"><h2>👀 감시종목</h2><p>로드 실패</p></div>'
+
+    # 4. 투자판단
+    try:
+        dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
+        if dl:
+            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:5]
+            html += ('<div class="section" id="decision"><h2>📝 최근 투자판단</h2>'
+                     '<div class="table-wrap"><table><thead><tr><th>날짜</th><th>레짐</th><th>액션</th></tr></thead><tbody>')
+            for date, entry in recent:
+                regime = _html.escape(str(entry.get("regime", "?")))
+                actions = _html.escape(", ".join(entry.get("actions", [])) or str(entry.get("summary", ""))[:60])
+                html += f"<tr><td>{_html.escape(date)}</td><td>{regime}</td><td>{actions}</td></tr>"
+            html += "</tbody></table></div></div>"
+    except Exception:
+        pass
+
+    # 5. 매매기록
+    try:
+        tl = load_json(f"{_DATA_DIR}/trade_log.json", [])
+        trades = tl if isinstance(tl, list) else tl.get("trades", [])
+        if trades:
+            recent_t = trades[-10:][::-1]
+            html += ('<div class="section" id="trade"><h2>💼 최근 매매</h2>'
+                     '<div class="table-wrap"><table><thead><tr>'
+                     '<th>날짜</th><th>종목</th><th>매매</th><th>가격</th><th>수량</th>'
+                     '</tr></thead><tbody>')
+            for t in recent_t:
+                side_cls = "badge-buy" if t.get("side") == "buy" else "badge-sell"
+                side_txt = "매수" if t.get("side") == "buy" else "매도"
+                price_val = t.get("price", "?")
+                try:
+                    price_disp = f"{int(price_val):,}"
+                except (TypeError, ValueError):
+                    price_disp = str(price_val)
+                html += (f'<tr><td>{_html.escape(str(t.get("date", "?")))}</td>'
+                         f'<td>{_html.escape(str(t.get("name", t.get("ticker", "?"))))}</td>'
+                         f'<td><span class="badge {side_cls}">{side_txt}</span></td>'
+                         f'<td>{price_disp}</td><td>{t.get("qty", "?")}</td></tr>')
+            html += "</tbody></table></div></div>"
+    except Exception:
+        pass
+
+    # 6. 문서
+    try:
+        html += f'<div class="section" id="docs"><h2>📚 문서</h2>{_build_docs_v2_html()}</div>'
+    except Exception:
+        html += '<div class="section" id="docs"><h2>📚 문서</h2><p>로드 실패</p></div>'
+
+    # 7. TODO (접힘)
+    try:
+        todo_path = os.path.join(_DATA_DIR, "TODO.md")
+        if os.path.exists(todo_path):
+            with open(todo_path, encoding="utf-8") as f:
+                todo_md = f.read()
+            html += (f'<details class="section">'
+                     f'<summary><h2 style="display:inline">📋 TODO</h2></summary>'
+                     f'<div style="margin-top:12px">{_md_to_html(todo_md)}</div>'
+                     f'</details>')
+    except Exception:
+        pass
+
+    html += _dash_v2_js()
+    html += "</body></html>"
+    return web.Response(text=html, content_type="text/html")
+
+
+async def _handle_dash_research_file(request: web.Request) -> web.Response:
+    """GET /dash/file/research/{filename} — data/research/ 파일 렌더링."""
+    try:
+        filename = request.match_info.get("filename", "")
+        if ".." in filename or "/" in filename or "\\" in filename:
+            return web.Response(text="Forbidden", status=403)
+        if filename.endswith((".py", ".env", ".sh")):
+            return web.Response(text="Forbidden", status=403)
+
+        filepath = os.path.join(_DATA_DIR, "research", filename)
+        if not os.path.isfile(filepath):
+            return web.Response(text="Not Found", status=404)
+        if os.path.getsize(filepath) > 500 * 1024:
+            return web.Response(text="File too large", status=413)
+
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+
+        html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+                f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+                f'<title>{filename}</title>{_DASH_CSS}</head><body>'
+                f'<div class="nav"><a href="/dash-v2">← 대시보드 v2</a></div>'
+                f'<h1>{filename}</h1>')
+
+        if filename.endswith(".md") or filename.endswith(".txt"):
+            html += _md_to_html(content)
+        elif filename.endswith(".json"):
+            try:
+                html += _json_to_table(json.loads(content))
+            except Exception:
+                html += f"<pre>{content[:10000]}</pre>"
+        else:
+            html += f"<pre>{content[:10000]}</pre>"
+
+        html += "</body></html>"
+        return web.Response(text=html, content_type="text/html")
+    except Exception as e:
+        import traceback
+        print(f"[Dash] research file 오류: {e}\n{traceback.format_exc()}")
+        return web.Response(text=f"Error: {e}", status=500)
+
+
 async def _run_all(app, port):
     # MCP aiohttp 서버 시작
     mcp_app = web.Application(client_max_size=50 * 1024 * 1024)  # 50MB for KRX upload
@@ -3347,6 +3940,8 @@ async def _run_all(app, port):
     mcp_app.router.add_post("/api/krx_upload", _handle_krx_upload)
     mcp_app.router.add_get("/dash", _handle_dash)
     mcp_app.router.add_get("/dash/file/{filename}", _handle_dash_file)
+    mcp_app.router.add_get("/dash-v2", _handle_dash_v2)
+    mcp_app.router.add_get("/dash/file/research/{filename}", _handle_dash_research_file)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -3398,7 +3993,7 @@ async def _run_all(app, port):
                 pass
 
     await ws_manager.start(_ws_alert_cb, get_ws_tickers())
-    print(f"[WS] 실시간 매니저 시작 ({len(ws_manager._subscribed)}개 KR 종목)")
+    print(f"[WS] 실시간 매니저 시작 (KR {len(ws_manager._subscribed)}개 + US {len(ws_manager._subscribed_us)}개)")
 
     # 텔레그램 봇 비동기 실행
     try:
