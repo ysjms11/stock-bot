@@ -1592,8 +1592,11 @@ async def weekly_financial_job(context):
     if not _HAS_DB_COLLECTOR:
         return
     try:
-        await collect_financial_weekly()
+        await asyncio.wait_for(collect_financial_weekly(), timeout=1800)  # 30분
         await context.bot.send_message(chat_id=CHAT_ID, text="📊 주간 재무 수집 완료")
+    except asyncio.TimeoutError:
+        print("[weekly_financial] 30분 타임아웃")
+        await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ 주간 재무 수집 30분 초과 타임아웃")
     except Exception as e:
         print(f"[weekly_financial] 오류: {e}")
 
