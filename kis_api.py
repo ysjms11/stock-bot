@@ -2836,11 +2836,11 @@ async def fetch_universe_from_krx(token: str) -> dict:
 
         return collected
 
-    kospi200  = await _fetch_market("2001", 250)  # KOSPI200 전체
+    kospi  = await _fetch_market("2001", 250)  # KOSPI 시총 상위 250
     await asyncio.sleep(0.3)
-    kosdaq150 = await _fetch_market("1001", 150)  # KOSDAQ 시총 상위 150
-    universe  = {**kospi200, **kosdaq150}
-    print(f"[fetch_universe] KOSPI200={len(kospi200)}, KOSDAQ={len(kosdaq150)}, 합계={len(universe)}")
+    kosdaq = await _fetch_market("1001", 350)  # KOSDAQ 시총 상위 350
+    universe  = {**kospi, **kosdaq}
+    print(f"[fetch_universe] KOSPI={len(kospi)}, KOSDAQ={len(kosdaq)}, 합계={len(universe)}")
     return universe
 
 

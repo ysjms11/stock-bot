@@ -1396,7 +1396,7 @@ async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
 # 📋 유니버스 자동 갱신 (매주 월요일 07:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
-    """매주 월요일 07:00 KST — KOSPI200 + KOSDAQ150 기준으로 stock_universe.json 자동 갱신."""
+    """매주 월요일 07:00 KST — KOSPI250 + KOSDAQ350 기준으로 stock_universe.json 자동 갱신 (~600종목)."""
     try:
         token = await get_kis_token()
         if not token:
