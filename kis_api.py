@@ -3,6 +3,7 @@ import json
 import re
 import asyncio
 import aiohttp
+import sqlite3
 import xml.etree.ElementTree as ET
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -51,6 +52,7 @@ ET  = ZoneInfo('America/New_York')  # DST 자동 감지 (서머타임 EDT/표준
 
 _DATA_DIR = os.environ.get("DATA_DIR", "/data")
 os.makedirs(_DATA_DIR, exist_ok=True)
+_DB_PATH = f"{_DATA_DIR}/stock.db"
 
 WATCHLIST_FILE    = f"{_DATA_DIR}/watchlist.json"
 STOPLOSS_FILE     = f"{_DATA_DIR}/stoploss.json"
@@ -585,6 +587,42 @@ def get_us_consensus(ticker: str) -> dict | None:
         return None
 
 
+def _insert_consensus_history(kr_data: dict, us_data: dict):
+    """수집된 컨센서스를 consensus_history 테이블에 UPSERT."""
+    today = datetime.now(KST).strftime("%Y%m%d")
+    now_str = datetime.now(KST).isoformat()
+    rows = []
+    for symbol, entry in kr_data.items():
+        avg = entry.get("avg")
+        if not avg:
+            continue
+        rows.append((
+            today, symbol,
+            float(avg), float(entry.get("high", 0) or 0), float(entry.get("low", 0) or 0),
+            int(entry.get("buy", 0) or 0), int(entry.get("hold", 0) or 0), int(entry.get("sell", 0) or 0),
+            now_str,
+        ))
+    if not rows:
+        return
+    try:
+        conn = sqlite3.connect(_DB_PATH, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executemany("""
+            INSERT INTO consensus_history
+            (trade_date, symbol, target_avg, target_high, target_low, buy_count, hold_count, sell_count, collected_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_date, symbol) DO UPDATE SET
+                target_avg=excluded.target_avg, target_high=excluded.target_high, target_low=excluded.target_low,
+                buy_count=excluded.buy_count, hold_count=excluded.hold_count, sell_count=excluded.sell_count,
+                collected_at=excluded.collected_at
+        """, rows)
+        conn.commit()
+        conn.close()
+        print(f"[consensus_history] {len(rows)}건 저장 ({today})")
+    except Exception as e:
+        print(f"[consensus_history] DB 저장 실패: {e}")
+
+
 async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
     """포트폴리오+워치리스트 전체 컨센서스를 배치 수집해 consensus_cache.json에 저장.
     기존 avg는 prev_avg로 보존해 주간 변동 추적 가능.
@@ -670,6 +708,7 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
             "us": old_us,
         }
         save_json(CONSENSUS_CACHE_FILE, cache)
+        _insert_consensus_history(new_kr, {})
         print(f"[consensus_cache] 부분 저장 완료: KR {len(new_kr)}종목 갱신 (전체 {len(merged_kr)})")
         return cache
 
@@ -708,6 +747,7 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
         "us": new_us,
     }
     save_json(CONSENSUS_CACHE_FILE, cache)
+    _insert_consensus_history(new_kr, new_us)
     print(f"[consensus_cache] 저장 완료: KR {len(new_kr)}종목, US {len(new_us)}종목")
     return cache
 
