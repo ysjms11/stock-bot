@@ -86,10 +86,11 @@ def _init_schema(conn: sqlite3.Connection):
 # Rate Limiter
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def _rate_limited(coro):
-    """초당 8건 제한 (세마포어 + 0.13s 슬립)."""
+    """초당 8건 제한 (세마포어 + jitter 슬립)."""
+    import random
     async with _RATE_SEM:
         result = await coro
-        await asyncio.sleep(0.13)
+        await asyncio.sleep(0.10 + random.random() * 0.06)  # 0.10~0.16초
         return result
 
 
