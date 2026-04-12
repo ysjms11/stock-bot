@@ -1266,17 +1266,17 @@ async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
         print("[consensus_update] 컨센서스 배치 업데이트 시작")
         old_cache = deepcopy(load_json(CONSENSUS_CACHE_FILE, {}))
 
-        # universe + portfolio + watchlist + watchalert 합집합
+        # stock_master 전종목 (일요일이니 시간 무관)
         all_kr = {}
         try:
-            uni = load_json(os.path.join(_DATA_DIR, "stock_universe.json"), {})
-            all_kr.update(uni.get("codes", {}))
+            from db_collector import _get_db
+            conn = _get_db()
+            rows = conn.execute("SELECT symbol, name FROM stock_master").fetchall()
+            all_kr = {r["symbol"]: r["name"] for r in rows}
+            conn.close()
         except Exception:
             pass
-        pf = load_json(PORTFOLIO_FILE, {})
-        for t, v in pf.items():
-            if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict) and not _is_us_ticker(t):
-                all_kr[t] = v.get("name", t)
+        # stock_master에 없는 감시 종목도 추가
         wa = load_watchalert()
         for t, v in wa.items():
             if not _is_us_ticker(t) and t not in all_kr:
