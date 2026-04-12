@@ -1408,6 +1408,10 @@ async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
         if not new:
             print("[universe_update] 종목 조회 결과 없음 — 갱신 스킵")
             return
+        # 비정상적으로 적으면 덮어쓰기 방지 (주말 KIS API 제한 대응)
+        if len(new) < 100 and len(old) > 100:
+            print(f"[universe_update] {len(new)}종목 < 100 — 비정상 응답, 기존 {len(old)}종목 유지")
+            return
 
         added   = sorted(set(new) - set(old))
         removed = sorted(set(old) - set(new))
