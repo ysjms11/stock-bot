@@ -1553,24 +1553,38 @@ async def daily_collect_job(context):
     """장후 KIS API 풀수집 (18:30 KST, 평일)."""
     if not _HAS_DB_COLLECTOR:
         return
+
+    # 주말 이중 가드
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+
     try:
-        report = await collect_daily()
-        if "error" not in report:
-            msg = (f"📊 DB 수집 완료\n"
-                   f"종목: {report['total']}\n"
-                   f"소요: {report['duration']:.0f}초")
-            for phase, pr in report.get("phases", {}).items():
-                msg += f"\n  {phase}: {pr['success']}✓ {pr['failed']}✗"
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
-            try:
-                from db_collector import backup_to_icloud
-                backup_to_icloud()
-            except Exception as e:
-                print(f"[backup] iCloud 백업 실패: {e}")
-        else:
-            await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ DB 수집 실패: {report['error']}")
+        report = await asyncio.wait_for(collect_daily(), timeout=2400)  # 40분
+    except asyncio.TimeoutError:
+        await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ DB 수집 40분 초과 타임아웃")
+        return
     except Exception as e:
         print(f"[daily_collect] 오류: {e}")
+        return
+
+    if report.get("skipped"):
+        return  # 주말/공휴일 조용히 스킵
+
+    if "error" not in report:
+        msg = (f"📊 DB 수집 완료\n"
+               f"종목: {report['total']}\n"
+               f"소요: {report['duration']:.0f}초")
+        for phase, pr in report.get("phases", {}).items():
+            msg += f"\n  {phase}: {pr['success']}✓ {pr['failed']}✗"
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        try:
+            from db_collector import backup_to_icloud
+            backup_to_icloud()
+        except Exception as e:
+            print(f"[backup] iCloud 백업 실패: {e}")
+    else:
+        await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ DB 수집 실패: {report['error']}")
 
 
 async def weekly_financial_job(context):

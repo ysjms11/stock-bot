@@ -58,6 +58,8 @@ _STD_SECTOR_MAP_PATH = f"{_DATA_DIR}/std_sector_map.json"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 _RATE_SEM = None  # collect_daily 시작 시 초기화
 
+_PHASE_TIMEOUT = 600   # Phase별 타임아웃 10분
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # SQLite 연결 / 스키마 초기화
@@ -417,8 +419,8 @@ def _update_master_from_basic(conn: sqlite3.Connection, phase1_results: dict):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def _collect_phase(name: str, tickers: list, token: str,
                           session: aiohttp.ClientSession, fetch_fn) -> dict:
-    """한 Phase 전종목 수집.
-    Returns {"results": {ticker: data}, "success": N, "failed": N}
+    """한 Phase 전종목 수집. Circuit breaker 내장.
+    Returns {"results": {ticker: data}, "success": N, "failed": N[, "aborted": True]}
     """
     results = {}
     failed = 0
@@ -429,14 +431,38 @@ async def _collect_phase(name: str, tickers: list, token: str,
         except Exception:
             return ticker, None
 
-    tasks = [_fetch_one(t) for t in tickers]
-    completed = await asyncio.gather(*tasks)
+    # Circuit breaker: 첫 50종목 테스트
+    probe_size = min(50, len(tickers))
+    probe = tickers[:probe_size]
+    probe_results = await asyncio.gather(*[_fetch_one(t) for t in probe])
 
-    for ticker, data in completed:
+    probe_fail = sum(1 for _, data in probe_results if data is None)
+    for ticker, data in probe_results:
         if data is not None:
             results[ticker] = data
         else:
             failed += 1
+
+    # 실패율 80% 이상이면 나머지 중단
+    if probe_size > 0 and probe_fail / probe_size >= 0.8:
+        remaining_count = len(tickers) - probe_size
+        print(f"[{name}] Circuit breaker: {probe_fail}/{probe_size} 실패 → 나머지 {remaining_count}종목 스킵")
+        return {
+            "results": results,
+            "success": len(results),
+            "failed": failed + remaining_count,
+            "aborted": True,
+        }
+
+    # 나머지 종목 실행
+    remaining = tickers[probe_size:]
+    if remaining:
+        rem_results = await asyncio.gather(*[_fetch_one(t) for t in remaining])
+        for ticker, data in rem_results:
+            if data is not None:
+                results[ticker] = data
+            else:
+                failed += 1
 
     return {"results": results, "success": len(results), "failed": failed}
 
@@ -550,6 +576,12 @@ async def collect_daily(date: str = None) -> dict:
     if date is None:
         date = datetime.now(KST).strftime("%Y%m%d")
 
+    # 주말 가드
+    dt = datetime.strptime(date, "%Y%m%d")
+    if dt.weekday() >= 5:  # 토(5), 일(6)
+        print(f"[collect_daily] {date} 주말 → 스킵")
+        return {"skipped": True, "reason": "weekend", "date": date}
+
     report: dict = {"date": date, "phases": {}, "total": 0, "duration": 0.0}
     start = datetime.now()
 
@@ -605,10 +637,15 @@ async def collect_daily(date: str = None) -> dict:
     async with aiohttp.ClientSession() as session:
         # Phase 1: KIS 기본시세 + 밸류에이션 (FHKST01010100)
         print(f"[collect_daily] Phase 1/4 — 기본시세 {len(tickers)}종목")
-        p1 = await _collect_phase(
-            "basic", tickers, token, session,
-            lambda t, tok, s: kis_stock_price(t, tok, session=s),
-        )
+        try:
+            p1 = await asyncio.wait_for(
+                _collect_phase("basic", tickers, token, session,
+                               lambda t, tok, s: kis_stock_price(t, tok, session=s)),
+                timeout=_PHASE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            print(f"[collect_daily] Phase basic 타임아웃 ({_PHASE_TIMEOUT}초)")
+            p1 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
         report["phases"]["basic"] = {
             "success": p1["success"], "failed": p1["failed"],
         }
@@ -621,30 +658,45 @@ async def collect_daily(date: str = None) -> dict:
 
         # Phase 2: 시간외 (FHPST02320000)
         print(f"[collect_daily] Phase 2/4 — 시간외")
-        p2 = await _collect_phase(
-            "overtime", tickers, token, session,
-            lambda t, tok, s: kis_overtime_daily(t, tok, session=s),
-        )
+        try:
+            p2 = await asyncio.wait_for(
+                _collect_phase("overtime", tickers, token, session,
+                               lambda t, tok, s: kis_overtime_daily(t, tok, session=s)),
+                timeout=_PHASE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            print(f"[collect_daily] Phase overtime 타임아웃 ({_PHASE_TIMEOUT}초)")
+            p2 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
         report["phases"]["overtime"] = {
             "success": p2["success"], "failed": p2["failed"],
         }
 
         # Phase 3: 투자자 수급 1일 (FHPTJ04160001)
         print(f"[collect_daily] Phase 3/4 — 수급")
-        p3 = await _collect_phase(
-            "supply", tickers, token, session,
-            lambda t, tok, s: kis_investor_trend_history(t, tok, n_days=1, session=s),
-        )
+        try:
+            p3 = await asyncio.wait_for(
+                _collect_phase("supply", tickers, token, session,
+                               lambda t, tok, s: kis_investor_trend_history(t, tok, n_days=1, session=s)),
+                timeout=_PHASE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            print(f"[collect_daily] Phase supply 타임아웃 ({_PHASE_TIMEOUT}초)")
+            p3 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
         report["phases"]["supply"] = {
             "success": p3["success"], "failed": p3["failed"],
         }
 
         # Phase 4: 공매도 1일 (FHPST04830000)
         print(f"[collect_daily] Phase 4/4 — 공매도")
-        p4 = await _collect_phase(
-            "short", tickers, token, session,
-            lambda t, tok, s: kis_daily_short_sale(t, tok, n=1, session=s),
-        )
+        try:
+            p4 = await asyncio.wait_for(
+                _collect_phase("short", tickers, token, session,
+                               lambda t, tok, s: kis_daily_short_sale(t, tok, n=1, session=s)),
+                timeout=_PHASE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            print(f"[collect_daily] Phase short 타임아웃 ({_PHASE_TIMEOUT}초)")
+            p4 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
         report["phases"]["short"] = {
             "success": p4["success"], "failed": p4["failed"],
         }
