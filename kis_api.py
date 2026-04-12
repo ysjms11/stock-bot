@@ -585,34 +585,45 @@ def get_us_consensus(ticker: str) -> dict | None:
         return None
 
 
-async def update_consensus_cache() -> dict:
+async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
     """포트폴리오+워치리스트 전체 컨센서스를 배치 수집해 consensus_cache.json에 저장.
     기존 avg는 prev_avg로 보존해 주간 변동 추적 가능.
-    실패 종목은 기존 캐시 유지."""
+    실패 종목은 기존 캐시 유지.
+
+    Args:
+        kr_tickers: {ticker: name} 형태로 전달하면 해당 KR 종목만 수집 (부분 업데이트).
+                    None이면 portfolio+watchlist 전체 자동 결정.
+                    kr_tickers가 주어지면 US 섹션은 기존 캐시를 그대로 유지.
+    """
     import asyncio as _aio
     old_cache = load_json(CONSENSUS_CACHE_FILE, {})
     old_kr = old_cache.get("kr", {})
     old_us = old_cache.get("us", {})
 
-    # 수집 대상 티커
-    portfolio = load_json(PORTFOLIO_FILE, {})
-    kr_tickers: dict = {
-        t: (v.get("name", t) if isinstance(v, dict) else t)
-        for t, v in portfolio.items()
-        if t != "us_stocks" and not _is_us_ticker(t)
-    }
-    us_tickers: dict = {
-        t: (v.get("name", t) if isinstance(v, dict) else t)
-        for t, v in portfolio.get("us_stocks", {}).items()
-    }
-    # 한국 워치리스트 추가
-    for t, n in load_json(WATCHLIST_FILE, {}).items():
-        if t not in kr_tickers and not _is_us_ticker(t):
-            kr_tickers[t] = n
-    # 미국 워치리스트 추가
-    for t, v in load_json(US_WATCHLIST_FILE, {}).items():
-        if t not in us_tickers:
-            us_tickers[t] = v.get("name", t) if isinstance(v, dict) else str(v)
+    partial_mode = kr_tickers is not None  # True면 kr만 갱신
+
+    if not partial_mode:
+        # 수집 대상 티커 자동 결정
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        kr_tickers = {
+            t: (v.get("name", t) if isinstance(v, dict) else t)
+            for t, v in portfolio.items()
+            if t != "us_stocks" and not _is_us_ticker(t)
+        }
+        us_tickers: dict = {
+            t: (v.get("name", t) if isinstance(v, dict) else t)
+            for t, v in portfolio.get("us_stocks", {}).items()
+        }
+        # 한국 워치리스트 추가
+        for t, n in load_json(WATCHLIST_FILE, {}).items():
+            if t not in kr_tickers and not _is_us_ticker(t):
+                kr_tickers[t] = n
+        # 미국 워치리스트 추가
+        for t, v in load_json(US_WATCHLIST_FILE, {}).items():
+            if t not in us_tickers:
+                us_tickers[t] = v.get("name", t) if isinstance(v, dict) else str(v)
+    else:
+        us_tickers = {}  # 부분 업데이트 시 US 수집 건너뜀
 
     loop = _aio.get_event_loop()
 
@@ -649,6 +660,18 @@ async def update_consensus_cache() -> dict:
             if ticker in old_kr:
                 new_kr[ticker] = old_kr[ticker]
         await _aio.sleep(0.5)
+
+    if partial_mode:
+        # 부분 업데이트: kr 섹션만 덮어쓰고 us는 기존 캐시 유지
+        merged_kr = {**old_kr, **new_kr}
+        cache = {
+            "updated": datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "kr": merged_kr,
+            "us": old_us,
+        }
+        save_json(CONSENSUS_CACHE_FILE, cache)
+        print(f"[consensus_cache] 부분 저장 완료: KR {len(new_kr)}종목 갱신 (전체 {len(merged_kr)})")
+        return cache
 
     # 미국 컨센서스 (Nasdaq.com, 동기 → executor)
     new_us: dict = {}
@@ -687,6 +710,47 @@ async def update_consensus_cache() -> dict:
     save_json(CONSENSUS_CACHE_FILE, cache)
     print(f"[consensus_cache] 저장 완료: KR {len(new_kr)}종목, US {len(new_us)}종목")
     return cache
+
+
+def detect_consensus_changes(old_kr: dict, new_kr: dict, target_pct: float = 5.0, detect_new_cover: bool = False) -> list:
+    """컨센서스 변화 감지.
+    Returns: [{"ticker", "name", "type", "detail"}, ...]
+    type: "target_up" / "target_down" / "opinion_change" / "new_cover"
+    """
+    changes = []
+    for ticker, new_data in new_kr.items():
+        old_data = old_kr.get(ticker)
+        new_avg = new_data.get("avg", 0) or 0
+
+        if old_data is None:
+            if detect_new_cover and new_avg > 0:
+                changes.append({"ticker": ticker, "name": new_data.get("name", ticker),
+                               "type": "new_cover", "detail": f"목표가 {new_avg:,.0f}"})
+            continue
+
+        old_avg = old_data.get("avg", 0) or 0
+        if old_avg > 0 and new_avg > 0:
+            pct = (new_avg - old_avg) / old_avg * 100
+            if pct >= target_pct:
+                changes.append({"ticker": ticker, "name": new_data.get("name", ticker),
+                               "type": "target_up", "detail": f"{old_avg:,.0f}→{new_avg:,.0f} (+{pct:.1f}%)"})
+            elif pct <= -target_pct:
+                changes.append({"ticker": ticker, "name": new_data.get("name", ticker),
+                               "type": "target_down", "detail": f"{old_avg:,.0f}→{new_avg:,.0f} ({pct:.1f}%)"})
+
+        # 투자의견 변경
+        def _dominant(d):
+            b, h, s = d.get("buy", 0), d.get("hold", 0), d.get("sell", 0)
+            if b >= h and b >= s and b > 0: return "매수"
+            if s >= b and s >= h and s > 0: return "매도"
+            return "중립"
+        old_op = _dominant(old_data)
+        new_op = _dominant(new_data)
+        if old_op != new_op:
+            changes.append({"ticker": ticker, "name": new_data.get("name", ticker),
+                           "type": "opinion_change", "detail": f"{old_op}→{new_op}"})
+
+    return changes
 
 
 async def save_portfolio_snapshot(token: str) -> dict:

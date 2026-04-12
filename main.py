@@ -1257,18 +1257,114 @@ async def snapshot_and_drawdown(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 📋 컨센서스 배치 캐시 (매주 월요일 07:05 KST)
+# 📋 컨센서스 배치 캐시 (매주 일요일 07:05 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
-    """매주 월요일 07:05 KST — 포트폴리오+워치리스트 컨센서스 배치 업데이트."""
+    """매주 일요일 07:05 KST — 포트폴리오+워치리스트+유니버스 전체 컨센서스 배치 업데이트."""
     try:
+        from copy import deepcopy
         print("[consensus_update] 컨센서스 배치 업데이트 시작")
-        cache = await update_consensus_cache()
+        old_cache = deepcopy(load_json(CONSENSUS_CACHE_FILE, {}))
+
+        # universe + portfolio + watchlist + watchalert 합집합
+        all_kr = {}
+        try:
+            uni = load_json(os.path.join(_DATA_DIR, "stock_universe.json"), {})
+            all_kr.update(uni.get("codes", {}))
+        except Exception:
+            pass
+        pf = load_json(PORTFOLIO_FILE, {})
+        for t, v in pf.items():
+            if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict) and not _is_us_ticker(t):
+                all_kr[t] = v.get("name", t)
+        wa = load_watchalert()
+        for t, v in wa.items():
+            if not _is_us_ticker(t) and t not in all_kr:
+                all_kr[t] = v.get("name", t) if isinstance(v, dict) else t
+        wl = load_watchlist()
+        for t, n in wl.items():
+            if not _is_us_ticker(t) and t not in all_kr:
+                all_kr[t] = n
+        print(f"[consensus_update] 대상: {len(all_kr)}종목 (universe+portfolio+watch)")
+
+        cache = await update_consensus_cache(kr_tickers=all_kr)
         kr_cnt = len(cache.get("kr", {}))
         us_cnt = len(cache.get("us", {}))
         print(f"[consensus_update] 완료: KR {kr_cnt}종목, US {us_cnt}종목")
+
+        # 변화 감지 (10% 이상 목표가 변동 or 신규 커버리지)
+        changes = detect_consensus_changes(
+            old_cache.get("kr", {}), cache.get("kr", {}),
+            target_pct=10.0, detect_new_cover=True
+        )
+        if changes:
+            msg = f"📊 *주간 컨센서스 변화* ({len(changes)}건)\n\n"
+            for c in changes[:15]:
+                if c["type"] == "target_up":
+                    msg += f"📈 *{c['name']}* — 목표가 상향 {c['detail']}\n"
+                elif c["type"] == "target_down":
+                    msg += f"📉 *{c['name']}* — 목표가 하향 {c['detail']}\n"
+                elif c["type"] == "opinion_change":
+                    msg += f"🔄 *{c['name']}* — 의견 변경 {c['detail']}\n"
+                elif c["type"] == "new_cover":
+                    msg += f"🆕 *{c['name']}* — 신규 커버리지 {c['detail']}\n"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
         print(f"[consensus_update] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📋 일간 컨센서스 변화 감지 (평일 19:30 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
+    """매일 19:30 평일 — 보유+감시 종목 컨센서스 변화 감지."""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        from copy import deepcopy
+        old_cache = deepcopy(load_json(CONSENSUS_CACHE_FILE, {}))
+
+        # 보유+감시 한국 종목
+        kr_tickers = {}
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        for t, v in portfolio.items():
+            if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict) and not _is_us_ticker(t):
+                kr_tickers[t] = v.get("name", t)
+        wa = load_watchalert()
+        for t, v in wa.items():
+            if not _is_us_ticker(t) and t not in kr_tickers:
+                kr_tickers[t] = v.get("name", t) if isinstance(v, dict) else t
+        wl = load_watchlist()
+        for t, n in wl.items():
+            if not _is_us_ticker(t) and t not in kr_tickers:
+                kr_tickers[t] = n
+
+        if not kr_tickers:
+            return
+
+        await update_consensus_cache(kr_tickers=kr_tickers)
+        new_cache = load_json(CONSENSUS_CACHE_FILE, {})
+
+        changes = detect_consensus_changes(
+            old_cache.get("kr", {}), new_cache.get("kr", {}),
+            target_pct=5.0, detect_new_cover=False
+        )
+
+        if changes:
+            msg = f"📊 *컨센서스 변화 감지* ({len(changes)}건)\n\n"
+            for c in changes[:10]:
+                if c["type"] == "target_up":
+                    msg += f"📈 *{c['name']}* — 목표가 상향 {c['detail']}\n"
+                elif c["type"] == "target_down":
+                    msg += f"📉 *{c['name']}* — 목표가 하향 {c['detail']}\n"
+                elif c["type"] == "opinion_change":
+                    msg += f"🔄 *{c['name']}* — 의견 변경 {c['detail']}\n"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+        print(f"[daily_consensus] {len(kr_tickers)}종목 수집, {len(changes)}건 변화")
+    except Exception as e:
+        print(f"[daily_consensus] 오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3003,7 +3099,8 @@ def main():
     jq.run_daily(snapshot_and_drawdown, time=dtime(15, 50, tzinfo=KST), days=(0,1,2,3,4), name="snapshot_dd")
     jq.run_daily(weekly_review,           time=dtime(7,  0, tzinfo=KST), days=(5,), name="weekly")
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
-    jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(0,), name="consensus_update")
+    jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(6,), name="consensus_update")
+    jq.run_daily(daily_consensus_check,  time=dtime(19, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_consensus")
     jq.run_daily(auto_backup,            time=dtime(22, 0, tzinfo=KST), name="auto_backup")
     # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
