@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS reports (
     title           TEXT DEFAULT '',
     pdf_url         TEXT DEFAULT '',
     full_text       TEXT DEFAULT '',
+    pdf_path        TEXT DEFAULT '',         -- 로컬 PDF 저장 경로
     extraction_status TEXT DEFAULT '',
     collected_at    TEXT DEFAULT '',
     UNIQUE(date, source, ticker)

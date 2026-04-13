@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 KST = ZoneInfo("Asia/Seoul")
 REPORTS_FILE = os.environ.get("DATA_DIR", "/data") + "/reports.json"
 DB_PATH = os.environ.get("DATA_DIR", "/data") + "/stock.db"
+_PDF_DIR = os.environ.get("DATA_DIR", "/data") + "/report_pdfs"
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                   " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -43,13 +44,21 @@ def _get_report_db() -> sqlite3.Connection:
             title TEXT DEFAULT '',
             pdf_url TEXT DEFAULT '',
             full_text TEXT DEFAULT '',
+            pdf_path TEXT DEFAULT '',
             extraction_status TEXT DEFAULT '',
             collected_at TEXT DEFAULT '',
             UNIQUE(date, source, ticker)
         );
+
         CREATE INDEX IF NOT EXISTS idx_rpt_ticker ON reports(ticker);
         CREATE INDEX IF NOT EXISTS idx_rpt_date ON reports(date);
     """)
+    # 기존 DB 마이그레이션: pdf_path 컬럼 없으면 추가 (오류 무시)
+    try:
+        conn.execute("ALTER TABLE reports ADD COLUMN pdf_path TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass  # 이미 컬럼 존재 시 무시
     return conn
 
 
@@ -332,6 +341,24 @@ def _parse_date(raw: str) -> str:
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ PDF 텍스트 추출 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _save_pdf_local(pdf_bytes: bytes, ticker: str, date: str, source: str, analyst: str) -> str:
+    """PDF를 로컬에 저장. 반환: 저장 경로."""
+    import re
+    dir_path = os.path.join(_PDF_DIR, ticker)
+    os.makedirs(dir_path, exist_ok=True)
+    # 파일명: 2026-04-09_유안타증권_백길현.pdf (특수문자 제거)
+    safe_source = re.sub(r'[^\w가-힣]', '', source)
+    safe_analyst = re.sub(r'[^\w가-힣,]', '', analyst)
+    if safe_analyst:
+        fname = f"{date}_{safe_source}_{safe_analyst}.pdf"
+    else:
+        fname = f"{date}_{safe_source}.pdf"
+    fpath = os.path.join(dir_path, fname)
+    with open(fpath, 'wb') as f:
+        f.write(pdf_bytes)
+    return fpath
+
+
 def _validate_korean_text(text: str) -> bool:
     """추출 텍스트에 한글이 10% 이상 포함되어 있는지 검증."""
     if not text:
@@ -349,40 +376,44 @@ def _is_chart_image_text(text: str) -> bool:
     return chart_chars / len(text) >= 0.90
 
 
-def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
+def extract_pdf_text(pdf_url: str) -> tuple[str, str, bytes]:
     """PDF 다운로드 후 pdfplumber로 텍스트 추출.
-    Returns: (text, status) — status: 'success'|'failed'|'partial'
+    Returns: (text, status, pdf_bytes)
+      - status: 'success'|'failed'|'partial'
+      - pdf_bytes: 다운로드된 PDF 바이트 (실패 시 빈 bytes)
     최대 _MAX_TEXT(10000)자. 임시 파일은 처리 후 삭제.
     """
     try:
         import pdfplumber
     except ImportError:
         print("[report] pdfplumber 미설치")
-        return ("", "failed")
+        return ("", "failed", b"")
 
     # URL 도메인 검증 — 허용된 네이버 도메인만 다운로드
     try:
         host = urlparse(pdf_url).hostname or ""
         if host not in _ALLOWED_PDF_DOMAINS:
             print(f"[report] 허용되지 않은 PDF 도메인: {host}")
-            return ("", "failed")
+            return ("", "failed", b"")
     except Exception:
-        return ("", "failed")
+        return ("", "failed", b"")
 
     tmp_path = None
+    pdf_bytes = b""
     try:
         resp = requests.get(pdf_url, headers=_HEADERS, timeout=30, stream=True)
         if resp.status_code != 200:
-            return ("", "failed")
+            return ("", "failed", b"")
 
         # Content-Length 사전 검사
         content_len = resp.headers.get("Content-Length")
         if content_len and int(content_len) > _MAX_PDF_BYTES:
             print(f"[report] PDF 크기 초과 ({int(content_len)//1024//1024}MB): {pdf_url}")
             resp.close()
-            return ("", "failed")
+            return ("", "failed", b"")
 
         downloaded = 0
+        chunks = []
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp_path = tmp.name
             for chunk in resp.iter_content(8192):
@@ -390,10 +421,13 @@ def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
                 if downloaded > _MAX_PDF_BYTES:
                     print(f"[report] PDF 다운로드 크기 초과 ({downloaded//1024//1024}MB): {pdf_url}")
                     break
+                chunks.append(chunk)
                 tmp.write(chunk)
 
         if downloaded > _MAX_PDF_BYTES:
-            return ("", "failed")
+            return ("", "failed", b"")
+
+        pdf_bytes = b"".join(chunks)
 
         text = ""
         truncated = False
@@ -409,21 +443,21 @@ def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
         text = text[:_MAX_TEXT].strip()
 
         if not text:
-            return ("", "failed")
+            return ("", "failed", pdf_bytes)
 
         if _is_chart_image_text(text):
-            return ("[PDF 텍스트 추출 실패 - 차트/이미지 PDF]", "failed")
+            return ("[PDF 텍스트 추출 실패 - 차트/이미지 PDF]", "failed", pdf_bytes)
 
         if not _validate_korean_text(text):
-            return ("[PDF 텍스트 추출 실패 - 이미지 기반 PDF]", "failed")
+            return ("[PDF 텍스트 추출 실패 - 이미지 기반 PDF]", "failed", pdf_bytes)
 
         if truncated:
-            return (text, "partial")
+            return (text, "partial", pdf_bytes)
 
-        return (text, "success")
+        return (text, "success", pdf_bytes)
     except Exception as e:
         print(f"[report] PDF 추출 실패 ({pdf_url}): {e}")
-        return ("", "failed")
+        return ("", "failed", b"")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -481,11 +515,21 @@ def collect_reports(tickers_dict: dict) -> list:
                 if r.get("_wise_meta"):
                     r["full_text"] = "[와이즈리포트 메타데이터만 — PDF는 유료]"
                     r["extraction_status"] = "meta_only"
+                    r["pdf_path"] = ""
                     r.pop("_wise_meta", None)
                 else:
-                    full_text, status = extract_pdf_text(r["pdf_url"])
+                    full_text, status, pdf_bytes = extract_pdf_text(r["pdf_url"])
                     r["full_text"] = full_text
                     r["extraction_status"] = status
+                    r["pdf_path"] = ""
+                    if pdf_bytes:
+                        try:
+                            r["pdf_path"] = _save_pdf_local(
+                                pdf_bytes, ticker,
+                                r.get("date", ""), r.get("source", ""), r.get("analyst", ""),
+                            )
+                        except Exception as e:
+                            print(f"[report] PDF 로컬 저장 실패 ({ticker}): {e}")
                 r["collected_at"] = datetime.now(KST).isoformat()
                 new_reports.append(r)
                 existing_urls.add(r["pdf_url"])
@@ -503,12 +547,13 @@ def collect_reports(tickers_dict: dict) -> list:
             conn.execute(
                 """INSERT OR IGNORE INTO reports
                    (date, ticker, name, source, analyst, title, pdf_url,
-                    full_text, extraction_status, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    full_text, pdf_path, extraction_status, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
                  r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
                  r.get("pdf_url", ""), r.get("full_text", ""),
-                 r.get("extraction_status", ""), r.get("collected_at", "")),
+                 r.get("pdf_path", ""), r.get("extraction_status", ""),
+                 r.get("collected_at", "")),
             )
         # 영구 보관 (삭제 없음)
         conn.commit()
