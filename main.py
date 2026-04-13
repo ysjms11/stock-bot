@@ -4596,7 +4596,19 @@ async def _handle_dash_reports(request: web.Request) -> web.Response:
 
     html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{_html.escape(name)} 리포트</title>{_DASH_V2_CSS}</head><body>')
+            f'<title>{_html.escape(name)} 리포트</title>{_DASH_V2_CSS}'
+            f'<style>'
+            f'.rpt-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}'
+            f'.rpt-table{{width:100%;border-collapse:collapse;font-size:0.88em}}'
+            f'.rpt-table th{{background:var(--card);color:var(--fg2);font-weight:600;'
+            f'padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}}'
+            f'.rpt-table td{{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}}'
+            f'.rpt-table tr:hover td{{background:var(--card)}}'
+            f'.rpt-date{{white-space:nowrap;color:var(--fg2);font-size:0.85em}}'
+            f'.rpt-title{{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}'
+            f'.op-buy{{color:var(--green)}}.op-sell{{color:var(--red)}}.op-neutral{{color:var(--fg2)}}'
+            f'</style>'
+            f'</head><body>')
     html += (f'<div style="margin-bottom:16px">'
              f'<a href="/dash#reports" style="color:var(--accent);text-decoration:none">← 대시보드</a>'
              f'</div>')
@@ -4605,52 +4617,54 @@ async def _handle_dash_reports(request: web.Request) -> web.Response:
 
     if not rows:
         html += '<p style="color:var(--fg2)">리포트 없음</p>'
+    else:
+        html += '<div class="rpt-wrap"><table class="rpt-table">'
+        html += ('<thead><tr>'
+                 '<th>날짜</th><th>증권사</th><th>애널리스트</th>'
+                 '<th>제목</th><th>목표가</th><th>투자의견</th><th>PDF</th>'
+                 '</tr></thead><tbody>')
 
-    for r in rows:
-        date = _html.escape(r["date"] or "")
-        source = _html.escape(r["source"] or "")
-        analyst = _html.escape(r["analyst"] or "")
-        title = _html.escape(r["title"] or "")
-        pdf_path = r["pdf_path"] or ""
-        target_price = r["target_price"] or 0
-        opinion = r["opinion"] or ""
+        for r in rows:
+            date = _html.escape(r["date"] or "")
+            source = _html.escape(r["source"] or "")
+            analyst = _html.escape(r["analyst"] or "")
+            title = _html.escape(r["title"] or "")
+            pdf_path = r["pdf_path"] or ""
+            target_price = r["target_price"] or 0
+            opinion = r["opinion"] or ""
 
-        html += '<details class="decision-card"><summary>'
-        html += f'<span class="decision-date">{date}</span>'
-        if source:
-            html += f'<span class="badge badge-neutral">{source}</span>'
-        if analyst:
-            html += f'<span style="color:var(--fg2);font-size:0.85em">{analyst}</span>'
-        html += f'<span class="decision-preview">{title}</span>'
-        html += '</summary><div class="decision-body">'
+            # 목표가 셀
+            tp_cell = f'🎯 {target_price:,}원' if target_price else '<span style="color:var(--fg2)">—</span>'
 
-        # 목표가/투자의견 메타
-        if target_price or opinion:
-            meta_parts = []
-            if target_price:
-                meta_parts.append(f'🎯 목표가 {target_price:,}원')
-            if opinion:
-                if opinion == "매수":
-                    op_color = "var(--green)"
-                elif opinion == "매도":
-                    op_color = "var(--red)"
-                else:
-                    op_color = "var(--fg2)"
-                meta_parts.append(
-                    f'<span style="color:{op_color}">{_html.escape(opinion)}</span>'
-                )
-            html += (f'<div style="font-size:0.85em;margin-bottom:8px">'
-                     f'{" | ".join(meta_parts)}</div>')
+            # 투자의견 셀
+            if opinion == "매수":
+                op_cell = f'<span class="op-buy">{_html.escape(opinion)}</span>'
+            elif opinion == "매도":
+                op_cell = f'<span class="op-sell">{_html.escape(opinion)}</span>'
+            elif opinion:
+                op_cell = f'<span class="op-neutral">{_html.escape(opinion)}</span>'
+            else:
+                op_cell = '<span style="color:var(--fg2)">—</span>'
 
-        if pdf_path:
-            fname = os.path.basename(pdf_path)
-            html += (f'<a href="/dash/pdf/{_html.escape(ticker)}/{_html.escape(fname)}" '
-                     f'target="_blank" style="color:var(--accent);text-decoration:none">'
-                     f'📎 PDF 열기</a>')
-        else:
-            html += '<span style="color:var(--fg2)">PDF 없음 (와이즈리포트 유료)</span>'
+            # PDF 셀
+            if pdf_path:
+                fname = os.path.basename(pdf_path)
+                pdf_cell = (f'<a href="/dash/pdf/{_html.escape(ticker)}/{_html.escape(fname)}" '
+                            f'target="_blank" style="color:var(--accent);text-decoration:none">PDF</a>')
+            else:
+                pdf_cell = '<span style="color:var(--fg2)">—</span>'
 
-        html += '</div></details>'
+            html += (f'<tr>'
+                     f'<td class="rpt-date">{date}</td>'
+                     f'<td>{source}</td>'
+                     f'<td style="color:var(--fg2);font-size:0.85em">{analyst}</td>'
+                     f'<td class="rpt-title" title="{title}">{title}</td>'
+                     f'<td style="white-space:nowrap">{tp_cell}</td>'
+                     f'<td>{op_cell}</td>'
+                     f'<td>{pdf_cell}</td>'
+                     f'</tr>')
+
+        html += '</tbody></table></div>'
 
     html += "</body></html>"
     return web.Response(text=html, content_type="text/html")
