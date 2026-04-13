@@ -31,7 +31,7 @@ async def _refresh_ws():
 from mcp_tools import mcp_sse_handler, mcp_messages_handler
 
 try:
-    from report_crawler import collect_reports, get_collection_tickers, load_reports
+    from report_crawler import collect_reports, get_collection_tickers
     _REPORT_AVAILABLE = True
 except ImportError:
     _REPORT_AVAILABLE = False
@@ -1722,7 +1722,7 @@ KRX_UPLOAD_KEY = os.environ.get("KRX_UPLOAD_KEY", "")
 
 
 async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
-    """매일 07:00 KST — 보유+감시 종목 증권사 리포트 수집"""
+    """매일 08:30 KST — 보유+감시 종목 증권사 리포트 수집"""
     if not _REPORT_AVAILABLE:
         return
     now = datetime.now(KST)
@@ -2906,12 +2906,19 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _REPORT_AVAILABLE:
         await update.message.reply_text("📭 리포트 기능 미설치 (pdfplumber/bs4 필요)"); return
-    data = load_reports()
-    reports = data.get("reports", [])
-    if not reports:
-        await update.message.reply_text("📭 수집된 리포트 없음"); return
+    import sqlite3 as _sqlite3
+    from report_crawler import DB_PATH as _REPORT_DB_PATH
     cutoff = (datetime.now(KST) - timedelta(days=3)).strftime("%Y-%m-%d")
-    recent = [r for r in reports if r.get("date", "") >= cutoff]
+    try:
+        _conn = _sqlite3.connect(_REPORT_DB_PATH, timeout=10)
+        _conn.row_factory = _sqlite3.Row
+        rows = _conn.execute(
+            "SELECT date, ticker, name, source, title FROM reports WHERE date >= ? ORDER BY date DESC",
+            (cutoff,)).fetchall()
+        _conn.close()
+        recent = [dict(r) for r in rows]
+    except Exception as _e:
+        await update.message.reply_text(f"📭 DB 조회 오류: {_e}"); return
     if not recent:
         await update.message.reply_text("📭 최근 3일 리포트 없음"); return
     # 종목별 그룹핑
@@ -2928,9 +2935,6 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date = r.get("date", "?")
             msg += f"  • {src}: {title} ({date})\n"
         msg += "\n"
-    last = data.get("last_collected", "")
-    if last:
-        msg += f"_마지막 수집: {last[:16]}_"
     # 텔레그램 메시지 길이 제한
     if len(msg) > 4000:
         msg = msg[:3950] + "\n\n_(일부 생략)_"
@@ -3192,7 +3196,7 @@ def main():
     jq.run_daily(check_earnings_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="earnings_cal")
     jq.run_daily(check_dividend_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="dividend_cal")
     jq.run_daily(check_us_earnings_calendar, time=dtime(7, 10, tzinfo=KST), days=(0,1,2,3,4), name="us_earnings_cal")
-    jq.run_daily(collect_reports_daily,    time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
+    jq.run_daily(collect_reports_daily,    time=dtime(8, 30, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
     # KRX 전종목 DB 갱신: GitHub Actions에서 크롤링 → /api/krx_upload로 업로드
     # jq.run_daily(update_krx_db_job, time=dtime(15, 55, tzinfo=KST), days=(0,1,2,3,4), name="krx_db")
     # db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시에만 실제 동작)

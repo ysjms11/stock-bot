@@ -36,11 +36,13 @@ from db_collector import load_krx_db, scan_stocks, _load_history
 
 try:
     from report_crawler import (
-        load_reports, collect_reports, get_collection_tickers,
+        collect_reports, get_collection_tickers,
+        DB_PATH as REPORT_DB_PATH,
     )
     _REPORT_AVAILABLE = True
 except ImportError:
     _REPORT_AVAILABLE = False
+    REPORT_DB_PATH = ""
     print("[mcp] report_crawler 미설치 — manage_report 비활성")
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
@@ -2923,16 +2925,28 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 action = arguments.get("action", "list").strip().lower()
 
                 if action == "list":
+                    import sqlite3 as _sqlite3
                     days = int(arguments.get("days", 7) or 7)
                     ticker_filter = arguments.get("ticker", "").strip()
                     brief = arguments.get("brief", False)
 
-                    data = load_reports()
                     cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
-                    reports = [r for r in data.get("reports", []) if r.get("date", "") >= cutoff]
-
-                    if ticker_filter:
-                        reports = [r for r in reports if r.get("ticker") == ticker_filter]
+                    try:
+                        _conn = _sqlite3.connect(REPORT_DB_PATH, timeout=10)
+                        _conn.row_factory = _sqlite3.Row
+                        if ticker_filter:
+                            rows = _conn.execute(
+                                "SELECT * FROM reports WHERE date >= ? AND ticker = ? ORDER BY date DESC",
+                                (cutoff, ticker_filter)).fetchall()
+                        else:
+                            rows = _conn.execute(
+                                "SELECT * FROM reports WHERE date >= ? ORDER BY date DESC",
+                                (cutoff,)).fetchall()
+                        reports = [dict(r) for r in rows]
+                        _conn.close()
+                    except Exception as _e:
+                        reports = []
+                        print(f"[manage_report list] SQLite 오류: {_e}")
 
                     if brief:
                         reports = [{"date": r.get("date"), "ticker": r.get("ticker"),
@@ -2942,7 +2956,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     else:
                         # full_text 3000자 제한 + extraction_status 하위호환
                         for r in reports:
-                            if "extraction_status" not in r:
+                            if not r.get("extraction_status"):
                                 r["extraction_status"] = "unknown"
                             if r.get("full_text") and len(r["full_text"]) > 3000:
                                 r["full_text"] = r["full_text"][:3000] + "...(truncated)"
@@ -2951,7 +2965,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "count": len(reports),
                         "days": days,
                         "reports": reports,
-                        "last_collected": data.get("last_collected", ""),
                     }
 
                 elif action == "collect":

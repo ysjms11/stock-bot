@@ -1,7 +1,6 @@
 """증권사 리포트 자동 수집 — 네이버증권 리서치 크롤링 + PDF 텍스트 추출"""
-# git push credential test
 import os
-import json
+import sqlite3
 import time
 import tempfile
 import requests
@@ -12,36 +11,62 @@ from bs4 import BeautifulSoup
 
 KST = ZoneInfo("Asia/Seoul")
 REPORTS_FILE = os.environ.get("DATA_DIR", "/data") + "/reports.json"
+DB_PATH = os.environ.get("DATA_DIR", "/data") + "/stock.db"
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                   " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://finance.naver.com/research/company_list.naver",
 }
-_MAX_DAILY = 50       # 하루 최대 수집 건수
 _MAX_TEXT = 10000      # PDF 텍스트 최대 글자수
 _MAX_PDF_BYTES = 50 * 1024 * 1024  # PDF 최대 50MB
-_RETAIN_DAYS = 90      # 보관 기간
-_MAX_PER_TICKER = 10   # 종목당 최대 보관 건수
+_RETAIN_DAYS = 90      # 레거시 (현재 미사용, 영구 보관)
+_MAX_PER_TICKER = 10   # 레거시 (현재 미사용, 영구 보관)
 _ALLOWED_PDF_DOMAINS = {"ssl.pstatic.net", "finance.naver.com", "stock.pstatic.net",
                         "consensus.hankyung.com"}
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━ 파일 저장/로드 ━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━ DB 연결 & 파일 저장/로드 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _get_report_db() -> sqlite3.Connection:
+    """SQLite 연결 반환. reports 테이블 및 인덱스 자동 생성."""
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            source TEXT DEFAULT '',
+            analyst TEXT DEFAULT '',
+            title TEXT DEFAULT '',
+            pdf_url TEXT DEFAULT '',
+            full_text TEXT DEFAULT '',
+            extraction_status TEXT DEFAULT '',
+            collected_at TEXT DEFAULT '',
+            UNIQUE(date, source, ticker)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rpt_ticker ON reports(ticker);
+        CREATE INDEX IF NOT EXISTS idx_rpt_date ON reports(date);
+    """)
+    return conn
+
 
 def load_reports() -> dict:
-    """reports.json 로드. 구조: {"reports": [...], "last_collected": "..."}"""
-    if os.path.exists(REPORTS_FILE):
-        try:
-            with open(REPORTS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"reports": [], "last_collected": ""}
+    """SQLite에서 리포트 로드. 기존 dict 포맷 호환."""
+    try:
+        conn = _get_report_db()
+        rows = conn.execute("SELECT * FROM reports ORDER BY date DESC").fetchall()
+        conn.close()
+        return {"reports": [dict(r) for r in rows], "last_collected": ""}
+    except Exception:
+        return {"reports": [], "last_collected": ""}
 
 
 def save_reports(data: dict):
-    os.makedirs(os.path.dirname(REPORTS_FILE), exist_ok=True)
-    with open(REPORTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """No-op: 저장은 collect_reports()에서 SQLite INSERT로 처리."""
+    pass
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 크롤링 ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -113,6 +138,7 @@ def crawl_naver_reports(ticker: str, name: str, existing_urls: set) -> list:
             "ticker": ticker,
             "name": name,
             "source": source,
+            "analyst": "",
             "title": title,
             "pdf_url": pdf_url,
         })
@@ -271,12 +297,14 @@ def crawl_hankyung_reports(ticker: str, name: str, existing_urls: set) -> list:
             continue
 
         source = tds[5].get_text(strip=True)  # 제공출처
+        analyst = tds[4].get_text(strip=True)  # 작성자
 
         reports.append({
             "date": date_str,
             "ticker": ticker,
             "name": name,
             "source": source,
+            "analyst": analyst,
             "title": title,
             "pdf_url": pdf_url,
         })
@@ -403,24 +431,20 @@ def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 수집 메인 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
+def collect_reports(tickers_dict: dict) -> list:
     """종목 딕셔너리({ticker: name})에 대해 리포트 수집.
     Returns: 새로 수집된 리포트 리스트.
     """
-    data = load_reports()
-    existing_urls = {r["pdf_url"] for r in data["reports"] if r.get("pdf_url")}
-    # 날짜+증권사+종목 복합키로 추가 중복 방지 (제목은 사이트별로 공백 등 차이가 있어 제외)
-    existing_keys = {
-        (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
-        for r in data["reports"]
-    }
+    # SQLite에서 기존 URL/키 로드 (중복 방지)
+    _conn = _get_report_db()
+    rows = _conn.execute("SELECT pdf_url, date, source, ticker FROM reports").fetchall()
+    _conn.close()
+    existing_urls = {r["pdf_url"] for r in rows if r["pdf_url"]}
+    existing_keys = {(r["date"], r["source"], r["ticker"]) for r in rows}
 
     new_reports = []
-    count = 0
 
     for ticker, name in tickers_dict.items():
-        if count >= max_count:
-            break
         try:
             # 한경 + 네이버 + 와이즈 통합 (우선순위: 한경 → 네이버 → 와이즈)
             # PDF 본문이 있는 한경/네이버를 우선, 와이즈는 메타데이터로 보강
@@ -436,8 +460,8 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
                 print(f"[wise] {name}({ticker}) 실패: {e}")
 
             # 같은 배치 내 중복 제거 (date+source+ticker 기준, 먼저 들어온 것 우선)
-            seen_keys = set()
-            seen_urls = set()
+            seen_keys: set[tuple] = set()
+            seen_urls: set[str] = set()
             unique_reports = []
             for r in reports:
                 k = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
@@ -448,10 +472,7 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
                 unique_reports.append(r)
             # 최신순 정렬
             unique_reports.sort(key=lambda x: x.get("date", ""), reverse=True)
-            reports = unique_reports
-            for r in reports:
-                if count >= max_count:
-                    break
+            for r in unique_reports:
                 # 복합키 중복 체크 (date+source+ticker)
                 key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
                 if key in existing_keys:
@@ -469,7 +490,6 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
                 new_reports.append(r)
                 existing_urls.add(r["pdf_url"])
                 existing_keys.add(key)
-                count += 1
                 time.sleep(1)  # 크롤링 딜레이
         except Exception as e:
             print(f"[report] {name}({ticker}) 수집 오류: {e}")
@@ -477,21 +497,22 @@ def collect_reports(tickers_dict: dict, max_count: int = _MAX_DAILY) -> list:
         time.sleep(1)  # 종목간 딜레이
 
     if new_reports:
-        data["reports"].extend(new_reports)
-        data["last_collected"] = datetime.now(KST).isoformat()
-        # 정리: 90일 초과 삭제
-        cutoff = (datetime.now(KST) - timedelta(days=_RETAIN_DAYS)).strftime("%Y-%m-%d")
-        data["reports"] = [r for r in data["reports"] if r.get("date", "") >= cutoff]
-        # 종목별 최신 _MAX_PER_TICKER건만 유지
-        by_ticker: dict[str, list] = {}
-        for r in sorted(data["reports"], key=lambda x: x.get("date", ""), reverse=True):
-            t = r.get("ticker", "")
-            by_ticker.setdefault(t, []).append(r)
-        kept = []
-        for t, rs in by_ticker.items():
-            kept.extend(rs[:_MAX_PER_TICKER])
-        data["reports"] = sorted(kept, key=lambda x: x.get("date", ""), reverse=True)
-        save_reports(data)
+        # SQLite에 INSERT (UNIQUE 제약으로 중복 자동 스킵)
+        conn = _get_report_db()
+        for r in new_reports:
+            conn.execute(
+                """INSERT OR IGNORE INTO reports
+                   (date, ticker, name, source, analyst, title, pdf_url,
+                    full_text, extraction_status, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
+                 r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
+                 r.get("pdf_url", ""), r.get("full_text", ""),
+                 r.get("extraction_status", ""), r.get("collected_at", "")),
+            )
+        # 영구 보관 (삭제 없음)
+        conn.commit()
+        conn.close()
 
     return new_reports
 

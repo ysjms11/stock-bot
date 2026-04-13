@@ -1,5 +1,5 @@
--- stock-bot SQLite DB 스키마 v1.2
--- 4테이블 + 1뷰: stock_master + daily_snapshot + financial_quarterly + consensus_history + v_daily_scan
+-- stock-bot SQLite DB 스키마 v1.3
+-- 5테이블 + 1뷰: stock_master + daily_snapshot + financial_quarterly + consensus_history + reports + v_daily_scan
 -- 확정 API: FHKST01010100 / FHPTJ04160001 / FHPST04830000 / FHPST02320000 / FHKST66430200 / FHKST66430100
 
 PRAGMA journal_mode=WAL;
@@ -225,6 +225,24 @@ CREATE TABLE IF NOT EXISTS consensus_history (
 );
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
+-- 5. 증권사 리포트 (영구 보관)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+CREATE TABLE IF NOT EXISTS reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    date            TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    name            TEXT DEFAULT '',
+    source          TEXT DEFAULT '',
+    analyst         TEXT DEFAULT '',
+    title           TEXT DEFAULT '',
+    pdf_url         TEXT DEFAULT '',
+    full_text       TEXT DEFAULT '',
+    extraction_status TEXT DEFAULT '',
+    collected_at    TEXT DEFAULT '',
+    UNIQUE(date, source, ticker)
+);
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- 인덱스 (최소주의 — 느린 쿼리 확인 후 추가)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- PK (trade_date, symbol)는 자동 인덱스
@@ -241,6 +259,10 @@ CREATE INDEX IF NOT EXISTS idx_fq_period ON financial_quarterly(report_period);
 
 -- consensus_history: 종목별 히스토리 조회
 CREATE INDEX IF NOT EXISTS idx_ch_symbol ON consensus_history(symbol);
+
+-- reports: 종목별·날짜별 조회
+CREATE INDEX IF NOT EXISTS idx_rpt_ticker ON reports(ticker);
+CREATE INDEX IF NOT EXISTS idx_rpt_date ON reports(date);
 
 -- 필요시 추가 후보 (데이터 수십만행 이상 시):
 -- CREATE INDEX IF NOT EXISTS idx_ds_change ON daily_snapshot(trade_date, change_pct);
