@@ -111,6 +111,11 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
+    # 중복 발송 방지
+    _kr_sent = load_json(MACRO_SENT_FILE, {})
+    _kr_key = f"{now.strftime('%Y-%m-%d')}_kr_summary"
+    if _kr_sent.get("kr_summary") == _kr_key:
+        return
     try:
         token = await get_kis_token()
 
@@ -453,6 +458,10 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
+        # 발송 기록
+        _kr_sent["kr_summary"] = _kr_key
+        save_json(MACRO_SENT_FILE, _kr_sent)
+
         # ── 수급 히스토리 축적 (백테스트용) ──
         try:
             await save_supply_snapshot(token)
@@ -588,6 +597,11 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
     if not _is_us_market_closed():
         return
     now = datetime.now(KST)
+    # 중복 발송 방지
+    _us_sent = load_json(MACRO_SENT_FILE, {})
+    _us_key = f"{now.strftime('%Y-%m-%d')}_us_summary"
+    if _us_sent.get("us_summary") == _us_key:
+        return
     try:
         sp500 = await get_yahoo_quote("^GSPC")
         nasdaq = await get_yahoo_quote("^IXIC")
@@ -708,6 +722,8 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
 
         msg += "\n→ Claude에서 점검하세요"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        _us_sent["us_summary"] = _us_key
+        save_json(MACRO_SENT_FILE, _us_sent)
     except Exception as e:
         print(f"us_market_summary 오류: {e}")
 
