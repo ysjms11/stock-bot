@@ -1862,13 +1862,13 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
             new_ids.append(rcept_no)
 
         msg += "💡 Claude에서 영향 분석하세요"
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-        # 알림 보낸 공시 ID 저장
+        # 발송 전에 먼저 저장 (중복 발송 방지)
         seen_ids.update(new_ids)
-        # 최근 500개만 유지
         seen_list = list(seen_ids)[-500:]
         save_json(DART_SEEN_FILE, {"ids": seen_list})
+
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
 
     except Exception as e:
         print(f"DART 체크 오류: {e}")
