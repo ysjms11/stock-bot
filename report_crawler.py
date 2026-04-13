@@ -104,20 +104,21 @@ def extract_report_meta(full_text: str) -> dict:
     if not full_text:
         return {"target_price": target, "opinion": opinion}
 
-    # 목표주가 추출 패턴들
+    # 목표주가 추출 패턴들 (괄호 안 유지/상향/12M 등 허용)
     patterns = [
-        r'목표주가[:\s]*([0-9,]+)\s*원',
-        r'목표가[:\s]*([0-9,]+)\s*원',
-        r'Target\s*Price[:\s]*([0-9,]+)',
-        r'TP[:\s]*([0-9,]+)\s*원',
-        r'목표주가[:\s]*([0-9,]+)',
+        r'목표주가\s*(?:\([^)]*\))?\s*([0-9,]+)\s*원',
+        r'목표가\s*(?:\([^)]*\))?\s*([0-9,]+)\s*원',
+        r'Target\s*Price\s*(?:\([^)]*\))?\s*([0-9,]+)',
+        r'TP\s*(?:\([^)]*\))?\s*([0-9,]+)\s*원',
     ]
     for p in patterns:
         m = re.search(p, full_text, re.IGNORECASE)
         if m:
             try:
-                target = int(m.group(1).replace(",", ""))
-                break
+                val = int(m.group(1).replace(",", ""))
+                if val >= 1000:  # 최소 1,000원 이상만 (연도 오탐 방지)
+                    target = val
+                    break
             except Exception:
                 pass
 
