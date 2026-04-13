@@ -1278,6 +1278,12 @@ async def snapshot_and_drawdown(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
     """매주 일요일 07:05 KST — 포트폴리오+워치리스트+유니버스 전체 컨센서스 배치 업데이트."""
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_consensus_weekly"
+    if _sent.get("consensus_weekly") == _key:
+        return
+
     try:
         from copy import deepcopy
         print("[consensus_update] 컨센서스 배치 업데이트 시작")
@@ -1326,6 +1332,8 @@ async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
                 elif c["type"] == "new_cover":
                     msg += f"🆕 *{c['name']}* — 신규 커버리지 {c['detail']}\n"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            _sent["consensus_weekly"] = _key
+            save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"[consensus_update] 오류: {e}")
 
@@ -1338,6 +1346,12 @@ async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
+
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_consensus_daily"
+    if _sent.get("consensus_daily") == _key:
+        return
+
     try:
         from copy import deepcopy
         old_cache = deepcopy(load_json(CONSENSUS_CACHE_FILE, {}))
@@ -1378,6 +1392,8 @@ async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
                 elif c["type"] == "opinion_change":
                     msg += f"🔄 *{c['name']}* — 의견 변경 {c['detail']}\n"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            _sent["consensus_daily"] = _key
+            save_json(MACRO_SENT_FILE, _sent)
 
         print(f"[daily_consensus] {len(kr_tickers)}종목 수집, {len(changes)}건 변화")
     except Exception as e:
@@ -1414,6 +1430,12 @@ async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
     """매주 월요일 07:00 KST — KOSPI250 + KOSDAQ350 기준으로 stock_universe.json 자동 갱신 (~600종목)."""
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_universe"
+    if _sent.get("universe") == _key:
+        return
+
     try:
         token = await get_kis_token()
         if not token:
@@ -1453,6 +1475,8 @@ async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
             msg += f"\n❌ 삭제 {len(removed)}종목: {', '.join(names)}"
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        _sent["universe"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"[universe_update] 오류: {e}")
 
@@ -1467,6 +1491,11 @@ async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
     """
     now = datetime.now(KST)
     if now.weekday() >= 5:
+        return
+
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_earnings_cal"
+    if _sent.get("earnings_cal") == _key:
         return
 
     # ── events.json 기반 D-3 알림 (확정 일정) ──
@@ -1574,6 +1603,9 @@ async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[earnings_calendar] 오류: {e}")
 
+    _sent["earnings_cal"] = _key
+    save_json(MACRO_SENT_FILE, _sent)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📅 미국 실적 캘린더 알림 (매일 07:10 KST)
@@ -1582,6 +1614,12 @@ async def check_us_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
+
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_us_earnings_cal"
+    if _sent.get("us_earnings_cal") == _key:
+        return
+
     try:
         portfolio = load_json(PORTFOLIO_FILE, {})
         us_stocks = portfolio.get("us_stocks", {})
@@ -1597,6 +1635,8 @@ async def check_us_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
             for e in upcoming:
                 msg += f"• {e['name']}({e['ticker']}) — {e['earnings_date']} ({e['days_until']}일 후)\n"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            _sent["us_earnings_cal"] = _key
+            save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"[us_earnings_calendar] 오류: {e}")
 
@@ -1610,6 +1650,12 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
+
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_dividend_cal"
+    if _sent.get("dividend_cal") == _key:
+        return
+
     try:
         token = await get_kis_token()
         wl = load_watchlist()
@@ -1653,6 +1699,8 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
         if alerts:
             msg = "📅 *배당 캘린더 알림*\n\n" + "\n\n".join(alerts)
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            _sent["dividend_cal"] = _key
+            save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"[dividend_calendar] 오류: {e}")
 
@@ -1843,8 +1891,9 @@ async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
-        # 발송 성공 후 기록
-        save_json(MACRO_SENT_FILE, {"last": slot_key})
+        # 발송 성공 후 기록 (기존 키 보존)
+        sent_data["last"] = slot_key
+        save_json(MACRO_SENT_FILE, sent_data)
     except Exception as e:
         print(f"매크로 대시보드 오류: {e}")
 
@@ -1926,6 +1975,12 @@ async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
+
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_watch_change"
+    if _sent.get("watch_change") == _key:
+        return
+
     try:
         db = load_krx_db()
         if not db:
@@ -1997,6 +2052,8 @@ async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
         save_json(change_sent_file, {"date": today, "sent": True})
+        _sent["watch_change"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"watch_change_detect 오류: {e}")
 
@@ -2060,8 +2117,13 @@ async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
 # 🔔 자동알림: Sunday 30 리마인더 (일 19:00)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_sunday_30"
+    if _sent.get("sunday_30") == _key:
+        return
+
     try:
-        now = datetime.now(KST)
         msg = f"📋 *주간점검 Sunday 30 리마인더* ({now.strftime('%m/%d')})\n\n"
 
         # 레짐
@@ -2148,6 +2210,8 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
         )
 
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        _sent["sunday_30"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"sunday_30_reminder 오류: {e}")
 
