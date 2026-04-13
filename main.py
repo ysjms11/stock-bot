@@ -750,8 +750,8 @@ def _increment_stoploss_sent(sent: dict, ticker: str, today: str):
 
 async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    if not _is_kr_trading_time(now):
-        return
+    if now.weekday() >= 5:
+        return  # 주말 스킵
     is_kr = not (now.hour < 9 or (now.hour >= 15 and now.minute > 30))
     is_us = _is_us_market_hours_kst()
 
@@ -865,8 +865,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
     # ── 매수 희망가 감시 (watchalert) ──
     try:
         _now_w = datetime.now(KST)
-        if _now_w.weekday() >= 5 or not (8 <= _now_w.hour < 18):
-            return  # 주말 또는 장외 시간(08:00~18:00)이면 스킵
+        if _now_w.weekday() >= 5:
+            return  # 주말 스킵
         wa = load_watchalert()
         if wa:
             token_wa = await get_kis_token()
@@ -880,8 +880,6 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                         continue
                     cur = 0.0
                     if _is_us_ticker(ticker):
-                        if not is_us:
-                            continue
                         cached = ws_manager.get_cached_price(ticker)
                         if cached is not None:
                             cur = float(cached)
@@ -903,7 +901,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                             await asyncio.sleep(0.3)
                             if cur > 0:
                                 ws_manager.set_cached_price(ticker, int(cur))
-                    if cur > 0 and cur <= buy_price and watch_sent.get(ticker) != today_w:
+                    # US 종목은 장중(is_us)일 때만 알림 발송
+                    if cur > 0 and cur <= buy_price and watch_sent.get(ticker) != today_w and (not _is_us_ticker(ticker) or is_us):
                         watch_sent[ticker] = today_w
                         save_json(WATCH_SENT_FILE, watch_sent)
                         memo = info.get("memo", "")
