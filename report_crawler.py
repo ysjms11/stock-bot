@@ -45,6 +45,8 @@ def _get_report_db() -> sqlite3.Connection:
             pdf_url TEXT DEFAULT '',
             full_text TEXT DEFAULT '',
             pdf_path TEXT DEFAULT '',
+            target_price INTEGER DEFAULT 0,
+            opinion TEXT DEFAULT '',
             extraction_status TEXT DEFAULT '',
             collected_at TEXT DEFAULT '',
             UNIQUE(date, source, ticker)
@@ -53,12 +55,22 @@ def _get_report_db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_rpt_ticker ON reports(ticker);
         CREATE INDEX IF NOT EXISTS idx_rpt_date ON reports(date);
     """)
-    # 기존 DB 마이그레이션: pdf_path 컬럼 없으면 추가 (오류 무시)
+    # 기존 DB 마이그레이션: 컬럼 없으면 추가 (오류 무시)
     try:
         conn.execute("ALTER TABLE reports ADD COLUMN pdf_path TEXT DEFAULT ''")
         conn.commit()
     except Exception:
         pass  # 이미 컬럼 존재 시 무시
+    try:
+        conn.execute("ALTER TABLE reports ADD COLUMN target_price INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE reports ADD COLUMN opinion TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass
     return conn
 
 
@@ -76,6 +88,108 @@ def load_reports() -> dict:
 def save_reports(data: dict):
     """No-op: 저장은 collect_reports()에서 SQLite INSERT로 처리."""
     pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━ 목표가/투자의견 추출 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def extract_report_meta(full_text: str) -> dict:
+    """리포트 텍스트에서 목표가/투자의견 추출.
+
+    Returns: {"target_price": int or None, "opinion": str or ""}
+    """
+    import re
+    target = None
+    opinion = ""
+
+    if not full_text:
+        return {"target_price": target, "opinion": opinion}
+
+    # 목표주가 추출 패턴들
+    patterns = [
+        r'목표주가[:\s]*([0-9,]+)\s*원',
+        r'목표가[:\s]*([0-9,]+)\s*원',
+        r'Target\s*Price[:\s]*([0-9,]+)',
+        r'TP[:\s]*([0-9,]+)\s*원',
+        r'목표주가[:\s]*([0-9,]+)',
+    ]
+    for p in patterns:
+        m = re.search(p, full_text, re.IGNORECASE)
+        if m:
+            try:
+                target = int(m.group(1).replace(",", ""))
+                break
+            except Exception:
+                pass
+
+    # 투자의견 추출
+    opinion_patterns = [
+        r'투자의견[:\s]*(매수|BUY|Buy|중립|HOLD|Hold|매도|SELL|Sell|Overweight|Underweight|시장수익률상회|시장수익률)',
+        r'(BUY|HOLD|SELL|매수|중립|매도)\s*(?:유지|상향|하향|신규)',
+    ]
+    for p in opinion_patterns:
+        m = re.search(p, full_text, re.IGNORECASE)
+        if m:
+            raw = m.group(1).upper()
+            if raw in ("매수", "BUY", "OVERWEIGHT", "시장수익률상회"):
+                opinion = "매수"
+            elif raw in ("중립", "HOLD", "시장수익률"):
+                opinion = "중립"
+            elif raw in ("매도", "SELL", "UNDERWEIGHT"):
+                opinion = "매도"
+            else:
+                opinion = m.group(1)
+            break
+
+    return {"target_price": target, "opinion": opinion}
+
+
+def _normalize_wise_opinion(recomm: str) -> str:
+    """와이즈리포트 RECOMM 값을 매수/중립/매도로 정규화."""
+    if not recomm:
+        return ""
+    r = recomm.strip().upper()
+    if r in ("BUY", "매수", "STRONG BUY", "STRONGBUY", "OVERWEIGHT", "시장수익률상회"):
+        return "매수"
+    if r in ("HOLD", "NEUTRAL", "MARKET PERFORM", "중립", "시장수익률"):
+        return "중립"
+    if r in ("SELL", "UNDERWEIGHT", "UNDERPERFORM", "매도"):
+        return "매도"
+    return recomm.strip()
+
+
+def backfill_report_meta() -> int:
+    """기존 DB 리포트의 full_text에서 목표가/투자의견을 소급 추출하여 UPDATE.
+
+    target_price=0 AND opinion='' 인 행만 처리 (이미 채워진 것은 건드리지 않음).
+    Returns: 업데이트된 행 수.
+    """
+    conn = _get_report_db()
+    rows = conn.execute(
+        "SELECT id, full_text, extraction_status FROM reports "
+        "WHERE (target_price IS NULL OR target_price = 0) AND (opinion IS NULL OR opinion = '')"
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        status = row["extraction_status"] or ""
+        full_text = row["full_text"] or ""
+        # 와이즈 메타는 full_text에 목표가가 없으니 스킵
+        if status == "meta_only":
+            continue
+        if not full_text:
+            continue
+        meta = extract_report_meta(full_text)
+        tp = meta["target_price"] or 0
+        op = meta["opinion"]
+        if tp or op:
+            conn.execute(
+                "UPDATE reports SET target_price=?, opinion=? WHERE id=?",
+                (tp, op, row["id"]),
+            )
+            updated += 1
+    conn.commit()
+    conn.close()
+    print(f"[report] backfill_report_meta: {updated}건 업데이트")
+    return updated
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 크롤링 ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -517,6 +631,13 @@ def collect_reports(tickers_dict: dict) -> list:
                     r["extraction_status"] = "meta_only"
                     r["pdf_path"] = ""
                     r.pop("_wise_meta", None)
+                    # 와이즈 메타에서 직접 제공되는 목표가/투자의견 사용
+                    try:
+                        tp_raw = r.pop("target_price", "") or ""
+                        r["target_price"] = int(str(tp_raw).replace(",", "")) if tp_raw else 0
+                    except (ValueError, TypeError):
+                        r["target_price"] = 0
+                    r["opinion"] = _normalize_wise_opinion(r.pop("recommendation", "") or "")
                 else:
                     full_text, status, pdf_bytes = extract_pdf_text(r["pdf_url"])
                     r["full_text"] = full_text
@@ -530,6 +651,10 @@ def collect_reports(tickers_dict: dict) -> list:
                             )
                         except Exception as e:
                             print(f"[report] PDF 로컬 저장 실패 ({ticker}): {e}")
+                    # PDF full_text에서 목표가/투자의견 추출
+                    meta = extract_report_meta(full_text)
+                    r["target_price"] = meta["target_price"] or 0
+                    r["opinion"] = meta["opinion"]
                 r["collected_at"] = datetime.now(KST).isoformat()
                 new_reports.append(r)
                 existing_urls.add(r["pdf_url"])
@@ -547,13 +672,15 @@ def collect_reports(tickers_dict: dict) -> list:
             conn.execute(
                 """INSERT OR IGNORE INTO reports
                    (date, ticker, name, source, analyst, title, pdf_url,
-                    full_text, pdf_path, extraction_status, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    full_text, pdf_path, extraction_status, collected_at,
+                    target_price, opinion)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
                  r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
                  r.get("pdf_url", ""), r.get("full_text", ""),
                  r.get("pdf_path", ""), r.get("extraction_status", ""),
-                 r.get("collected_at", "")),
+                 r.get("collected_at", ""),
+                 r.get("target_price", 0), r.get("opinion", "")),
             )
         # 영구 보관 (삭제 없음)
         conn.commit()

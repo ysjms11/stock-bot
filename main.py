@@ -4581,7 +4581,9 @@ async def _handle_dash_reports(request: web.Request) -> web.Response:
         conn = _sqlite3_rpt2.connect(REPORT_DB_PATH, timeout=10)
         conn.row_factory = _sqlite3_rpt2.Row
         rows = conn.execute("""
-            SELECT date, source, analyst, title, pdf_path, extraction_status
+            SELECT date, source, analyst, title, pdf_path, extraction_status,
+                   COALESCE(target_price, 0) AS target_price,
+                   COALESCE(opinion, '') AS opinion
             FROM reports WHERE ticker=? ORDER BY date DESC
         """, (ticker,)).fetchall()
         name_row = conn.execute(
@@ -4610,6 +4612,8 @@ async def _handle_dash_reports(request: web.Request) -> web.Response:
         analyst = _html.escape(r["analyst"] or "")
         title = _html.escape(r["title"] or "")
         pdf_path = r["pdf_path"] or ""
+        target_price = r["target_price"] or 0
+        opinion = r["opinion"] or ""
 
         html += '<details class="decision-card"><summary>'
         html += f'<span class="decision-date">{date}</span>'
@@ -4619,6 +4623,24 @@ async def _handle_dash_reports(request: web.Request) -> web.Response:
             html += f'<span style="color:var(--fg2);font-size:0.85em">{analyst}</span>'
         html += f'<span class="decision-preview">{title}</span>'
         html += '</summary><div class="decision-body">'
+
+        # 목표가/투자의견 메타
+        if target_price or opinion:
+            meta_parts = []
+            if target_price:
+                meta_parts.append(f'🎯 목표가 {target_price:,}원')
+            if opinion:
+                if opinion == "매수":
+                    op_color = "var(--green)"
+                elif opinion == "매도":
+                    op_color = "var(--red)"
+                else:
+                    op_color = "var(--fg2)"
+                meta_parts.append(
+                    f'<span style="color:{op_color}">{_html.escape(opinion)}</span>'
+                )
+            html += (f'<div style="font-size:0.85em;margin-bottom:8px">'
+                     f'{" | ".join(meta_parts)}</div>')
 
         if pdf_path:
             fname = os.path.basename(pdf_path)
