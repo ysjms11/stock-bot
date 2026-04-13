@@ -31,10 +31,11 @@ async def _refresh_ws():
 from mcp_tools import mcp_sse_handler, mcp_messages_handler
 
 try:
-    from report_crawler import collect_reports, get_collection_tickers
+    from report_crawler import collect_reports, get_collection_tickers, DB_PATH as REPORT_DB_PATH
     _REPORT_AVAILABLE = True
 except ImportError:
     _REPORT_AVAILABLE = False
+    REPORT_DB_PATH = os.path.join(os.environ.get("DATA_DIR", "data"), "stock.db")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4359,6 +4360,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
              '<a href="#trade">💼 매매</a>'
              '<a href="#invest">📈 투자</a>'
              '<a href="#dev">🔧 봇개발</a>'
+             '<a href="#reports">📄 리포트</a>'
              '<a href="#docs">📚 문서</a>'
              '</nav>')
 
@@ -4489,7 +4491,33 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    # 7. 문서
+    # 7. 리포트
+    try:
+        import sqlite3 as _sqlite3_rpt
+        rpt_conn = _sqlite3_rpt.connect(REPORT_DB_PATH, timeout=10)
+        rpt_conn.row_factory = _sqlite3_rpt.Row
+        ticker_counts = rpt_conn.execute("""
+            SELECT ticker, name, COUNT(*) as cnt, MAX(date) as latest
+            FROM reports GROUP BY ticker ORDER BY cnt DESC
+        """).fetchall()
+        rpt_conn.close()
+        html += '<div class="section" id="reports"><h2>📄 리포트</h2>'
+        if ticker_counts:
+            html += '<div class="doc-grid">'
+            for tc in ticker_counts:
+                html += (f'<a href="/dash/reports/{_html.escape(tc["ticker"])}" class="doc-card">'
+                         f'<div class="doc-icon">📄</div>'
+                         f'<div class="doc-name">{_html.escape(tc["name"])}</div>'
+                         f'<div class="doc-desc">{tc["cnt"]}건 | 최신 {_html.escape(tc["latest"])}</div>'
+                         f'</a>')
+            html += '</div>'
+        else:
+            html += '<p style="color:var(--fg2)">리포트 없음</p>'
+        html += '</div>'
+    except Exception:
+        pass
+
+    # 8. 문서
     try:
         html += f'<div class="section" id="docs"><h2>📚 문서</h2>{_build_docs_v2_html()}</div>'
     except Exception:
@@ -4540,6 +4568,94 @@ async def _handle_dash_research_file(request: web.Request) -> web.Response:
         import traceback
         print(f"[Dash] research file 오류: {e}\n{traceback.format_exc()}")
         return web.Response(text=f"Error: {e}", status=500)
+
+
+async def _handle_dash_reports(request: web.Request) -> web.Response:
+    """GET /dash/reports/{ticker} — 종목별 리포트 목록."""
+    ticker = request.match_info.get("ticker", "")
+    if ".." in ticker or "/" in ticker or "\\" in ticker:
+        return web.Response(status=400, text="Invalid ticker")
+
+    import sqlite3 as _sqlite3_rpt2
+    try:
+        conn = _sqlite3_rpt2.connect(REPORT_DB_PATH, timeout=10)
+        conn.row_factory = _sqlite3_rpt2.Row
+        rows = conn.execute("""
+            SELECT date, source, analyst, title, pdf_path, extraction_status
+            FROM reports WHERE ticker=? ORDER BY date DESC
+        """, (ticker,)).fetchall()
+        name_row = conn.execute(
+            "SELECT name FROM reports WHERE ticker=? LIMIT 1", (ticker,)
+        ).fetchone()
+        name = name_row["name"] if name_row else ticker
+        conn.close()
+    except Exception as e:
+        return web.Response(status=500, text=f"DB 오류: {e}")
+
+    html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{_html.escape(name)} 리포트</title>{_DASH_V2_CSS}</head><body>')
+    html += (f'<div style="margin-bottom:16px">'
+             f'<a href="/dash#reports" style="color:var(--accent);text-decoration:none">← 대시보드</a>'
+             f'</div>')
+    html += (f'<h1>📄 {_html.escape(name)} ({_html.escape(ticker)}) '
+             f'리포트 ({len(rows)}건)</h1>')
+
+    if not rows:
+        html += '<p style="color:var(--fg2)">리포트 없음</p>'
+
+    for r in rows:
+        date = _html.escape(r["date"] or "")
+        source = _html.escape(r["source"] or "")
+        analyst = _html.escape(r["analyst"] or "")
+        title = _html.escape(r["title"] or "")
+        pdf_path = r["pdf_path"] or ""
+
+        html += '<details class="decision-card"><summary>'
+        html += f'<span class="decision-date">{date}</span>'
+        if source:
+            html += f'<span class="badge badge-neutral">{source}</span>'
+        if analyst:
+            html += f'<span style="color:var(--fg2);font-size:0.85em">{analyst}</span>'
+        html += f'<span class="decision-preview">{title}</span>'
+        html += '</summary><div class="decision-body">'
+
+        if pdf_path:
+            fname = os.path.basename(pdf_path)
+            html += (f'<a href="/dash/pdf/{_html.escape(ticker)}/{_html.escape(fname)}" '
+                     f'target="_blank" style="color:var(--accent);text-decoration:none">'
+                     f'📎 PDF 열기</a>')
+        else:
+            html += '<span style="color:var(--fg2)">PDF 없음 (와이즈리포트 유료)</span>'
+
+        html += '</div></details>'
+
+    html += "</body></html>"
+    return web.Response(text=html, content_type="text/html")
+
+
+async def _handle_dash_pdf(request: web.Request) -> web.Response:
+    """GET /dash/pdf/{ticker}/{filename} — PDF 파일 직접 서빙."""
+    ticker = request.match_info.get("ticker", "")
+    filename = request.match_info.get("filename", "")
+
+    # 보안: path traversal 방지
+    if ".." in ticker or "/" in ticker or "\\" in ticker:
+        return web.Response(status=400, text="Invalid ticker")
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return web.Response(status=400, text="Invalid filename")
+    if not filename.lower().endswith(".pdf"):
+        return web.Response(status=400, text="PDF only")
+
+    pdf_dir = os.path.join(os.environ.get("DATA_DIR", "data"), "report_pdfs")
+    fpath = os.path.join(pdf_dir, ticker, filename)
+
+    if not os.path.isfile(fpath):
+        return web.Response(status=404, text="PDF not found")
+
+    with open(fpath, "rb") as f:
+        content = f.read()
+    return web.Response(body=content, content_type="application/pdf")
 
 
 def _build_trade_card(t: dict, is_open: bool = False) -> str:
@@ -4710,6 +4826,8 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
     mcp_app.router.add_get("/dash/trades", _handle_dash_trades)
     mcp_app.router.add_get("/dash/file/research/{filename}", _handle_dash_research_file)
+    mcp_app.router.add_get("/dash/reports/{ticker}", _handle_dash_reports)
+    mcp_app.router.add_get("/dash/pdf/{ticker}/{filename}", _handle_dash_pdf)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
