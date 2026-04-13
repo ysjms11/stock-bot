@@ -1672,11 +1672,13 @@ async def daily_collect_job(context):
         return  # 주말/공휴일 조용히 스킵
 
     if "error" not in report:
+        _PHASE_KR = {"basic": "시세/밸류", "overtime": "시간외", "supply": "수급", "short": "공매도"}
+        dur = report['duration']
         msg = (f"📊 DB 수집 완료\n"
-               f"종목: {report['total']}\n"
-               f"소요: {report['duration']:.0f}초")
+               f"종목: {report['total']}개 | 소요: {int(dur//60)}분 {int(dur%60)}초")
         for phase, pr in report.get("phases", {}).items():
-            msg += f"\n  {phase}: {pr['success']}✓ {pr['failed']}✗"
+            name = _PHASE_KR.get(phase, phase)
+            msg += f"\n  {name}: {pr['success']}✓ {pr['failed']}✗"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg)
         try:
             from db_collector import backup_to_icloud
