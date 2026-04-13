@@ -459,16 +459,51 @@ def _parse_date(raw: str) -> str:
 def _save_pdf_local(pdf_bytes: bytes, ticker: str, date: str, source: str, analyst: str) -> str:
     """PDF를 로컬에 저장. 반환: 저장 경로."""
     import re
+
+    # ── path traversal 방지 ─────────────────────────────────────────────
+    # 1) 원본 값에서 '..' 포함 여부를 먼저 차단 (악의적 입력 명시적 거부)
+    for val, name in ((ticker, "ticker"), (date, "date"), (source, "source"), (analyst, "analyst")):
+        if ".." in val:
+            raise ValueError(f"_save_pdf_local: invalid {name} value: {val!r}")
+
+    # 2) basename만 남기기 (슬래시/백슬래시 계열 절대경로·상대경로 제거)
+    ticker = os.path.basename(ticker)
+    date = os.path.basename(date)
+    # source/analyst는 아래 re.sub으로 충분하지만 basename 적용도 추가
+    source = os.path.basename(source)
+    analyst = os.path.basename(analyst)
+
+    # 3) ticker는 영숫자·한글·하이픈·언더스코어만 허용 (안전한 디렉토리명)
+    ticker = re.sub(r'[^\w가-힣\-]', '', ticker)
+    if not ticker:
+        raise ValueError("_save_pdf_local: ticker is empty after sanitization")
+
     dir_path = os.path.join(_PDF_DIR, ticker)
     os.makedirs(dir_path, exist_ok=True)
+
+    # 4) realpath로 _PDF_DIR 하위인지 최종 확인
+    real_base = os.path.realpath(_PDF_DIR)
+    real_dir = os.path.realpath(dir_path)
+    if not real_dir.startswith(real_base + os.sep) and real_dir != real_base:
+        raise ValueError(f"_save_pdf_local: dir_path escapes _PDF_DIR: {real_dir!r}")
+
+    # ── 파일명 생성 ─────────────────────────────────────────────────────
     # 파일명: 2026-04-09_유안타증권_백길현.pdf (특수문자 제거)
+    safe_date = re.sub(r'[^\d\-]', '', date)
     safe_source = re.sub(r'[^\w가-힣]', '', source)
     safe_analyst = re.sub(r'[^\w가-힣,]', '', analyst)
     if safe_analyst:
-        fname = f"{date}_{safe_source}_{safe_analyst}.pdf"
+        fname = f"{safe_date}_{safe_source}_{safe_analyst}.pdf"
     else:
-        fname = f"{date}_{safe_source}.pdf"
+        fname = f"{safe_date}_{safe_source}.pdf"
+
     fpath = os.path.join(dir_path, fname)
+
+    # 5) 최종 파일 경로도 _PDF_DIR 하위인지 realpath 체크
+    real_fpath = os.path.realpath(fpath)
+    if not real_fpath.startswith(real_base + os.sep):
+        raise ValueError(f"_save_pdf_local: fpath escapes _PDF_DIR: {real_fpath!r}")
+
     with open(fpath, 'wb') as f:
         f.write(pdf_bytes)
     return fpath
