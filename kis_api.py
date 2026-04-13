@@ -3214,17 +3214,13 @@ async def collect_macro_data() -> dict:
     except Exception:
         data["USDKRW"] = {"price": "?", "change_pct": "?"}
 
-    # 4. 시장별 투자자매매동향 (KOSPI + KOSDAQ, FHPTJ04040000)
+    # 4. 시장별 투자자매매동향 (KOSPI만, FHPTJ04040000)
+    # KOSDAQ은 API 응답 전부 0 → 공식 문의 필요, 당분간 KOSPI만
     try:
         token = await get_kis_token()
         if token:
-            kospi_flow  = await _fetch_market_investor_flow(token, "KSP")
-            await asyncio.sleep(0.4)
-            kosdaq_flow = await _fetch_market_investor_flow(token, "KSQ")
-            data["MARKET_FLOW"] = {
-                "kospi":  kospi_flow,
-                "kosdaq": kosdaq_flow,
-            }
+            kospi_flow = await _fetch_market_investor_flow(token, "KSP")
+            data["MARKET_FLOW"] = {"kospi": kospi_flow}
             # judge_regime 호환: KOSPI 외인 순매수금(백만원 → 억원)
             data["FOREIGN_FLOW"] = {"amount_억": kospi_flow["frgn"] // 100}
         else:
@@ -3336,8 +3332,6 @@ def format_macro_msg(data: dict) -> str:
     msg += "[수급]\n"
     if mf.get("kospi"):
         msg += _flow_str(mf["kospi"], "KOSPI") + "\n"
-    if mf.get("kosdaq"):
-        msg += _flow_str(mf["kosdaq"], "KOSDAQ") + "\n"
     if not mf:
         # fallback: FOREIGN_FLOW만 있을 때
         ff  = data.get("FOREIGN_FLOW", {})
