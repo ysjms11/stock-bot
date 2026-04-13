@@ -626,7 +626,7 @@ MCP_TOOLS = [
                      "required": ["ticker"]}},
 
     {"name": "read_file",
-     "description": "stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt, 최대 100KB. ../ 경로 차단.",
+     "description": "stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt/.pdf, 최대 100KB (PDF는 2MB). ../ 경로 차단. PDF는 경로만 반환.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (예: CLAUDE.md, kis_api.py)"},
@@ -3266,7 +3266,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             elif ".." in rel or rel.startswith("/"):
                 result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
             else:
-                _allowed_ext = (".md", ".py", ".json", ".txt")
+                _allowed_ext = (".md", ".py", ".json", ".txt", ".pdf")
                 if not any(rel.endswith(ext) for ext in _allowed_ext):
                     result = {"error": f"허용 확장자: {', '.join(_allowed_ext)}"}
                 else:
@@ -3276,6 +3276,17 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
                     elif not os.path.isfile(_fpath):
                         result = {"error": f"파일 없음: {rel}"}
+                    elif rel.endswith(".pdf"):
+                        _pdf_size = os.path.getsize(_fpath)
+                        if _pdf_size > 2 * 1024 * 1024:
+                            result = {"error": f"PDF 크기 초과 (최대 2MB, 실제 {_pdf_size // 1024}KB)"}
+                        else:
+                            result = {
+                                "path": rel,
+                                "full_path": _fpath,
+                                "size_kb": _pdf_size // 1024,
+                                "note": "PDF 파일입니다. Claude Code의 Read 도구로 직접 읽으세요.",
+                            }
                     elif os.path.getsize(_fpath) > 100 * 1024:
                         result = {"error": f"파일 크기 초과 (최대 100KB, 실제 {os.path.getsize(_fpath) // 1024}KB)"}
                     else:
