@@ -1728,6 +1728,14 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return  # 주말 스킵
+
+    # 중복 발송 방지
+    _rpt_sent = load_json(MACRO_SENT_FILE, {})
+    _rpt_key = f"{now.strftime('%Y-%m-%d')}_report"
+    if _rpt_sent.get("report") == _rpt_key:
+        print(f"[report_daily] 이미 발송됨: {_rpt_key}, 스킵")
+        return
+
     try:
         tickers = get_collection_tickers()
         if not tickers:
@@ -1737,21 +1745,41 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
         new_reports = await loop.run_in_executor(None, collect_reports, tickers)
 
         if new_reports:
-            failed = sum(1 for r in new_reports if r.get("extraction_status") == "failed")
-            msg = f"📄 *증권사 리포트 수집* ({len(new_reports)}건"
-            if failed:
-                msg += f", 추출실패 {failed}건"
-            msg += ")\n\n"
             def _esc(s: str) -> str:
                 """Telegram Markdown v1 특수문자 이스케이프"""
                 for ch in ("*", "_", "`", "["):
                     s = s.replace(ch, "\\" + ch)
                 return s
-            for r in new_reports[:10]:  # 최대 10건 표시
-                msg += f"• {_esc(r.get('name', ''))} - {_esc(r.get('source', ''))} \"{_esc(r.get('title', ''))}\" ({r.get('date', '')[-5:]})\n"
-            if len(new_reports) > 10:
-                msg += f"\n... 외 {len(new_reports) - 10}건"
+
+            # 종목별 그룹핑 → 각 종목 최신 1건만, 리포트 수 내림차순
+            from collections import defaultdict
+            by_name: dict = defaultdict(list)
+            for r in new_reports:
+                key = r.get("name") or r.get("ticker", "?")
+                by_name[key].append(r)
+
+            lines = []
+            for name, reports in sorted(by_name.items(), key=lambda x: -len(x[1])):
+                latest = max(reports, key=lambda x: x.get("date", ""))
+                src   = _esc(latest.get("source", ""))
+                title = _esc(latest.get("title", ""))[:30]
+                date  = latest.get("date", "")[-5:]
+                lines.append(f"• {_esc(name)} ({len(reports)}건) — {src} \"{title}\" ({date})")
+
+            failed = sum(1 for r in new_reports if r.get("extraction_status") == "failed")
+            header = f"📄 *증권사 리포트 수집* ({len(new_reports)}건, {len(by_name)}종목"
+            if failed:
+                header += f", 추출실패 {failed}건"
+            header += ")"
+            msg = header + "\n\n" + "\n".join(lines[:15])  # 최대 15종목
+            if len(by_name) > 15:
+                msg += f"\n... 외 {len(by_name) - 15}종목"
+
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+            # 발송 기록
+            _rpt_sent["report"] = _rpt_key
+            save_json(MACRO_SENT_FILE, _rpt_sent)
     except Exception as e:
         print(f"[report_daily] 오류: {e}")
 
