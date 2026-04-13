@@ -76,6 +76,7 @@ SECTOR_ROTATION_FILE      = f"{_DATA_DIR}/sector_rotation.json"
 SUPPLY_HISTORY_FILE       = f"{_DATA_DIR}/supply_history.json"
 REPORTS_FILE              = f"{_DATA_DIR}/reports.json"
 REGIME_STATE_FILE         = f"{_DATA_DIR}/regime_state.json"
+MACRO_SENT_FILE           = f"{_DATA_DIR}/macro_sent.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
@@ -1181,6 +1182,46 @@ _TICKER_SECTOR = {
     "000720": "건설",   "097950": "건설",   "047040": "건설",   "028260": "건설",
     "207940": "바이오", "068270": "바이오", "196170": "바이오", "091990": "바이오",
 }
+
+
+async def _fetch_market_investor_flow(token: str, market: str) -> dict:
+    """시장별 투자자매매동향(일별) FHPTJ04040000.
+    market: "KSP"(코스피) or "KSQ"(코스닥)
+    Returns: {"frgn": 백만원, "orgn": 백만원, "prsn": 백만원}
+    """
+    today = datetime.now(KST).strftime("%Y%m%d")
+    params = {
+        "fid_cond_mrkt_div_code": "U",
+        "fid_input_iscd": "0001",
+        "fid_input_date_1": today,
+        "fid_input_iscd_1": market,
+        "fid_input_date_2": today,
+        "fid_input_iscd_2": "0001",
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            _, d = await _kis_get(
+                s,
+                "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
+                "FHPTJ04040000",
+                token,
+                params,
+            )
+        if not d or d.get("rt_cd") != "0":
+            return {"frgn": 0, "orgn": 0, "prsn": 0}
+        rows = d.get("output") or []
+        if isinstance(rows, list) and rows:
+            row = rows[0]
+        elif isinstance(rows, dict):
+            row = rows
+        else:
+            return {"frgn": 0, "orgn": 0, "prsn": 0}
+        frgn = int(row.get("frgn_ntby_tr_pbmn", 0) or 0)
+        orgn = int(row.get("orgn_ntby_tr_pbmn", 0) or 0)
+        prsn = int(row.get("prsn_ntby_tr_pbmn", 0) or 0)
+        return {"frgn": frgn, "orgn": orgn, "prsn": prsn}
+    except Exception:
+        return {"frgn": 0, "orgn": 0, "prsn": 0}
 
 
 async def _fetch_sector_flow(token: str, sector_code: str) -> tuple:
@@ -3173,19 +3214,24 @@ async def collect_macro_data() -> dict:
     except Exception:
         data["USDKRW"] = {"price": "?", "change_pct": "?"}
 
-    # 4. 외국인 KOSPI 수급 (업종별 합산)
+    # 4. 시장별 투자자매매동향 (KOSPI + KOSDAQ, FHPTJ04040000)
     try:
         token = await get_kis_token()
         if token:
-            total_frgn = 0
-            for code, _ in WI26_SECTORS:
-                frgn, _ = await _fetch_sector_flow(token, code)
-                total_frgn += frgn
-                await asyncio.sleep(0.1)
-            data["FOREIGN_FLOW"] = {"amount_억": total_frgn}
+            kospi_flow  = await _fetch_market_investor_flow(token, "KSP")
+            await asyncio.sleep(0.4)
+            kosdaq_flow = await _fetch_market_investor_flow(token, "KSQ")
+            data["MARKET_FLOW"] = {
+                "kospi":  kospi_flow,
+                "kosdaq": kosdaq_flow,
+            }
+            # judge_regime 호환: KOSPI 외인 순매수금(백만원 → 억원)
+            data["FOREIGN_FLOW"] = {"amount_억": kospi_flow["frgn"] // 100}
         else:
+            data["MARKET_FLOW"]  = {}
             data["FOREIGN_FLOW"] = {"amount_억": "?"}
     except Exception:
+        data["MARKET_FLOW"]  = {}
         data["FOREIGN_FLOW"] = {"amount_억": "?"}
 
     # 5. 이벤트 캘린더 (날짜 미래 항목만 포함)
@@ -3200,6 +3246,29 @@ async def collect_macro_data() -> dict:
         except Exception:
             upcoming[key] = val   # "진행중" 같은 비날짜 값도 포함
     data["EVENTS"] = upcoming
+
+    # 6. 시간외 급등락 (SQLite daily_snapshot, pm 슬롯용)
+    try:
+        from db_collector import _get_db
+        today_str = datetime.now(KST).strftime("%Y-%m-%d")
+        conn = _get_db()
+        rows = conn.execute("""
+            SELECT s.symbol, m.name_kr, s.ovtm_change_pct
+            FROM daily_snapshot s
+            LEFT JOIN stock_master m ON m.symbol = s.symbol
+            WHERE s.trade_date = ?
+              AND s.ovtm_change_pct IS NOT NULL
+              AND s.ovtm_change_pct != 0
+            ORDER BY s.ovtm_change_pct DESC
+        """, (today_str,)).fetchall()
+        conn.close()
+        top    = [{"name": r["name_kr"] or r["symbol"], "pct": r["ovtm_change_pct"]}
+                  for r in rows[:3]]
+        bottom = [{"name": r["name_kr"] or r["symbol"], "pct": r["ovtm_change_pct"]}
+                  for r in rows[-3:] if r["ovtm_change_pct"] < 0]
+        data["OVERTIME_MOVERS"] = {"top": top, "bottom": bottom}
+    except Exception:
+        data["OVERTIME_MOVERS"] = {"top": [], "bottom": []}
 
     return data
 
@@ -3252,13 +3321,32 @@ def format_macro_msg(data: dict) -> str:
     msg += f"USD/KRW: {_p(usdkrw)} ({_c(usdkrw)}){_fx_warn} | US10Y: {_p(us10y)}% ({_c(us10y)})\n\n"
 
     # [수급]
-    ff  = data.get("FOREIGN_FLOW", {})
-    amt = ff.get("amount_억", "?")
+    def _flow_str(flow_dict: dict, label: str) -> str:
+        """시장별 투자자 흐름 → "외인 +1,064억 | 기관 -203억 | 개인 -1,228억" """
+        frgn = flow_dict.get("frgn", 0)
+        orgn = flow_dict.get("orgn", 0)
+        prsn = flow_dict.get("prsn", 0)
+        frgn_억 = frgn // 100
+        orgn_억 = orgn // 100
+        prsn_억 = prsn // 100
+        return (f"{label}: 외인 {frgn_억:+,}억 | "
+                f"기관 {orgn_억:+,}억 | 개인 {prsn_억:+,}억")
+
+    mf = data.get("MARKET_FLOW", {})
     msg += "[수급]\n"
-    if isinstance(amt, (int, float)):
-        msg += f"외인 KOSPI: {amt:+,}억\n\n"
-    else:
-        msg += f"외인 KOSPI: {amt}\n\n"
+    if mf.get("kospi"):
+        msg += _flow_str(mf["kospi"], "KOSPI") + "\n"
+    if mf.get("kosdaq"):
+        msg += _flow_str(mf["kosdaq"], "KOSDAQ") + "\n"
+    if not mf:
+        # fallback: FOREIGN_FLOW만 있을 때
+        ff  = data.get("FOREIGN_FLOW", {})
+        amt = ff.get("amount_억", "?")
+        if isinstance(amt, (int, float)):
+            msg += f"외인 KOSPI: {amt:+,}억\n"
+        else:
+            msg += f"외인 KOSPI: {amt}\n"
+    msg += "\n"
 
     # [이벤트]
     events = data.get("EVENTS", {})

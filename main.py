@@ -1743,13 +1743,37 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _format_overtime_movers(data: dict) -> str:
+    """시간외 급등락 섹션 포맷 (pm 슬롯 전용)"""
+    movers = data.get("OVERTIME_MOVERS", {})
+    top    = movers.get("top", [])
+    bottom = movers.get("bottom", [])
+    if not top and not bottom:
+        return ""
+    lines = ["\n[시간외 급등락]"]
+    if top:
+        lines.append("📈 " + " | ".join(f"{m['name']} {m['pct']:+.1f}%" for m in top))
+    if bottom:
+        lines.append("📉 " + " | ".join(f"{m['name']} {m['pct']:+.1f}%" for m in bottom))
+    return "\n".join(lines)
+
+
 async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
-    # 18:00 실행: 평일만 / 06:00 실행: 일요일 제외 (토요일은 금요일 결과)
+    # 18:35 실행: 평일만 / 06:00 실행: 일요일 제외 (토요일은 금요일 결과)
     if now.hour >= 12 and now.weekday() >= 5:
         return
     if now.hour < 12 and now.weekday() == 6:
         return
+
+    # 중복 발송 방지: 같은 날짜_슬롯이면 스킵
+    slot = "pm" if now.hour >= 12 else "am"
+    slot_key = f"{now.strftime('%Y-%m-%d')}_{slot}"
+    sent_data = load_json(MACRO_SENT_FILE, {})
+    if sent_data.get("last") == slot_key:
+        print(f"[macro_dashboard] 이미 발송됨: {slot_key}, 스킵")
+        return
+
     try:
         data = await collect_macro_data()
         msg = format_macro_msg(data)
@@ -1766,7 +1790,16 @@ async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+        # pm 슬롯에만 시간외 급등락 추가
+        if slot == "pm":
+            overtime_section = _format_overtime_movers(data)
+            if overtime_section:
+                msg += overtime_section
+
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+        # 발송 성공 후 기록
+        save_json(MACRO_SENT_FILE, {"last": slot_key})
     except Exception as e:
         print(f"매크로 대시보드 오류: {e}")
 
@@ -3108,8 +3141,8 @@ def main():
     jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(6,), name="consensus_update")
     jq.run_daily(daily_consensus_check,  time=dtime(19, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_consensus")
     jq.run_daily(auto_backup,            time=dtime(22, 0, tzinfo=KST), name="auto_backup")
-    # 매크로 대시보드: 18:00(한국장 마감) + 06:00(미국장 마감)
-    jq.run_daily(macro_dashboard, time=dtime(18, 0, tzinfo=KST), name="macro_pm")
+    # 매크로 대시보드: 18:55(daily_collect 18:30+~21분 완료 후) + 06:00(미국장 마감)
+    jq.run_daily(macro_dashboard, time=dtime(18, 55, tzinfo=KST), name="macro_pm")
     jq.run_daily(macro_dashboard, time=dtime(6,  0, tzinfo=KST), name="macro_am")
     # 실적/배당 캘린더: 매일 07:00 KST 평일만
     jq.run_daily(check_earnings_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="earnings_cal")
