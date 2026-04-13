@@ -4311,8 +4311,8 @@ def _build_docs_v2_html() -> str:
         doc_files = []
 
     for f in doc_files:
-        if f == "TODO.md":
-            continue  # TODO는 독립 탭에 있으므로 문서 카드에서 제외
+        if f in ("TODO.md", "TODO_invest.md", "TODO_dev.md"):
+            continue  # TODO 파일은 독립 탭에 있으므로 문서 카드에서 제외
         icon, desc = _DOC_META_V2.get(f, ("📄", ""))
         html += (f'<a href="/dash/file/{f}" class="doc-card">'
                  f'<div class="doc-icon">{icon}</div>'
@@ -4357,7 +4357,8 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
              '<a href="#watch">👀 감시종목</a>'
              '<a href="#decision">📝 투자판단</a>'
              '<a href="#trade">💼 매매</a>'
-             '<a href="#todo">📋 TODO</a>'
+             '<a href="#invest">📈 투자</a>'
+             '<a href="#dev">🔧 봇개발</a>'
              '<a href="#docs">📚 문서</a>'
              '</nav>')
 
@@ -4470,13 +4471,21 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    # 6. TODO
+    # 6. 투자 TODO
     try:
-        todo_path = os.path.join(_DATA_DIR, "TODO.md")
-        if os.path.exists(todo_path):
-            with open(todo_path, encoding="utf-8") as f:
-                todo_md = f.read()
-            html += f'<div class="section" id="todo"><h2>📋 TODO</h2>{_md_to_html(todo_md)}</div>'
+        invest_path = os.path.join(_DATA_DIR, "TODO_invest.md")
+        if os.path.exists(invest_path):
+            with open(invest_path, encoding="utf-8") as f:
+                html += f'<div class="section" id="invest"><h2>📈 투자</h2>{_md_to_html(f.read())}</div>'
+    except Exception:
+        pass
+
+    # 6b. 봇개발 TODO
+    try:
+        dev_path = os.path.join(_DATA_DIR, "TODO_dev.md")
+        if os.path.exists(dev_path):
+            with open(dev_path, encoding="utf-8") as f:
+                html += f'<div class="section" id="dev"><h2>🔧 봇개발</h2>{_md_to_html(f.read())}</div>'
     except Exception:
         pass
 
