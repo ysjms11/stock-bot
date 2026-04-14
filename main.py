@@ -28,7 +28,10 @@ async def _refresh_ws():
         await ws_manager.update_tickers(get_ws_tickers())
     except Exception as e:
         print(f"[WS] refresh 오류: {e}")
-from mcp_tools import mcp_sse_handler, mcp_messages_handler
+from mcp_tools import (
+    mcp_sse_handler, mcp_messages_handler,
+    mcp_streamable_post_handler, mcp_streamable_delete_handler, mcp_streamable_options_handler,
+)
 
 try:
     from report_crawler import collect_reports, get_collection_tickers, DB_PATH as REPORT_DB_PATH
@@ -4917,6 +4920,10 @@ async def _run_all(app, port):
     mcp_app = web.Application(client_max_size=50 * 1024 * 1024)  # 50MB for KRX upload
     mcp_app.router.add_get("/mcp", mcp_sse_handler)
     mcp_app.router.add_post("/mcp/messages", mcp_messages_handler)
+    # Streamable HTTP transport (MCP 2025-03-26)
+    mcp_app.router.add_post("/mcp", mcp_streamable_post_handler)
+    mcp_app.router.add_delete("/mcp", mcp_streamable_delete_handler)
+    mcp_app.router.add_options("/mcp", mcp_streamable_options_handler)
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     mcp_app.router.add_post("/api/krx_upload", _handle_krx_upload)
     mcp_app.router.add_get("/dash", _handle_dash_v2)

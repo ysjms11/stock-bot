@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 import asyncio
 import uuid
 import subprocess
@@ -46,6 +47,7 @@ except ImportError:
     print("[mcp] report_crawler 미설치 — manage_report 비활성")
 
 _mcp_sessions: dict = {}   # session_id → asyncio.Queue
+_streamable_sessions: dict = {}  # session_id → {"created": float}
 
 _MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
 
@@ -3684,3 +3686,78 @@ async def mcp_messages_handler(request: web.Request) -> web.Response:
         await queue.put(response)
 
     return web.Response(status=202, text="Accepted")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Streamable HTTP transport (MCP 2025-03-26)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def mcp_streamable_post_handler(request: web.Request) -> web.Response:
+    """POST /mcp  → Streamable HTTP: JSON-RPC 요청을 받아 JSON으로 직접 응답"""
+    if not _check_mcp_auth(request):
+        return web.Response(status=401, text="Unauthorized")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    # batch 요청 미지원
+    if isinstance(body, list):
+        return web.json_response({"error": "batch requests not supported"}, status=400)
+
+    # 30분 초과 세션 정리 (유효성 체크 전에 수행)
+    now = time.time()
+    expired = [sid for sid, info in _streamable_sessions.items() if now - info["created"] > 1800]
+    for sid in expired:
+        _streamable_sessions.pop(sid, None)
+
+    method = body.get("method", "")
+    session_id = request.headers.get("Mcp-Session-Id", "")
+
+    # initialize: 새 세션 생성
+    if method == "initialize":
+        session_id = str(uuid.uuid4())
+        _streamable_sessions[session_id] = {"created": time.time()}
+    elif not session_id:
+        # initialize가 아닌데 세션 ID 없음 → 400
+        return web.json_response({"error": "Mcp-Session-Id header required"}, status=400)
+    else:
+        # 세션 유효성 확인 (없으면 404)
+        if session_id not in _streamable_sessions:
+            return web.json_response({"error": "session not found"}, status=404)
+
+    response = await _handle_jsonrpc(body)
+
+    # notification은 응답 없음
+    if response is None:
+        return web.Response(status=202, text="Accepted", headers={
+            "Mcp-Session-Id": session_id,
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "Mcp-Session-Id",
+        })
+
+    return web.json_response(response, headers={
+        "Mcp-Session-Id": session_id,
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "Mcp-Session-Id",
+    })
+
+
+async def mcp_streamable_delete_handler(request: web.Request) -> web.Response:
+    """DELETE /mcp  → Streamable HTTP: 세션 종료"""
+    if not _check_mcp_auth(request):
+        return web.Response(status=401, text="Unauthorized")
+    session_id = request.headers.get("Mcp-Session-Id", "")
+    _streamable_sessions.pop(session_id, None)
+    return web.Response(status=200, text="Session deleted")
+
+
+async def mcp_streamable_options_handler(request: web.Request) -> web.Response:
+    """OPTIONS /mcp  → CORS preflight 응답"""
+    return web.Response(status=204, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Mcp-Session-Id, Authorization",
+        "Access-Control-Expose-Headers": "Mcp-Session-Id",
+    })
