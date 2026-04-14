@@ -3913,8 +3913,8 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .pf-sort-bar{display:flex;gap:4px;margin-bottom:8px}
 .pf-sort-btn{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--fg2);cursor:pointer;font-size:0.75em;transition:background 0.2s,color 0.2s}
 .pf-sort-btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
-.dday{font-weight:700;color:var(--accent)}
-.dday-0{font-weight:700;color:var(--red);animation:pulse 1s infinite}
+.dday{font-weight:700;color:var(--accent);white-space:nowrap;text-align:center}
+.dday-0{font-weight:700;color:var(--red);animation:pulse 1s infinite;white-space:nowrap;text-align:center}
 @keyframes pulse{50%{opacity:0.6}}
 .doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
 .doc-card{background:var(--bg);border-radius:8px;padding:12px;border:1px solid var(--border);text-decoration:none;color:var(--fg);transition:border-color 0.2s,transform 0.2s;display:block}
@@ -4111,7 +4111,7 @@ def _build_events_v2_html() -> str:
 
     html = ""
     if future:
-        html += '<div class="table-wrap"><table><thead><tr><th>D-day</th><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
+        html += '<div class="table-wrap"><table><thead><tr><th style="width:60px;min-width:60px;text-align:center">D-day</th><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
         for event_name, ds, delta in future:
             if delta is None:
                 dday_cls, dday_text = "dday", "—"
@@ -4119,14 +4119,16 @@ def _build_events_v2_html() -> str:
                 dday_cls, dday_text = "dday-0", "D-DAY"
             else:
                 dday_cls, dday_text = "dday", f"D-{delta}"
-            html += f'<tr><td class="{dday_cls}">{dday_text}</td><td>{_html.escape(ds)}</td><td>{_html.escape(event_name)}</td></tr>'
+            display_name = _html.escape(event_name.replace("_", " "))
+            html += f'<tr><td class="{dday_cls}">{dday_text}</td><td>{_html.escape(ds)}</td><td>{display_name}</td></tr>'
         html += '</tbody></table></div>'
 
     if past:
         html += f'<details><summary style="color:var(--fg2);font-size:0.85em;margin-top:12px;padding:4px 0">지난 이벤트 ({len(past)}건)</summary>'
         html += '<div class="table-wrap"><table><thead><tr><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
         for event_name, ds, _ in past:
-            html += f'<tr style="color:var(--fg2)"><td>{_html.escape(ds)}</td><td>{_html.escape(event_name)}</td></tr>'
+            display_name = _html.escape(event_name.replace("_", " "))
+            html += f'<tr style="color:var(--fg2)"><td>{_html.escape(ds)}</td><td>{display_name}</td></tr>'
         html += '</tbody></table></div></details>'
     return html
 
