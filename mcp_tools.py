@@ -647,6 +647,15 @@ MCP_TOOLS = [
                          "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (기본값: .)"},
                      },
                      "required": []}},
+    {"name": "read_report_pdf",
+     "description": "리포트 PDF 원본 읽기. 종목코드+리포트ID로 PDF를 base64로 반환합니다. manage_report(action=list)에서 id 확인 후 사용.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker":    {"type": "string",  "description": "종목코드"},
+                         "report_id": {"type": "integer", "description": "리포트 ID (manage_report에서 확인, 생략 시 해당 종목 최신 PDF)"},
+                         "pages":     {"type": "string",  "description": "페이지 범위 (예: '1-3', 생략 시 전체)"},
+                     },
+                     "required": ["ticker"]}},
     {"name": "get_change_scan",
      "description": "변화 감지 스캔. 기술적 지표+수급 기반 종목 발굴. preset: ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout/short_squeeze/credit_unwind/foreign_reversal/foreign_accumulation. 복합: 콤마 구분.",
      "inputSchema": {"type": "object",
@@ -748,7 +757,7 @@ def _validate_git_path(raw: str) -> str:
 
 
 _NO_TOKEN_TOOLS = frozenset({
-    "read_file", "write_file", "list_files",
+    "read_file", "write_file", "list_files", "read_report_pdf",
     "git_status", "git_diff", "git_log", "git_commit", "git_push",
     "backup_data",
 })
@@ -3502,6 +3511,69 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "branch": branch,
                         "output": (masked_out + masked_err).strip(),
                     }
+
+        elif name == "read_report_pdf":
+            if not _REPORT_AVAILABLE:
+                result = {"error": "report_crawler 모듈 미설치 — REPORT_DB_PATH 없음"}
+            else:
+                import sqlite3 as _sqlite3, base64 as _base64
+                _ticker    = arguments.get("ticker", "").strip()
+                _report_id = arguments.get("report_id")
+
+                if not _ticker:
+                    result = {"error": "ticker는 필수입니다"}
+                elif not REPORT_DB_PATH or not os.path.exists(REPORT_DB_PATH):
+                    result = {"error": f"리포트 DB 없음: {REPORT_DB_PATH}"}
+                else:
+                    try:
+                        _conn = _sqlite3.connect(REPORT_DB_PATH, timeout=10)
+                        _conn.row_factory = _sqlite3.Row
+                        if _report_id:
+                            _row = _conn.execute(
+                                "SELECT * FROM reports WHERE id=?", (_report_id,)
+                            ).fetchone()
+                        else:
+                            _row = _conn.execute(
+                                "SELECT * FROM reports WHERE ticker=? AND pdf_path IS NOT NULL AND pdf_path != '' ORDER BY date DESC LIMIT 1",
+                                (_ticker,)
+                            ).fetchone()
+                        _conn.close()
+                    except Exception as _e:
+                        _row = None
+                        print(f"[read_report_pdf] SQLite 오류: {_e}")
+
+                    if not _row:
+                        result = {"error": f"리포트 없음 (ticker={_ticker}, report_id={_report_id})"}
+                    elif not _row["pdf_path"]:
+                        result = {"error": "PDF 경로 없음 (pdf_path가 비어 있음)"}
+                    else:
+                        # 보안: path traversal 차단
+                        _pdf_path = os.path.realpath(_row["pdf_path"])
+                        _data_base = os.path.realpath(DATA_DIR) if DATA_DIR else ""
+                        _bot_base  = os.path.dirname(os.path.realpath(__file__))
+                        _allowed   = _data_base and _pdf_path.startswith(_data_base) or _pdf_path.startswith(_bot_base)
+                        if not _allowed:
+                            result = {"error": "PDF 경로가 허용 디렉토리 밖입니다"}
+                        elif not os.path.isfile(_pdf_path):
+                            result = {"error": f"PDF 파일 없음: {_pdf_path}"}
+                        else:
+                            _pdf_size = os.path.getsize(_pdf_path)
+                            if _pdf_size > 2 * 1024 * 1024:
+                                result = {"error": f"PDF 크기 초과 (최대 2MB, 실제 {_pdf_size // 1024}KB)"}
+                            else:
+                                with open(_pdf_path, "rb") as _pf:
+                                    _pdf_bytes = _pf.read()
+                                result = {
+                                    "ticker":     _ticker,
+                                    "report_id":  _row["id"] if "id" in _row.keys() else _report_id,
+                                    "title":      _row["title"],
+                                    "source":     _row["source"],
+                                    "date":       _row["date"],
+                                    "size_kb":    _pdf_size // 1024,
+                                    "mime_type":  "application/pdf",
+                                    "pages":      arguments.get("pages", "전체"),
+                                    "pdf_base64": _base64.b64encode(_pdf_bytes).decode("ascii"),
+                                }
 
         else:
             result = {"error": f"unknown tool: {name}"}
