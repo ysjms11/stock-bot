@@ -131,6 +131,107 @@ def _nf(val):
         return None
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# PDF 렌더링 헬퍼
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _parse_page_range(pages_str: str | None, total_pages: int) -> list[int] | None | str:
+    """페이지 범위 문자열을 0-based 인덱스 리스트로 변환.
+    - None/빈 문자열: 전체 페이지(None 반환)
+    - "1-3": 0,1,2
+    - "2,4,5": 1,3,4
+    - "1-3,7": 0,1,2,6
+    - 오류: 오류 메시지 문자열 반환
+    """
+    if not pages_str or not pages_str.strip():
+        return None  # 전체 페이지
+
+    indices: list[int] = []
+    parts = pages_str.strip().split(",")
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            bounds = part.split("-", 1)
+            try:
+                start = int(bounds[0].strip())
+                end   = int(bounds[1].strip())
+            except ValueError:
+                return f"페이지 범위 파싱 오류: '{part}'"
+            if start < 1 or end < start:
+                return f"잘못된 페이지 범위: '{part}'"
+            if end > total_pages:
+                end = total_pages  # 초과 시 마지막 페이지로 clamp
+            indices.extend(range(start - 1, end))  # 1-based → 0-based
+        else:
+            try:
+                pg = int(part)
+            except ValueError:
+                return f"페이지 번호 파싱 오류: '{part}'"
+            if pg < 1 or pg > total_pages:
+                return f"페이지 번호 범위 초과: {pg} (총 {total_pages}p)"
+            indices.append(pg - 1)  # 1-based → 0-based
+
+    if not indices:
+        return "유효한 페이지 번호가 없습니다"
+    # 중복 제거 후 정렬
+    return sorted(set(indices))
+
+
+def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
+    """PDF 페이지를 PNG ImageContent 리스트로 변환.
+    - page_indices=None 이면 전체 페이지
+    - 누적 5MB 초과 시 이후 페이지 생략
+    Returns: (content_list, metadata_dict)
+    content_list: [{"type":"image","data":"<b64>","mimeType":"image/png"}, ...]
+    """
+    import fitz as _fitz
+    import base64 as _b64
+
+    _MAX_BYTES = 5 * 1024 * 1024  # 5MB
+
+    doc = _fitz.open(pdf_path)
+    total_pages = len(doc)
+
+    if page_indices is None:
+        page_indices = list(range(total_pages))
+
+    images: list[dict] = []
+    cumulative = 0
+    truncated = False
+    rendered = 0
+
+    for idx in page_indices:
+        if idx < 0 or idx >= total_pages:
+            continue
+        page = doc[idx]
+        pix  = page.get_pixmap(dpi=100)
+        png_bytes = pix.tobytes("png")
+        if cumulative + len(png_bytes) > _MAX_BYTES:
+            truncated = True
+            break
+        b64 = _b64.b64encode(png_bytes).decode("ascii")
+        images.append({
+            "type":     "image",
+            "data":     b64,
+            "mimeType": "image/png",
+        })
+        cumulative += len(png_bytes)
+        rendered   += 1
+
+    doc.close()
+
+    meta = {
+        "total_pages":   total_pages,
+        "rendered_pages": rendered,
+        "requested_pages": len(page_indices),
+        "size_kb":       cumulative // 1024,
+        "truncated":     truncated,
+    }
+    return images, meta
+
+
 _TREND_PRIORITY = {"연속증가": 0, "흑자전환": 1, "감소": 2, "적자전환": 3, "적자지속": 4}
 
 
@@ -3518,9 +3619,10 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             if not _REPORT_AVAILABLE:
                 result = {"error": "report_crawler 모듈 미설치 — REPORT_DB_PATH 없음"}
             else:
-                import sqlite3 as _sqlite3, base64 as _base64
+                import sqlite3 as _sqlite3
                 _ticker    = arguments.get("ticker", "").strip()
                 _report_id = arguments.get("report_id")
+                _pages_str = arguments.get("pages", "").strip() or None
 
                 if not _ticker:
                     result = {"error": "ticker는 필수입니다"}
@@ -3551,7 +3653,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     else:
                         # 보안: path traversal 차단
                         _pdf_path = os.path.realpath(_row["pdf_path"])
-                        _data_base = os.path.realpath(DATA_DIR) if DATA_DIR else ""
+                        _data_base = os.path.realpath(_DATA_DIR) if _DATA_DIR else ""
                         _bot_base  = os.path.dirname(os.path.realpath(__file__))
                         _allowed   = _data_base and _pdf_path.startswith(_data_base) or _pdf_path.startswith(_bot_base)
                         if not _allowed:
@@ -3559,23 +3661,45 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         elif not os.path.isfile(_pdf_path):
                             result = {"error": f"PDF 파일 없음: {_pdf_path}"}
                         else:
-                            _pdf_size = os.path.getsize(_pdf_path)
-                            if _pdf_size > 2 * 1024 * 1024:
-                                result = {"error": f"PDF 크기 초과 (최대 2MB, 실제 {_pdf_size // 1024}KB)"}
-                            else:
-                                with open(_pdf_path, "rb") as _pf:
-                                    _pdf_bytes = _pf.read()
-                                result = {
-                                    "ticker":     _ticker,
-                                    "report_id":  _row["id"] if "id" in _row.keys() else _report_id,
-                                    "title":      _row["title"],
-                                    "source":     _row["source"],
-                                    "date":       _row["date"],
-                                    "size_kb":    _pdf_size // 1024,
-                                    "mime_type":  "application/pdf",
-                                    "pages":      arguments.get("pages", "전체"),
-                                    "pdf_base64": _base64.b64encode(_pdf_bytes).decode("ascii"),
-                                }
+                            # fitz로 페이지 수 파악 후 범위 파싱
+                            try:
+                                import fitz as _fitz_tmp
+                                _doc_tmp = _fitz_tmp.open(_pdf_path)
+                                _total_pages = len(_doc_tmp)
+                                _doc_tmp.close()
+                            except Exception as _fe:
+                                result = {"error": f"PDF 열기 실패: {_fe}"}
+                                _total_pages = -1
+
+                            if _total_pages >= 0:
+                                _page_indices = _parse_page_range(_pages_str, _total_pages)
+                                if isinstance(_page_indices, str):
+                                    # 오류 문자열 반환
+                                    result = {"error": _page_indices}
+                                else:
+                                    # PNG 렌더링
+                                    try:
+                                        _images, _meta = _render_pdf_pages(_pdf_path, _page_indices)
+                                    except Exception as _re:
+                                        result = {"error": f"PDF 렌더링 실패: {_re}"}
+                                        _images = None
+
+                                    if _images is not None:
+                                        # 메타 텍스트 content
+                                        _meta_text = {
+                                            "ticker":         _ticker,
+                                            "report_id":      _row["id"] if "id" in _row.keys() else _report_id,
+                                            "title":          _row["title"],
+                                            "source":         _row["source"],
+                                            "date":           _row["date"],
+                                            "pdf_size_kb":    os.path.getsize(_pdf_path) // 1024,
+                                            "pages_requested": _pages_str or "전체",
+                                            **_meta,
+                                        }
+                                        # result를 list로 반환 → _handle_jsonrpc에서 직접 content로 사용
+                                        result = _images + [
+                                            {"type": "text", "text": json.dumps(_meta_text, ensure_ascii=False)}
+                                        ]
 
         else:
             result = {"error": f"unknown tool: {name}"}
@@ -3585,7 +3709,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
         result = {"error": str(e), "traceback": tb}
         print(f"에러: {name} → {e}\n{tb}")
 
-    print(f"툴 결과: {name} → {json.dumps(result, ensure_ascii=False)[:200]}")
+    # list이면 pre-formatted content (ImageContent 등), 요약 로그만 출력
+    if isinstance(result, list):
+        print(f"툴 결과: {name} → [content list, {len(result)}개 항목]")
+    else:
+        print(f"툴 결과: {name} → {json.dumps(result, ensure_ascii=False)[:200]}")
     return result
 
 
@@ -3612,9 +3740,12 @@ async def _handle_jsonrpc(body: dict) -> dict | None:
         tool_name = params.get("name", "")
         tool_args = params.get("arguments") or {}
         result = await _execute_tool(tool_name, tool_args)
-        return {"jsonrpc": "2.0", "id": req_id, "result": {
-            "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
-        }}
+        # list 반환 = pre-formatted content (ImageContent 등) → 그대로 사용
+        if isinstance(result, list):
+            content = result
+        else:
+            content = [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"content": content}}
 
     return {"jsonrpc": "2.0", "id": req_id,
             "error": {"code": -32601, "message": f"Method not found: {method}"}}
