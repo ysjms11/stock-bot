@@ -18,11 +18,47 @@ try:
         load_krx_db, scan_stocks, _load_history,
         KRX_DB_DIR, DB_PATH,
         collect_daily, collect_financial_weekly,
+        _parse_market_records,  # 중복 제거 — db_collector.py가 canonical
     )
     # _compute_technicals는 re-export하지 않음 — 기존 (date, stocks) 시그니처 유지
     _USE_SQLITE = True
 except ImportError:
     _USE_SQLITE = False
+    # db_collector 없을 때 fallback (독립 실행 환경용)
+    def _parse_market_records(records: list, market: str) -> list:  # type: ignore[misc]
+        """KRX 시세 레코드 파싱 fallback (db_collector 없을 때만 사용)."""
+        def _pi(s) -> int:
+            if not s or s == "-" or s == "":
+                return 0
+            return int(str(s).replace(",", "").replace("+", "").strip() or "0")
+
+        def _pf(s) -> float:
+            if not s or s == "-" or s == "":
+                return 0.0
+            return float(str(s).replace(",", "").replace("+", "").strip() or "0")
+
+        mkt_label = "kospi" if market == "STK" else "kosdaq"
+        result = []
+        for r in records:
+            raw = str(r.get("ISU_SRT_CD") or r.get("ISU_CD", "")).strip()
+            if len(raw) == 12 and raw.startswith("KR"):
+                ticker = raw[3:9]
+            else:
+                ticker = raw
+            if not ticker or len(ticker) != 6:
+                continue
+            name = str(r.get("ISU_ABBRV") or r.get("ISU_NM", "")).strip()
+            result.append({
+                "ticker": ticker,
+                "name": name,
+                "market": mkt_label,
+                "close": _pi(r.get("TDD_CLSPRC")),
+                "chg_pct": _pf(r.get("FLUC_RT")),
+                "volume": _pi(r.get("ACC_TRDVOL")),
+                "trade_value": _pi(r.get("ACC_TRDVAL")),
+                "market_cap": _pi(r.get("MKTCAP")),
+            })
+        return result
 
 import aiohttp
 import asyncio
@@ -276,36 +312,7 @@ async def _krx_post(session: aiohttp.ClientSession, form: dict) -> dict:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 1) 전종목 시세
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-def _parse_market_records(records: list, market: str) -> list[dict]:
-    """시세 레코드 파싱 (OPEN API / 크롤링 공통).
-    OPEN API: ISU_CD(6자리), ISU_NM
-    크롤링:   ISU_SRT_CD(6자리), ISU_ABBRV
-    """
-    mkt_label = "kospi" if market == "STK" else "kosdaq"
-    result = []
-    for r in records:
-        # 크롤링: ISU_SRT_CD(6자리), OPEN API: ISU_CD(6자리 또는 ISIN 12자리)
-        raw = str(r.get("ISU_SRT_CD") or r.get("ISU_CD", "")).strip()
-        # ISIN(KR7XXXXXX000) → 6자리 추출
-        if len(raw) == 12 and raw.startswith("KR"):
-            ticker = raw[3:9]
-        else:
-            ticker = raw
-        if not ticker or len(ticker) != 6:
-            continue
-        name = str(r.get("ISU_ABBRV") or r.get("ISU_NM", "")).strip()
-        result.append({
-            "ticker": ticker,
-            "name": name,
-            "market": mkt_label,
-            "close": _pi(r.get("TDD_CLSPRC")),
-            "chg_pct": _pf(r.get("FLUC_RT")),
-            "volume": _pi(r.get("ACC_TRDVOL")),
-            "trade_value": _pi(r.get("ACC_TRDVAL")),
-            "market_cap": _pi(r.get("MKTCAP")),
-        })
-    return result
-
+# _parse_market_records — db_collector.py 또는 fallback(위 except 블록)에서 임포트
 
 async def fetch_krx_market_data(date: str, market: str = "STK") -> list[dict]:
     """전종목 시세. KRX OPEN API 우선, 실패 시 크롤링 fallback."""

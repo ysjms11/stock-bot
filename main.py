@@ -780,7 +780,7 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                         if cached is not None:
                             price = int(cached)
                         else:
-                            d = await get_stock_price(ticker, token)
+                            d = await kis_stock_price(ticker, token)
                             await asyncio.sleep(0.3)
                             price = int(d.get("stck_prpr", 0))
                             if price > 0:
@@ -899,7 +899,7 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                         if cached is not None:
                             cur = float(cached)
                         else:
-                            d = await get_stock_price(ticker, token_wa)
+                            d = await kis_stock_price(ticker, token_wa)
                             cur = int(d.get("stck_prpr", 0) or 0)
                             await asyncio.sleep(0.3)
                             if cur > 0:
@@ -979,7 +979,7 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
         alerts = []
         for ticker, name in watchlist.items():
             try:
-                pd = await get_stock_price(ticker, token)
+                pd = await kis_stock_price(ticker, token)
                 await asyncio.sleep(0.4)
                 price = int(pd.get("stck_prpr", 0))
                 change = pd.get("prdy_ctrt", "0")
@@ -2373,7 +2373,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         token = await get_kis_token()
         if not token:
             await update.message.reply_text("❌ KIS 토큰 실패"); return
-        d = await get_stock_price(ticker, token)
+        d = await kis_stock_price(ticker, token)
         if not d or not d.get("stck_prpr"):
             await update.message.reply_text(f"❌ {ticker} 없음"); return
 
@@ -3801,98 +3801,6 @@ def _build_watchalert_html() -> str:
     if len(items) > 30:
         html += f"<p>... 외 {len(items) - 30}종목</p>"
     return html
-
-
-async def _handle_dash_v1(request: web.Request) -> web.Response:
-    """GET /dash — 메인 대시보드 (v1, 백업용)."""
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stock Bot Dashboard</title>{_DASH_CSS}</head><body>
-<h1>📊 Stock Bot Dashboard</h1>
-<div class="nav">
-<a href="/dash">홈</a>
-<a href="/health">Health</a>
-</div>"""
-
-    # 📋 TODO
-    try:
-        todo_path = os.path.join(_DATA_DIR, "TODO.md")
-        if os.path.exists(todo_path):
-            with open(todo_path, encoding="utf-8") as f:
-                todo_md = f.read()
-            html += f'<div class="section"><h2>📋 TODO</h2>{_md_to_html(todo_md)}</div>'
-    except Exception:
-        pass
-
-    # 💰 포트폴리오
-    html += f'<div class="section"><h2>💰 포트폴리오</h2>{_build_portfolio_html()}</div>'
-
-    # 👀 워치리스트
-    html += f'<div class="section"><h2>👀 감시 종목</h2>{_build_watchalert_html()}</div>'
-
-    # 📝 투자판단 최근 5건
-    try:
-        dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
-        if dl:
-            recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:5]
-            html += '<div class="section"><h2>📝 최근 투자판단</h2><table><thead><tr><th>날짜</th><th>레짐</th><th>액션</th></tr></thead><tbody>'
-            for date, entry in recent:
-                regime = entry.get("regime", "?")
-                actions = ", ".join(entry.get("actions", [])) or entry.get("summary", "")[:60]
-                html += (f"<tr><td>{_html.escape(str(date))}</td>"
-                         f"<td>{_html.escape(str(regime))}</td>"
-                         f"<td>{_html.escape(str(actions))}</td></tr>")
-            html += "</tbody></table></div>"
-    except Exception:
-        pass
-
-    # 💼 매매기록 최근 5건
-    try:
-        tl = load_json(f"{_DATA_DIR}/trade_log.json", [])
-        trades = tl if isinstance(tl, list) else tl.get("trades", [])
-        if trades:
-            total_trades = len(trades)
-            recent_t = list(reversed(trades))[:5]
-            trade_cards = ""
-            for idx, t in enumerate(recent_t):
-                trade_cards += _build_trade_card(t, is_open=(idx == 0))
-            html += (f'<div class="section">'
-                     f'<div style="display:flex;justify-content:space-between;align-items:center">'
-                     f'<h2 style="margin:0">💼 최근 매매</h2>'
-                     f'<a href="/dash/trades" style="color:#4A9EFF;text-decoration:none;font-size:0.85em">'
-                     f'전체 {total_trades}건 보기 →</a>'
-                     f'</div>'
-                     f'{trade_cards}'
-                     f'</div>')
-    except Exception:
-        pass
-
-    # 📅 이벤트
-    try:
-        events = load_json(f"{_DATA_DIR}/events.json", {})
-        if events:
-            html += '<div class="section"><h2>📅 이벤트</h2><table><thead><tr><th>날짜</th><th>이벤트</th></tr></thead><tbody>'
-            for date in sorted(events.keys()):
-                html += f"<tr><td>{_html.escape(str(date))}</td><td>{_html.escape(str(events[date]))}</td></tr>"
-            html += "</tbody></table></div>"
-    except Exception:
-        pass
-
-    # 📚 문서
-    try:
-        doc_files = []
-        for f in sorted(os.listdir(_DATA_DIR)):
-            if f.endswith((".md", ".txt")) and not f.startswith("."):
-                doc_files.append(f)
-        if doc_files:
-            html += '<div class="section"><h2>📚 문서</h2><ul>'
-            for f in doc_files:
-                html += f'<li><a href="/dash/file/{_html.escape(f)}">{_html.escape(f)}</a></li>'
-            html += "</ul></div>"
-    except Exception:
-        pass
-
-    html += "</body></html>"
-    return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_dash_file(request: web.Request) -> web.Response:

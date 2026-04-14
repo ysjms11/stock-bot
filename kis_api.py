@@ -1002,17 +1002,6 @@ async def get_kis_token():
             return token
 
 
-async def get_stock_price(ticker, token):
-    url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
-    headers = {
-        "content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}",
-        "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100"
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker}) as resp:
-            return (await resp.json()).get("output", {})
-
-
 async def get_investor_trend(ticker, token):
     url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor"
     headers = {
@@ -2884,22 +2873,6 @@ async def fetch_universe_from_krx(token: str) -> dict:
     universe  = {**kospi, **kosdaq}
     print(f"[fetch_universe] KOSPI={len(kospi)}, KOSDAQ={len(kosdaq)}, 합계={len(universe)}")
     return universe
-
-
-async def batch_fetch(codes: list, fetch_fn, token: str, delay: float = 0.06) -> dict:
-    """종목 리스트에 대해 rate limit 지키면서 배치 조회.
-    codes: list of tickers
-    fetch_fn(ticker, token) → result
-    returns: {ticker: result}
-    """
-    results = {}
-    for code in codes:
-        try:
-            results[code] = await fetch_fn(code, token)
-        except Exception:
-            pass
-        await asyncio.sleep(delay)
-    return results
 
 
 async def kis_daily_closes(ticker: str, token: str, n: int = 65) -> list:
