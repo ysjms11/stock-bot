@@ -729,7 +729,7 @@ MCP_TOOLS = [
                      "required": ["ticker"]}},
 
     {"name": "read_file",
-     "description": "stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt/.pdf, 최대 100KB (PDF는 2MB). ../ 경로 차단. PDF는 경로만 반환.",
+     "description": "stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt, 최대 100KB. ../ 경로 차단. PDF 읽기는 read_report_pdf 사용.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (예: CLAUDE.md, kis_api.py)"},
@@ -751,7 +751,7 @@ MCP_TOOLS = [
                      },
                      "required": []}},
     {"name": "read_report_pdf",
-     "description": "리포트 PDF 원본 읽기. 종목코드+리포트ID로 PDF를 base64로 반환합니다. manage_report(action=list)에서 id 확인 후 사용.",
+     "description": "리포트 PDF 읽기 (차트/도표 포함). PDF 페이지를 이미지로 변환하여 시각 분석 가능. 종목코드만으로 최신 리포트 자동 조회.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker":    {"type": "string",  "description": "종목코드"},
