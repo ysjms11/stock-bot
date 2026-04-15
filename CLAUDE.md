@@ -2,17 +2,8 @@
 
 ## KIS API 참조
 
-**`kis-api-ref/` 폴더에 한투 공식 API 샘플이 있음. API 엔드포인트, TR_ID, 파라미터 확인 시 이 폴더 참조할 것.**
-
-| 파일/폴더 | 내용 |
-|-----------|------|
-| `kis-api-ref/examples_llm/domestic_stock/` | 국내주식 API 예제 (TR_ID, params, response 포함) |
-| `kis-api-ref/examples_llm/overseas_stock/` | 해외주식 API 예제 |
-| `kis-api-ref/examples_llm/etfetn/` | ETF/ETN API 예제 |
-| `kis-api-ref/data.csv` | KIS REST API 전체 목록 (6326행, category/TR_ID/URL/params/response) |
-| `kis-api-ref/data2.csv` | KIS API 확장 목록 (12437행) |
-
-새 API 엔드포인트 찾을 때: `grep "TR_ID명" kis-api-ref/data.csv` 또는 `kis-api-ref/examples_llm/` 서브폴더 참조.
+`kis-api-ref/` 폴더에 한투 공식 API 샘플 (data.csv 6326행, examples_llm/). TR_ID/파라미터 확인 시 참조.
+상세 TR_ID 테이블 → `.claude/rules/kis-api-reference.md`
 
 ## 인프라
 
@@ -66,152 +57,48 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ---
 
-## 데이터 파일 경로 (`/data/*.json`)
+## 데이터 파일 경로
 
-| 파일 | 내용 | 기본값 |
-|------|------|--------|
-| `/data/watchlist.json` | 한국 워치리스트 `{ticker: name}` | 5개 기본 종목 |
-| `/data/us_watchlist.json` | 미국 워치리스트 `{ticker: {name, qty}}` | TSLA 등 4개 |
-| `/data/stoploss.json` | 손절/목표가 `{ticker: {name, stop_price, ...}, us_stocks: {...}}` | `{}` |
-| `/data/portfolio.json` | 보유 포트폴리오 `{ticker: {name, qty, avg_price}, us_stocks: {...}}` | `{}` |
-| `/data/dart_seen.json` | DART 알림 전송된 공시 ID 목록 `{ids: [...]}` | `{ids: []}` |
-| `/data/insider_sent.json` | 내부자 클러스터 알림 최근 발송 `{ticker: "YYYY-MM-DD"}` (7일 쿨다운) | `{}` |
-| `/data/watchalert.json` | 매수 희망가 감시 `{ticker: {name, buy_price, memo, created}}` | `{}` |
-| `/data/watch_sent.json` | 매수감시 알림 당일 발송 기록 `{ticker: "YYYY-MM-DD"}` | `{}` |
-| `/data/stoploss_sent.json` | 손절 알림 당일 발송 횟수 기록 | `{}` |
-| `/data/decision_log.json` | 투자판단 기록 (날짜별 regime/grades/actions) | `[]` |
-| `/data/compare_log.json` | 종목 비교 기록 | `[]` |
-| `/data/watchlist_log.json` | 워치리스트 변경 이력 | `[]` |
-| `/data/events.json` | 매크로 이벤트 캘린더 | `{}` |
-| `/data/weekly_base.json` | 주간 리뷰 기준 스냅샷 | `{}` |
-| `/data/stock_universe.json` | 종목 유니버스 (시총 상위) | `{}` |
-| `/data/consensus_cache.json` | 컨센서스 캐시 (FnGuide) | `{}` |
-| `/data/portfolio_history.json` | 포트폴리오 일별 스냅샷 | `[]` |
-| `/data/trade_log.json` | 매매 기록 | `[]` |
-| `/data/dart_corp_map.json` | DART 고유번호 매핑 | `{}` |
-| `/data/dart_screener_cache.json` | DART 스크리너 당일 캐시 | `{}` |
-| `/data/corp_codes.json` | OpenDART corp_code 매핑 캐시 (1일 1회 갱신) | `{}` |
-| `/data/dart_reports/*.txt` | DART 사업보고서 본문 txt 파일 | — |
-| `/data/krx_db/YYYYMMDD.json` | KRX 전종목 일별 DB (시세+수급+비율, 보관 무제한) | — |
-| `/data/std_sector_map.json` | 표준산업분류코드 캐시 `{ticker: {std_code, std_name}}` (1회 수집) | `{}` |
-| `/data/stock.db` | SQLite DB (stock_master + daily_snapshot + financial_snapshot + 뷰, ~277MB) | — |
-| `/data/db_schema.sql` | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) | — |
-
-> 맥미니 로컬 `data/` 디렉토리 사용 (`DATA_DIR` 환경변수).
-> 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`, `BACKUP_STOPLOSS` 등).
+핵심 파일만 본체에 기록:
+- `data/stock.db` — SQLite DB (~320MB, stock_master + daily_snapshot + financial_quarterly + consensus_history + reports + insider_transactions)
+- `data/*.json` — 워치/포트/손절/알림 등 상태 파일 (전체 목록 → `.claude/rules/data-files.md`)
+- `data/db_schema.sql` — SQLite 스키마 정의
 
 ---
 
-> **상세 참조**: 파일별 함수 구조 → `.claude/rules/file-structure.md`, KIS API TR_ID 테이블 → `.claude/rules/kis-api-reference.md`
+## MCP 도구 (33개)
+
+실행 로직: `mcp_tools.py`의 `_execute_tool()` 함수.
+전체 도구 목록/모드/파라미터 → `.claude/rules/mcp-tools.md`
 
 ---
 
-## MCP 도구 목록 (33개)
+## 새 MCP 도구 추가
 
-| # | 이름 | mode/type | 설명 |
-|---|------|-----------|------|
-| 1 | `get_rank` | type=price | 한국 등락률 상위/하위 (rise/fall, kospi/kosdaq) |
-| | | type=us_price | 미국 등락률 상위/하위 (NAS/NYS/AMS) |
-| | | type=volume | 체결강도 상위 (120%이상=매수우위) |
-| | | type=scan | 거래량 상위 종목 |
-| | | type=after_hours | 시간외 등락률 순위 (장 마감 후 급등/급락) |
-| | | type=dividend | 배당수익률 순위 (배당금·배당률·PER) |
-| 2 | `get_portfolio` | | 포트폴리오 조회/수정 (한국+미국 손익, cash_krw/cash_usd) |
-| 3 | `get_stock_detail` | (기본) | 현재가·PER·PBR·수급, 한국/미국 자동 판별, period로 일봉 |
-| | | mode=volume_profile | 볼륨 프로파일(매물대) 분석 (Y1/Y2/Y3) |
-| | | mode=after_hours | 시간외 현재가·등락률·거래량 |
-| | | mode=orderbook | 매수·매도 10호가 + 잔량 + 비율 |
-| 4 | `get_supply` | mode=daily | 당일확정수급 (외인/기관/개인) |
-| | | mode=history | N일 수급추세 (연속매수/매도) |
-| | | mode=estimate | 장중추정수급 (가집계) |
-| | | mode=foreign_rank | 외국인 순매수 상위 |
-| | | mode=combined_rank | 외인+기관 합산 순매수 상위 |
-| | | mode=broker_rank | 증권사별 매매종목 상위 (매수/매도) |
-| 5 | `get_dart` | | DART 공시 (워치 3일, report/report_list/read/insider 모드). insider: 임원·주요주주 N일 매수/매도 집계 + cluster_flag(3명+매수 AND 순매수>0) |
-| 6 | `get_macro` | | 매크로 지표 (dashboard/sector_etf/convergence/op_growth 등) |
-| 7 | `get_sector` | | 업종별 외인+기관 순매수, 업종 로테이션 분석 |
-| 8 | `manage_watch` | | 워치리스트 조회/추가/제거 (한국+미국, 매수감시 포함) |
-| 9 | `get_alerts` | | 손절가/목표가 목록 + 현재가 대비 % + 매수감시 |
-| 10 | `get_market_signal` | mode=short_sale | 공매도 일별추이 |
-| | | mode=vi | VI 발동 종목 현황 |
-| | | mode=program_trade | 프로그램매매 투자자별 동향 |
-| | | mode=credit | 신용잔고 일별추이 (10% 과열 경고) |
-| | | mode=lending | 대차거래 일별추이 |
-| 11 | `get_news` | | 종목 뉴스 헤드라인 (한국/미국, sentiment 감성분석) |
-| 12 | `get_consensus` | | 증권사 컨센서스 목표주가/투자의견 (FnGuide) |
-| 13 | `set_alert` | | 손절가/목표가, 매수감시, 투자판단, 종목비교, 매매기록 |
-| 14 | `get_portfolio_history` | | 포트폴리오 스냅샷 히스토리 + 드로다운 + 투자규칙 경고 |
-| 15 | `get_trade_stats` | | 매매 기록 성과 분석 (승률·손익·평균보유기간) |
-| 16 | `backup_data` | | /data/*.json GitHub Gist 백업·복원·상태 조회 |
-| 17 | `simulate_trade` | | 가상 매매 시뮬레이션 |
-| 18 | `get_backtest` | | 백테스트 (ma_cross/momentum_exit/supply_follow/bollinger/hybrid) |
-| 19 | `manage_report` | | 투자 리포트 관리 |
-| 20 | `get_regime` | | 시장 국면 판단 (매크로 기반) |
-| 21 | `get_scan` | | KRX 전종목 스크리너 (시총/PER/PBR/수급/회전율, 6개 프리셋) |
-| 22 | `get_finance_rank` | | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
-| 23 | `get_highlow` | | 52주 신고가/신저가 근접 종목 순위 (괴리율 필터) |
-| 24 | `get_broker` | | 종목별 거래원(증권사) 매수/매도 상위 5곳 |
-| 25 | `read_file` | | stock-bot 디렉토리 내 파일 읽기 (.md/.py/.json/.txt, 100KB, ../ 차단) |
-| 26 | `write_file` | | stock-bot 디렉토리 내 파일 쓰기 (.md/.json/.txt, .py/.env 불가, 200KB, ../ 차단) |
-| 27 | `list_files` | | stock-bot 디렉토리 내 파일/폴더 목록 (이름·크기·수정일, depth 2, ../ 차단) |
-| 28 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout, 복합 콤마 구분) |
-| 29 | `git_status` | | Git 브랜치/변경파일 조회 |
-| 30 | `git_diff` | | 변경내용 조회 (path, staged 옵션) |
-| 31 | `git_log` | | 최근 커밋 로그 |
-| 32 | `git_commit` | | 파일 지정 커밋 (.py/.env 차단) |
-| 33 | `git_push` | | origin/main push |
-
----
-
-## 새 MCP 도구 추가하는 방법
-
-**Step 1 — API 함수 작성** (`kis_api.py`에 추가)
-
-```python
-async def kis_new_api(ticker: str, token: str) -> dict:
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/...", "TR_ID", token, {"param": ticker})
-        return d.get("output", {})
-```
-
-**Step 2 — MCP_TOOLS 배열에 스키마 추가** (`mcp_tools.py`의 `MCP_TOOLS` 배열 끝)
-
-```python
-{"name": "new_tool_name", "description": "도구 설명",
- "inputSchema": {"type": "object",
-                 "properties": {"ticker": {"type": "string", "description": "종목코드"}},
-                 "required": ["ticker"]}},
-```
-
-**Step 3 — `_execute_tool` 함수에 elif 핸들러 추가** (`mcp_tools.py`의 `else: result = {"error": ...}` 바로 위)
-
-```python
-elif name == "new_tool_name":
-    ticker = arguments.get("ticker", "").strip()
-    d = await kis_new_api(ticker, token)
-    result = {"ticker": ticker, "field": d.get("field_name")}
-```
-
-**Step 4** — 커밋 & push → 맥미니 서버에서 git pull 후 재시작
+절차 (API 함수 작성 → 스키마 추가 → elif 핸들러 → 커밋):
+→ `.claude/rules/add-mcp-tool.md` 참조
 
 ---
 
 ## 알려진 이슈
 
-**🔴 버그 함정 (반드시 지킬 것)**
+**🔴 버그 함정**
+- **미국 현재가 `rate` 필드**: KIS 해외 응답은 `rate`. `diff_rate` 없음. 전 코드 `rate` 통일됨.
+- **WebSocket 국내 전용**: `KisRealtimeManager`는 국내만. 미국은 Yahoo Finance 폴링 (`check_stoploss`).
+- **KRX OPEN API 간헐 장애**: 자주 빈 응답. `db_collector`가 `stock_master` fallback으로 KIS API 직접 호출.
 
-- **미국 현재가 `rate` 필드**: KIS 해외 API 응답은 `rate` (등락률%). `diff_rate` 필드는 없음. 사용 시 None.
-- **WebSocket 국내 전용**: `KisRealtimeManager`는 국내주식만 지원. 미국주식은 폴링 방식(`check_stoploss`).
-- **공매도/신용잔고 전종목 미수집**: KRX/공공데이터/네이버 모두 부적합. KIS API는 1.5초/호출이라 전종목 60분 부담. 결정: **딥서치 시점에 `get_market_signal(mode=short_sale, ticker=...)` 개별 조회**. 전종목 프리셋(`short_squeeze`, `credit_unwind`, `foreign_accumulation`)은 종목별 조회 기반.
+**🟠 데이터 성숙 대기 중 (4/12부터 수집)**
+- `get_change_scan` 프리셋 3개는 과거 데이터 0으로 현재 빈 결과. 시간 지나면 자동 작동:
+  - `short_squeeze`: ~5/14 (20d 데이터 필요)
+  - `foreign_accumulation`: ~4/19 (5d). 계산 로직 5줄 추가 필요
+  - `credit_unwind`: `whol_loan_rmnd_rate` 저장 + 계산 필요 (추가 API 호출 없음)
 
 **🟡 아키텍처 노트**
-
-- **로컬 데이터 디렉토리**: 맥미니 `DATA_DIR` 사용. 환경변수 기반 fallback 복원 + Gist 백업.
-- **KIS 토큰 캐시**: `data/token_cache.json` (24시간 유효, 23시간 재사용). 재시작 시에도 캐시된 토큰 즉시 사용.
-- **Yahoo Finance fallback**: 미국 장 요약(`us_market_summary`) + 손절 체크(US)는 yfinance 사용. KIS 해외 API와 혼용 주의.
-- **DST 자동 감지**: 미국 장 시간 판별은 `zoneinfo.ZoneInfo('America/New_York')` 사용.
-- **KRX 데이터 수집**: `db_collector.collect_daily()` (18:30 KST)가 KRX OPEN API (`KRX_API_KEY`)로 전종목 수집. 실패 시 `stock_master` fallback.
-- **섹터 분류 2중 구조**: `sector_name`은 92개 실용 섹터(std_idst_clsf_cd 기반), `sector_krx`는 KRX 29개 원본 업종. `data/std_sector_map.json` 전종목 코드 캐시.
+- 로컬 DATA_DIR + Gist 백업
+- KIS 토큰 캐시 23시간 (메모리+파일)
+- Yahoo Finance fallback (미국 장 요약 + `check_stoploss`)
+- DST 자동 감지 (`zoneinfo`)
+- 섹터 2중 구조 (`sector`=실용 분류, `sector_krx`=KRX 원본, `std_sector_map.json` 캐시)
 
 ---
 
@@ -240,36 +127,20 @@ elif name == "new_tool_name":
 
 ## Agent Team
 
-모든 코드 작업은 아래 팀 구조를 따른다:
+모든 코드 작업은 팀 구조로. 상세 프롬프트는 `.claude/agents/*.md` 참조.
 
-### Teammate 1: architect (Opus)
-- 역할: 설계/계획만. 코드 작성 안 함.
-- "어떤 파일을 어떻게 수정할지" 계획을 세우고 python-developer에게 넘김.
+| 역할 | 모델 | 언제 |
+|------|------|-----|
+| architect (Opus, 기본 계정) | - | 설계/계획 (코드 작성 X) |
+| python-developer | Sonnet | 실제 코드 수정. 모든 edit은 여기서 |
+| kis-api-specialist | Sonnet | KIS API 호출/파라미터/에러 처리 검토 |
+| test-writer | Sonnet | 테스트 작성+실행 |
+| code-reviewer | Sonnet | 일반 코드 리뷰 |
+| critic | Sonnet | 고위험 변경 최종 게이트 (다관점 갭분석, file:line 증거) |
+| verifier | Sonnet | 증거 기반 완료 검증. self-approve 금지 |
+| debugger | Sonnet | 버그 리포트 시. 근본원인+minimal diff. 3-failure circuit breaker |
 
-### Teammate 2: python-developer (Sonnet)
-- 역할: architect 계획에 따라 실제 코드 작성.
-- 모든 수정은 이 에이전트가 실행.
-
-### Teammate 3: kis-api-specialist (Sonnet)
-- 역할: KIS Open API 관련 로직 검토. API 호출 순서, 파라미터, 에러 처리 확인.
-- KIS API 관련 없는 작업이면 스킵.
-
-### Teammate 4: test-writer (Sonnet)
-- 역할: 테스트 작성 및 실행. 수정된 기능의 정상 동작 확인.
-
-### Teammate 5: code-reviewer (Sonnet) / critic (Sonnet, OMC 차용)
-- code-reviewer: 일반 코드 리뷰. /codex:review --base main 실행 가능.
-- **critic**: 고위험 변경에만 투입. 다관점(보안/운영/새직원) 갭분석, ADVERSARIAL 모드, file:line 증거 필수, REJECT/REVISE/ACCEPT 판정.
-
-### Teammate 6: verifier (Sonnet, OMC 차용)
-- 역할: 증거 기반 완료 검증. 신선한 테스트 출력 없이 PASS 못 줌.
-- **절대 self-approve 금지** — 같은 컨텍스트에서 작성한 작업 검증 금지. 별도 호출만.
-
-### Teammate 7: debugger (Sonnet, OMC 차용)
-- 역할: 버그 리포트 시 투입. 근본원인 찾기 + minimal diff 수정.
-- 3-failure circuit breaker. 리팩토링/개명 금지.
-
-### 작업 순서
-- 신기능: architect → python-developer → kis-api-specialist(해당시) → test-writer → code-reviewer → (고위험이면 critic) → (필요시 verifier 별도 패스)
-- 버그: debugger 단독 (근본원인+최소수정) → verifier 별도 검증
-- 재검증 필요 시: verifier 단독 호출 (다른 에이전트 결과에 self-approve 금지)
+**작업 순서:**
+- 신기능: architect → developer → (kis-api-specialist) → test-writer → reviewer → (고위험이면 critic)
+- 버그: debugger 단독 → verifier 별도 검증
+- 재검증 필요 시: verifier 단독 (self-approve 금지)
