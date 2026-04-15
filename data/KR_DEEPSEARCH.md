@@ -35,7 +35,8 @@
 
 ━━ STEP 2. 사업 thesis 형성 (10분) ★목표가 보기 전 ━━
 봇: get_dart(mode="report", ticker="[티커]") → get_dart(mode="read", ticker="[티커]")
-    + manage_report(action="list", ticker="[티커]") → read_report_pdf(산업분석 리포트만)
+    + manage_report(action="collect", ticker="[티커]")
+    + manage_report(action="list", ticker="[티커]", days=14)
 ※ 리포트에서 산업 데이터만 추출. 투자의견·목표가 이 단계에서 완전 무시.
 
 출력 필수:
@@ -79,14 +80,23 @@
 □ 증권사 매수 상위 3곳에 외국계 포함 여부
 긍정 3개+ → 확신+1, 외국인+기관 동반매도 → 확신-1
 
+⛔━━ PDF 게이트 (STEP 6 진입 조건) ━━⛔
+봇: read_report_pdf(ticker="[티커]") — 최소 2개 리포트 PDF 읽기 필수
+□ read_report_pdf 최소 2개 리포트 실행 완료?
+□ TP 산출 방식(PER/PBR/EV_EBITDA/SOTP/DCF) 확인?
+□ 브로커별 EPS 개별 수치 확인? (컨센 avg 사용 금지 — 교훈 #9)
+□ FCF·부채비율 Forward 추정치 확인? (DART 과거만으로 부족)
+⛔ 미완료 시 STEP 6 진입 금지. manage_report list의 full_text는 대부분 meta_only/truncated → PDF 직접 읽기만 유효.
+
 ━━ STEP 6. 밸류에이션 (5분) ★이제 목표가 본다 ━━
-봇: get_consensus(ticker="[티커]") + manage_report(action="list", ticker="[티커]")
+봇: get_consensus(ticker="[티커]")
     + get_stock_detail(ticker="[티커]", mode="volume_profile")
 
-■ 리포트 목표가 분해:
+■ 리포트 목표가 분해 (PDF에서 확인한 데이터 사용):
   - 사용 멀티플: PER/PBR/EV_EBITDA/SOTP 중 무엇?
   - 적용 배수 vs 업종 피어 배수 (과도한가?)
   - 목표 EPS/BPS 근거 (컨센 대비 +/-)
+  - 브로커별 EPS 편차 범위 (최소~최대)
 ■ 컨센서스 gap:
   - 현재가 vs 컨센 평균 목표가: __% 할인/프리미엄
   - 최근 3개월 컨센 방향: 상향/하향/정체
