@@ -175,6 +175,7 @@
 | **get_dart** | (생략) | 워치리스트 최근 3일 공시 |
 | | `mode=report, ticker` | 사업보고서 txt 저장 |
 | | `mode=read, ticker` | 저장된 사업보고서 읽기 |
+| | `mode=insider, ticker, days=30` | 내부자 거래 30일 집계 + cluster_flag |
 | **backup_data** | | Gist 백업/복원 |
 | **read_file** | `path="CLAUDE.md"` | 봇 디렉토리 파일 읽기 |
 | **write_file** | `path="TODO.md", content="..."` | 파일 쓰기 (.md/.json/.txt) |

@@ -2664,6 +2664,53 @@ async def dart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ DART 오류: {str(e)}")
 
 
+async def insider_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/insider <ticker> [days]  → 종목 내부자 매수/매도 집계."""
+    if not DART_API_KEY:
+        await update.message.reply_text("❌ DART_API_KEY 미설정")
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "사용법: /insider <종목코드> [일수]\n예: /insider 005930 30"
+        )
+        return
+    ticker = args[0].strip()
+    days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 30
+    if _is_us_ticker(ticker):
+        await update.message.reply_text("❌ 내부자 거래는 한국 종목만 지원합니다.")
+        return
+
+    await update.message.reply_text(f"⏳ {ticker} 내부자 거래 조회 중 ({days}일)...")
+    try:
+        universe = get_stock_universe() or {}
+        corp_map = await get_dart_corp_map(universe) if universe else {}
+        corp_code = corp_map.get(ticker, "")
+        if not corp_code:
+            await update.message.reply_text(f"❌ {ticker} corp_code 매핑 없음 (유니버스 외)")
+            return
+        records = await kis_elestock(corp_code)
+        upsert_insider_transactions(ticker, corp_code, records)
+        agg = aggregate_insider_cluster(ticker, days=days)
+
+        flag = "🚩" if agg["buyers"] >= 3 and agg["buy_qty"] > agg["sell_qty"] else "  "
+        msg = f"🕵️ *{ticker} 내부자 거래* (최근 {days}일) {flag}\n\n"
+        msg += f"매수 {agg['buyers']}명 / 매도 {agg['sellers']}명\n"
+        msg += f"순매수 {agg['buy_qty'] - agg['sell_qty']:,}주 "
+        msg += f"(+{agg['buy_qty']:,} / -{agg['sell_qty']:,})\n\n"
+        if agg["recent"]:
+            msg += "*최근 거래:*\n"
+            for r in agg["recent"][:10]:
+                delta = r.get("delta") or 0
+                sign = "+" if delta > 0 else ""
+                msg += f"• {r['date']} {r['name']}({r['ofcps']}) {sign}{delta:,}\n"
+        else:
+            msg += "_최근 거래 없음_"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 오류: {e}")
+
+
 # 워치리스트 (매수감시 종목 — grade 정렬)
 _GRADE_ORDER = {"A": 0, "B+": 1, "B": 2, "B-": 3, "C+": 4, "C": 5, "D": 6, "": 7}
 
@@ -3181,6 +3228,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/macro - VIX/환율/유가/금리/KOSPI/KOSDAQ\n"
         "/news [키워드] - 뉴스 헤드라인\n"
         "/dart - 워치리스트 DART 공시\n"
+        "/insider 코드 [일수] - 내부자 매수/매도 집계 (기본 30일)\n"
         "/summary - 한국 장마감 요약(수동)\n\n"
         "📊 *빠른 조회 (버튼)*\n"
         "/portfolio - 보유종목 손익\n"
@@ -3300,7 +3348,7 @@ def main():
     # 명령어 등록
     commands = [
         ("start", start), ("analyze", analyze), ("scan", scan), ("macro", macro),
-        ("news", news_cmd), ("dart", dart_cmd), ("summary", manual_summary),
+        ("news", news_cmd), ("dart", dart_cmd), ("insider", insider_cmd), ("summary", manual_summary),
         ("watchlist", watchlist_cmd), ("watch", watch), ("unwatch", unwatch),
         ("uslist", uslist_cmd), ("addus", addus), ("remus", remus),
         ("setstop", setstop), ("delstop", delstop), ("stops", stops_cmd),

@@ -64,6 +64,7 @@ Railway (main push → 자동 배포)
 | 15:45 | 평일 | 모멘텀 이탈 체크 | `momentum_exit_check` |
 | 15:50 | 평일 | 포트폴리오 스냅샷 + 드로다운 | `snapshot_and_drawdown` |
 | 18:00 | 매일 | 매크로 대시보드 (PM) + 섹터 로테이션 | `macro_dashboard` |
+| 20:00 | 평일 | 내부자 거래 클러스터 감지 (30일 3명+ 매수 AND 순매수>0) | `check_insider_cluster` |
 | 22:00 | 매일 | GitHub Gist 자동 백업 | `auto_backup` |
 
 ---

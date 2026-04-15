@@ -23,6 +23,7 @@
 [2052~2230] DART API (공시, 기업재무, 사업보고서)
 [2230~2400] GitHub Gist 백업/복원
 [2400+]     뉴스, 재무비율순위, 52주신고저, 거래원, 신용잔고, 대차, 시간외, 호가
+[3547+]     DART 내부자 거래 (kis_elestock, upsert_insider_transactions, aggregate_insider_cluster, collect_insider_for_tickers)
 ```
 
 ## main.py 구조

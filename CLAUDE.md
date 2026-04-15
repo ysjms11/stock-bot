@@ -86,6 +86,7 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | `/data/stoploss.json` | 손절/목표가 `{ticker: {name, stop_price, ...}, us_stocks: {...}}` | `{}` |
 | `/data/portfolio.json` | 보유 포트폴리오 `{ticker: {name, qty, avg_price}, us_stocks: {...}}` | `{}` |
 | `/data/dart_seen.json` | DART 알림 전송된 공시 ID 목록 `{ids: [...]}` | `{ids: []}` |
+| `/data/insider_sent.json` | 내부자 클러스터 알림 최근 발송 `{ticker: "YYYY-MM-DD"}` (7일 쿨다운) | `{}` |
 | `/data/watchalert.json` | 매수 희망가 감시 `{ticker: {name, buy_price, memo, created}}` | `{}` |
 | `/data/watch_sent.json` | 매수감시 알림 당일 발송 기록 `{ticker: "YYYY-MM-DD"}` | `{}` |
 | `/data/stoploss_sent.json` | 손절 알림 당일 발송 횟수 기록 | `{}` |
@@ -137,7 +138,7 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | | | mode=foreign_rank | 외국인 순매수 상위 |
 | | | mode=combined_rank | 외인+기관 합산 순매수 상위 |
 | | | mode=broker_rank | 증권사별 매매종목 상위 (매수/매도) |
-| 5 | `get_dart` | | DART 공시 (워치 3일, report/report_list/read 모드) |
+| 5 | `get_dart` | | DART 공시 (워치 3일, report/report_list/read/insider 모드). insider: 임원·주요주주 N일 매수/매도 집계 + cluster_flag(3명+매수 AND 순매수>0) |
 | 6 | `get_macro` | | 매크로 지표 (dashboard/sector_etf/convergence/op_growth 등) |
 | 7 | `get_sector` | | 업종별 외인+기관 순매수, 업종 로테이션 분석 |
 | 8 | `manage_watch` | | 워치리스트 조회/추가/제거 (한국+미국, 매수감시 포함) |
