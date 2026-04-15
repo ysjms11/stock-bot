@@ -8,6 +8,10 @@ venv/
 data/*.json
 data/krx_db/
 data/dart_reports/
+data/report_pdfs/
+data/stock.db
+data/stock.db-*
 data/.DS_Store
 data_backup_before_railway/
 .DS_Store
+.claude/worktrees/
