@@ -19,15 +19,7 @@
    launchctl kickstart -k gui/501/com.stock-bot.main  # 봇 재시작
    ```
 
-2. **프리셋 3개 복구** (30분 작업, 알파 도구)
-   - `short_squeeze`: 코드는 정상, ~5/14 자동 작동 (조치 불필요)
-   - `foreign_accumulation`: `db_collector.py`에 `foreign_hold_change_5d` 계산 5줄 추가 + DB 컬럼 추가
-   - `credit_unwind`:
-     - `daily_snapshot`에 `loan_balance_rate REAL` 컬럼 추가 (schema.sql)
-     - Phase 1 파싱에 `"loan_balance_rate": float(d.get("whol_loan_rmnd_rate", 0) or 0)` 추가
-     - `_load_history_from_db`에 `loan_balance_rate` SELECT 추가
-     - mcp_tools.py credit_unwind에서 `credit_balance` → `loan_balance_rate`
-     - `credit_change_5d` 계산 로직 5줄 추가
+2. **프리셋 복구 후속 검증** — foreign_accumulation + credit_unwind 코드 반영 완료 (2026-04-16). 맥미니 배포 후 ~7일 수집 쌓이면 실제 스캔 결과 확인 필요. `short_squeeze`는 ~5/14 자동 작동.
 
 3. **내부자 클러스터 첫 실행 결과 확인** — 4/16 20:00 KST 이후 텔레그램 알림 체크
 

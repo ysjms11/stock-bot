@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS daily_snapshot (
     w52_low         INTEGER DEFAULT 0,          -- 52주 최저 (w52_lwpr)
     foreign_own_pct REAL DEFAULT 0,             -- 외인보유비율% (hts_frgn_ehrt)
     listing_shares  INTEGER DEFAULT 0,          -- 상장주식수 (lstn_stcn)
-    turnover        REAL DEFAULT 0,             -- 회전율% (vol_tnrt)
+    turnover        REAL DEFAULT 0,             -- 회전율%
+    loan_balance_rate REAL DEFAULT 0,           -- 신용잔고비율% (whol_loan_rmnd_rate, kis_stock_price) (vol_tnrt)
 
     -- ── API 2: 투자자 수급 (FHPTJ04160001) ──
     foreign_net_qty INTEGER DEFAULT 0,          -- 외인 순매수 수량

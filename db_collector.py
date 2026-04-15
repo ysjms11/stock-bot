@@ -80,6 +80,14 @@ def _init_schema(conn: sqlite3.Connection):
     schema_path = os.path.join(os.path.dirname(__file__), "data", "db_schema.sql")
     with open(schema_path, encoding="utf-8") as f:
         conn.executescript(f.read())
+    # 기존 DB 마이그레이션: 누락 컬럼 추가 (SQLite ADD COLUMN IF NOT EXISTS 미지원 → try/except)
+    for alter_sql in (
+        "ALTER TABLE daily_snapshot ADD COLUMN loan_balance_rate REAL DEFAULT 0",
+    ):
+        try:
+            conn.execute(alter_sql)
+        except sqlite3.OperationalError:
+            pass  # 이미 존재
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -502,6 +510,7 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                     volume, trade_value, market_cap,
                     per, pbr, eps, bps, div_yield,
                     w52_high, w52_low, foreign_own_pct, listing_shares, turnover,
+                    loan_balance_rate,
                     foreign_net_qty, foreign_net_amt, inst_net_qty, inst_net_amt,
                     indiv_net_qty, indiv_net_amt,
                     short_volume, short_ratio,
@@ -513,6 +522,7 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                     ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
+                    ?,
                     ?, ?, ?, ?,
                     ?, ?,
                     ?, ?,
@@ -539,6 +549,7 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                 float(basic.get("hts_frgn_ehrt", 0) or 0),
                 int(basic.get("lstn_stcn", 0) or 0),
                 float(basic.get("vol_tnrt", 0) or 0),
+                float(basic.get("whol_loan_rmnd_rate", 0) or 0),  # 신용잔고비율
                 # 수급 (kis_investor_trend_history 변환 키)
                 int(supply.get("foreign_net", 0) or 0),
                 0,  # foreign_net_amt — 히스토리 API에 금액 없음
@@ -908,7 +919,7 @@ def _load_history_from_db(conn: sqlite3.Connection, target_date: str, n_days: in
     oldest = dates[-1]
     rows = conn.execute("""
         SELECT symbol, trade_date, close, high, low, volume, eps,
-               foreign_net_amt, short_volume, foreign_own_pct
+               foreign_net_amt, short_volume, foreign_own_pct, loan_balance_rate
         FROM daily_snapshot
         WHERE trade_date >= ? AND trade_date <= ?
         ORDER BY trade_date ASC
@@ -921,7 +932,8 @@ def _load_history_from_db(conn: sqlite3.Connection, target_date: str, n_days: in
         if sym not in tmp:
             tmp[sym] = {"close": [], "volume": [], "eps": [],
                         "foreign_net_amt": [], "short_volume": [],
-                        "high": [], "low": [], "foreign_own_pct": []}
+                        "high": [], "low": [], "foreign_own_pct": [],
+                        "loan_balance_rate": []}
         h = tmp[sym]
         h["close"].append(r["close"] or 0)
         h["volume"].append(r["volume"] or 0)
@@ -931,6 +943,7 @@ def _load_history_from_db(conn: sqlite3.Connection, target_date: str, n_days: in
         h["high"].append(r["high"] or 0)
         h["low"].append(r["low"] or 0)
         h["foreign_own_pct"].append(r["foreign_own_pct"] or 0)
+        h["loan_balance_rate"].append(r["loan_balance_rate"] or 0)
 
     # 최신→과거 순으로 역순
     history = {}

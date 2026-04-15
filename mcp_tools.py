@@ -3312,9 +3312,12 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         s_set = set()
                         hist_c, _ = _load_history(db["date"], 6)
                         for t, s in stocks.items():
-                            ch = hist_c.get(t, {}).get("credit_balance", [])
+                            ch = hist_c.get(t, {}).get("loan_balance_rate", [])
+                            # ch는 최신→과거 순. 최근 5일 연속 감소(= i가 작을수록 작음) 판정
                             if len(ch) >= 5 and all(ch[i] < ch[i+1] for i in range(4) if ch[i+1] > 0):
                                 s_set.add(t)
+                                # credit_change_5d: 최근 - 5일전 (음수=감소)
+                                s["credit_change_5d"] = round(ch[0] - ch[4], 4) if ch[4] else None
                         matched &= s_set
                         preset_desc.append("신용청산(5일연속감소)")
                         default_sort = "credit_change_5d"
@@ -3327,8 +3330,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         default_sort = "foreign_trend_5d"
                     elif p == "foreign_accumulation":
                         hold_min = _t("hold_min", 1.0)
-                        s_set = {t for t, s in stocks.items()
-                                 if s.get("foreign_hold_change_5d") is not None and s["foreign_hold_change_5d"] > hold_min}
+                        s_set = set()
+                        hist_f, _ = _load_history(db["date"], 6)
+                        for t, s in stocks.items():
+                            fh = hist_f.get(t, {}).get("foreign_own_pct", [])
+                            # fh는 최신→과거 순. 최근 - 5일전
+                            if len(fh) >= 5:
+                                delta = fh[0] - fh[4]
+                                s["foreign_hold_change_5d"] = round(delta, 4)
+                                if delta > hold_min:
+                                    s_set.add(t)
                         matched &= s_set
                         preset_desc.append(f"외인축적(보유+{hold_min}%p/5d)")
                         default_sort = "foreign_hold_change_5d"
