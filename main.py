@@ -1710,8 +1710,7 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📄 증권사 리포트 자동 수집 (매일 07:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# update_krx_db_job 비활성화 — GitHub Actions에서 크롤링 후 /api/krx_upload로 업로드
-# async def update_krx_db_job(context): ...
+# KRX 전종목 데이터는 db_collector.collect_daily() (18:30)에서 KRX OPEN API로 수집
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시 활성화)
@@ -1768,9 +1767,6 @@ async def weekly_financial_job(context):
         await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ 주간 재무 수집 30분 초과 타임아웃")
     except Exception as e:
         print(f"[weekly_financial] 오류: {e}")
-
-KRX_UPLOAD_KEY = os.environ.get("KRX_UPLOAD_KEY", "")
-
 
 async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
     """매일 08:30 KST — 보유+감시 종목 증권사 리포트 수집"""
@@ -3395,9 +3391,7 @@ def main():
     jq.run_daily(check_dividend_calendar,  time=dtime(7,  0, tzinfo=KST), days=(0,1,2,3,4), name="dividend_cal")
     jq.run_daily(check_us_earnings_calendar, time=dtime(7, 10, tzinfo=KST), days=(0,1,2,3,4), name="us_earnings_cal")
     jq.run_daily(collect_reports_daily,    time=dtime(8, 30, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
-    # KRX 전종목 DB 갱신: GitHub Actions에서 크롤링 → /api/krx_upload로 업로드
-    # jq.run_daily(update_krx_db_job, time=dtime(15, 55, tzinfo=KST), days=(0,1,2,3,4), name="krx_db")
-    # db_collector 기반 KIS API 풀수집 (db_collector.py 존재 시에만 실제 동작)
+    # KRX 전종목 DB 갱신: db_collector가 18:30에 KRX OPEN API로 수집
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
@@ -3408,68 +3402,6 @@ def main():
     port = int(os.environ.get("PORT", 8080))
     print(f"봇 실행! MCP SSE 서버 포트: {port}")
     asyncio.run(_run_all(app, port))
-
-
-async def _handle_krx_upload(request: web.Request) -> web.Response:
-    """POST /api/krx_upload — GitHub Actions에서 KRX DB 업로드 수신."""
-    # 인증 (KRX_UPLOAD_KEY 미설정 시 모든 요청 거부)
-    if not KRX_UPLOAD_KEY:
-        return web.json_response({"error": "KRX_UPLOAD_KEY not configured"}, status=503)
-    auth = request.headers.get("Authorization", "")
-    if auth != f"Bearer {KRX_UPLOAD_KEY}":
-        return web.json_response({"error": "Unauthorized"}, status=401)
-
-    try:
-        db = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
-
-    date = db.get("date", "")
-    if not date or len(date) != 8:
-        return web.json_response({"error": "date 필드 필요 (YYYYMMDD)"}, status=400)
-
-    stocks = db.get("stocks")
-    if not isinstance(stocks, dict) or not stocks:
-        return web.json_response({"error": "stocks 필드 필요 (비어있음)"}, status=400)
-    count = len(stocks)
-    db["count"] = count
-
-    # atomic write
-    os.makedirs(KRX_DB_DIR, exist_ok=True)
-    filepath = os.path.join(KRX_DB_DIR, f"{date}.json")
-    tmp_path = filepath + ".tmp"
-    payload = json.dumps(db, ensure_ascii=False)
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(payload)
-    os.replace(tmp_path, filepath)
-
-    size_kb = round(os.path.getsize(filepath) / 1024, 1)
-    print(f"[KRX Upload] 저장 완료: {filepath} ({size_kb}KB, {count}종목)")
-
-    # 30일 이전 파일 삭제
-    _cleanup_old_db(30)
-
-    # 텔레그램 알림
-    summary = db.get("market_summary", {})
-    investor_ok = db.get("investor_data_available", False)
-    try:
-        msg = (
-            f"📊 *KRX DB 갱신 완료* (GitHub Actions)\n"
-            f"종목수: {count}개\n"
-            f"코스피: {summary.get('kospi_count', 0)}개 "
-            f"(↑{summary.get('kospi_up', 0)} ↓{summary.get('kospi_down', 0)})\n"
-            f"코스닥: {summary.get('kosdaq_count', 0)}개 "
-            f"(↑{summary.get('kosdaq_up', 0)} ↓{summary.get('kosdaq_down', 0)})\n"
-            f"수급: {'✅' if investor_ok else '❌ 미수집'} | "
-            f"파일: {size_kb}KB"
-        )
-        from telegram import Bot
-        bot = Bot(token=TELEGRAM_TOKEN)
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-    except Exception as e:
-        print(f"[KRX Upload] 텔레그램 알림 실패: {e}")
-
-    return web.json_response({"ok": True, "date": date, "count": count, "file_size_kb": size_kb})
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4967,7 +4899,6 @@ async def _run_all(app, port):
     mcp_app.router.add_delete("/mcp", mcp_streamable_delete_handler)
     mcp_app.router.add_options("/mcp", mcp_streamable_options_handler)
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
-    mcp_app.router.add_post("/api/krx_upload", _handle_krx_upload)
     mcp_app.router.add_get("/dash", _handle_dash_v2)
     mcp_app.router.add_get("/dash/file/{filename}", _handle_dash_file)
     mcp_app.router.add_get("/dash-v2", _handle_dash_v2)

@@ -56,7 +56,7 @@
 
 ### 정리
 - [x] **Railway 완전 삭제** — 중복 발송 원인 (매크로/DART 2회), 4/15 삭제
-- [ ] Oracle Cloud VM 해지 검토
+- [x] **Oracle Cloud VM Stop** — 4/15 Running 확인 후 Stop. 하루 모니터링 후 중복 없으면 Terminate 예정
 
 ---
 

@@ -35,17 +35,10 @@ CHAT_ID          텔레그램 채팅 ID
 KIS_APP_KEY      KIS Open API 앱키
 KIS_APP_SECRET   KIS Open API 시크릿
 DART_API_KEY     전자공시 API 키 (선택)
+KRX_API_KEY      KRX OPEN API 인증키 (db_collector가 18:30 사용)
 GITHUB_TOKEN     GitHub Gist 백업용 토큰 (선택)
 BACKUP_GIST_ID   백업 Gist ID (선택)
-KRX_UPLOAD_KEY   KRX DB 업로드 인증 키 (GitHub Actions)
 DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
-```
-
-**GitHub Actions Secrets** (KRX 크롤러용)
-
-```
-BOT_URL          서버 URL (https://bot.arcbot-server.org)
-BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 ```
 
 ---
@@ -59,21 +52,17 @@ BOT_API_KEY      KRX_UPLOAD_KEY와 동일한 값
 | `kis_api.py` | ~2400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업 |
 | `main.py` | ~1950 | 텔레그램 봇 + 자동알림 스케줄 + 진입점 |
 | `mcp_tools.py` | ~1760 | MCP 도구 스키마 + 실행 로직 + SSE 서버 |
-| `krx_crawler.py` | ~400 | KRX DB 로드, 스캐너 (크롤링은 GitHub Actions) |
-| `db_collector.py` | ~1700 | KIS API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
+| `krx_crawler.py` | ~400 | KRX DB 로드 & 스캐너 (레거시 JSON 파일 호환) |
+| `db_collector.py` | ~1700 | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
 
 기타 파일:
 
 | 파일 | 내용 |
 |------|------|
-| `scripts/krx_update.py` | GitHub Actions용 KRX 크롤러 (독립 실행) |
-| `scripts/requirements_actions.txt` | GitHub Actions 의존성 |
-| `.github/workflows/krx_update.yml` | KRX 크롤링 워크플로우 (평일 15:55 KST) |
 | `stock_universe.json` | 종목 유니버스 (시총 상위 코스피+코스닥) |
 | `dart_corp_map.json` | DART 고유번호 ↔ 종목코드 매핑 |
 | `test_consensus_ci.py` | CI 테스트 (컨센서스 기능) |
 | `requirements.txt` | Python 의존성 |
-| `Procfile` | Railway 실행 명령 |
 
 ---
 
@@ -209,18 +198,20 @@ elif name == "new_tool_name":
 
 ## 알려진 이슈
 
-- **해외 현재가 `rate` 필드**: 응답 필드는 `rate` (등락률%). `diff_rate`는 존재하지 않음 → None 반환됨. `get_portfolio` 미국 섹션은 `d.get("rate")` 사용.
-- **거래소 코드 자동판별**: `_guess_excd()`는 `_NYSE_TICKERS` 세트 기반으로 NYS/NAS만 구분. AMEX(`AMS`) 종목은 NAS로 fallback됨.
-- **로컬 데이터**: 맥미니 로컬 `data/` 디렉토리 사용. 환경변수 기반 fallback 복원 + Gist 백업 있음.
-- **KIS 토큰 캐시**: `data/token_cache.json`에 파일 캐싱 (24시간 유효, 23시간 재사용). 재시작 시에도 캐시된 토큰 즉시 사용.
-- **Yahoo Finance fallback**: 미국 장 요약(`us_market_summary`)과 손절 체크(`check_stoploss` US)는 Yahoo Finance 사용. KIS 해외 API와 혼용 주의.
-- **check_fx_alert 비활성화**: 환율 알림은 매크로 대시보드로 통합 예정, 스케줄에서 주석 처리됨.
+**🔴 버그 함정 (반드시 지킬 것)**
+
+- **미국 현재가 `rate` 필드**: KIS 해외 API 응답은 `rate` (등락률%). `diff_rate` 필드는 없음. 사용 시 None.
 - **WebSocket 국내 전용**: `KisRealtimeManager`는 국내주식만 지원. 미국주식은 폴링 방식(`check_stoploss`).
-- **DST 자동 감지**: 미국 장 시간 판별은 `zoneinfo.ZoneInfo('America/New_York')` 사용으로 서머타임/표준시 자동 전환.
-- **KRX 크롤링 → GitHub Actions**: GitHub Actions에서 크롤링 후 `/api/krx_upload`로 업로드하는 구조. 설정: GitHub Secrets(`BOT_URL`, `BOT_API_KEY`) + 환경변수(`KRX_UPLOAD_KEY`).
-- **공매도/신용잔고 전종목 미수집**: KRX 정보데이터시스템(공매도→금융투자협회 redirect, 외인/신용은 종목별만), 공공데이터포털, 네이버(페이지 폐쇄) 모두 부적합. KIS API는 1.5초/호출이라 전종목 60분 부담. 결정: **딥서치 시점에 `get_market_signal(mode=short_sale, ticker=...)` 개별 조회**. `short_squeeze`/`credit_unwind`/`foreign_accumulation` 프리셋은 비활성 상태 유지.
-- **KRX Safari 세션 의존**: PER/PBR/수급은 Safari 카카오 로그인 필수. 30분 자동로그아웃 → `com.stock-bot.krx-keepalive` launchd가 25분마다 "연장" 버튼 클릭. 모든 윈도우/탭 순회.
-- **섹터 분류 2중 구조**: `sector_name`은 92개 실용 섹터(std_idst_clsf_cd 기반), `sector_krx`는 KRX 29개 원본 업종. `data/std_sector_map.json`에 전종목 코드 캐시. 신규 상장 종목은 map에 없으면 KRX 업종이 fallback. Phase 1 수집 시 `db_collector.py`가 `sector_krx`를 `stock_master`에 자동 갱신.
+- **공매도/신용잔고 전종목 미수집**: KRX/공공데이터/네이버 모두 부적합. KIS API는 1.5초/호출이라 전종목 60분 부담. 결정: **딥서치 시점에 `get_market_signal(mode=short_sale, ticker=...)` 개별 조회**. 전종목 프리셋(`short_squeeze`, `credit_unwind`, `foreign_accumulation`)은 종목별 조회 기반.
+
+**🟡 아키텍처 노트**
+
+- **로컬 데이터 디렉토리**: 맥미니 `DATA_DIR` 사용. 환경변수 기반 fallback 복원 + Gist 백업.
+- **KIS 토큰 캐시**: `data/token_cache.json` (24시간 유효, 23시간 재사용). 재시작 시에도 캐시된 토큰 즉시 사용.
+- **Yahoo Finance fallback**: 미국 장 요약(`us_market_summary`) + 손절 체크(US)는 yfinance 사용. KIS 해외 API와 혼용 주의.
+- **DST 자동 감지**: 미국 장 시간 판별은 `zoneinfo.ZoneInfo('America/New_York')` 사용.
+- **KRX 데이터 수집**: `db_collector.collect_daily()` (18:30 KST)가 KRX OPEN API (`KRX_API_KEY`)로 전종목 수집. 실패 시 `stock_master` fallback.
+- **섹터 분류 2중 구조**: `sector_name`은 92개 실용 섹터(std_idst_clsf_cd 기반), `sector_krx`는 KRX 29개 원본 업종. `data/std_sector_map.json` 전종목 코드 캐시.
 
 ---
 
