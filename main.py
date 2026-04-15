@@ -2852,6 +2852,8 @@ async def watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wa = load_watchalert()
     today = datetime.now(KST).strftime("%Y-%m-%d")
     prev = wa.get(ticker, {})
+    is_update = bool(prev)
+    old_name = prev.get("name", "")
     wa[ticker] = {
         "name": wname,
         "market": "KR",  # /watch 는 KR 전용 (사용자 오입력 방어). 미국은 /addus 사용.
@@ -2864,7 +2866,16 @@ async def watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     save_json(WATCHALERT_FILE, wa)
     await _refresh_ws()
-    await update.message.reply_text(f"✅ *{wname}* 추가!", parse_mode="Markdown")
+    if is_update:
+        bp = float(prev.get("buy_price") or 0)
+        extra = f" (매수감시 {bp:,.0f}원 유지)" if bp > 0 else ""
+        if old_name and old_name != wname:
+            msg = f"🔄 *{ticker}* 이름 갱신: {old_name} → *{wname}*{extra}"
+        else:
+            msg = f"🔄 *{wname}* 이미 존재 (갱신){extra}"
+    else:
+        msg = f"✅ *{wname}* 추가!"
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2914,6 +2925,9 @@ async def addus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wa = load_watchalert()
     today = datetime.now(KST).strftime("%Y-%m-%d")
     prev = wa.get(sym, {})
+    is_update = bool(prev)
+    old_qty = int(prev.get("qty") or 0)
+    old_name = prev.get("name", "")
     wa[sym] = {
         "name": name,
         "market": "US",
@@ -2925,7 +2939,15 @@ async def addus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "updated_at": today,
     }
     save_json(WATCHALERT_FILE, wa)
-    await update.message.reply_text(f"✅ 🇺🇸 *{name}* ({sym}) {qty}주 추가!", parse_mode="Markdown")
+    if is_update:
+        changes = []
+        if old_name and old_name != name: changes.append(f"이름 {old_name}→{name}")
+        if old_qty != qty: changes.append(f"수량 {old_qty}→{qty}주")
+        detail = ", ".join(changes) if changes else "동일"
+        msg = f"🔄 🇺🇸 *{name}* ({sym}) 갱신: {detail}"
+    else:
+        msg = f"✅ 🇺🇸 *{name}* ({sym}) {qty}주 추가!"
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def remus(update: Update, context: ContextTypes.DEFAULT_TYPE):
