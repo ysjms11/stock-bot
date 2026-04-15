@@ -1,5 +1,5 @@
 # Stock-Bot MCP 도구 상세 레퍼런스
-> 업데이트: 2026-04-11 | 총 33개 도구 | 서버: 맥미니 M4 + Cloudflare Tunnel
+> 업데이트: 2026-04-16 | 총 33개 도구 | 서버: 맥미니 M4 + Cloudflare Tunnel
 
 ===========================================
 ## 1. get_regime — 시장 레짐 판정
@@ -552,7 +552,9 @@
   - "report": 사업보고서 본문 txt 저장 (ticker 지정 가능)
   - "report_list": 저장된 txt 파일 목록
   - "read": 저장된 사업보고서 읽기 (ticker 필수)
-- ticker: report/read 시 종목코드
+  - "insider": 30일 내부자 거래 집계. ticker 필수, days=30 기본. 반환: buy_count, sell_count, net_shares, cluster_flag (3명+ 매수 AND 순매수>0).
+- ticker: report/read/insider 시 종목코드
+- days: insider 모드 조회 기간 (기본 30)
 
 사용 예:
 - 공시확인: get_dart

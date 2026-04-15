@@ -1,3 +1,5 @@
+> ⚠️ [레거시 참조용] JSON DB 설계는 2026-04-15 폐기. 현재는 SQLite (data/stock.db + data/db_schema.sql + db_collector.py). 이 문서는 구 포맷 이해용으로만 유지.
+
 # KRX DB 설계서 v2.0
 > 확정일: 2026-04-08
 > 목적: 전종목 일별 데이터 수집 → 변화 감지 스캔 → 종목 발굴

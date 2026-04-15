@@ -25,10 +25,10 @@
 | 파일 | 내용 | 예시 |
 |------|------|------|
 | **portfolio.json** | 보유종목 + 수량 + 평단가 + 현금 | HD조선 50주 평단 207,800원, 현금 411만원 |
-| **watchalert.json** | 매수감시 44개 종목 (감시가+메모) | NVDA $171, "AI GPU 1위, PEG 0.4x" |
-| **watchlist.json** | 한국 워치리스트 (종목코드:종목명) | {"009540": "HD조선해양"} |
+| **watchalert.json** | **워치리스트 단일 소스** (KR+US 통합). 스키마: `{ticker: {name, market: "KR"\|"US", buy_price, qty, memo, grade, created_at, updated_at}}`. `buy_price>0` = 매수감시 활성, `buy_price==0` = 단순 워치 | NVDA $171 "AI GPU 1위" / 풍산 buy=0 "관심만" |
+| ~~watchlist.json~~ | **[레거시]** 2026-04-16 `.bak`으로 리네임, watchalert.json으로 통합 | — |
+| ~~us_watchlist.json~~ | **[레거시]** 2026-04-16 `.bak`으로 리네임, watchalert.json으로 통합 | — |
 | **stoploss.json** | 손절가/목표가 설정된 보유종목 | HD조선 손절 175K, 목표 280K |
-| **us_watchlist.json** | 미국 워치리스트 (티커: {name, qty}) | TSLA, NVDA, AMD 등 |
 | **decision_log.json** | 투자 판단 기록 (날짜별) | "4/9: 레짐 11→3개 확정, NVDA A등급" |
 | **trade_log.json** | 실제 매매 기록 (매수/매도) | "4/3 HD조선 6주 매도 @205K, grade:B" |
 | **portfolio_history.json** | 포트 일별 스냅샷 (총자산/손익) | "4/8: 총 6,420만원, 일간 +3.2%" |
