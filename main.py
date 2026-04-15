@@ -4393,7 +4393,6 @@ def _build_watchalert_v2_html() -> str:
 _DOC_META_V2 = {
     "TODO.md": ("📋", "할일 목록"),
     "INVESTMENT_RULES.md": ("📏", "투자 규칙"),
-    "HANDOVER.md": ("🤝", "인수인계"),
     "PROGRESS.md": ("🧭", "세션 인수인계"),
     "bot_guide.md": ("📖", "도구 사용법"),
     "bot_reference.txt": ("📘", "도구 파라미터"),
