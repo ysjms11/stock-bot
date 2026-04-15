@@ -4394,6 +4394,7 @@ _DOC_META_V2 = {
     "TODO.md": ("📋", "할일 목록"),
     "INVESTMENT_RULES.md": ("📏", "투자 규칙"),
     "HANDOVER.md": ("🤝", "인수인계"),
+    "PROGRESS.md": ("🧭", "세션 인수인계"),
     "bot_guide.md": ("📖", "도구 사용법"),
     "bot_reference.txt": ("📘", "도구 파라미터"),
     "bot_scenarios.md": ("🎯", "활용 시나리오"),
@@ -4401,6 +4402,7 @@ _DOC_META_V2 = {
     "FILES.md": ("📁", "파일 설명서"),
     "krx_db_design.md": ("🗄️", "KRX DB 설계"),
     "regime_update_notes.md": ("📝", "레짐 수정노트"),
+    "US_DEEPSEARCH_v3.md": ("🇺🇸", "미국주식 딥서치 v3"),
 }
 
 
@@ -4425,24 +4427,27 @@ def _build_docs_v2_html() -> str:
                  f'<div class="doc-desc">{desc}</div></a>')
     html += '</div>'
 
-    research_dir = os.path.join(_DATA_DIR, "research")
-    try:
-        research_files = sorted(
-            f for f in os.listdir(research_dir)
-            if f.endswith(".md") and not f.startswith(".")
-        ) if os.path.isdir(research_dir) else []
-    except Exception:
-        research_files = []
-
-    if research_files:
-        html += '<h3 style="margin-top:16px">📊 종목 리서치</h3><div class="doc-grid">'
-        for f in research_files:
-            name = f.replace(".md", "")
-            html += (f'<a href="/dash/file/research/{f}" class="doc-card">'
-                     f'<div class="doc-icon">📊</div>'
-                     f'<div class="doc-name">{name}</div>'
-                     f'<div class="doc-desc">딥리서치</div></a>')
-        html += '</div>'
+    for subdir, section_icon, section_label, card_icon, card_desc in (
+        ("research", "📊", "종목 리서치", "📊", "딥리서치"),
+        ("thesis", "💡", "투자 테제", "💡", "Thesis"),
+    ):
+        sub_path = os.path.join(_DATA_DIR, subdir)
+        try:
+            sub_files = sorted(
+                f for f in os.listdir(sub_path)
+                if f.endswith(".md") and not f.startswith(".")
+            ) if os.path.isdir(sub_path) else []
+        except Exception:
+            sub_files = []
+        if sub_files:
+            html += f'<h3 style="margin-top:16px">{section_icon} {section_label}</h3><div class="doc-grid">'
+            for f in sub_files:
+                name = f.replace(".md", "")
+                html += (f'<a href="/dash/file/{subdir}/{f}" class="doc-card">'
+                         f'<div class="doc-icon">{card_icon}</div>'
+                         f'<div class="doc-name">{name}</div>'
+                         f'<div class="doc-desc">{card_desc}</div></a>')
+            html += '</div>'
     return html
 
 
@@ -4633,15 +4638,17 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
 
 
 async def _handle_dash_research_file(request: web.Request) -> web.Response:
-    """GET /dash/file/research/{filename} — data/research/ 파일 렌더링."""
+    """GET /dash/file/research/{filename} 또는 /dash/file/thesis/{filename} — 서브폴더 파일 렌더링."""
     try:
         filename = request.match_info.get("filename", "")
+        # URL 경로에서 subdir 판별 (research / thesis)
+        subdir = "thesis" if "/thesis/" in request.path else "research"
         if ".." in filename or "/" in filename or "\\" in filename:
             return web.Response(text="Forbidden", status=403)
         if filename.endswith((".py", ".env", ".sh")):
             return web.Response(text="Forbidden", status=403)
 
-        filepath = os.path.join(_DATA_DIR, "research", filename)
+        filepath = os.path.join(_DATA_DIR, subdir, filename)
         if not os.path.isfile(filepath):
             return web.Response(text="Not Found", status=404)
         if os.path.getsize(filepath) > 500 * 1024:
@@ -4969,6 +4976,7 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
     mcp_app.router.add_get("/dash/trades", _handle_dash_trades)
     mcp_app.router.add_get("/dash/file/research/{filename}", _handle_dash_research_file)
+    mcp_app.router.add_get("/dash/file/thesis/{filename}", _handle_dash_research_file)
     mcp_app.router.add_get("/dash/reports/{ticker}", _handle_dash_reports)
     mcp_app.router.add_get("/dash/pdf/{ticker}/{filename}", _handle_dash_pdf)
     runner = web.AppRunner(mcp_app)
