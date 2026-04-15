@@ -1,5 +1,7 @@
 # Stock-Bot MCP 도구 가이드
 > 업데이트: 2026-04-16 | 총 33개 도구
+>
+> **이 문서**: 도구 무엇을 언제 쓰는지 (용도·타이밍). 파라미터 상세 → `bot_reference.txt`, 실전 조합 워크플로우 → `bot_scenarios.md`, 입출력 예시 → `bot_samples.md`.
 
 ---
 
