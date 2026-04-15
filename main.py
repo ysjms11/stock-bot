@@ -1971,6 +1971,89 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 자동알림: 내부자 클러스터 매수 감지 (매일 20:00 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INSIDER_SENT_FILE = f"{_DATA_DIR}/insider_sent.json"
+INSIDER_CLUSTER_MIN_BUYERS = 3  # 30일 내 매수자 3명+ 시 플래그
+INSIDER_COOLDOWN_DAYS = 7       # 종목당 알림 재발송 쿨다운
+
+
+async def check_insider_cluster(context: ContextTypes.DEFAULT_TYPE):
+    """워치/보유 종목의 DART 임원 소유보고 수집 → 30일 3명+ 매수 클러스터 감지."""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    if not DART_API_KEY:
+        return
+
+    # 대상 종목: 워치 + 보유 + 매수감시 (한국만)
+    watchlist = load_watchlist()
+    portfolio = load_json(PORTFOLIO_FILE, {})
+    wa = load_watchalert()
+    tickers: dict = {}
+    for k, v in watchlist.items():
+        if not _is_us_ticker(k):
+            tickers[k] = v
+    for k, v in portfolio.items():
+        if k in ("us_stocks", "cash_krw", "cash_usd"):
+            continue
+        if isinstance(v, dict) and not _is_us_ticker(k):
+            tickers[k] = v.get("name", "")
+    for k, v in wa.items():
+        if not _is_us_ticker(k) and isinstance(v, dict):
+            tickers[k] = v.get("name", "")
+
+    if not tickers:
+        return
+
+    try:
+        # corp_code 매핑 (universe 기반)
+        universe = get_stock_universe() or {}
+        corp_map = await get_dart_corp_map(universe) if universe else {}
+        if not corp_map:
+            print("[insider] corp_map 없음, 스킵")
+            return
+
+        # 수집
+        stats = await collect_insider_for_tickers(list(tickers.keys()), corp_map)
+
+        # 쿨다운 체크 & 집계
+        sent = load_json(INSIDER_SENT_FILE, {})
+        cooldown_cutoff = (now - timedelta(days=INSIDER_COOLDOWN_DAYS)).strftime("%Y-%m-%d")
+        today = now.strftime("%Y-%m-%d")
+
+        alerts = []
+        for sym in stats.keys():
+            last_sent = sent.get(sym, "")
+            if last_sent and last_sent >= cooldown_cutoff:
+                continue  # 쿨다운 중
+            agg = aggregate_insider_cluster(sym, days=30)
+            if agg["buyers"] >= INSIDER_CLUSTER_MIN_BUYERS and agg["buy_qty"] > agg["sell_qty"]:
+                alerts.append((sym, tickers.get(sym, sym), agg))
+
+        if not alerts:
+            return
+
+        msg = f"🕵️ *내부자 클러스터 매수 감지* ({now.strftime('%m/%d %H:%M')})\n\n"
+        for sym, name, agg in alerts[:5]:
+            msg += f"🏢 *{name}* ({sym})\n"
+            msg += f"📅 30일: 매수 {agg['buyers']}명 / 매도 {agg['sellers']}명\n"
+            msg += f"📊 순매수 {agg['buy_qty'] - agg['sell_qty']:,}주 "
+            msg += f"(매수 {agg['buy_qty']:,} / 매도 {agg['sell_qty']:,})\n"
+            # 최근 3건 매수
+            recent_buys = [r for r in agg["recent"] if (r.get("delta") or 0) > 0][:3]
+            for r in recent_buys:
+                msg += f"  • {r['date']} {r['name']}({r['ofcps']}) +{r['delta']:,}\n"
+            msg += "\n"
+            sent[sym] = today
+
+        save_json(INSIDER_SENT_FILE, sent)
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[insider] 체크 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔔 자동알림: 워치 변화 감지 (19:00)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
@@ -3270,6 +3353,7 @@ def main():
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
+    jq.run_daily(check_insider_cluster,   time=dtime(20, 0, tzinfo=KST), days=(0,1,2,3,4), name="insider_cluster")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")
     jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
 

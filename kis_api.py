@@ -3544,6 +3544,170 @@ async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | N
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 내부자 거래 (elestock.json: 임원·주요주주 특정증권등 소유상황보고서)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+DB_PATH_FOR_INSIDER = f"{_DATA_DIR}/stock.db"
+
+
+async def kis_elestock(corp_code: str) -> list:
+    """DART 임원·주요주주 소유보고서 조회.
+
+    Returns: [{rcept_no, rcept_dt, repror, isu_exctv_ofcps,
+               sp_stock_lmp_cnt, sp_stock_lmp_irds_cnt, ...}, ...]
+    """
+    if not DART_API_KEY or not corp_code:
+        return []
+    url = f"{DART_BASE_URL}/elestock.json"
+    params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
+            async with s.get(url, params=params) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                if data.get("status") != "000":
+                    return []
+                return data.get("list", [])
+    except Exception as e:
+        print(f"[DART elestock] {corp_code} 오류: {e}")
+        return []
+
+
+def _to_int_safe(v) -> int:
+    if v is None:
+        return 0
+    s = str(v).replace(",", "").replace("-", "-").strip()
+    if not s or s == "-":
+        return 0
+    try:
+        return int(s)
+    except ValueError:
+        try:
+            return int(float(s))
+        except ValueError:
+            return 0
+
+
+def _to_float_safe(v) -> float:
+    if v is None:
+        return 0.0
+    s = str(v).replace(",", "").strip()
+    if not s or s == "-":
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def upsert_insider_transactions(symbol: str, corp_code: str, records: list) -> int:
+    """elestock 응답을 insider_transactions 테이블에 UPSERT. 신규 row 수 반환."""
+    import sqlite3
+    if not records:
+        return 0
+    conn = sqlite3.connect(DB_PATH_FOR_INSIDER, timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
+    now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+    inserted = 0
+    try:
+        for r in records:
+            rcept_no = (r.get("rcept_no") or "").strip()
+            repror = (r.get("repror") or "").strip()
+            if not rcept_no or not repror:
+                continue
+            try:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO insider_transactions "
+                    "(rcept_no, symbol, corp_code, rcept_dt, repror, ofcps, rgist, "
+                    " main_shrholdr, stock_cnt, stock_irds_cnt, stock_rate, stock_irds_rate, collected_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        rcept_no, symbol, corp_code,
+                        (r.get("rcept_dt") or "").strip(),
+                        repror,
+                        (r.get("isu_exctv_ofcps") or "").strip(),
+                        (r.get("isu_exctv_rgist_at") or "").strip(),
+                        (r.get("isu_main_shrholdr") or "").strip(),
+                        _to_int_safe(r.get("sp_stock_lmp_cnt")),
+                        _to_int_safe(r.get("sp_stock_lmp_irds_cnt")),
+                        _to_float_safe(r.get("sp_stock_lmp_rate")),
+                        _to_float_safe(r.get("sp_stock_lmp_irds_rate")),
+                        now_str,
+                    ),
+                )
+                if cur.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                print(f"[insider upsert] {symbol} {rcept_no} {repror}: {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    return inserted
+
+
+def aggregate_insider_cluster(symbol: str, days: int = 30) -> dict:
+    """최근 N일간 해당 종목 내부자 매수/매도 집계.
+
+    Returns: {buy_names: set, sell_names: set, buy_qty, sell_qty, buyers, sellers, recent: [...]}
+    """
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH_FOR_INSIDER, timeout=30)
+    conn.row_factory = sqlite3.Row
+    cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = conn.execute(
+        "SELECT * FROM insider_transactions "
+        "WHERE symbol=? AND rcept_dt>=? ORDER BY rcept_dt DESC",
+        (symbol, cutoff),
+    ).fetchall()
+    conn.close()
+
+    buy_names, sell_names = set(), set()
+    buy_qty = sell_qty = 0
+    recent = []
+    for r in rows:
+        name = r["repror"]
+        delta = r["stock_irds_cnt"] or 0
+        if delta > 0:
+            buy_names.add(name)
+            buy_qty += delta
+        elif delta < 0:
+            sell_names.add(name)
+            sell_qty += abs(delta)
+        recent.append({
+            "date": r["rcept_dt"], "name": name, "ofcps": r["ofcps"],
+            "delta": delta, "total": r["stock_cnt"], "rate": r["stock_rate"],
+        })
+    return {
+        "symbol": symbol,
+        "days": days,
+        "buyers": len(buy_names),
+        "sellers": len(sell_names),
+        "buy_qty": buy_qty,
+        "sell_qty": sell_qty,
+        "buy_names": sorted(buy_names),
+        "sell_names": sorted(sell_names),
+        "recent": recent,
+    }
+
+
+async def collect_insider_for_tickers(tickers: list, corp_map: dict) -> dict:
+    """워치리스트 종목들의 내부자 보고 수집 → DB 저장.
+    Returns: {symbol: {new: int, total: int}}
+    """
+    import asyncio
+    result = {}
+    for sym in tickers:
+        corp_code = corp_map.get(sym, "")
+        if not corp_code:
+            continue
+        records = await kis_elestock(corp_code)
+        new_cnt = upsert_insider_transactions(sym, corp_code, records)
+        result[sym] = {"new": new_cnt, "total": len(records)}
+        await asyncio.sleep(0.3)  # DART rate limit 여유
+    return result
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # DART 사업보고서 본문 저장
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 DART_REPORTS_DIR = f"{_DATA_DIR}/dart_reports"

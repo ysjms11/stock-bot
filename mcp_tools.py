@@ -494,11 +494,12 @@ MCP_TOOLS = [
                      "required": ["mode"]}},
     # 5. get_dart (유지 + report/report_list 모드 추가)
     {"name": "get_dart",
-     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록. mode='read': 저장된 사업보고서 txt 내용 반환 (ticker 필수).",
+     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록. mode='read': 저장된 사업보고서 txt 내용 반환 (ticker 필수). mode='insider': 종목별 임원·주요주주 내부자 거래 집계 (ticker 필수, days 지정 가능).",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":   {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 'read'=저장된 보고서 읽기(ticker 필수), 생략=기존 공시"},
-                         "ticker": {"type": "string", "description": "[report/read] 종목코드 (report: 생략 시 전체, read: 필수)"},
+                         "mode":   {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 'read'=저장된 보고서 읽기(ticker 필수), 'insider'=내부자거래집계(ticker 필수), 생략=기존 공시"},
+                         "ticker": {"type": "string", "description": "[report/read/insider] 종목코드 (report: 생략 시 전체, read/insider: 필수)"},
+                         "days":   {"type": "integer", "description": "[insider] 집계 기간 (기본 30일)"},
                      },
                      "required": []}},
     # 6. get_macro (유지)
@@ -1488,6 +1489,29 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "total_skipped": len(skipped_no_report),
                             "total_failed": len(failed),
                         }
+
+            elif dart_mode == "insider":
+                target_ticker = (arguments.get("ticker") or "").strip()
+                days = int(arguments.get("days", 30) or 30)
+                if not target_ticker:
+                    result = {"error": "ticker를 지정하세요. 예: get_dart(mode='insider', ticker='005930')"}
+                elif _is_us_ticker(target_ticker):
+                    result = {"error": "내부자 거래는 한국 종목만 지원합니다."}
+                else:
+                    # DB에 데이터 없으면 실시간 수집
+                    universe = get_stock_universe() or {}
+                    corp_map = await get_dart_corp_map(universe) if universe else {}
+                    corp_code = corp_map.get(target_ticker, "")
+                    fetched_new = 0
+                    if corp_code:
+                        records = await kis_elestock(corp_code)
+                        fetched_new = upsert_insider_transactions(target_ticker, corp_code, records)
+                    agg = aggregate_insider_cluster(target_ticker, days=days)
+                    agg["fetched_new"] = fetched_new
+                    agg["cluster_flag"] = agg["buyers"] >= 3 and agg["buy_qty"] > agg["sell_qty"]
+                    # recent는 최대 20건으로 제한
+                    agg["recent"] = agg["recent"][:20]
+                    result = agg
 
             else:
                 # 기존 동작: 워치리스트 최근 3일 공시

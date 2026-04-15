@@ -244,6 +244,27 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
+-- 6. 내부자 거래 (DART elestock.json)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+CREATE TABLE IF NOT EXISTS insider_transactions (
+    rcept_no        TEXT NOT NULL,              -- DART 접수번호
+    symbol          TEXT NOT NULL,              -- 종목코드
+    corp_code       TEXT DEFAULT '',            -- DART 고유번호
+    rcept_dt        TEXT NOT NULL,              -- 접수일자 (YYYY-MM-DD)
+    repror          TEXT DEFAULT '',            -- 보고자 (임원 이름)
+    ofcps           TEXT DEFAULT '',            -- 직위 (상무/이사/대표 등)
+    rgist           TEXT DEFAULT '',            -- 등기/비등기 여부
+    main_shrholdr   TEXT DEFAULT '',            -- 주요주주 여부
+    stock_cnt       INTEGER DEFAULT 0,          -- 특정증권등 소유수 (총)
+    stock_irds_cnt  INTEGER DEFAULT 0,          -- 소유수 증감 (+매수/-매도)
+    stock_rate      REAL DEFAULT 0,             -- 소유비율%
+    stock_irds_rate REAL DEFAULT 0,             -- 소유비율 증감%
+    collected_at    TEXT DEFAULT '',
+    PRIMARY KEY (rcept_no, repror),
+    FOREIGN KEY (symbol) REFERENCES stock_master(symbol)
+);
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- 인덱스 (최소주의 — 느린 쿼리 확인 후 추가)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- PK (trade_date, symbol)는 자동 인덱스
@@ -264,6 +285,10 @@ CREATE INDEX IF NOT EXISTS idx_ch_symbol ON consensus_history(symbol);
 -- reports: 종목별·날짜별 조회
 CREATE INDEX IF NOT EXISTS idx_rpt_ticker ON reports(ticker);
 CREATE INDEX IF NOT EXISTS idx_rpt_date ON reports(date);
+
+-- insider_transactions: 종목별·날짜별 클러스터 집계
+CREATE INDEX IF NOT EXISTS idx_ins_symbol_date ON insider_transactions(symbol, rcept_dt);
+CREATE INDEX IF NOT EXISTS idx_ins_date ON insider_transactions(rcept_dt);
 
 -- 필요시 추가 후보 (데이터 수십만행 이상 시):
 -- CREATE INDEX IF NOT EXISTS idx_ds_change ON daily_snapshot(trade_date, change_pct);

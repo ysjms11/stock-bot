@@ -18,12 +18,12 @@
 - [x] **전종목 컨센 변화 스캔 (일요일 07:05)** — 구현 완료
 - [x] **신규 리포트 텔레그램 알람** — SQLite 전환, 종목별 표시
 - [x] **MCP PDF 리포트 읽기** — 100DPI PNG ImageContent, 200개 전수 테스트 완료
-- [ ] **실적/배당 일정 자동 수집** — 현재 수동 events.json
+- [x] **실적/배당 일정 자동 수집** — events.json v2 구조, 매일 07:00 자동수집 (KIS+DART+yfinance), 매크로일정 포함, 텔레그램 알림
 
 ### 인프라
 - [x] **MCP Streamable HTTP** — Claude.ai 연결 안정화, SSE 병행
 - [x] **Gist 백업 409 수정** — 손상 Gist 교체, 신규 생성
-- [ ] **KRX OPEN API 승인 후 전환** — 4/4 신청, 서비스 8개 대기. GitHub Actions로 전환
+- [x] **KRX OPEN API** — 승인됨. KIS API + SQLite로 대체되어 전환 불필요. GitHub Actions KRX 크롤링은 보조 데이터로 유지.
 - [ ] **대시보드 인증** — Cloudflare Access + TODO 수정 + 투자판단 메모 기능
 
 ---
@@ -31,7 +31,7 @@
 ## 🟢 P2 — 알파 도구 (Tier 1, 즉시 구현)
 
 - [ ] **F-Score / M-Score** — Piotroski 9점 + Beneish 8변수. DART 재무제표 기반 (예상 알파 5~15%/년)
-- [ ] **내부자 거래 추적** — DART 임원·주요주주 소유보고. 30일 내 3명+ 매수 시 플래그 (3~8%/년)
+- [x] **내부자 거래 추적** — DART elestock.json, insider_transactions 테이블, 매일 20:00 체크, 30일 3명+ 매수 + 순매수 시 텔레그램 플래그. MCP `get_dart(mode='insider')` 추가 (4/15)
 - [ ] **FCF 메트릭** — FCF/총자산, FCF/EV, FCF/순이익 전환율 (4~6%/년)
 
 ## 🔵 P2.5 — 알파 도구 (Tier 2, 다음 분기)
@@ -49,12 +49,14 @@
 - [ ] bot_architecture.md 생성
 
 ### 정리
-- [ ] Railway 완전 삭제 (사용자 로그인 필요)
+- [x] **Railway 완전 삭제** — 중복 발송 원인 (매크로/DART 2회), 4/15 삭제
 - [ ] Oracle Cloud VM 해지 검토
 
 ---
 
 ## ✅ 완료 (최근)
+- [x] **실적/배당 일정 자동 수집 (캘린더)** — kis_api.py 14개 함수, main.py 07:00 스케줄, events.json v2 구조 (4/15)
+- [x] **대시보드 이벤트 UI 수정** — D-day 정렬 고정 + 언더스코어→공백 (4/15)
 - [x] **MCP PDF 리포트 시각 분석** — 100DPI PNG, 836개 PDF 대응, 차트/도표 인식 확인
 - [x] **MCP Streamable HTTP 트랜스포트** — POST/DELETE/OPTIONS /mcp, 세션30분, CORS
 - [x] **Gist 백업 409 해결** — reports.json(1.5MB) 포함 Gist 손상 → 신규 Gist 생성
