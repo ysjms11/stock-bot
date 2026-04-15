@@ -266,9 +266,19 @@ elif name == "new_tool_name":
 ### Teammate 4: test-writer (Sonnet)
 - 역할: 테스트 작성 및 실행. 수정된 기능의 정상 동작 확인.
 
-### Teammate 5: code-reviewer (Codex)
-- 역할: 최종 코드 리뷰. /codex:review --base main 실행.
-- 모든 작업의 마지막 단계.
+### Teammate 5: code-reviewer (Sonnet) / critic (Sonnet, OMC 차용)
+- code-reviewer: 일반 코드 리뷰. /codex:review --base main 실행 가능.
+- **critic**: 고위험 변경에만 투입. 다관점(보안/운영/새직원) 갭분석, ADVERSARIAL 모드, file:line 증거 필수, REJECT/REVISE/ACCEPT 판정.
+
+### Teammate 6: verifier (Sonnet, OMC 차용)
+- 역할: 증거 기반 완료 검증. 신선한 테스트 출력 없이 PASS 못 줌.
+- **절대 self-approve 금지** — 같은 컨텍스트에서 작성한 작업 검증 금지. 별도 호출만.
+
+### Teammate 7: debugger (Sonnet, OMC 차용)
+- 역할: 버그 리포트 시 투입. 근본원인 찾기 + minimal diff 수정.
+- 3-failure circuit breaker. 리팩토링/개명 금지.
 
 ### 작업 순서
-architect → python-developer → kis-api-specialist(해당시) → test-writer → code-reviewer
+- 신기능: architect → python-developer → kis-api-specialist(해당시) → test-writer → code-reviewer → (고위험이면 critic) → (필요시 verifier 별도 패스)
+- 버그: debugger 단독 (근본원인+최소수정) → verifier 별도 검증
+- 재검증 필요 시: verifier 단독 호출 (다른 에이전트 결과에 self-approve 금지)
