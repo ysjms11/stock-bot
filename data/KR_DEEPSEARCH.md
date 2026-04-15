@@ -1,63 +1,169 @@
-# 한국 종목 딥서치 — 10 Step 프레임워크
+# 한국 종목 10 Step 딥서치 프롬프트 템플릿
 
-> 확정일: 2026-04-16 · 근거: INVESTMENT_RULES.md (원본 유지)
-> 이 문서는 한국 종목 매수 검증 전용. 미국은 `US_DEEPSEARCH_v3.md` 참조.
+> 확정일: 2026-04-16 · 원본: `INVESTMENT_RULES.md` (유지)
+> [티커], [종목명], [현재가] 등 대괄호만 바꿔서 복붙
+> **각 STEP 헤더(`━━ STEP N. ...`)를 반드시 출력**. 생략·통합 금지. 킬 조건 적중 시 즉시 중단.
 
 ---
 
-## 🎯 핵심 원칙
+## 🎯 핵심 원칙 (매 실행 전 자각)
 
 1. **Thesis 먼저, 목표가 나중** — 가격 먼저 보면 30% 앵커링 편향 (Campbell & Sharpe 2007)
-2. **컨센서스는 벤치마크, 입력 아님** — 한국 매수 의견 93.7%, 목표가 알파 2013년 이후 0 (KCMI 2026)
-3. **5개 변수면 충분** — 5개·40개 정확도 동일 17%, 정보 늘리면 확신만 2배 부풀음 (Slovic 1973)
+2. **컨센서스 = 벤치마크, 입력 아님** — 한국 매수 의견 93.7%, 목표가 알파 2013년 이후 0 (KCMI 2026)
+3. **5개 변수면 충분** — 5개·40개 정확도 동일 17%, 정보 늘리면 확신만 2배 (Slovic 1973)
 
 ---
 
-## ✅ 매수 검증 10 Step
+## ① 새 종목 풀 딥서치 (~35분, 복붙용)
 
-**도구 표기**: 🇰🇷 = 한국 전용 · 🇺🇸 = 미국 전용 · 🌐 = 공통
+```
+[티커] [종목명] 한국 종목 10 Step 딥서치. 현재가 약 [현재가]원.
+각 STEP 헤더를 반드시 출력하고 순서대로 진행. 킬 적중 시 즉시 종료.
 
-| Step | 이름 | 도구 | 시간 |
-|------|------|------|------|
-| 0 | 레짐 게이트 | 🌐 `get_regime` | 10초 |
-| 1 | 트렌드 & 유동성 필터 | 🌐 `get_stock_detail`(가격+이평), 🇰🇷 `get_highlow` / 🇺🇸 웹서치(52w range) | 30초 |
-| 2 | 사업 thesis 형성 | 🇰🇷 `read_report_pdf`(산업분석만) + `get_dart`(사업보고서) / 🇺🇸 웹서치(10-K, 경쟁사) | 10분 |
-| 3 | 재무 검증 | 🇰🇷 `get_dart`(재무제표) + `get_finance_rank` / 🇺🇸 웹서치(SEC filing) | 5분 |
-| 4 | 팩트체크 & 반증 | 🌐 `get_news`(sentiment) + 웹서치, 🇰🇷 `get_dart`(공시) / 🇺🇸 웹서치(SEC 8-K) | 3분 |
-| 5 | 수급 확인 | 🇰🇷 `get_supply` + `get_broker` + `get_market_signal` / 🇺🇸 웹서치(13F, short interest) | 2분 |
-| 6 | 밸류에이션 | 🇰🇷 리포트 목표가 분해 + `get_consensus` / 🇺🇸 웹서치(analyst estimates). 🌐 `get_stock_detail`(VP) | 5분 |
-| 7 | RR & 과거 비교 | 🌐 `get_alerts`(과거 판단) + `get_backtest` | 2분 |
-| 8 | 포트 시뮬 | 🌐 `simulate_trade` | 1분 |
-| 9 | 결정 & 기록 | 🌐 `set_alert`(등급 + 손절/목표 + decision) | 2분 |
+━━ STEP 0. 레짐 게이트 (10초) ━━
+봇: get_regime
+□ 🟢 탐욕 / 🟡 중립 / 🔴 공포 확인
+□ 현금 제약 반영 (🔴=방어, 🟢=공격, 🟡=균형)
+※ 🔴에도 매수 가능 (개인 구조적 우위). 단 비중 축소.
+
+━━ STEP 1. 트렌드 & 유동성 필터 (30초) ━━
+봇: get_stock_detail(ticker="[티커]") + get_highlow(ticker="[티커]")
+□ Minervini Stage 2 (200MA 위 + 200MA 상승)
+□ 20거래일 평균 거래대금 100억원+ (유동성)
+□ 52주 고가 대비 -25% 이내 (고가권)
+킬: Stage 2 아님 OR 거래대금 <50억 → 탈락
+
+━━ STEP 2. 사업 thesis 형성 (10분) ★목표가 보기 전 ━━
+봇: get_dart(mode="report", ticker="[티커]") → get_dart(mode="read", ticker="[티커]")
+    + manage_report(action="list", ticker="[티커]") → read_report_pdf(산업분석 리포트만)
+※ 리포트에서 산업 데이터만 추출. 투자의견·목표가 이 단계에서 완전 무시.
+
+출력 필수:
+■ Thesis 한 문장: "[종목명]은 [무엇을] [어떻게] [왜 구조적으로 성장]"
+■ 주력 제품/서비스 3개 + 각 매출 비중
+■ 경쟁 구도: 국내/글로벌 M/S, 경쟁사 3개
+■ 구조적 성장 드라이버 2개 (규제/수요/기술/밸류업)
+
+킬: 한 문장 thesis 못 쓰면 → 이해 부족, 탈락
+
+━━ STEP 3. 재무 검증 (5분) ★밸류에이션보다 먼저 ━━
+봇: get_dart(mode="report", ticker="[티커]") 재무제표 항목 + get_finance_rank(metric="roe|per|pbr|debt_ratio")
+□ 매출 성장 3개년 CAGR 양수
+□ 영업이익률 업종 평균 이상 (get_finance_rank로 확인)
+□ 부채비율 200% 이하 (금융/건설 예외)
+□ ICR(이자보상배율) 3x+
+□ FCF 최근 4분기 중 3분기+ 양수
+□ ROE 10%+ (성장기업은 8%+도 허용)
+킬: 부채비율 300%+ OR ICR <1 OR FCF 연속적자 → 탈락
+
+━━ STEP 4. 팩트체크 & 반증 (3분) ━━
+봇: get_news(ticker="[티커]", sentiment=true) + get_dart(mode="report", ticker="[티커]")
+    + 웹서치: "[종목명] 리스크" "[종목명] 악재"
+
+■ 최근 30일 공시 이벤트: ________
+■ 뉴스 감성: 긍정/부정/중립 비율
+■ 반증 2개 필수:
+  1. 이 thesis가 틀리려면 무엇이 깨져야 하나?
+  2. Bear Case 시나리오 (-30% 경로)
+
+킬: 회계/감사 이슈 or 대규모 소송 진행 → 탈락
+
+━━ STEP 5. 수급 확인 (2분) ━━
+봇: get_supply(mode="history", ticker="[티커]", days=20)
+    + get_broker(ticker="[티커]") + get_market_signal(mode="short_sale", ticker="[티커]")
+    + get_market_signal(mode="credit", ticker="[티커]")
+□ 외국인 20일 누적 순매수 방향
+□ 기관 20일 누적 순매수 방향
+□ 공매도 잔고비율 추이 (증가=경고)
+□ 신용잔고율 <10% (과열 기준)
+□ 증권사 매수 상위 3곳에 외국계 포함 여부
+긍정 3개+ → 확신+1, 외국인+기관 동반매도 → 확신-1
+
+━━ STEP 6. 밸류에이션 (5분) ★이제 목표가 본다 ━━
+봇: get_consensus(ticker="[티커]") + manage_report(action="list", ticker="[티커]")
+    + get_stock_detail(ticker="[티커]", mode="volume_profile")
+
+■ 리포트 목표가 분해:
+  - 사용 멀티플: PER/PBR/EV_EBITDA/SOTP 중 무엇?
+  - 적용 배수 vs 업종 피어 배수 (과도한가?)
+  - 목표 EPS/BPS 근거 (컨센 대비 +/-)
+■ 컨센서스 gap:
+  - 현재가 vs 컨센 평균 목표가: __% 할인/프리미엄
+  - 최근 3개월 컨센 방향: 상향/하향/정체
+  - ※ 컨센은 입력 아님, 기대치 벤치마크로만 사용
+■ VP 주요 매물대 3개:
+  - 상단 저항 ____원 / 중심 ____원 / 하단 지지 ____원
+
+킬: 업종 피어 대비 PER 50%+ 프리미엄 + 성장률 차이로 설명 안 됨 → 보류
+
+━━ STEP 7. RR & 과거 비교 (2분) ━━
+봇: get_alerts(brief=true) + get_backtest(ticker="[티커]", strategy="ma_cross")
+■ 내 과거 동일 섹터/유사 종목 판단 결과: ________
+■ RR 계산:
+  - 진입가(감시가): ____원
+  - 손절가: ____원 (-__%)
+  - 목표가: ____원 (+__%)
+  - RR = 목표 상승률 / 손절 하락률 = __:1
+  - 등급별 최소 RR: A=1:2, B+=1:2.5, B=1:3, C=매수금지
+■ 기회비용: 현 포트 내 최고 확신 종목 대비 더 매력적인가?
+
+━━ STEP 8. 포트 시뮬 (1분) ━━
+봇: simulate_trade(ticker="[티커]", action="buy", qty=__, price=__)
+□ 단일 종목 비중 <35%
+□ 섹터 합계 비중 <50%
+□ 현금 최소선 유지 (레짐별)
+킬: 35% OR 50% 한도 초과 → 비중 축소 or 탈락
+
+━━ STEP 9. 결정 & 기록 (2분) ━━
+봇: set_alert(ticker="[티커]", buy_price=__, grade="__", memo="thesis 한 문장 + Kill Switch")
+    + write_file("data/thesis/[티커]_[종목명].md", thesis 본문)
+
+■ 확신등급: A / B+ / B / B- / C (C는 매수 금지)
+■ 감시가 (RR 기준): ____원
+■ 손절가: ____원
+■ 목표가 (2yr): ____원
+■ Thesis 한 문장: ________________
+■ Kill Switch (thesis 무효화 조건 2개):
+  1. ________________
+  2. ________________
+■ 다음 촉매 (실적 발표일 or 공시 타이밍): ____
+
+출력 템플릿 준수 필수. Bear Case 2개 필수.
+```
 
 ---
 
-## 📌 Step별 상세
+## ② 빠른 등급 판정 (10분, 복붙용)
 
-- **Step 0 — 레짐 게이트**: 🟢/🟡/🔴 확인 → 현금 제약 설정. 🔴 시에도 매수 가능 (개인 구조적 우위).
-- **Step 1 — 트렌드 필터**: Stage 2인가? 유동성 충분한가? 아니면 Kill. Minervini SEPA 기준.
-- **Step 2 — 사업 thesis**: "이 회사가 어떻게 돈 버는지" 이해. **목표가 보기 전**에 한 문장 thesis 작성. 리포트에서 산업 데이터만 추출, 투자의견·목표가는 이 단계에서 무시.
-- **Step 3 — 재무 검증**: 매출·마진·FCF·부채 검증. Pabrai 1순위: 레버리지. earnings quality 체크.
-- **Step 4 — 반증**: thesis 반증 찾기. "이 thesis가 틀리려면 뭐가 필요한가?"
-- **Step 5 — 수급**: 스마트 머니가 thesis와 같은 방향인가?
-- **Step 6 — 밸류에이션**: 이제 목표가 본다. 산출 근거 뜯기. 피어 멀티플 크로스체크. VP로 진입가. 컨센은 기대치 갭 확인용만.
-- **Step 7 — 비교**: 내 기존 판단 히스토리와 비교. RR 계산. 기회비용 체크.
-- **Step 8 — 시뮬**: 비중·섹터·현금 변화. **35% 종목한도 / 50% 섹터한도** 위반 여부.
-- **Step 9 — 기록**: 확신등급 부여. 감시가 등록. thesis 한 문장 + Kill Switch 기록. **한 문장으로 못 쓰면 이해가 부족한 것**.
+```
+[티커] [종목명] 한국 빠른 등급 판정. 현재가 약 [현재가]원.
+봇: get_stock_detail(ticker="[티커]") + get_consensus(ticker="[티커]") + get_alerts(brief=true)
+웹서치: "[종목명] 2026 실적 전망" + "[종목명] 목표주가"
+
+1. Stage 2 & 거래대금 확인 (Step 1)
+2. Thesis 한 문장 작성 (Step 2)
+3. 부채비율·ICR·FCF 확인 (Step 3)
+4. 수급 방향 (Step 5)
+5. 컨센 gap + RR (Step 6-7)
+→ 등급 / 감시가 / set_alert 기록
+```
 
 ---
 
-## 🔍 라이트 체크 (5분, 기보유 모니터링)
+## ③ 라이트 체크 (5분, 기보유 모니터링)
 
-**5개 변수만** (Slovic: 5개 넘으면 정확도 안 올라감):
+**5개 변수만** — Slovic 1973 기반 (5개 넘으면 정확도 안 올라감):
 
-1. 🌐 `get_stock_detail` — 트렌드 유지? (200MA 위?)
-2. 🇰🇷 `get_consensus` or `manage_report` / 🇺🇸 웹서치 — 추정치 상향/하향?
-3. 🌐 `get_stock_detail` — PER/PBR 섹터 대비 이상?
-4. 🇰🇷 `get_supply`(daily) / 🇺🇸 웹서치 — 오늘 수급 방향?
+```
+[티커] 라이트 체크.
+1. get_stock_detail(ticker="[티커]") — 200MA 위 유지?
+2. get_consensus(ticker="[티커]") — 추정치 상향/하향?
+3. get_stock_detail — PER/PBR 섹터 대비 이상 없음?
+4. get_supply(mode="daily", ticker="[티커]") — 오늘 수급 방향?
 5. thesis 한 문장 — 아직 유효?
 
-**이상 감지 시 → 풀 DD 에스컬레이션**
+이상 1개+ → 풀 DD 에스컬레이션
+```
 
 ---
 
@@ -67,13 +173,14 @@
 - A / B+ 확신등급 부여
 - 처음 분석하는 섹터
 - 기보유 종목 thesis 붕괴 의심
-- `get_change_scan`에서 구조적 변화 시그널
+- `get_change_scan` 구조적 변화 시그널
+- 라이트 체크 5개 중 1개+ 이상
 
 ---
 
 ## 🔗 관련 문서
 
-- `INVESTMENT_RULES.md` — 전체 투자 규칙 (원본 유지)
-- `US_DEEPSEARCH_v3.md` — 미국 종목 7단계
-- `bot_guide.md` — MCP 도구 용도·타이밍
-- `bot_scenarios.md` — 상황별 도구 조합 워크플로우
+- `INVESTMENT_RULES.md` — 전체 투자 규칙 (등급·한도·프로세스)
+- `US_DEEPSEARCH_v3.md` — 미국 7단계 (대칭 구조)
+- `bot_guide.md` — MCP 도구 용도
+- `bot_scenarios.md` — 상황별 도구 조합
