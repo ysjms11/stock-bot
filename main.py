@@ -4402,6 +4402,7 @@ _DOC_META_V2 = {
     "krx_db_design.md": ("🗄️", "KRX DB 설계"),
     "regime_update_notes.md": ("📝", "레짐 수정노트"),
     "US_DEEPSEARCH_v3.md": ("🇺🇸", "미국주식 딥서치 v3"),
+    "KR_DEEPSEARCH.md": ("🇰🇷", "한국주식 10 Step"),
 }
 
 
