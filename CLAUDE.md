@@ -1,5 +1,21 @@
 # CLAUDE.md — stock-bot 프로젝트 가이드
 
+## 🚨 세션 시작 루틴 (필수)
+
+매 세션 시작 시 **반드시** `data/PROGRESS.md`를 가장 먼저 읽을 것. 다음 세션이 바로 이어갈 수 있도록 설계된 인수인계 문서임. Anthropic "Effective harnesses for long-running agents" 패턴.
+
+```
+1. pwd
+2. git log --oneline -10
+3. cat data/PROGRESS.md      ← 가장 중요
+4. cat data/TODO_dev.md      (봇 개발)
+5. cat data/TODO_invest.md   (투자, 필요시)
+```
+
+세션 종료 시 `PROGRESS.md`의 "다음 세션에서 할 일" 갱신 필수.
+
+---
+
 ## KIS API 참조
 
 `kis-api-ref/` 폴더에 한투 공식 API 샘플 (data.csv 6326행, examples_llm/). TR_ID/파라미터 확인 시 참조.
