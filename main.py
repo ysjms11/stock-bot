@@ -2845,24 +2845,46 @@ async def watchlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /watch: watchalert.json에 KR 워치 추가 (buy_price=0 = 순수 워치)
     if len(context.args) < 2:
         await update.message.reply_text("사용법: /watch 005930 삼성전자"); return
-    wl = load_watchlist()
-    wl[context.args[0]] = context.args[1]
-    save_json(WATCHLIST_FILE, wl)
+    ticker, wname = context.args[0], context.args[1]
+    wa = load_watchalert()
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    prev = wa.get(ticker, {})
+    wa[ticker] = {
+        "name": wname,
+        "market": "KR",  # /watch 는 KR 전용 (사용자 오입력 방어). 미국은 /addus 사용.
+        "buy_price": float(prev.get("buy_price") or 0.0),
+        "qty": int(prev.get("qty") or 0),
+        "memo": prev.get("memo", ""),
+        "grade": prev.get("grade"),
+        "created_at": prev.get("created_at", today),
+        "updated_at": today,
+    }
+    save_json(WATCHALERT_FILE, wa)
     await _refresh_ws()
-    await update.message.reply_text(f"✅ *{context.args[1]}* 추가!", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ *{wname}* 추가!", parse_mode="Markdown")
 
 
 async def unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /unwatch: watchalert 엔트리 제거. buy_price>0이면 매수감시 보호 차원에서 거부
     if not context.args:
         await update.message.reply_text("사용법: /unwatch 005930"); return
-    wl = load_watchlist()
-    if context.args[0] in wl:
-        n = wl.pop(context.args[0])
-        save_json(WATCHLIST_FILE, wl)
+    ticker = context.args[0]
+    wa = load_watchalert()
+    if ticker in wa:
+        entry = wa[ticker]
+        nm = entry.get("name") or ticker
+        if float(entry.get("buy_price") or 0) > 0:
+            await update.message.reply_text(
+                f"⚠️ *{nm}* 매수감시 활성 중입니다. 먼저 매수감시 해제 후 삭제하세요.",
+                parse_mode="Markdown")
+            return
+        wa.pop(ticker)
+        save_json(WATCHALERT_FILE, wa)
         await _refresh_ws()
-        await update.message.reply_text(f"🗑 *{n}* 삭제!", parse_mode="Markdown")
+        await update.message.reply_text(f"🗑 *{nm}* 삭제!", parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ 없음")
 
@@ -2880,6 +2902,7 @@ async def uslist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def addus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /addus: watchalert.json에 US 워치 추가 (qty 포함, buy_price 보존)
     if len(context.args) < 3:
         await update.message.reply_text("사용법: /addus TSLA 테슬라 12\n(심볼 이름 수량)"); return
     sym = context.args[0].upper()
@@ -2888,20 +2911,39 @@ async def addus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         qty = int(context.args[2])
     except ValueError:
         await update.message.reply_text("❌ 수량은 숫자로"); return
-    us = load_us_watchlist()
-    us[sym] = {"name": name, "qty": qty}
-    save_json(US_WATCHLIST_FILE, us)
+    wa = load_watchalert()
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    prev = wa.get(sym, {})
+    wa[sym] = {
+        "name": name,
+        "market": "US",
+        "buy_price": float(prev.get("buy_price") or 0.0),
+        "qty": qty,
+        "memo": prev.get("memo", ""),
+        "grade": prev.get("grade"),
+        "created_at": prev.get("created_at", today),
+        "updated_at": today,
+    }
+    save_json(WATCHALERT_FILE, wa)
     await update.message.reply_text(f"✅ 🇺🇸 *{name}* ({sym}) {qty}주 추가!", parse_mode="Markdown")
 
 
 async def remus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /remus: watchalert US 엔트리 제거. buy_price>0이면 매수감시 보호 차원에서 거부
     if not context.args:
         await update.message.reply_text("사용법: /remus TSLA"); return
     sym = context.args[0].upper()
-    us = load_us_watchlist()
-    if sym in us:
-        name = us.pop(sym)["name"]
-        save_json(US_WATCHLIST_FILE, us)
+    wa = load_watchalert()
+    if sym in wa:
+        entry = wa[sym]
+        name = entry.get("name") or sym
+        if float(entry.get("buy_price") or 0) > 0:
+            await update.message.reply_text(
+                f"⚠️ *{name}* ({sym}) 매수감시 활성 중입니다. 먼저 매수감시 해제 후 삭제하세요.",
+                parse_mode="Markdown")
+            return
+        wa.pop(sym)
+        save_json(WATCHALERT_FILE, wa)
         await update.message.reply_text(f"🗑 *{name}* ({sym}) 삭제!", parse_mode="Markdown")
     else:
         await update.message.reply_text(f"❌ {sym} 없음")
@@ -3255,7 +3297,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def post_init(application: Application):
     # ── 자동 복원 체크: 핵심 파일 없으면 Gist에서 복원 ──────────────────
-    _critical = [PORTFOLIO_FILE, STOPLOSS_FILE, WATCHLIST_FILE]
+    _critical = [PORTFOLIO_FILE, STOPLOSS_FILE, WATCHALERT_FILE]
     if GITHUB_TOKEN and any(not os.path.exists(f) for f in _critical):
         try:
             res = await restore_data_files(force=False)

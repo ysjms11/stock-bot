@@ -27,7 +27,11 @@
 
 ## 🟡 이번 주 할 일 (우선순위 중)
 
-- **워치리스트 단일화** (TODO_dev.md P1): `watchlist.json` + `us_watchlist.json` + `watchalert.json` → `watchalert.json` 단일 소스. 현재 26종목 불일치. 반나절 작업.
+- **워치리스트 단일화 배포 검증** (2026-04-16 구현 완료): watchalert.json 단일 소스. 맥미니 배포 후 확인:
+  - `scripts/migrate_watchlist.py` 실행 필요 여부 (dry-run 결과: 이미 watchalert 51건이라 실질 불필요)
+  - `/watch` `/unwatch` `/addus` `/remus` 명령 동작 확인
+  - WebSocket 구독 40건 이하 유지 확인 (신규 캡 슬라이싱 추가됨)
+  - `BACKUP_WATCHLIST` `BACKUP_US_WATCHLIST` 환경변수 설정돼 있으면 제거 (Gist 복원 충돌 방지)
 - **Oracle Cloud VM 처리**: 4/15 Stop 완료. 4/16 이후 중복 알림 없으면 Terminate.
 
 ---
@@ -50,6 +54,8 @@
 | 2026-04-15 | KRX 레거시 대청소 (-2,357줄) | krx_update.py 좀비, Safari keepalive 좀비 |
 | 2026-04-15 | CLAUDE.md 다이어트 275→146줄 | 매 세션 토큰 절약 |
 | 2026-04-16 | Oracle VM Stop | 중복 발송 추가 원인 의심 |
+| 2026-04-16 | 워치리스트 단일화 (watchalert.json) | 3파일 파편화 26종목 불일치 해결, save/load 단일 경로 |
+| 2026-04-16 | 배포 플로우: main 직행 | 1인 운영 봇, 브랜치/PR 생략 |
 
 ---
 

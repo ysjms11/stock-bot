@@ -81,10 +81,11 @@ MACRO_SENT_FILE           = f"{_DATA_DIR}/macro_sent.json"
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
 _BACKUP_FILES_LIST = [
-    STOPLOSS_FILE, PORTFOLIO_FILE, WATCHLIST_FILE, US_WATCHLIST_FILE,
+    STOPLOSS_FILE, PORTFOLIO_FILE,
     WATCHALERT_FILE, WATCHLIST_LOG_FILE, PORTFOLIO_HISTORY_FILE,
     TRADE_LOG_FILE, CONSENSUS_CACHE_FILE, DECISION_LOG_FILE,
     REGIME_STATE_FILE,
+    # WATCHLIST_FILE / US_WATCHLIST_FILE 제외 — watchalert.json 단일 소스.
     # REPORTS_FILE 제외 — 1.4MB+ Gist 크기 초과. iCloud 백업으로 커버.
 ]
 
@@ -105,14 +106,15 @@ MACRO_SYMBOLS = {
 _BACKUP_MAP = {
     "BACKUP_PORTFOLIO":    PORTFOLIO_FILE,
     "BACKUP_STOPLOSS":     STOPLOSS_FILE,
-    "BACKUP_WATCHLIST":    WATCHLIST_FILE,
-    "BACKUP_US_WATCHLIST": US_WATCHLIST_FILE,
     "BACKUP_WATCHALERT":   WATCHALERT_FILE,
     "BACKUP_DECISION_LOG": DECISION_LOG_FILE,
     "BACKUP_COMPARE_LOG":  COMPARE_LOG_FILE,
     "BACKUP_EVENTS":       EVENTS_FILE,
     "BACKUP_WEEKLY_BASE":  WEEKLY_BASE_FILE,
+    # BACKUP_WATCHLIST / BACKUP_US_WATCHLIST 제거 — watchalert 단일 소스.
 }
+# 하위호환: 구 BACKUP_WATCHLIST/US_WATCHLIST 환경변수는 watchalert.json이 없을 때만 무시되지 않음.
+# watchalert.json이 있으면 무조건 그것을 단일 소스로 사용 (레거시 env 무시).
 for _env_key, _filepath in _BACKUP_MAP.items():
     if not os.path.exists(_filepath):
         _backup_val = os.environ.get(_env_key, "")
@@ -124,6 +126,12 @@ for _env_key, _filepath in _BACKUP_MAP.items():
                 print(f"[복원] {_filepath} ← 환경변수 {_env_key}")
             except Exception as _e:
                 print(f"[복원 실패] {_env_key}: {_e}")
+
+# 레거시 환경변수 가드: watchalert.json이 존재하면 BACKUP_WATCHLIST/US_WATCHLIST 무시 로그만.
+if os.path.exists(WATCHALERT_FILE):
+    for _legacy_env in ("BACKUP_WATCHLIST", "BACKUP_US_WATCHLIST"):
+        if os.environ.get(_legacy_env):
+            print(f"[무시] {_legacy_env} (watchalert.json 단일 소스 사용)")
 
 _token_cache = {"token": None, "expires": None}
 TOKEN_CACHE_FILE = f"{_DATA_DIR}/token_cache.json"
@@ -241,25 +249,41 @@ def save_json(filepath, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+_DEFAULT_KR_WATCH = {
+    "009540": "HD한국조선해양", "298040": "효성중공업",
+    "010120": "LS ELECTRIC", "267260": "HD현대일렉트릭",
+    "034020": "두산에너빌리티",
+}
+
+
 def load_watchlist():
-    return load_json(WATCHLIST_FILE, {
-        "009540": "HD한국조선해양", "298040": "효성중공업",
-        "010120": "LS ELECTRIC", "267260": "HD현대일렉트릭",
-        "034020": "두산에너빌리티",
-    })
+    """하위호환 wrapper: watchalert 기반 {ticker: name}.
+    watchalert.json 존재 시 그 내용을 그대로 반환 (빈 dict라도).
+    파일 자체가 없으면 최초 실행이므로 기본 5종목 seed."""
+    if os.path.exists(WATCHALERT_FILE):
+        return load_kr_watch_dict()
+    return dict(_DEFAULT_KR_WATCH)
 
 
 def load_stoploss():
     return load_json(STOPLOSS_FILE, {})
 
 
+_DEFAULT_US_WATCH = {
+    "TSLA": {"name": "테슬라", "qty": 12},
+    "CRSP": {"name": "크리스퍼", "qty": 70},
+    "AMD": {"name": "AMD", "qty": 17},
+    "LITE": {"name": "루멘텀", "qty": 4},
+}
+
+
 def load_us_watchlist():
-    return load_json(US_WATCHLIST_FILE, {
-        "TSLA": {"name": "테슬라", "qty": 12},
-        "CRSP": {"name": "크리스퍼", "qty": 70},
-        "AMD": {"name": "AMD", "qty": 17},
-        "LITE": {"name": "루멘텀", "qty": 4},
-    })
+    """하위호환 wrapper: watchalert 기반 {ticker: {name, qty}}.
+    watchalert.json 존재 시 그 내용을 그대로 반환 (빈 dict라도).
+    파일 자체가 없으면 최초 실행이므로 기본 US seed."""
+    if os.path.exists(WATCHALERT_FILE):
+        return load_us_watch_dict()
+    return dict(_DEFAULT_US_WATCH)
 
 
 def load_dart_seen():
@@ -268,6 +292,45 @@ def load_dart_seen():
 
 def load_watchalert():
     return load_json(WATCHALERT_FILE, {})
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 워치리스트 단일화 헬퍼 (watchalert.json 기반)
+# market 필드 없으면 _is_us_ticker()로 자동 추론
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _wa_market(ticker: str, entry: dict) -> str:
+    m = (entry or {}).get("market")
+    if m in ("KR", "US"):
+        return m
+    return "US" if _is_us_ticker(ticker) else "KR"
+
+
+def load_kr_watch_tickers() -> list:
+    """watchalert에서 market==KR 종목 코드 리스트."""
+    wa = load_watchalert()
+    return [t for t, v in wa.items() if _wa_market(t, v) == "KR"]
+
+
+def load_us_watch_tickers() -> list:
+    """watchalert에서 market==US 종목 코드 리스트."""
+    wa = load_watchalert()
+    return [t for t, v in wa.items() if _wa_market(t, v) == "US"]
+
+
+def load_kr_watch_dict() -> dict:
+    """구 watchlist.json 호환 형식 {ticker: name}."""
+    wa = load_watchalert()
+    return {t: (v.get("name") or t) for t, v in wa.items() if _wa_market(t, v) == "KR"}
+
+
+def load_us_watch_dict() -> dict:
+    """구 us_watchlist.json 호환 형식 {ticker: {name, qty}}."""
+    wa = load_watchalert()
+    return {
+        t: {"name": v.get("name") or t, "qty": int(v.get("qty") or 0)}
+        for t, v in wa.items()
+        if _wa_market(t, v) == "US"
+    }
 
 def load_decision_log():
     return load_json(DECISION_LOG_FILE, {})
@@ -655,11 +718,11 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
             for t, v in portfolio.get("us_stocks", {}).items()
         }
         # 한국 워치리스트 추가
-        for t, n in load_json(WATCHLIST_FILE, {}).items():
+        for t, n in load_watchlist().items():
             if t not in kr_tickers and not _is_us_ticker(t):
                 kr_tickers[t] = n
         # 미국 워치리스트 추가
-        for t, v in load_json(US_WATCHLIST_FILE, {}).items():
+        for t, v in load_us_watchlist().items():
             if t not in us_tickers:
                 us_tickers[t] = v.get("name", t) if isinstance(v, dict) else str(v)
     else:
@@ -1457,7 +1520,7 @@ async def save_supply_snapshot(token: str):
     history = load_json(SUPPLY_HISTORY_FILE, {})
 
     portfolio = load_json(PORTFOLIO_FILE, {})
-    wl = load_json(WATCHLIST_FILE, {})
+    wl = load_watchlist()
     tickers = {}
     for t, v in portfolio.items():
         if t not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict):
@@ -3088,27 +3151,40 @@ ws_manager = KisRealtimeManager()
 
 
 def get_ws_tickers() -> set:
-    """WebSocket 구독 대상 종목 수집 (KR + US: 포트폴리오 + 손절 + 워치알러트 + 워치리스트)"""
-    tickers = set()
+    """WebSocket 구독 대상 종목 수집 (KR + US).
+    단일 소스: 포트폴리오 + 손절 + watchalert (KR/US 통합).
+    KIS WebSocket 41건 제한 → 포트폴리오/손절 우선, 초과 시 상위 40건만 반환.
+    """
+    # 우선순위 1: 포트폴리오 (실제 보유)
+    priority: list = []
+    seen: set = set()
+
+    def _add(t: str):
+        if t and t not in seen:
+            seen.add(t)
+            priority.append(t)
+
     pf = load_json(PORTFOLIO_FILE, {})
     for t in pf:
         if t not in ("us_stocks", "cash_krw", "cash_usd"):
-            tickers.add(t)
+            _add(t)
     for sym in pf.get("us_stocks", {}):
-        tickers.add(sym)
+        _add(sym)
+    # 우선순위 2: 손절/목표가 설정 종목
     sl = load_stoploss()
     for t in sl:
         if t != "us_stocks":
-            tickers.add(t)
+            _add(t)
     for sym in sl.get("us_stocks", {}):
-        tickers.add(sym)
+        _add(sym)
+    # 우선순위 3: watchalert (KR+US 단일 소스)
     for t in load_watchalert():
-        tickers.add(t)
-    for t in load_watchlist():
-        tickers.add(t)
-    for t in load_json(US_WATCHLIST_FILE, {}):
-        tickers.add(t)
-    return tickers
+        _add(t)
+
+    # KIS WebSocket 41건 제한 → 40건 안전 캡
+    if len(priority) > 40:
+        priority = priority[:40]
+    return set(priority)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

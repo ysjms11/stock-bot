@@ -2286,15 +2286,32 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             watch_action = arguments.get("action", "").strip().lower()
 
             if watch_action == "add":
-                # ← 기존 add_watch 핸들러
+                # watchalert.json 단일 저장소에 기록 (buy_price=0 → "순수 워치" 상태)
                 ticker = arguments.get("ticker", "").strip()
                 wname  = arguments.get("name", "").strip()
                 if not ticker or not wname:
                     result = {"error": "ticker와 name은 필수입니다"}
                 else:
-                    wl = load_watchlist()
-                    wl[ticker] = wname
-                    save_json(WATCHLIST_FILE, wl)
+                    wa = load_watchalert()
+                    today = datetime.now(KST).strftime("%Y-%m-%d")
+                    # NOTE: MCP 호출자가 명시적 market 인자 추가 권장 (현재는 ticker 형태로 추론).
+                    # 영문 티커 = US, 숫자 포함 = KR.
+                    market = arguments.get("market") or ("US" if _is_us_ticker(ticker) else "KR")
+                    if market not in ("KR", "US"):
+                        market = "US" if _is_us_ticker(ticker) else "KR"
+                    prev = wa.get(ticker, {})
+                    wa[ticker] = {
+                        "name": wname,
+                        "market": market,
+                        "buy_price": float(prev.get("buy_price") or 0.0),
+                        "qty": int(prev.get("qty") or 0),
+                        "memo": prev.get("memo", ""),
+                        "grade": prev.get("grade"),
+                        "created_at": prev.get("created_at", today),
+                        "updated_at": today,
+                    }
+                    save_json(WATCHALERT_FILE, wa)
+                    wl = load_watchlist()  # 집계용 (KR 워치 수)
                     asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
                     append_watchlist_log({
                         "date": datetime.now(KST).strftime("%Y-%m-%d"),
@@ -2321,19 +2338,28 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     else:
                         result = {"error": f"{ticker} 매수감시 목록에 없음"}
                 else:
-                    # ── 워치리스트 제거 ──
-                    wl = load_watchlist()
-                    if ticker in wl:
-                        removed = wl.pop(ticker)
-                        save_json(WATCHLIST_FILE, wl)
-                        asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
-                        append_watchlist_log({
-                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
-                            "action": "remove",
-                            "ticker": ticker, "name": removed,
-                            "buy_price": None, "old_price": None, "reason": "",
-                        })
-                        result = {"ok": True, "message": f"{removed}({ticker}) 워치리스트 제거됨", "total": len(wl)}
+                    # ── 워치리스트 제거: watchalert 엔트리 처리 ──
+                    # buy_price>0(매수감시 활성)이면 엔트리는 유지하고 안내 (데이터 보호)
+                    wa = load_watchalert()
+                    if ticker in wa:
+                        entry = wa[ticker]
+                        removed_name = entry.get("name") or ticker
+                        if float(entry.get("buy_price") or 0) > 0:
+                            result = {
+                                "ok": False,
+                                "error": f"{removed_name}({ticker})는 매수감시 활성 상태입니다. 먼저 alert_type='buy_alert'로 매수감시를 해제하세요.",
+                            }
+                        else:
+                            wa.pop(ticker)
+                            save_json(WATCHALERT_FILE, wa)
+                            asyncio.create_task(ws_manager.update_tickers(get_ws_tickers()))
+                            append_watchlist_log({
+                                "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                                "action": "remove",
+                                "ticker": ticker, "name": removed_name,
+                                "buy_price": None, "old_price": None, "reason": "",
+                            })
+                            result = {"ok": True, "message": f"{removed_name}({ticker}) 워치리스트 제거됨", "total": len(load_watchlist())}
                     else:
                         result = {"error": f"{ticker} 워치리스트에 없음"}
 
