@@ -25,12 +25,7 @@
 - [x] **Gist 백업 409 수정** — 손상 Gist 교체, 신규 생성
 - [x] **KRX OPEN API** — 승인됨. KIS API + SQLite로 대체되어 전환 불필요. GitHub Actions KRX 크롤링은 보조 데이터로 유지.
 - [ ] **대시보드 인증** — Cloudflare Access + TODO 수정 + 투자판단 메모 기능
-- [ ] **워치리스트 단일화 (3파일 → 1파일)** — watchlist.json/us_watchlist.json/watchalert.json 파편화. 현재 불일치 26종목(감시가만 있고 워치리스트 X). 통합 설계:
-  - watchalert.json을 단일 소스로 (market: kr/us, buy_price: null이면 "그냥 관심")
-  - load_watchlist()/load_us_watchlist()는 watchalert 필터링 wrapper로 변경 (호출부 26곳 수정 불필요)
-  - /watch, /addus 명령어는 watchalert 기록으로 통합
-  - 단기 조치: 26개 watchalert→watchlist 1회 동기화 스크립트
-  - 영향: Gist 백업 용량↓, 신규 알림 개발 시 동기화 버그 방지
+- [x] **워치리스트 단일화 (3파일 → 1파일)** — 2026-04-16 완료. watchalert.json 단일 소스, load_watchlist/us_watchlist는 wrapper. /watch/unwatch/addus/remus 통합, market 필드, buy_price>0 삭제 보호, WebSocket 40건 캡. 레거시 2파일 .bak 리네임.
 
 ---
 
