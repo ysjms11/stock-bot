@@ -31,9 +31,9 @@
 
 ## 🟢 P2 — 알파 도구 (Tier 1, 즉시 구현)
 
-- [ ] **F-Score / M-Score** — Piotroski 9점 + Beneish 8변수. DART 재무제표 기반 (예상 알파 5~15%/년)
+- [x] **F-Score / M-Score / FCF 메트릭** — TTM 기반, 12분기 DART 소급 26,584행 수집 (4/16). MCP `get_alpha_metrics` + `get_finance_rank(fscore/mscore_safe/fcf_yield)`. **남은 작업**: shares_out 재시도(자정 KST 후), main.py 일일 자동화 스케줄 1줄.
 - [x] **내부자 거래 추적** — DART elestock.json, insider_transactions 테이블, 매일 20:00 체크, 30일 3명+ 매수 + 순매수 시 텔레그램 플래그. MCP `get_dart(mode='insider')` 추가 (4/15)
-- [ ] **FCF 메트릭** — FCF/총자산, FCF/EV, FCF/순이익 전환율 (4~6%/년)
+- [x] **FCF 메트릭** — F-Score/M-Score와 일괄 구축 완료 (위 항목 참조)
 
 ## 🔵 P2.5 — 알파 도구 (Tier 2, 다음 분기)
 
@@ -51,7 +51,7 @@
 
 ### 정리
 - [x] **Railway 완전 삭제** — 중복 발송 원인 (매크로/DART 2회), 4/15 삭제
-- [x] **Oracle Cloud VM Stop** — 4/15 Running 확인 후 Stop. 하루 모니터링 후 중복 없으면 Terminate 예정
+- [x] **Oracle Cloud VM Terminate** — 4/15 Stop → 4/16 중복 알림 없음 확인 후 완전 Terminate
 
 ---
 
