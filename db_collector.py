@@ -745,6 +745,15 @@ async def collect_daily(date: str = None) -> dict:
     # _update_consensus(conn, date, tickers)
 
     conn.close()
+
+    # 7. F/M/FCF 알파 메트릭 일괄 업데이트 (실패해도 collect_daily는 성공 취급)
+    try:
+        alpha_res = update_all_alpha_metrics(trade_date=date)
+        report["alpha"] = alpha_res
+    except Exception as e:
+        print(f"[collect_daily] 알파 메트릭 계산 실패: {e}")
+        report["alpha"] = {"error": str(e)}
+
     report["duration"] = (datetime.now() - start).total_seconds()
     print(
         f"[collect_daily] 완료 — {len(tickers)}종목 "
@@ -2855,4 +2864,150 @@ def _update_alpha_metrics(conn: sqlite3.Connection, ticker: str, end_period: str
         ),
     )
     return cur.rowcount > 0
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# F/M/FCF 전종목 일괄 업데이트 (collect_daily 훅)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def update_all_alpha_metrics(end_period: str | None = None,
+                              trade_date: str | None = None) -> dict:
+    """전종목 F-Score/M-Score/FCF 계산 후 daily_snapshot 5컬럼 UPDATE.
+
+    Args:
+        end_period: 재무 기준 분기 (YYYYMM). None이면 financial_quarterly에서
+                    fs_source IS NOT NULL 중 최신 report_period 자동 선택.
+        trade_date: daily_snapshot 대상 일자 (YYYYMMDD). None이면 MAX(trade_date).
+
+    Returns:
+        {"tickers": N, "success": S, "fscore_filled": F, "mscore_filled": M,
+         "fcf_filled": FC, "duration_sec": T, "end_period": ..., "trade_date": ...}
+    """
+    start = datetime.now()
+    conn = _get_db()
+    try:
+        _ensure_alpha_columns(conn)
+
+        # end_period 자동 결정
+        # 단순 MAX(report_period) 는 극소수 선행공시 분기(1~10건)를 골라버림 →
+        # "커버리지가 충분한 최신 분기" 를 선택: count>=500 중 최신.
+        # (기준치 500은 유니버스 2400종목의 ~20% 이상 — 신뢰할 수준)
+        if end_period is None:
+            row = conn.execute(
+                "SELECT report_period FROM financial_quarterly "
+                "WHERE fs_source IS NOT NULL "
+                "GROUP BY report_period HAVING COUNT(*) >= 500 "
+                "ORDER BY report_period DESC LIMIT 1"
+            ).fetchone()
+            end_period = row["report_period"] if row else None
+            # fallback: 아무리 적어도 최신 분기 하나 사용
+            if end_period is None:
+                row = conn.execute(
+                    "SELECT MAX(report_period) AS p FROM financial_quarterly "
+                    "WHERE fs_source IS NOT NULL"
+                ).fetchone()
+                end_period = row["p"] if row and row["p"] else None
+        if not end_period:
+            conn.close()
+            return {"error": "end_period 확보 실패 (financial_quarterly 비어있음)",
+                    "tickers": 0, "success": 0}
+
+        # trade_date 자동 결정
+        if trade_date is None:
+            row = conn.execute(
+                "SELECT MAX(trade_date) AS t FROM daily_snapshot"
+            ).fetchone()
+            trade_date = row["t"] if row and row["t"] else None
+        if not trade_date:
+            conn.close()
+            return {"error": "trade_date 확보 실패 (daily_snapshot 비어있음)",
+                    "tickers": 0, "success": 0}
+
+        # 대상 종목: fs_source 있는 재무 + 해당 trade_date에 daily_snapshot row 존재
+        rows = conn.execute(
+            "SELECT fq.symbol AS ticker, ds.market_cap AS market_cap "
+            "FROM financial_quarterly fq "
+            "JOIN daily_snapshot ds ON ds.symbol=fq.symbol "
+            "WHERE fq.report_period=? AND fq.fs_source IS NOT NULL "
+            "AND ds.trade_date=?",
+            (end_period, trade_date),
+        ).fetchall()
+
+        tickers_total = len(rows)
+        success = 0
+        fscore_filled = 0
+        mscore_filled = 0
+        fcf_filled = 0
+        errors = 0
+
+        print(f"[AlphaMetrics] 시작 — end_period={end_period} "
+              f"trade_date={trade_date} 대상 {tickers_total}종목")
+
+        for r in rows:
+            ticker = r["ticker"]
+            mcap = r["market_cap"] if r["market_cap"] else None
+            # database is locked 대비 최대 3회 재시도 (0.5s 간격)
+            attempt = 0
+            while True:
+                try:
+                    ok = _update_alpha_metrics(
+                        conn, ticker, end_period,
+                        market_cap=mcap, trade_date=trade_date,
+                    )
+                    if ok:
+                        success += 1
+                    break
+                except sqlite3.OperationalError as e:
+                    if "locked" in str(e).lower() and attempt < 2:
+                        attempt += 1
+                        import time as _t
+                        _t.sleep(0.5)
+                        continue
+                    errors += 1
+                    if errors <= 5:
+                        print(f"[AlphaMetrics] {ticker} 실패(lock): {e}")
+                    break
+                except Exception as e:
+                    errors += 1
+                    if errors <= 5:
+                        print(f"[AlphaMetrics] {ticker} 실패: {e}")
+                    break
+
+        conn.commit()
+
+        # 채움 수 집계 (WHERE IS NOT NULL count)
+        fscore_filled = conn.execute(
+            "SELECT COUNT(*) AS c FROM daily_snapshot "
+            "WHERE trade_date=? AND fscore IS NOT NULL",
+            (trade_date,),
+        ).fetchone()["c"]
+        mscore_filled = conn.execute(
+            "SELECT COUNT(*) AS c FROM daily_snapshot "
+            "WHERE trade_date=? AND mscore IS NOT NULL",
+            (trade_date,),
+        ).fetchone()["c"]
+        fcf_filled = conn.execute(
+            "SELECT COUNT(*) AS c FROM daily_snapshot "
+            "WHERE trade_date=? AND fcf_to_assets IS NOT NULL",
+            (trade_date,),
+        ).fetchone()["c"]
+
+        duration = (datetime.now() - start).total_seconds()
+        print(f"[AlphaMetrics] 완료 — success={success}/{tickers_total} "
+              f"fscore={fscore_filled} mscore={mscore_filled} "
+              f"fcf={fcf_filled} ({duration:.1f}s)")
+
+        return {
+            "tickers": tickers_total,
+            "success": success,
+            "fscore_filled": fscore_filled,
+            "mscore_filled": mscore_filled,
+            "fcf_filled": fcf_filled,
+            "duration_sec": round(duration, 1),
+            "end_period": end_period,
+            "trade_date": trade_date,
+            "errors": errors,
+        }
+    finally:
+        conn.close()
+
 

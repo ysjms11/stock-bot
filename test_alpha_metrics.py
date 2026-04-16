@@ -26,6 +26,7 @@ from db_collector import (  # noqa: E402
     _update_alpha_metrics,
     _ensure_alpha_columns,
 )
+import db_collector as _dbc  # update_all_alpha_metrics 전용 monkeypatch
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -353,6 +354,112 @@ class TestUpdateAlphaMetrics:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(daily_snapshot)").fetchall()]
         for c in ("fscore", "mscore", "fcf_to_assets", "fcf_yield_ev", "fcf_conversion"):
             assert c in cols, f"{c} 누락"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 배치 update_all_alpha_metrics 테스트
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+class TestUpdateAllAlphaMetrics:
+    def test_batch_updates_multiple_tickers(self, monkeypatch):
+        """3종목 중 최소 2종목 이상 알파 메트릭 채워져야 함."""
+        conn = _make_conn()
+
+        # 종목 A: samsung-like 풀데이터 (prev + cur) — 모든 지표 계산 성공 기대
+        _insert_fq(
+            conn, "AAAA01", "202312",
+            revenue=2_600_000, cost_of_sales=2_050_000, gross_profit=550_000,
+            operating_profit=65_000, net_income=150_000,
+            total_assets=4_800_000, fixed_assets=2_850_000, current_assets=1_950_000,
+            current_liab=820_000, fixed_liab=430_000, total_liab=1_250_000,
+            total_equity=3_550_000,
+            cfo=450_000, capex=530_000, fcf=-80_000,
+            depreciation=300_000, sga=420_000,
+            receivables=520_000, inventory=400_000,
+            shares_out=5_919_637_922,
+            net_income_parent=145_000, equity_parent=3_400_000,
+        )
+        _insert_fq(
+            conn, "AAAA01", "202412",
+            revenue=3_000_000, cost_of_sales=2_000_000, gross_profit=1_000_000,
+            operating_profit=320_000, net_income=340_000,
+            total_assets=5_140_000, fixed_assets=3_010_000, current_assets=2_130_000,
+            current_liab=860_000, fixed_liab=310_000, total_liab=1_170_000,
+            total_equity=3_970_000,
+            cfo=650_000, capex=540_000, fcf=110_000,
+            depreciation=350_000, sga=480_000,
+            receivables=560_000, inventory=420_000,
+            shares_out=5_919_637_922,
+            net_income_parent=335_000, equity_parent=3_800_000,
+        )
+
+        # 종목 B: 최소 데이터만 (prev 없음) — F-Score 일부만 + FCF 일부
+        _insert_fq(
+            conn, "BBBB02", "202412",
+            revenue=1000, operating_profit=80, net_income=70,
+            total_assets=5000, current_assets=2000,
+            current_liab=800, total_liab=1500, total_equity=3500,
+            cfo=80, capex=30, fcf=50,
+            shares_out=1_000_000, net_income_parent=70,
+        )
+
+        # 종목 C: OFS_HOLDCO → F/M 스킵, FCF만 계산 가능
+        _insert_fq(
+            conn, "CCCC03", "202412",
+            revenue=500, operating_profit=40, net_income=30, net_income_parent=30,
+            total_assets=3000, current_assets=1000,
+            current_liab=400, total_liab=800, total_equity=2200,
+            cfo=40, capex=10, fcf=30,
+            shares_out=500_000, fs_source="OFS_HOLDCO",
+        )
+
+        # daily_snapshot rows
+        for tk, mcap in (("AAAA01", 5_000_000), ("BBBB02", 1500), ("CCCC03", 1000)):
+            conn.execute(
+                "INSERT INTO daily_snapshot (trade_date, symbol, market_cap) "
+                "VALUES (?, ?, ?)",
+                ("20260416", tk, mcap),
+            )
+        conn.commit()
+
+        # _get_db() 가 모듈 레벨에서 stock.db를 열어버리므로 in-memory conn 주입.
+        # sqlite3.Connection.close 는 read-only 속성이라 직접 패치 불가 →
+        # 대리 래퍼로 우회 (모든 메서드 위임, close 만 no-op).
+        class _ConnProxy:
+            def __init__(self, real): self._real = real
+            def __getattr__(self, name): return getattr(self._real, name)
+            def close(self): pass  # finally: conn.close() 무력화
+        proxy = _ConnProxy(conn)
+
+        def _fake_get_db():
+            return proxy
+
+        monkeypatch.setattr(_dbc, "_get_db", _fake_get_db)
+
+        res = _dbc.update_all_alpha_metrics(
+            end_period="202412", trade_date="20260416"
+        )
+
+        assert res["tickers"] == 3, res
+        # 3개 전부 대상. 최소 2개 이상 UPDATE 성공.
+        assert res["success"] >= 2, res
+        # AAAA01 은 풀데이터 → F + M + FCF 전부 계산되어야 함
+        assert res["fscore_filled"] >= 1
+        assert res["mscore_filled"] >= 1
+        assert res["fcf_filled"] >= 2  # AAAA01 + BBBB02 (+ CCCC03)
+        # 반환 메타
+        assert res["end_period"] == "202412"
+        assert res["trade_date"] == "20260416"
+        assert "duration_sec" in res
+
+        # AAAA01 실제 값 확인
+        row = conn.execute(
+            "SELECT fscore, mscore, fcf_to_assets, fcf_yield_ev, fcf_conversion "
+            "FROM daily_snapshot WHERE trade_date=? AND symbol=?",
+            ("20260416", "AAAA01"),
+        ).fetchone()
+        assert row["fscore"] is not None and row["fscore"] >= 7
+        assert row["mscore"] is not None
+        assert row["fcf_to_assets"] is not None
 
 
 if __name__ == "__main__":
