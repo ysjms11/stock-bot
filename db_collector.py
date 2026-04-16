@@ -83,6 +83,18 @@ def _init_schema(conn: sqlite3.Connection):
     # 기존 DB 마이그레이션: 누락 컬럼 추가 (SQLite ADD COLUMN IF NOT EXISTS 미지원 → try/except)
     for alter_sql in (
         "ALTER TABLE daily_snapshot ADD COLUMN loan_balance_rate REAL DEFAULT 0",
+        # v1.4: F/M/FCF Phase1 — financial_quarterly 확장 (DART fnlttSinglAcntAll)
+        "ALTER TABLE financial_quarterly ADD COLUMN cfo INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN capex INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN fcf INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN depreciation INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN sga INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN receivables INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN inventory INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN shares_out INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN net_income_parent INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN equity_parent INTEGER",
+        "ALTER TABLE financial_quarterly ADD COLUMN fs_source TEXT",
     ):
         try:
             conn.execute(alter_sql)
@@ -1571,6 +1583,7 @@ async def collect_financial_weekly(date: str = None) -> dict:
 
     success_is = 0
     success_bs = 0
+    success_dart = 0
 
     async with aiohttp.ClientSession() as session:
         # Phase A: 손익계산서
@@ -1638,15 +1651,235 @@ async def collect_financial_weekly(date: str = None) -> dict:
 
         conn.commit()
 
+        # Phase C: DART 현금흐름표 + 지배귀속 + 판관비/매출채권/재고 (최신 4분기)
+        # F/M/FCF Phase1 — dart_quarterly_full 1콜로 PL/BS/CF 전체
+        try:
+            from kis_api import get_dart_corp_map, dart_quarterly_full
+            corp_map = await get_dart_corp_map({})
+        except Exception as e:
+            print(f"[Finance] Phase C skip — corp_map 로드 실패: {e}")
+            corp_map = {}
+
+        if corp_map:
+            # 최신 4분기 (현재연도 Q1 ~ 전년도 Q2) 기준 — TTM 1회분 확보
+            from datetime import datetime as _dt
+            now = _dt.now(KST)
+            # DART 공시 지연(~45일) 감안: 직전 확정 분기부터 과거로 4개
+            current_q = (now.month - 1) // 3 + 1
+            targets = []  # (year, quarter)
+            y, q = now.year, max(current_q - 1, 1) if current_q > 1 else 4
+            if current_q == 1:
+                y = now.year - 1
+            for _ in range(4):
+                targets.append((y, q))
+                q -= 1
+                if q < 1:
+                    q = 4
+                    y -= 1
+
+            print(f"[Finance] Phase C — DART 현금흐름표 {len(tickers)}종목 × "
+                  f"{len(targets)}분기 = {len(tickers) * len(targets)}콜")
+            success_dart = await _collect_dart_full_batch(
+                conn, tickers, corp_map, targets
+            )
+
     # 재무 파생값 → daily_snapshot UPDATE
     _update_financial_derived(conn, date)
     conn.close()
 
-    print(f"[Finance] 완료 — IS:{success_is}/{len(tickers)}, BS:{success_bs}/{len(tickers)}")
+    print(f"[Finance] 완료 — IS:{success_is}/{len(tickers)}, "
+          f"BS:{success_bs}/{len(tickers)}, DART:{success_dart}")
     return {
         "tickers": len(tickers),
         "income_statement": success_is,
         "balance_sheet": success_bs,
+        "dart_full": success_dart,
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 전체 재무제표 배치 (F/M/FCF Phase1)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# DART 분당 1000건 제한 → 안전 마진 900/분 = 0.067초/콜
+_DART_INTERVAL = 0.067
+
+
+def _upsert_dart_full_row(conn: sqlite3.Connection, ticker: str, r: dict):
+    """dart_quarterly_full 결과 1분기를 financial_quarterly에 UPSERT.
+    기존 KIS IS/BS 데이터를 덮어쓰지 않기 위해 COALESCE 패턴 사용.
+    10개 신규 컬럼 + (없을 때) revenue/operating_profit/net_income/… 보강.
+    """
+    rp = r.get("report_period", "")
+    if not rp:
+        return False
+
+    # 먼저 row 존재 보장 (INSERT OR IGNORE로 PK만 채움)
+    conn.execute(
+        "INSERT OR IGNORE INTO financial_quarterly (symbol, report_period, collected_at) "
+        "VALUES (?, ?, datetime('now'))",
+        (ticker, rp),
+    )
+    # 신규 컬럼은 항상 DART 값으로 덮어쓰기 (KIS에는 없음)
+    # 기존 컬럼은 COALESCE로 기존값 유지
+    conn.execute("""
+        UPDATE financial_quarterly SET
+            revenue          = COALESCE(revenue, ?),
+            cost_of_sales    = COALESCE(cost_of_sales, ?),
+            gross_profit    = COALESCE(gross_profit, ?),
+            operating_profit = COALESCE(operating_profit, ?),
+            net_income       = COALESCE(net_income, ?),
+            current_assets   = COALESCE(current_assets, ?),
+            total_assets     = COALESCE(total_assets, ?),
+            current_liab     = COALESCE(current_liab, ?),
+            total_liab       = COALESCE(total_liab, ?),
+            capital          = COALESCE(capital, ?),
+            total_equity     = COALESCE(total_equity, ?),
+            cfo              = ?,
+            capex            = ?,
+            fcf              = ?,
+            depreciation     = ?,
+            sga              = ?,
+            receivables      = ?,
+            inventory        = ?,
+            shares_out       = ?,
+            net_income_parent = ?,
+            equity_parent    = ?,
+            fs_source        = ?,
+            collected_at     = datetime('now')
+        WHERE symbol=? AND report_period=?
+    """, (
+        r.get("revenue"), r.get("cost_of_sales"), r.get("gross_profit"),
+        r.get("operating_profit"), r.get("net_income"),
+        r.get("current_assets"), r.get("total_assets"),
+        r.get("current_liab"), r.get("total_liab"),
+        r.get("capital"), r.get("total_equity"),
+        r.get("cfo"), r.get("capex"), r.get("fcf"),
+        r.get("depreciation"), r.get("sga"),
+        r.get("receivables"), r.get("inventory"),
+        r.get("shares_out"), r.get("net_income_parent"),
+        r.get("equity_parent"), r.get("fs_source"),
+        ticker, rp,
+    ))
+    return True
+
+
+async def _collect_dart_full_batch(conn: sqlite3.Connection, tickers: list,
+                                    corp_map: dict,
+                                    targets: list) -> int:
+    """DART fnlttSinglAcntAll 배치 수집 (tickers × targets).
+
+    tickers: [symbol, ...]
+    corp_map: {symbol: corp_code}
+    targets: [(year, quarter), ...]
+    반환: 성공 콜 수 (종목·분기 단위)
+    """
+    from kis_api import dart_quarterly_full
+
+    success = 0
+    total = len(tickers) * len(targets)
+    done = 0
+    skipped_no_corp = 0
+
+    async with aiohttp.ClientSession() as session:
+        for ticker in tickers:
+            corp_code = corp_map.get(ticker)
+            if not corp_code:
+                skipped_no_corp += 1
+                done += len(targets)
+                continue
+            for (y, q) in targets:
+                try:
+                    r = await dart_quarterly_full(corp_code, y, q, session=session)
+                    if r:
+                        _upsert_dart_full_row(conn, ticker, r)
+                        success += 1
+                except Exception:
+                    pass
+                done += 1
+                await asyncio.sleep(_DART_INTERVAL)
+                if done % 500 == 0:
+                    conn.commit()
+                    print(f"[DART-Full] 진행: {done}/{total} (성공 {success})")
+        conn.commit()
+
+    print(f"[DART-Full] 완료 — 성공 {success}/{total}, corp_map 미등록 스킵 {skipped_no_corp}")
+    return success
+
+
+async def collect_financial_historical(quarters_back: int = 12,
+                                       tickers_limit: int | None = None) -> dict:
+    """최근 N분기 DART 전체 재무제표 소급 수집 (F/M/FCF Phase1 1회용).
+
+    유니버스 3200종목 × 12분기 = ~38,400콜.
+    DART 분당 1000콜 제한 → 0.067초/콜 = 약 43분 소요.
+
+    Args:
+        quarters_back: 과거 몇 분기 수집할지 (기본 12 = 3년)
+        tickers_limit: 테스트용 종목 수 제한 (None=전종목)
+
+    Returns:
+        {"tickers": N, "quarters": Q, "calls_made": N*Q, "success": S,
+         "duration_sec": T}
+    """
+    from datetime import datetime as _dt
+    import time
+
+    conn = _get_db()
+    tickers = [r["symbol"] for r in conn.execute(
+        "SELECT symbol FROM stock_master"
+    ).fetchall()]
+    if tickers_limit:
+        tickers = tickers[:tickers_limit]
+
+    if not tickers:
+        conn.close()
+        return {"error": "stock_master 비어 있음"}
+
+    try:
+        from kis_api import get_dart_corp_map
+        corp_map = await get_dart_corp_map({})
+    except Exception as e:
+        conn.close()
+        return {"error": f"corp_map 로드 실패: {e}"}
+
+    if not corp_map:
+        conn.close()
+        return {"error": "corp_map 비어 있음 — dart_corp_map.json 확인"}
+
+    # 타겟 분기 리스트 생성 (DART 공시 지연 ~45일 고려 → 직전 확정 분기부터)
+    now = _dt.now(KST)
+    current_q = (now.month - 1) // 3 + 1
+    y, q = now.year, current_q - 1
+    if q < 1:
+        q = 4
+        y -= 1
+    targets = []
+    for _ in range(quarters_back):
+        targets.append((y, q))
+        q -= 1
+        if q < 1:
+            q = 4
+            y -= 1
+
+    total_calls = len(tickers) * len(targets)
+    print(f"[Historical] 대상: {len(tickers)}종목 × {len(targets)}분기 = {total_calls}콜")
+    print(f"[Historical] 예상 소요: 약 {total_calls * _DART_INTERVAL / 60:.1f}분")
+    print(f"[Historical] 타겟 분기: {targets[0]} ~ {targets[-1]}")
+
+    start = time.time()
+    success = await _collect_dart_full_batch(conn, tickers, corp_map, targets)
+    duration = time.time() - start
+
+    conn.close()
+
+    return {
+        "tickers": len(tickers),
+        "quarters": len(targets),
+        "calls_made": total_calls,
+        "success": success,
+        "duration_sec": round(duration, 1),
+        "target_range": f"{targets[-1]} ~ {targets[0]}",
     }
 
 
