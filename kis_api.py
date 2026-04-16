@@ -1474,29 +1474,48 @@ async def kis_fluctuation_rank(token: str, market: str = "0000",
     return result
 
 
+def _previous_trading_day(date_str: str) -> str:
+    """YYYYMMDD → 직전 영업일 YYYYMMDD (주말만 건너뜀, 공휴일 미반영).
+    공휴일엔 KIS API가 빈응답 반환하므로 호출자가 추가 fallback 처리 권장."""
+    dt = datetime.strptime(date_str, "%Y%m%d") - timedelta(days=1)
+    while dt.weekday() >= 5:  # 5=토, 6=일
+        dt -= timedelta(days=1)
+    return dt.strftime("%Y%m%d")
+
+
 async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5, session=None) -> list:
     """종목별 투자자 일별 수급 히스토리 (FHPTJ04160001).
 
     Returns: [{date, foreign_net, institution_net, individual_net,
                foreign_buy, foreign_sell}, ...] 최신순, 최대 n_days일
+
+    Fallback: KIS API가 today 지정 호출에 빈 응답을 주는 경우(장중 미확정, 공휴일 등)
+    직전 영업일로 한 번 재시도한 뒤에도 비면 빈 리스트 반환.
     """
     today = datetime.now(KST).strftime("%Y%m%d")
     s = session or aiohttp.ClientSession()
-    try:
+
+    async def _call(base_date: str):
         _, d = await _kis_get(s,
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
             "FHPTJ04160001", token,
             {
                 "FID_COND_MRKT_DIV_CODE": "J",
                 "FID_INPUT_ISCD":         ticker,
-                "FID_INPUT_DATE_1":       today,
+                "FID_INPUT_DATE_1":       base_date,
                 "FID_ORG_ADJ_PRC":        "",
                 "FID_ETC_CLS_CODE":       "",
             })
+        # output1=단일 현재가 dict, output2=일별 수급 list (최대 30일)
+        return d.get("output2") if d else None
+
+    try:
+        rows = await _call(today)
+        if not rows:  # 장중 빈 응답 → 직전 영업일로 1회 재시도
+            rows = await _call(_previous_trading_day(today))
     finally:
         if session is None:
             await s.close()
-    rows = d.get("output1") if d else None
     if not isinstance(rows, list):
         rows = []
     result = []
