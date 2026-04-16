@@ -9,7 +9,7 @@
 
 **우선순위 순:**
 
-1. **DART 증분 수집 구현** — 초기 12분기 소급 완료, 매일/매주 신규 공시만 증분 수집으로 전환. list.json 기반으로 `search_dart_periodic_new(days=7)` + `collect_financial_on_disclosure()` + main.py 매일 02:00 스케줄. 예상 쿼터: 5~500콜/일.
+1. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST `daily_dart_incremental` 스케줄 배포 완료 (2026-04-16). 첫 공시 발생일(분기 마감 + 45일 근처) 이후 텔레그램 알림으로 쿼터/수집 건수 확인. 평일 대다수 "공시 없음" → 조용히 skip. 분기별 피크일(5/15, 8/14, 11/14) 신규 ~800종목 수집 예상.
 
 2. **프리셋 복구 데이터 누적 대기** — credit_unwind/foreign_accumulation 코드 배포 완료 (2026-04-16). ~7일 수집되면 실제 스캔 결과 확인. `short_squeeze`는 ~5/14 자동 작동.
 
@@ -43,6 +43,7 @@
 | 2026-04-16 | KR_DEEPSEARCH.md 신설 (10 Step + PDF 게이트) | US_DEEPSEARCH_v3와 대칭, Claude의 Step 생략 방지 |
 | 2026-04-16 | F/M/FCF 알파 메트릭 4-Phase 구축 | TTM 기반 F-Score/M-Score/FCF, 12분기 DART 소급 26,584행, MCP get_alpha_metrics + 3 rank 추가 (커밋 9702a68→2ffa724) |
 | 2026-04-17 | F/M/FCF 완전 가동 | shares_out 12분기 소급 24,310건 완료 + F-Score #7 보강 재계산. 전종목 F-Score 분포 정규(피크 4-5점), 우량 7+ 552종목(22%). 자동화 스케줄(ed5aa72). 다음: DART 증분 수집. |
+| 2026-04-16 | F/M/FCF Phase6 DART 증분 자동화 | `search_dart_periodic_new` (list.json pblntf_ty=A, 정정공시 skip) + `collect_financial_on_disclosure` (중복체크, max_calls=1000 안전장치, _DART_INTERVAL 0.067) + main 02:00 daily 스케줄. 13 pytest 모두 pass (mock only, 실호출 0). |
 
 ---
 

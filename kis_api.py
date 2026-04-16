@@ -4187,6 +4187,159 @@ async def search_dart_reports(corp_code: str, days_back: int = 365) -> list:
     return []
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 증분 수집용 — 최근 N일 정기공시(pblntf_ty=A) 전체 조회
+# 기존 search_dart_reports는 특정 corp_code의 사업보고서(A001) 본문 수집용이라 분리.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_RPT_PERIOD_RE = re.compile(r"(\d{4})\.(\d{2})")
+
+
+def _parse_rpt_nm(rpt_nm: str) -> tuple[str | None, str | None]:
+    """rpt_nm 문자열에서 (report_period YYYYMM, report_type) 파싱.
+
+    규칙:
+      - "[기재정정]" / "[첨부정정]" 접두가 붙어 있으면 (None, None) 반환 — 원본 공시만 수집.
+      - "사업보고서 (2024.12)"  → ("202412", "annual")
+      - "반기보고서 (2024.06)"  → ("202406", "semi")
+      - "분기보고서 (2024.03)"  → ("202403", "quarterly")
+      - "분기보고서 (2024.09)"  → ("202409", "quarterly")
+      - 위 3유형이 아니면 (None, None).
+    """
+    nm = (rpt_nm or "").strip()
+    if not nm:
+        return None, None
+    # 정정 공시는 skip (원본이 이미 DB에 있거나, 곧 원본 공시가 나올 것)
+    if nm.startswith("[기재정정]") or nm.startswith("[첨부정정]") or nm.startswith("[정정]"):
+        return None, None
+
+    # 유형 분류 (첫 토큰만 본다; 일부는 "[첨부추가]" 등 변종이 뒤에 붙을 수 있음)
+    if "사업보고서" in nm:
+        rtype = "annual"
+    elif "반기보고서" in nm:
+        rtype = "semi"
+    elif "분기보고서" in nm:
+        rtype = "quarterly"
+    else:
+        return None, None
+
+    m = _RPT_PERIOD_RE.search(nm)
+    if not m:
+        # 괄호 내 날짜 없음 — 비정형. 일단 스킵.
+        return None, None
+    year, month = m.group(1), m.group(2)
+    # month 검증: 03/06/09/12만 유효
+    if month not in ("03", "06", "09", "12"):
+        return None, None
+    # 유형-월 정합성 보조 검증 (사업=12, 반기=06)
+    if rtype == "annual" and month != "12":
+        return None, None
+    if rtype == "semi" and month != "06":
+        return None, None
+    if rtype == "quarterly" and month not in ("03", "09"):
+        return None, None
+    return f"{year}{month}", rtype
+
+
+async def search_dart_periodic_new(days: int = 7,
+                                    session: aiohttp.ClientSession | None = None) -> list[dict]:
+    """DART list.json 지난 N일 정기공시(pblntf_ty=A) 조회.
+
+    기존 search_dart_reports(corp_code별 A001 본문 수집)와 분리 —
+    전체 공시판에서 사업/반기/분기보고서 모두 긁어오는 증분 수집용.
+    본문은 가져오지 않음 (corp_code + rcept_dt + rpt_nm만 필요).
+
+    Args:
+        days: 오늘 KST 기준 N일 전부터 조회 (기본 7).
+        session: 재사용할 aiohttp 세션. None이면 내부에서 생성.
+
+    Returns:
+        [{"corp_code", "ticker" (stock_code, 없을 수 있음), "corp_name",
+          "rcept_no", "rcept_dt", "rpt_nm",
+          "report_period" (YYYYMM), "report_type" ("quarterly"|"semi"|"annual")}]
+        정정공시([기재정정]/[첨부정정])는 제외.
+    """
+    if not DART_API_KEY:
+        print("[DART-Incr] DART_API_KEY 미설정 — 빈 결과 반환")
+        return []
+
+    now = datetime.now(KST)
+    end_de = now.strftime("%Y%m%d")
+    bgn_de = (now - timedelta(days=max(days, 1))).strftime("%Y%m%d")
+    url = f"{DART_BASE_URL}/list.json"
+
+    own_session = session is None
+    sess = session or aiohttp.ClientSession()
+
+    results: list[dict] = []
+    try:
+        page_no = 1
+        total_pages = 1
+        while page_no <= total_pages:
+            params = {
+                "crtfc_key": DART_API_KEY,
+                "bgn_de": bgn_de,
+                "end_de": end_de,
+                "pblntf_ty": "A",
+                "page_count": 100,
+                "page_no": page_no,
+                "sort": "date",
+                "sort_mth": "desc",
+            }
+            try:
+                async with sess.get(url, params=params,
+                                    timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        print(f"[DART-Incr] list.json HTTP {resp.status} page={page_no}")
+                        break
+                    data = await resp.json(content_type=None)
+            except Exception as e:
+                print(f"[DART-Incr] list.json 호출 오류 page={page_no}: {e}")
+                break
+
+            status = data.get("status", "")
+            if status != "000":
+                # 013(조회된 데이터 없음) 포함 — 조용히 종료
+                if status not in ("000", "013"):
+                    print(f"[DART-Incr] list.json status={status} "
+                          f"msg={data.get('message','')}")
+                break
+
+            page_list = data.get("list", []) or []
+            total_pages = int(data.get("total_page", 1) or 1)
+
+            for item in page_list:
+                rpt_nm = (item.get("report_nm") or "").strip()
+                period, rtype = _parse_rpt_nm(rpt_nm)
+                if not period or not rtype:
+                    continue
+                corp_code = (item.get("corp_code") or "").strip()
+                if not corp_code:
+                    continue
+                results.append({
+                    "corp_code":     corp_code,
+                    "ticker":        (item.get("stock_code") or "").strip(),
+                    "corp_name":     (item.get("corp_name") or "").strip(),
+                    "rcept_no":      (item.get("rcept_no") or "").strip(),
+                    "rcept_dt":      (item.get("rcept_dt") or "").strip(),
+                    "rpt_nm":        rpt_nm,
+                    "report_period": period,
+                    "report_type":   rtype,
+                })
+
+            # 과도한 페이징 방지 안전장치 (N일 × 100건/페이지 = 수천 페이지 이론상)
+            if page_no >= 50:
+                print(f"[DART-Incr] 50 페이지 상한 도달 — 중단 (page={page_no})")
+                break
+            page_no += 1
+
+        print(f"[DART-Incr] list.json {bgn_de}~{end_de}: "
+              f"원본 공시 {len(results)}건 (정정/비정기 제외 후)")
+        return results
+    finally:
+        if own_session:
+            await sess.close()
+
+
 async def fetch_dart_document(rcept_no: str) -> str:
     """OpenDART document.xml → ZIP 내 HTML 파일들 → 순수 텍스트.
 

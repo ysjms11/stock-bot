@@ -1768,6 +1768,78 @@ async def weekly_financial_job(context):
     except Exception as e:
         print(f"[weekly_financial] 오류: {e}")
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 증분 수집 (매일 02:00 KST)
+# collect_financial_on_disclosure: 지난 2일 정기공시만 수집 → 알파 재계산
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def daily_dart_incremental(context):
+    """매일 02:00 KST — DART 신규 정기공시 증분 수집 + 알파 메트릭 재계산.
+
+    days=2 (전날+당일)로 중복 허용 → 놓친 공시 복구 여지.
+    max_calls=1000 으로 DART 분당 1000콜 상한 보호.
+    신규 수집>0일 때만 텔레그램 알림.
+    """
+    if not _HAS_DB_COLLECTOR:
+        return
+    try:
+        from db_collector import collect_financial_on_disclosure
+    except ImportError as e:
+        print(f"[dart_incr] collect_financial_on_disclosure import 실패: {e}")
+        return
+
+    try:
+        # 타임아웃 20분 (최악: 1000콜 × 0.067초 ≈ 67초, 여유 포함)
+        report = await asyncio.wait_for(
+            collect_financial_on_disclosure(days=2, max_calls=1000),
+            timeout=1200,
+        )
+    except asyncio.TimeoutError:
+        print("[dart_incr] 20분 타임아웃")
+        try:
+            await context.bot.send_message(
+                chat_id=CHAT_ID,
+                text="⚠️ DART 증분 수집 20분 초과 타임아웃",
+            )
+        except Exception:
+            pass
+        return
+    except Exception as e:
+        print(f"[dart_incr] 오류: {e}")
+        return
+
+    newly = report.get("newly_collected", 0)
+    if newly <= 0:
+        # 조용히 스킵 (신규 공시 없음 — 대다수 평일이 그럼)
+        print(f"[dart_incr] 신규 공시 없음 — 공시 {report.get('disclosures_found',0)}건, "
+              f"중복 {report.get('already_in_db',0)}")
+        return
+
+    alpha = report.get("alpha_recalc") or {}
+    alpha_line = ""
+    if isinstance(alpha, dict) and "success" in alpha:
+        alpha_line = (f"\n• 알파 재계산: {alpha.get('success', 0)}종목 "
+                      f"(F:{alpha.get('fscore_filled',0)} / "
+                      f"M:{alpha.get('mscore_filled',0)} / "
+                      f"FCF:{alpha.get('fcf_filled',0)})")
+    elif isinstance(alpha, dict) and "error" in alpha:
+        alpha_line = f"\n• 알파 재계산 실패: {alpha['error'][:60]}"
+
+    msg = (
+        f"📥 DART 증분 수집 완료\n"
+        f"• 공시 발견: {report.get('disclosures_found',0)}건\n"
+        f"• 신규 수집: {newly}건\n"
+        f"• 기존 중복: {report.get('already_in_db',0)}건\n"
+        f"• 쿼터 사용: {report.get('quota_used_estimate',0)}콜\n"
+        f"• 소요: {report.get('duration_sec',0):.0f}초"
+        f"{alpha_line}"
+    )
+    try:
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        print(f"[dart_incr] 텔레그램 전송 실패: {e}")
+
+
 async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
     """매일 08:30 KST — 보유+감시 종목 증권사 리포트 수집"""
     if not _REPORT_AVAILABLE:
@@ -3458,6 +3530,8 @@ def main():
     # KRX 전종목 DB 갱신: db_collector가 18:30에 KRX OPEN API로 수집
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
+    # DART 증분 수집: 매일 02:00 KST — 신규 정기공시만 수집 후 알파 재계산
+    jq.run_daily(daily_dart_incremental,  time=dtime(2,  0, tzinfo=KST),                     name="dart_incremental")
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
     jq.run_daily(check_insider_cluster,   time=dtime(20, 0, tzinfo=KST), days=(0,1,2,3,4), name="insider_cluster")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")

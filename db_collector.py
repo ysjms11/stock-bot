@@ -1905,6 +1905,213 @@ async def collect_financial_historical(quarters_back: int = 12,
     }
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 증분 수집 (신규 정기공시 기반)
+# - 매일 02:00 KST에 main.py 스케줄러가 호출
+# - search_dart_periodic_new(days=2)로 최근 2일 정기공시 목록
+# - (corp_code, report_period) 쌍 기준 DB 미존재 + cfo IS NULL 만 신규 수집
+# - fnlttSinglAcntAll + stockTotqySttus 두 API 사용, 0.067초/콜 간격
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def collect_financial_on_disclosure(days: int = 2,
+                                           max_calls: int = 1000) -> dict:
+    """신규 정기공시 기반 증분 수집 + 알파 재계산 트리거.
+
+    흐름:
+      1) search_dart_periodic_new(days) → 최근 N일 원본 정기공시 목록.
+      2) 각 (corp_code, report_period) 쌍 DB 중복 체크.
+         - financial_quarterly에 해당 row가 있고 cfo IS NOT NULL 이면 skip.
+         - corp_code → ticker 매핑은 corp_codes.json 역방향 (dict{ticker: {corp_code,corp_name}}
+           → {corp_code: ticker}). stock_code가 list.json에도 있으니 이를 fallback.
+      3) 신규 건만 dart_quarterly_full + dart_shares_outstanding 호출 후 upsert.
+      4) 0.067초/콜 rate limit 준수. max_calls 도달 시 중단.
+      5) 수집 >0건이면 update_all_alpha_metrics(end_period=최신 period) 호출.
+
+    Args:
+        days: 조회 기간 (기본 2일 — 일 1회 스케줄 여유 포함).
+        max_calls: DART API 호출 상한 (fnlttSinglAcntAll + stockTotqySttus 합산).
+                   기본 1000 = DART 분당 1000콜 상한 고려한 1분치 여유.
+
+    Returns:
+        {"disclosures_found", "already_in_db", "skipped_no_ticker",
+         "newly_collected", "fnltt_calls", "shares_calls", "alpha_recalc" (dict|None),
+         "duration_sec", "quota_used_estimate"}
+    """
+    from datetime import datetime as _dt
+    import time as _time
+
+    from kis_api import (
+        search_dart_periodic_new,
+        dart_quarterly_full,
+        dart_shares_outstanding,
+        load_corp_codes,
+    )
+
+    start = _time.time()
+    result = {
+        "disclosures_found": 0,
+        "already_in_db": 0,
+        "skipped_no_ticker": 0,
+        "newly_collected": 0,
+        "fnltt_calls": 0,
+        "shares_calls": 0,
+        "alpha_recalc": None,
+        "duration_sec": 0.0,
+        "quota_used_estimate": 0,
+        "errors": 0,
+    }
+
+    # Step 1: 신규 공시 목록
+    try:
+        async with aiohttp.ClientSession() as scan_sess:
+            disclosures = await search_dart_periodic_new(days=days, session=scan_sess)
+    except Exception as e:
+        print(f"[DART-Incr] search_dart_periodic_new 오류: {e}")
+        result["errors"] += 1
+        result["duration_sec"] = round(_time.time() - start, 1)
+        return result
+
+    result["disclosures_found"] = len(disclosures)
+    if not disclosures:
+        result["duration_sec"] = round(_time.time() - start, 1)
+        return result
+
+    # Step 2: corp_code → ticker 역매핑 (list.json에 stock_code가 포함되어 있지만
+    # 보험용으로 corp_codes.json 역매핑도 준비)
+    try:
+        full_map = await load_corp_codes()  # {ticker: {corp_code, corp_name}}
+    except Exception as e:
+        print(f"[DART-Incr] load_corp_codes 실패: {e}")
+        full_map = {}
+    corp_to_ticker = {
+        v.get("corp_code"): tk for tk, v in full_map.items() if v.get("corp_code")
+    }
+
+    conn = _get_db()
+
+    # Step 3: (corp_code, report_period) 중복 + ticker 해결 후 수집 대상 필터링
+    # 동일 corp_code+period가 여러 row로 올 수 있으니 dedup.
+    to_collect: list[dict] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for d in disclosures:
+        corp_code = d["corp_code"]
+        period    = d["report_period"]
+        if (corp_code, period) in seen_pairs:
+            continue
+        seen_pairs.add((corp_code, period))
+
+        # ticker 해석: 1순위 list.json stock_code, 2순위 corp_codes 역매핑
+        ticker = d.get("ticker") or corp_to_ticker.get(corp_code, "")
+        if not ticker or len(ticker) != 6:
+            # 비상장/지주사 하위 등 — corp_code만 있고 ticker 없는 케이스 skip
+            result["skipped_no_ticker"] += 1
+            continue
+
+        # DB 중복 체크 — cfo NOT NULL이면 이미 완전 수집된 row (덮어쓰지 않음)
+        row = conn.execute(
+            "SELECT 1 FROM financial_quarterly "
+            "WHERE symbol=? AND report_period=? AND cfo IS NOT NULL",
+            (ticker, period),
+        ).fetchone()
+        if row:
+            result["already_in_db"] += 1
+            continue
+
+        to_collect.append({**d, "ticker": ticker})
+
+    if not to_collect:
+        conn.close()
+        result["duration_sec"] = round(_time.time() - start, 1)
+        return result
+
+    # Step 4: 수집 (fnlttSinglAcntAll + stockTotqySttus) — 종목당 2콜
+    # max_calls 안전장치: 2콜/종목 기준 허용 종목 수 계산
+    max_pairs = max_calls // 2
+    if len(to_collect) > max_pairs:
+        print(f"[DART-Incr] 공시 {len(to_collect)}건 > 허용 {max_pairs}건 — 앞에서만 수집")
+        to_collect = to_collect[:max_pairs]
+
+    latest_period = ""
+    async with aiohttp.ClientSession() as sess:
+        for item in to_collect:
+            ticker    = item["ticker"]
+            corp_code = item["corp_code"]
+            period    = item["report_period"]
+
+            # period "YYYYMM" → (year, quarter)
+            try:
+                year  = int(period[:4])
+                month = int(period[4:])
+                q_map = {3: 1, 6: 2, 9: 3, 12: 4}
+                quarter = q_map.get(month)
+            except Exception:
+                continue
+            if not quarter:
+                continue
+
+            # 4a. fnlttSinglAcntAll
+            try:
+                r = await dart_quarterly_full(corp_code, year, quarter, session=sess)
+                result["fnltt_calls"] += 1
+                if r:
+                    _upsert_dart_full_row(conn, ticker, r)
+                    if period > latest_period:
+                        latest_period = period
+            except Exception as e:
+                print(f"[DART-Incr] full {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
+                result["errors"] += 1
+                await asyncio.sleep(_DART_INTERVAL)
+                continue
+            await asyncio.sleep(_DART_INTERVAL)
+
+            if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
+                print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
+                break
+
+            # 4b. stockTotqySttus
+            try:
+                shares = await dart_shares_outstanding(
+                    corp_code, year, quarter, session=sess,
+                )
+                result["shares_calls"] += 1
+                if shares:
+                    conn.execute(
+                        "UPDATE financial_quarterly SET shares_out=? "
+                        "WHERE symbol=? AND report_period=?",
+                        (shares, ticker, period),
+                    )
+            except Exception as e:
+                print(f"[DART-Incr] shares {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
+                result["errors"] += 1
+            await asyncio.sleep(_DART_INTERVAL)
+
+            result["newly_collected"] += 1
+
+            if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
+                print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
+                break
+
+    conn.commit()
+    conn.close()
+
+    # Step 5: 알파 메트릭 재계산 (최신 period 기준)
+    if result["newly_collected"] > 0 and latest_period:
+        try:
+            result["alpha_recalc"] = update_all_alpha_metrics(end_period=latest_period)
+        except Exception as e:
+            print(f"[DART-Incr] update_all_alpha_metrics 오류: {e}")
+            result["alpha_recalc"] = {"error": str(e)}
+
+    result["quota_used_estimate"] = result["fnltt_calls"] + result["shares_calls"]
+    result["duration_sec"] = round(_time.time() - start, 1)
+    print(f"[DART-Incr] 완료 — 공시 {result['disclosures_found']}건 → "
+          f"신규 수집 {result['newly_collected']}건 "
+          f"(중복 {result['already_in_db']}, 무ticker {result['skipped_no_ticker']}) "
+          f"쿼터 {result['quota_used_estimate']}콜, "
+          f"{result['duration_sec']:.0f}초")
+    return result
+
+
 def _update_financial_derived(conn: sqlite3.Connection, date: str = None):
     """financial_quarterly 최신 분기 → daily_snapshot 재무 파생 컬럼 UPDATE."""
     if date is None:
