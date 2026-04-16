@@ -95,6 +95,12 @@ def _init_schema(conn: sqlite3.Connection):
         "ALTER TABLE financial_quarterly ADD COLUMN net_income_parent INTEGER",
         "ALTER TABLE financial_quarterly ADD COLUMN equity_parent INTEGER",
         "ALTER TABLE financial_quarterly ADD COLUMN fs_source TEXT",
+        # v1.5: F/M/FCF Phase3 — daily_snapshot 알파 메트릭
+        "ALTER TABLE daily_snapshot ADD COLUMN fscore INTEGER",
+        "ALTER TABLE daily_snapshot ADD COLUMN mscore REAL",
+        "ALTER TABLE daily_snapshot ADD COLUMN fcf_to_assets REAL",
+        "ALTER TABLE daily_snapshot ADD COLUMN fcf_yield_ev REAL",
+        "ALTER TABLE daily_snapshot ADD COLUMN fcf_conversion REAL",
     ):
         try:
             conn.execute(alter_sql)
@@ -2032,6 +2038,7 @@ _TTM_STOCK_FIELDS = (
     "total_assets", "current_assets", "total_liab", "current_liab",
     "total_equity", "equity_parent", "receivables", "inventory",
     "shares_out",
+    "fixed_assets", "fixed_liab",  # F/M-Score 에서 AQI/DEPI 근사용
 )
 
 
@@ -2292,3 +2299,560 @@ async def collect_shares_historical(quarters_back: int = 12,
         "duration_sec": round(duration, 1),
         "target_range": f"{targets[-1]} ~ {targets[0]}",
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# F/M/FCF Phase3 — 메트릭 계산 함수
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# 공통 원칙:
+#   * TTM 엔진(_compute_ttm) 기반. 현재 TTM vs 4분기 전 TTM (YoY).
+#   * net_income_parent 우선, None일 시 net_income으로 fallback (IS 없는 KR 기업 대응).
+#   * fs_source == 'OFS_HOLDCO' (순수 지주사)는 F/M-Score 스킵 (영업활동 없음).
+#   * 개별 지표 계산 불가(NULL) 시 False 취급 금지 → None으로 표시. score는 True만 카운트.
+#   * ZeroDivisionError / None 연산은 명시적 체크.
+#
+# 단위:
+#   * money 필드: 억원 (financial_quarterly에서 수집 시 이미 억원)
+#   * shares_out: 주
+#   * market_cap: 억원 (daily_snapshot)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+def _prev_yoy_period(end_period: str) -> str | None:
+    """end_period 기준 4분기 전(전년 동분기) period 반환. 'YYYYMM' → 'YYYYMM'."""
+    parsed = _parse_period(end_period)
+    if parsed is None:
+        return None
+    y, q = parsed
+    return _build_period(y - 1, q)
+
+
+def _fs_source(conn: sqlite3.Connection, ticker: str, end_period: str) -> str | None:
+    """financial_quarterly.fs_source 조회."""
+    row = conn.execute(
+        "SELECT fs_source FROM financial_quarterly "
+        "WHERE symbol=? AND report_period=?",
+        (ticker, end_period),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return row["fs_source"]
+    except (IndexError, KeyError):
+        return None
+
+
+def _pick_net_income(ttm: dict) -> float | None:
+    """지배주주 귀속 우선, 없으면 전체 순이익 fallback."""
+    v = ttm.get("net_income_parent")
+    if v is not None:
+        return v
+    return ttm.get("net_income")
+
+
+def _safe_div(num, den):
+    """None/0 안전 나눗셈. 둘 중 하나라도 None이거나 den=0 → None."""
+    if num is None or den is None:
+        return None
+    try:
+        if den == 0:
+            return None
+        return num / den
+    except (TypeError, ZeroDivisionError):
+        return None
+
+
+def _compute_fscore(conn: sqlite3.Connection, ticker: str, end_period: str) -> dict:
+    """Piotroski F-Score (0~9점) TTM YoY 기반 계산.
+
+    9개 이분법 지표:
+      1. ROA > 0               (TTM 순이익 / 평균 총자산)
+      2. CFO > 0               (TTM CFO)
+      3. ΔROA > 0              (현재 TTM ROA vs 전년 TTM ROA)
+      4. CFO > NI              (이익 품질)
+      5. Δ장기부채비율 < 0       (장기부채/총자산 감소, 장기부채=total_liab-current_liab)
+      6. Δ유동비율 > 0          (유동자산/유동부채 증가)
+      7. 주식수 증가 없음        (shares_out 전년 이하)
+      8. ΔGPM > 0              (매출총이익률 증가)
+      9. Δ자산회전율 > 0        (TTM 매출/평균 총자산 증가)
+
+    각 지표 데이터 부족 시 None (False 아님). score는 True만 카운트.
+    is_complete=True 조건: 9개 모두 True/False.
+    순수 지주사(OFS_HOLDCO)는 빈 결과 반환.
+
+    Returns:
+      {
+        "score": 0~9 | None,
+        "details": {지표명: True/False/None},
+        "period": end_period,
+        "yoy_period": 전년 동분기,
+        "is_complete": bool,
+        "skipped": None | "holdco" | "no_data",
+      }
+    """
+    yoy_period = _prev_yoy_period(end_period)
+    details = {
+        "roa_pos": None,
+        "cfo_pos": None,
+        "delta_roa_pos": None,
+        "cfo_gt_ni": None,
+        "delta_ltdebt_neg": None,
+        "delta_current_ratio_pos": None,
+        "shares_not_increased": None,
+        "delta_gpm_pos": None,
+        "delta_asset_turnover_pos": None,
+    }
+    result = {
+        "score": None,
+        "details": details,
+        "period": end_period,
+        "yoy_period": yoy_period,
+        "is_complete": False,
+        "skipped": None,
+    }
+
+    # 지주사 스킵
+    src = _fs_source(conn, ticker, end_period)
+    if src == "OFS_HOLDCO":
+        result["skipped"] = "holdco"
+        return result
+
+    if yoy_period is None:
+        result["skipped"] = "no_data"
+        return result
+
+    cur = _compute_ttm(conn, ticker, end_period)
+    prev = _compute_ttm(conn, ticker, yoy_period)
+
+    # 최소 현재 분기 row는 존재해야 진행 (prev는 일부만 있어도 계산 가능)
+    if not cur.get("period_end") or cur.get("total_assets") is None:
+        result["skipped"] = "no_data"
+        return result
+
+    ni_cur = _pick_net_income(cur)
+    ni_prev = _pick_net_income(prev)
+    ta_cur = cur.get("total_assets")
+    ta_prev = prev.get("total_assets")
+    ca_cur = cur.get("current_assets")
+    ca_prev = prev.get("current_assets")
+    cl_cur = cur.get("current_liab")
+    cl_prev = prev.get("current_liab")
+    tl_cur = cur.get("total_liab")
+    tl_prev = prev.get("total_liab")
+    cfo_cur = cur.get("cfo")
+    rev_cur = cur.get("revenue")
+    rev_prev = prev.get("revenue")
+    gp_cur = cur.get("gross_profit")
+    gp_prev = prev.get("gross_profit")
+    cos_cur = cur.get("cost_of_sales")
+    cos_prev = prev.get("cost_of_sales")
+    sh_cur = cur.get("shares_out")
+    sh_prev = prev.get("shares_out")
+
+    # 평균 자산 (prev 없으면 current 단일 사용)
+    if ta_cur is not None and ta_prev is not None:
+        avg_ta_cur = (ta_cur + ta_prev) / 2
+    else:
+        avg_ta_cur = ta_cur
+
+    # 전년 ROA 계산용 평균 자산: prev + 2기전 자산이 이상적이나 없음 → prev 단일
+    avg_ta_prev = ta_prev
+
+    # 1. ROA > 0
+    roa_cur = _safe_div(ni_cur, avg_ta_cur)
+    if roa_cur is not None:
+        details["roa_pos"] = roa_cur > 0
+
+    # 2. CFO > 0
+    if cfo_cur is not None:
+        details["cfo_pos"] = cfo_cur > 0
+
+    # 3. ΔROA > 0
+    roa_prev = _safe_div(ni_prev, avg_ta_prev)
+    if roa_cur is not None and roa_prev is not None:
+        details["delta_roa_pos"] = roa_cur > roa_prev
+
+    # 4. CFO > NI
+    # 단위 일관성: DART 파서(kis_api.dart_quarterly_full)에서 모든 money 필드를
+    # 수집 시점에 //1e8 처리 → 전부 "억원" 단위. net_income도 억원.
+    if cfo_cur is not None and ni_cur is not None:
+        details["cfo_gt_ni"] = cfo_cur > ni_cur
+
+    # 5. Δ장기부채비율 < 0 (장기부채/총자산)
+    #    장기부채 = total_liab - current_liab
+    def _ltdebt_ratio(tl, cl, ta):
+        if tl is None or cl is None or ta is None or ta == 0:
+            return None
+        return (tl - cl) / ta
+    ltd_cur = _ltdebt_ratio(tl_cur, cl_cur, ta_cur)
+    ltd_prev = _ltdebt_ratio(tl_prev, cl_prev, ta_prev)
+    if ltd_cur is not None and ltd_prev is not None:
+        details["delta_ltdebt_neg"] = ltd_cur < ltd_prev
+
+    # 6. Δ유동비율 > 0
+    curr_cur = _safe_div(ca_cur, cl_cur)
+    curr_prev = _safe_div(ca_prev, cl_prev)
+    if curr_cur is not None and curr_prev is not None:
+        details["delta_current_ratio_pos"] = curr_cur > curr_prev
+
+    # 7. 주식수 증가 없음
+    if sh_cur is not None and sh_prev is not None:
+        details["shares_not_increased"] = sh_cur <= sh_prev
+
+    # 8. ΔGPM > 0  — GPM = gross_profit / revenue. 없으면 (revenue - cost_of_sales)/revenue
+    def _gpm(gp, cos, rev):
+        if rev is None or rev == 0:
+            return None
+        if gp is not None:
+            return gp / rev
+        if cos is not None:
+            return (rev - cos) / rev
+        return None
+    gpm_cur = _gpm(gp_cur, cos_cur, rev_cur)
+    gpm_prev = _gpm(gp_prev, cos_prev, rev_prev)
+    if gpm_cur is not None and gpm_prev is not None:
+        details["delta_gpm_pos"] = gpm_cur > gpm_prev
+
+    # 9. Δ자산회전율 > 0
+    at_cur = _safe_div(rev_cur, avg_ta_cur)
+    at_prev = _safe_div(rev_prev, avg_ta_prev)
+    if at_cur is not None and at_prev is not None:
+        details["delta_asset_turnover_pos"] = at_cur > at_prev
+
+    # 집계
+    score = sum(1 for v in details.values() if v is True)
+    is_complete = all(v is not None for v in details.values())
+    result["score"] = score
+    result["is_complete"] = is_complete
+    return result
+
+
+def _compute_mscore(conn: sqlite3.Connection, ticker: str, end_period: str) -> dict:
+    """Beneish M-Score (earnings manipulation detection).
+
+    공식: M = -4.84 + 0.92·DSRI + 0.528·GMI + 0.404·AQI + 0.892·SGI
+              + 0.115·DEPI - 0.172·SGAI + 4.679·TATA - 0.327·LVGI
+
+    임계값:
+      M > -1.78        → "high"
+      -2.22 < M ≤ -1.78 → "moderate"
+      M ≤ -2.22        → "low"
+
+    주의 — 컬럼 부재에 따른 근사:
+      * PPE (유형자산) 컬럼 없음 → PPE ≈ total_assets - current_assets (비유동자산).
+        단, 이 근사로는 AQI가 항상 0이 되어버림 (1 - (CA+(TA-CA))/TA = 0).
+        → AQI 는 fixed_assets(고정자산, 비유동자산) 대신 inventory 기반 근사.
+        여기선 AQI 변수를 제외 대신 TA 대비 receivables 변화 비율로 대체 근사.
+      * Cash, CurrDebt 컬럼 없음 → TATA = (operating_profit - cfo) / total_assets 근사
+        (오퍼레이팅 발생액 = OI - CFO의 전통적 근사식)
+
+    Returns:
+      {
+        "mscore": float | None,
+        "manipulation_risk": "high"/"moderate"/"low"/None,
+        "variables": {DSRI, GMI, AQI, SGI, DEPI, SGAI, LVGI, TATA},
+        "period": end_period,
+        "yoy_period": 전년 동분기,
+        "is_complete": bool,
+        "skipped": None | "holdco" | "no_data",
+      }
+    """
+    yoy_period = _prev_yoy_period(end_period)
+    variables = {
+        "DSRI": None, "GMI": None, "AQI": None, "SGI": None,
+        "DEPI": None, "SGAI": None, "LVGI": None, "TATA": None,
+    }
+    result = {
+        "mscore": None,
+        "manipulation_risk": None,
+        "variables": variables,
+        "period": end_period,
+        "yoy_period": yoy_period,
+        "is_complete": False,
+        "skipped": None,
+    }
+
+    src = _fs_source(conn, ticker, end_period)
+    if src == "OFS_HOLDCO":
+        result["skipped"] = "holdco"
+        return result
+
+    if yoy_period is None:
+        result["skipped"] = "no_data"
+        return result
+
+    cur = _compute_ttm(conn, ticker, end_period)
+    prev = _compute_ttm(conn, ticker, yoy_period)
+
+    if cur.get("total_assets") is None:
+        result["skipped"] = "no_data"
+        return result
+
+    # 필드 추출
+    rev_c = cur.get("revenue")
+    rev_p = prev.get("revenue")
+    ar_c = cur.get("receivables")
+    ar_p = prev.get("receivables")
+    gp_c = cur.get("gross_profit")
+    gp_p = prev.get("gross_profit")
+    cos_c = cur.get("cost_of_sales")
+    cos_p = prev.get("cost_of_sales")
+    ca_c = cur.get("current_assets")
+    ca_p = prev.get("current_assets")
+    ta_c = cur.get("total_assets")
+    ta_p = prev.get("total_assets")
+    cl_c = cur.get("current_liab")
+    cl_p = prev.get("current_liab")
+    tl_c = cur.get("total_liab")
+    tl_p = prev.get("total_liab")
+    sga_c = cur.get("sga")  # 원 단위
+    sga_p = prev.get("sga")
+    dep_c = cur.get("depreciation")  # 원 단위
+    dep_p = prev.get("depreciation")
+    cfo_c = cur.get("cfo")  # 원 단위
+    op_c = cur.get("operating_profit")  # 억원 단위
+
+    # PPE 근사 (비유동자산 = total_assets - current_assets)
+    def _ppe(ta, ca):
+        if ta is None or ca is None:
+            return None
+        return ta - ca
+    ppe_c = _ppe(ta_c, ca_c)
+    ppe_p = _ppe(ta_p, ca_p)
+
+    # 1. DSRI = (AR_t/Rev_t) / (AR_t-1/Rev_t-1)
+    arr_c = _safe_div(ar_c, rev_c)
+    arr_p = _safe_div(ar_p, rev_p)
+    variables["DSRI"] = _safe_div(arr_c, arr_p)
+
+    # 2. GMI = GM_t-1 / GM_t   (GM = gross_profit / revenue)
+    def _gm(gp, cos, rev):
+        if rev is None or rev == 0:
+            return None
+        if gp is not None:
+            return gp / rev
+        if cos is not None:
+            return (rev - cos) / rev
+        return None
+    gm_c = _gm(gp_c, cos_c, rev_c)
+    gm_p = _gm(gp_p, cos_p, rev_p)
+    variables["GMI"] = _safe_div(gm_p, gm_c)
+
+    # 3. AQI — 원공식 = (1 - (CA+PPE)/TA)_t / (...)_t-1
+    # 우리 DB에는 PPE 컬럼 없음. total_assets - current_assets는 비유동자산
+    # 전체(=PPE+무형+투자자산)이므로 "1 - (CA+비유동)/TA = 0" 으로 항상 0이 됨.
+    # → 실용적 근사: fixed_assets(비유동자산) 있으면 PPE ≈ 0.5 * fixed_assets
+    #   (제조업 평균: 유형자산이 비유동의 ~50%). 더 정밀한 대체는 Phase 후속에서.
+    fa_c = cur.get("fixed_assets")
+    fa_p = prev.get("fixed_assets")
+    def _aqi_ratio(ca, fa, ta):
+        if ca is None or fa is None or ta is None or ta == 0:
+            return None
+        ppe_approx = fa * 0.5  # 제조업 평균 가정
+        return 1 - (ca + ppe_approx) / ta
+    aqi_c = _aqi_ratio(ca_c, fa_c, ta_c)
+    aqi_p = _aqi_ratio(ca_p, fa_p, ta_p)
+    variables["AQI"] = _safe_div(aqi_c, aqi_p)
+
+    # 4. SGI = Rev_t / Rev_t-1
+    variables["SGI"] = _safe_div(rev_c, rev_p)
+
+    # 5. DEPI = (Dep_t-1/(Dep_t-1+PPE_t-1)) / (Dep_t/(Dep_t+PPE_t))
+    # 단위 일관성: DART 파서에서 모든 money 필드 //1e8 처리됐으므로
+    # dep/depreciation 도 억원. PPE 근사 = fixed_assets * 0.5 (AQI와 동일).
+    def _depi_ratio(dep, fa):
+        if dep is None or fa is None:
+            return None
+        ppe_approx = fa * 0.5
+        total = dep + ppe_approx
+        if total == 0:
+            return None
+        return dep / total
+    depi_c = _depi_ratio(dep_c, fa_c)
+    depi_p = _depi_ratio(dep_p, fa_p)
+    variables["DEPI"] = _safe_div(depi_p, depi_c)
+
+    # 6. SGAI = (SGA/Rev)_t / (SGA/Rev)_t-1   — sga, rev 모두 억원
+    def _sga_ratio(sga, rev):
+        if sga is None or rev is None or rev == 0:
+            return None
+        return sga / rev
+    sgar_c = _sga_ratio(sga_c, rev_c)
+    sgar_p = _sga_ratio(sga_p, rev_p)
+    variables["SGAI"] = _safe_div(sgar_c, sgar_p)
+
+    # 7. LVGI = ((CL+LTD)/TA)_t / (...)_t-1
+    # CL+LTD = total_liab (CL + (TL-CL) = TL) 로 근사
+    lvgi_c = _safe_div(tl_c, ta_c)
+    lvgi_p = _safe_div(tl_p, ta_p)
+    variables["LVGI"] = _safe_div(lvgi_c, lvgi_p)
+
+    # 8. TATA ≈ (operating_profit - CFO) / total_assets  — 발생액 근사
+    # op/cfo/ta 모두 억원
+    if op_c is not None and cfo_c is not None and ta_c is not None and ta_c != 0:
+        variables["TATA"] = (op_c - cfo_c) / ta_c
+
+    # 최종 M-Score
+    if all(variables[k] is not None for k in
+           ("DSRI", "GMI", "AQI", "SGI", "DEPI", "SGAI", "LVGI", "TATA")):
+        m = (-4.84
+             + 0.92 * variables["DSRI"]
+             + 0.528 * variables["GMI"]
+             + 0.404 * variables["AQI"]
+             + 0.892 * variables["SGI"]
+             + 0.115 * variables["DEPI"]
+             - 0.172 * variables["SGAI"]
+             + 4.679 * variables["TATA"]
+             - 0.327 * variables["LVGI"])
+        result["mscore"] = m
+        result["is_complete"] = True
+        if m > -1.78:
+            result["manipulation_risk"] = "high"
+        elif m > -2.22:
+            result["manipulation_risk"] = "moderate"
+        else:
+            result["manipulation_risk"] = "low"
+    return result
+
+
+def _compute_fcf_metrics(conn: sqlite3.Connection, ticker: str, end_period: str,
+                         market_cap: float | None = None) -> dict:
+    """FCF 기반 3종 지표 TTM 기반.
+
+    반환 단위:
+      * fcf_ttm: 억원
+      * fcf_to_assets, fcf_yield_ev, fcf_conversion: % (예: 5.3 = 5.3%)
+
+    주의 — 단순화:
+      * EV ≈ market_cap + total_liab (현금 컬럼 없어 cash 차감 생략)
+      * FCF 전환율 = fcf / net_income. 순이익 ≤ 0 이면 None (의미 없음)
+      * 단위: DART 파서가 수집 시 모든 money 필드를 //1e8 처리하므로
+        financial_quarterly 의 fcf/cfo/depreciation 모두 "억원". market_cap도 억원.
+
+    Returns:
+      {
+        "fcf_ttm": float | None (억원),
+        "fcf_to_assets": float | None (%),
+        "fcf_yield_ev": float | None (%),
+        "fcf_conversion": float | None (%),
+        "period": end_period,
+        "is_complete": bool,
+      }
+    """
+    result = {
+        "fcf_ttm": None,
+        "fcf_to_assets": None,
+        "fcf_yield_ev": None,
+        "fcf_conversion": None,
+        "period": end_period,
+        "is_complete": False,
+    }
+
+    ttm = _compute_ttm(conn, ticker, end_period)
+    if ttm.get("period_end") is None:
+        return result
+
+    fcf = ttm.get("fcf")
+    ta = ttm.get("total_assets")
+    tl = ttm.get("total_liab")
+    ni = _pick_net_income(ttm)
+
+    # fcf 는 억원 단위 (DART 파서에서 //1e8 처리됨)
+    if fcf is None:
+        return result
+    result["fcf_ttm"] = float(fcf)
+
+    # FCF / 총자산
+    if ta is not None and ta > 0:
+        result["fcf_to_assets"] = (fcf / ta) * 100
+
+    # FCF / EV
+    if market_cap is not None and market_cap > 0 and tl is not None:
+        ev = market_cap + tl
+        if ev > 0:
+            result["fcf_yield_ev"] = (fcf / ev) * 100
+
+    # FCF / 순이익 (순이익>0 일 때만)
+    if ni is not None and ni > 0:
+        result["fcf_conversion"] = (fcf / ni) * 100
+
+    # is_complete: 3개 모두 계산됐을 때
+    core = (result["fcf_to_assets"], result["fcf_yield_ev"], result["fcf_conversion"])
+    result["is_complete"] = all(v is not None for v in core)
+    return result
+
+
+def _ensure_alpha_columns(conn: sqlite3.Connection):
+    """daily_snapshot 에 F/M/FCF 5컬럼 존재 보장. 없으면 ALTER ADD."""
+    for sql in (
+        "ALTER TABLE daily_snapshot ADD COLUMN fscore INTEGER",
+        "ALTER TABLE daily_snapshot ADD COLUMN mscore REAL",
+        "ALTER TABLE daily_snapshot ADD COLUMN fcf_to_assets REAL",
+        "ALTER TABLE daily_snapshot ADD COLUMN fcf_yield_ev REAL",
+        "ALTER TABLE daily_snapshot ADD COLUMN fcf_conversion REAL",
+    ):
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+
+def _update_alpha_metrics(conn: sqlite3.Connection, ticker: str, end_period: str,
+                          market_cap: float | None = None,
+                          trade_date: str | None = None) -> bool:
+    """F-Score + M-Score + FCF 계산 후 daily_snapshot(trade_date, symbol)에 UPDATE.
+
+    Args:
+        conn: SQLite 연결
+        ticker: 종목코드
+        end_period: 'YYYYMM' 기준 분기말 (재무 데이터 기준)
+        market_cap: 억원 단위. 없으면 daily_snapshot 에서 조회 시도.
+        trade_date: 'YYYYMMDD'. 없으면 daily_snapshot 최신 row 사용.
+
+    Returns:
+        True = UPDATE 발생, False = 해당 row 없음 or 데이터 없음.
+    """
+    _ensure_alpha_columns(conn)
+
+    # trade_date 결정
+    if trade_date is None:
+        row = conn.execute(
+            "SELECT trade_date, market_cap FROM daily_snapshot "
+            "WHERE symbol=? ORDER BY trade_date DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+        if row is None:
+            return False
+        trade_date = row["trade_date"]
+        if market_cap is None:
+            market_cap = row["market_cap"] if row["market_cap"] else None
+
+    # market_cap 인자 없으면 해당 날짜 row에서 조회
+    if market_cap is None:
+        row = conn.execute(
+            "SELECT market_cap FROM daily_snapshot WHERE trade_date=? AND symbol=?",
+            (trade_date, ticker),
+        ).fetchone()
+        if row and row["market_cap"]:
+            market_cap = row["market_cap"]
+
+    fs = _compute_fscore(conn, ticker, end_period)
+    ms = _compute_mscore(conn, ticker, end_period)
+    fcf = _compute_fcf_metrics(conn, ticker, end_period, market_cap=market_cap)
+
+    cur = conn.execute(
+        "UPDATE daily_snapshot SET fscore=?, mscore=?, "
+        "fcf_to_assets=?, fcf_yield_ev=?, fcf_conversion=? "
+        "WHERE trade_date=? AND symbol=?",
+        (
+            fs.get("score"),
+            ms.get("mscore"),
+            fcf.get("fcf_to_assets"),
+            fcf.get("fcf_yield_ev"),
+            fcf.get("fcf_conversion"),
+            trade_date, ticker,
+        ),
+    )
+    return cur.rowcount > 0
+

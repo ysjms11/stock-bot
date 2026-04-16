@@ -1,4 +1,4 @@
--- stock-bot SQLite DB 스키마 v1.4 (F/M/FCF Phase1: financial_quarterly 현금흐름+지배귀속 확장)
+-- stock-bot SQLite DB 스키마 v1.5 (F/M/FCF Phase3: daily_snapshot fscore/mscore/FCF 3종)
 -- 5테이블 + 1뷰: stock_master + daily_snapshot + financial_quarterly + consensus_history + reports + v_daily_scan
 -- 확정 API: FHKST01010100 / FHPTJ04160001 / FHPST04830000 / FHPST02320000 / FHKST66430200 / FHKST66430100
 
@@ -147,6 +147,13 @@ CREATE TABLE IF NOT EXISTS daily_snapshot (
     roe                 REAL,                   -- ROE%
     revenue_growth      REAL,                   -- 매출 성장률% (QoQ)
     op_growth           REAL,                   -- 영업이익 성장률% (QoQ)
+
+    -- ── F/M/FCF Phase3 (알파 메트릭) ──
+    fscore              INTEGER,                -- Piotroski F-Score (0~9)
+    mscore              REAL,                   -- Beneish M-Score
+    fcf_to_assets       REAL,                   -- FCF / 총자산 (%)
+    fcf_yield_ev        REAL,                   -- FCF / EV (%)
+    fcf_conversion      REAL,                   -- FCF / 순이익 (%)
 
     -- ── 확장 여유 (ALTER TABLE 없이 지표 추가용) ──
     tech_01             REAL,
