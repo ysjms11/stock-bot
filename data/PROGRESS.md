@@ -9,30 +9,11 @@
 
 **우선순위 순:**
 
-1. **맥미니 서버 반영** — 오늘 커밋 7개 적용 필요
-   ```bash
-   cd ~/stock-bot && git pull
-   # 좀비 launchd가 원격에 있으면 제거:
-   launchctl unload ~/Library/LaunchAgents/com.stock-bot.krx-update.plist 2>/dev/null
-   launchctl unload ~/Library/LaunchAgents/com.stock-bot.krx-keepalive.plist 2>/dev/null
-   rm -f ~/Library/LaunchAgents/com.stock-bot.krx-{update,keepalive}.plist
-   launchctl kickstart -k gui/501/com.stock-bot.main  # 봇 재시작
-   ```
+1. **프리셋 복구 데이터 누적 대기** — credit_unwind/foreign_accumulation 코드 배포 완료 (2026-04-16). ~7일 수집되면 실제 스캔 결과 확인. `short_squeeze`는 ~5/14 자동 작동.
 
-2. **프리셋 복구 후속 검증** — foreign_accumulation + credit_unwind 코드 반영 완료 (2026-04-16). 맥미니 배포 후 ~7일 수집 쌓이면 실제 스캔 결과 확인 필요. `short_squeeze`는 ~5/14 자동 작동.
+2. **KR_DEEPSEARCH 실전 검증** — 10 Step 템플릿 + PDF 게이트 추가됨. 다음 한국 종목 딥서치 시 사용자가 직접 복붙하며 Step 누락 여부 / 킬 조건 체감 확인.
 
-3. **내부자 클러스터 첫 실행 결과 확인** — 4/16 20:00 KST 이후 텔레그램 알림 체크
-
----
-
-## 🟡 이번 주 할 일 (우선순위 중)
-
-- **워치리스트 단일화 배포 검증** (2026-04-16 구현 완료): watchalert.json 단일 소스. 맥미니 배포 후 확인:
-  - `scripts/migrate_watchlist.py` 실행 필요 여부 (dry-run 결과: 이미 watchalert 51건이라 실질 불필요)
-  - `/watch` `/unwatch` `/addus` `/remus` 명령 동작 확인
-  - WebSocket 구독 40건 이하 유지 확인 (신규 캡 슬라이싱 추가됨)
-  - `BACKUP_WATCHLIST` `BACKUP_US_WATCHLIST` 환경변수 설정돼 있으면 제거 (Gist 복원 충돌 방지)
-- **Oracle Cloud VM 처리**: 4/15 Stop 완료. 4/16 이후 중복 알림 없으면 Terminate.
+3. **Oracle Cloud VM 처리** — 4/15 Stop 완료. 중복 알림 없으면 Terminate.
 
 ---
 
@@ -56,6 +37,9 @@
 | 2026-04-16 | Oracle VM Stop | 중복 발송 추가 원인 의심 |
 | 2026-04-16 | 워치리스트 단일화 (watchalert.json) | 3파일 파편화 26종목 불일치 해결, save/load 단일 경로 |
 | 2026-04-16 | 배포 플로우: main 직행 | 1인 운영 봇, 브랜치/PR 생략 |
+| 2026-04-16 | HANDOVER.md 폐기 | 1인 운영 + AI 페어, PROGRESS.md로 역할 일원화 |
+| 2026-04-16 | 대시보드 thesis/ 폴더 노출 | 18개 Thesis 딥서치 문서 접근성 |
+| 2026-04-16 | KR_DEEPSEARCH.md 신설 (10 Step + PDF 게이트) | US_DEEPSEARCH_v3와 대칭, Claude의 Step 생략 방지 |
 
 ---
 
@@ -65,6 +49,9 @@
 2. **"죽은 코드" 판단 전 데이터 성숙도 체크** — short_squeeze는 코드 정상, 과거 데이터 0이라 일시적으로 빈 결과일 뿐이었음.
 3. **사용자 지적 신뢰** — "KRX Safari 대체됐던 거 같은데"라는 기억이 정확했고, 재검증으로 2,357줄 청소로 이어짐.
 4. **팀 구조 원칙 지키기** — Opus가 직접 구현 안 하고 Sonnet 에이전트에 위임. 코드 수정은 python-developer.
+5. **"맥미니 = 다른 서버" 편향 주의** — 워크트리가 `/Users/kreuzer/stock-bot/.claude/worktrees/` 아래라 본체가 맥미니 자체임을 잊고 "배포 필요"라 말함. 사용자가 "니가 맥미니야"로 교정.
+6. **문서는 복붙 템플릿 + 킬 조건 없으면 Step 생략됨** — KR_DEEPSEARCH 초판은 설명문만 → Claude가 건너뜀. US 패턴(━━ STEP N ━━ 헤더 강제, 킬 조건, 체크박스) 차용으로 해결.
+7. **리뷰 2중 체제의 가치** — code-reviewer + critic 병렬로 워치리스트 단일화 치명 6건(wrapper fallback, 직접참조, WebSocket 41건 초과) 캐치. 커밋 전에 막음.
 
 ---
 

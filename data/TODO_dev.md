@@ -56,6 +56,11 @@
 ---
 
 ## ✅ 완료 (최근)
+- [x] **프리셋 복구 (credit_unwind + foreign_accumulation)** — loan_balance_rate 컬럼 + foreign_hold_change_5d 계산 추가, ~7일 데이터 누적 대기 (4/16)
+- [x] **KR_DEEPSEARCH.md 신설 (10 Step + PDF 게이트)** — US 대칭, 킬 조건 + 체크박스로 Step 생략 방지 (4/16)
+- [x] **대시보드 thesis/ 폴더 노출** — 💡 투자 테제 섹션, 18개 딥서치 문서 (4/16)
+- [x] **HANDOVER.md 폐기** — PROGRESS.md로 인수인계 일원화 (4/16)
+- [x] **문서 stale 정리** — FILES/krx_db_design/bot_reference 업데이트, regime_update_notes 삭제, 네비 주석 추가 (4/16)
 - [x] **실적/배당 일정 자동 수집 (캘린더)** — kis_api.py 14개 함수, main.py 07:00 스케줄, events.json v2 구조 (4/15)
 - [x] **대시보드 이벤트 UI 수정** — D-day 정렬 고정 + 언더스코어→공백 (4/15)
 - [x] **MCP PDF 리포트 시각 분석** — 100DPI PNG, 836개 PDF 대응, 차트/도표 인식 확인
