@@ -9,13 +9,11 @@
 
 **우선순위 순:**
 
-1. **shares_out 12분기 소급 재시도** — 4/16 DART 일일 한도 초과로 실패. 자정 KST 리셋 후 `collect_shares_historical(quarters_back=12)` 재실행. 완료 후 F-Score 배치 재계산 (#7 주식수 지표 보강 → 평균 6→7점 기대).
+1. **DART 증분 수집 구현** — 초기 12분기 소급 완료, 매일/매주 신규 공시만 증분 수집으로 전환. list.json 기반으로 `search_dart_periodic_new(days=7)` + `collect_financial_on_disclosure()` + main.py 매일 02:00 스케줄. 예상 쿼터: 5~500콜/일.
 
-2. **F/M/FCF 일일 자동화** — Phase 4까지 완료, 수동 배치는 daily_snapshot 채워짐. 매일 18:30 collect_daily 후 `_update_alpha_metrics` 자동 호출 스케줄 추가 필요. main.py에 1줄.
+2. **프리셋 복구 데이터 누적 대기** — credit_unwind/foreign_accumulation 코드 배포 완료 (2026-04-16). ~7일 수집되면 실제 스캔 결과 확인. `short_squeeze`는 ~5/14 자동 작동.
 
-3. **프리셋 복구 데이터 누적 대기** — credit_unwind/foreign_accumulation 코드 배포 완료 (2026-04-16). ~7일 수집되면 실제 스캔 결과 확인. `short_squeeze`는 ~5/14 자동 작동.
-
-4. **KR_DEEPSEARCH 실전 검증** — 10 Step 템플릿 + PDF 게이트 추가됨. 다음 한국 종목 딥서치 시 사용자가 직접 복붙하며 Step 누락 여부 / 킬 조건 체감 확인.
+3. **KR_DEEPSEARCH 실전 검증** — 10 Step 템플릿 + PDF 게이트 추가됨. 다음 한국 종목 딥서치 시 사용자가 직접 복붙하며 Step 누락 여부 / 킬 조건 체감 확인.
 
 ---
 
@@ -44,6 +42,7 @@
 | 2026-04-16 | 대시보드 thesis/ 폴더 노출 | 18개 Thesis 딥서치 문서 접근성 |
 | 2026-04-16 | KR_DEEPSEARCH.md 신설 (10 Step + PDF 게이트) | US_DEEPSEARCH_v3와 대칭, Claude의 Step 생략 방지 |
 | 2026-04-16 | F/M/FCF 알파 메트릭 4-Phase 구축 | TTM 기반 F-Score/M-Score/FCF, 12분기 DART 소급 26,584행, MCP get_alpha_metrics + 3 rank 추가 (커밋 9702a68→2ffa724) |
+| 2026-04-17 | F/M/FCF 완전 가동 | shares_out 12분기 소급 24,310건 완료 + F-Score #7 보강 재계산. 전종목 F-Score 분포 정규(피크 4-5점), 우량 7+ 552종목(22%). 자동화 스케줄(ed5aa72). 다음: DART 증분 수집. |
 
 ---
 
