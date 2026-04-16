@@ -1836,16 +1836,23 @@ async def collect_financial_historical(quarters_back: int = 12,
         conn.close()
         return {"error": "stock_master 비어 있음"}
 
+    # corp_codes.json (3959종목) 우선, fallback으로 dart_corp_map.json (211종목)
     try:
-        from kis_api import get_dart_corp_map
-        corp_map = await get_dart_corp_map({})
+        from kis_api import load_corp_codes, get_dart_corp_map
+        full_map = await load_corp_codes()  # {ticker: {corp_code, corp_name}}
+        corp_map = {tk: v["corp_code"] for tk, v in full_map.items() if v.get("corp_code")}
+        if not corp_map:
+            legacy = await get_dart_corp_map({})
+            corp_map = legacy if isinstance(legacy, dict) else {}
     except Exception as e:
         conn.close()
         return {"error": f"corp_map 로드 실패: {e}"}
 
     if not corp_map:
         conn.close()
-        return {"error": "corp_map 비어 있음 — dart_corp_map.json 확인"}
+        return {"error": "corp_map 비어 있음 — corp_codes.json / dart_corp_map.json 확인"}
+
+    print(f"[Historical] corp_map 엔트리: {len(corp_map)}종목")
 
     # 타겟 분기 리스트 생성 (DART 공시 지연 ~45일 고려 → 직전 확정 분기부터)
     now = _dt.now(KST)
@@ -2008,3 +2015,280 @@ def backup_to_icloud():
 
     print(f"[backup_to_icloud] 완료 → {CURRENT}")
     return {"ok": True, "path": CURRENT}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# TTM 계산 엔진 (F/M/FCF Phase2)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Flow 항목 (분기별 "누적" 값 → 차분으로 단분기 산출 후 4분기 합산)
+_TTM_FLOW_FIELDS = (
+    "revenue", "operating_profit", "net_income", "net_income_parent",
+    "cfo", "capex", "fcf", "depreciation", "sga",
+    "cost_of_sales", "gross_profit",
+)
+# Stock 항목 (대차대조표: end_period 시점 값 그대로)
+_TTM_STOCK_FIELDS = (
+    "total_assets", "current_assets", "total_liab", "current_liab",
+    "total_equity", "equity_parent", "receivables", "inventory",
+    "shares_out",
+)
+
+
+def _parse_period(period: str) -> tuple[int, int] | None:
+    """YYYYMM (예: 202412) → (year, quarter). quarter: 1/2/3/4."""
+    if not period or len(period) != 6 or not period.isdigit():
+        return None
+    y = int(period[:4])
+    m = int(period[4:])
+    q_map = {3: 1, 6: 2, 9: 3, 12: 4}
+    q = q_map.get(m)
+    if q is None:
+        return None
+    return (y, q)
+
+
+def _build_period(year: int, quarter: int) -> str:
+    """(year, quarter) → 'YYYYMM' (quarter 1→03, 2→06, 3→09, 4→12)."""
+    return f"{year}{quarter * 3:02d}"
+
+
+def _compute_ttm(conn: sqlite3.Connection, ticker: str, end_period: str) -> dict:
+    """TTM (Trailing Twelve Months) 재무 지표 계산.
+
+    한국 DART 분기 보고서는 "당해 연도 누적" 값을 반환함:
+      1분기(YYYY03) = 3개월 누적
+      반기  (YYYY06) = 6개월 누적
+      3분기(YYYY09) = 9개월 누적
+      사업  (YYYY12) = 12개월 누적 (= 연간)
+
+    따라서 단순 4분기 합산은 중복 계상됨.
+    TTM 공식:
+        Qn of year Y (n<4): cumulative(Qn,Y) + annual(Y-1) - cumulative(Qn,Y-1)
+        Q4 of year Y      : annual(Y)  (그대로)
+
+    Args:
+        conn: SQLite 연결
+        ticker: 종목코드
+        end_period: 'YYYYMM' (기준 분기 말)
+
+    Returns:
+        dict {
+          revenue, operating_profit, net_income, ...(flow),
+          total_assets, current_assets, ..., shares_out (stock, end_period 시점 값),
+          period_end: end_period,
+          periods_used: [리스트],
+          is_ttm_complete: bool  (True = flow 계산에 필요한 모든 분기 데이터 보유),
+        }
+        실패 시 {"period_end": end_period, "is_ttm_complete": False, 필드는 모두 None}.
+    """
+    parsed = _parse_period(end_period)
+    flow_fields = list(_TTM_FLOW_FIELDS)
+    stock_fields = list(_TTM_STOCK_FIELDS)
+
+    # 기본 반환 템플릿 (전 필드 None)
+    out: dict = {f: None for f in (*flow_fields, *stock_fields)}
+    out["period_end"] = end_period
+    out["periods_used"] = []
+    out["is_ttm_complete"] = False
+
+    if parsed is None:
+        return out
+    year, quarter = parsed
+
+    # end_period row (Stock 필드 + flow 누적값)
+    end_row = conn.execute(
+        "SELECT * FROM financial_quarterly WHERE symbol=? AND report_period=?",
+        (ticker, end_period),
+    ).fetchone()
+    if end_row is None:
+        return out
+
+    # Stock 필드: end_period 시점 값 그대로
+    for f in stock_fields:
+        try:
+            out[f] = end_row[f]
+        except (IndexError, KeyError):
+            out[f] = None
+
+    # TTM flow 계산
+    if quarter == 4:
+        # Q4 = 연간 (12개월 누적) = 그대로
+        periods_used = [end_period]
+        for f in flow_fields:
+            try:
+                out[f] = end_row[f]
+            except (IndexError, KeyError):
+                out[f] = None
+        # 필수 핵심 필드가 하나라도 있으면 complete로 간주
+        out["is_ttm_complete"] = any(out[f] is not None for f in flow_fields)
+    else:
+        # n<4: TTM = cum(Qn,Y) + annual(Y-1) - cum(Qn,Y-1)
+        prev_annual_period = _build_period(year - 1, 4)
+        prev_same_q_period = _build_period(year - 1, quarter)
+        periods_used = [end_period, prev_annual_period, prev_same_q_period]
+
+        prev_annual = conn.execute(
+            "SELECT * FROM financial_quarterly WHERE symbol=? AND report_period=?",
+            (ticker, prev_annual_period),
+        ).fetchone()
+        prev_same_q = conn.execute(
+            "SELECT * FROM financial_quarterly WHERE symbol=? AND report_period=?",
+            (ticker, prev_same_q_period),
+        ).fetchone()
+
+        all_present = prev_annual is not None and prev_same_q is not None
+        out["is_ttm_complete"] = all_present
+
+        if all_present:
+            for f in flow_fields:
+                try:
+                    cur = end_row[f]
+                    ann = prev_annual[f]
+                    prev_q = prev_same_q[f]
+                except (IndexError, KeyError):
+                    out[f] = None
+                    continue
+                # 보수적: 3개 값 중 하나라도 NULL이면 TTM도 NULL
+                if cur is None or ann is None or prev_q is None:
+                    out[f] = None
+                    continue
+                out[f] = cur + ann - prev_q
+        else:
+            # 불완전: 그래도 end_row 값만이라도 채워둠 (참고용, is_ttm_complete=False 표시)
+            for f in flow_fields:
+                try:
+                    out[f] = end_row[f]
+                except (IndexError, KeyError):
+                    out[f] = None
+
+    out["periods_used"] = periods_used
+    return out
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 발행주식수 소급 수집 (F/M/FCF Phase2)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def collect_shares_historical(quarters_back: int = 12,
+                                     tickers_limit: int | None = None) -> dict:
+    """DART stockTotqySttus API로 보통주 발행주식수 N분기 소급.
+
+    financial_quarterly.shares_out (주 단위) UPDATE.
+    이미 값이 있어도 덮어씀 (최신 API 결과 우선).
+
+    Args:
+        quarters_back: 과거 몇 분기 수집 (기본 12 = 3년)
+        tickers_limit: 테스트용 상한 (None=전종목)
+
+    Returns:
+        {"tickers", "quarters", "calls_made", "success", "updated", "duration_sec"}
+    """
+    from datetime import datetime as _dt
+    import time
+
+    conn = _get_db()
+    tickers = [r["symbol"] for r in conn.execute(
+        "SELECT symbol FROM stock_master"
+    ).fetchall()]
+    if tickers_limit:
+        tickers = tickers[:tickers_limit]
+    if not tickers:
+        conn.close()
+        return {"error": "stock_master 비어 있음"}
+
+    # corp_codes.json(3959) 우선, fallback dart_corp_map.json(211)
+    try:
+        from kis_api import load_corp_codes, get_dart_corp_map
+        full_map = await load_corp_codes()
+        corp_map = {tk: v["corp_code"] for tk, v in full_map.items()
+                    if v.get("corp_code")}
+        if not corp_map:
+            legacy = await get_dart_corp_map({})
+            corp_map = legacy if isinstance(legacy, dict) else {}
+    except Exception as e:
+        conn.close()
+        return {"error": f"corp_map 로드 실패: {e}"}
+    if not corp_map:
+        conn.close()
+        return {"error": "corp_map 비어 있음"}
+
+    # 타겟 분기 (DART 공시 지연 ~45일)
+    now = _dt.now(KST)
+    current_q = (now.month - 1) // 3 + 1
+    y, q = now.year, current_q - 1
+    if q < 1:
+        q = 4
+        y -= 1
+    targets = []
+    for _ in range(quarters_back):
+        targets.append((y, q))
+        q -= 1
+        if q < 1:
+            q = 4
+            y -= 1
+
+    total_calls = len(tickers) * len(targets)
+    print(f"[SharesHist] corp_map {len(corp_map)}종목, 대상 {len(tickers)}×{len(targets)}={total_calls}콜")
+    print(f"[SharesHist] 예상 {total_calls * _DART_INTERVAL / 60:.1f}분, "
+          f"타겟 {targets[-1]}~{targets[0]}")
+
+    from kis_api import dart_shares_outstanding
+
+    success = 0
+    updated = 0
+    done = 0
+    skipped_no_corp = 0
+    start = time.time()
+
+    async with aiohttp.ClientSession() as session:
+        for ticker in tickers:
+            corp_code = corp_map.get(ticker)
+            if not corp_code:
+                skipped_no_corp += 1
+                done += len(targets)
+                continue
+            for (ty, tq) in targets:
+                rp = _build_period(ty, tq)
+                try:
+                    shares = await dart_shares_outstanding(
+                        corp_code, ty, tq, session=session
+                    )
+                    if shares is not None and shares > 0:
+                        success += 1
+                        # row 없으면 생성 (collect_financial_historical 이후 shares만 채우는 케이스도 대응)
+                        conn.execute(
+                            "INSERT OR IGNORE INTO financial_quarterly "
+                            "(symbol, report_period, collected_at) "
+                            "VALUES (?, ?, datetime('now'))",
+                            (ticker, rp),
+                        )
+                        cur = conn.execute(
+                            "UPDATE financial_quarterly SET shares_out=? "
+                            "WHERE symbol=? AND report_period=?",
+                            (shares, ticker, rp),
+                        )
+                        if cur.rowcount > 0:
+                            updated += 1
+                except Exception:
+                    pass
+                done += 1
+                await asyncio.sleep(_DART_INTERVAL)
+                if done % 500 == 0:
+                    conn.commit()
+                    print(f"[SharesHist] {done}/{total_calls} (성공 {success}, UPDATE {updated})")
+        conn.commit()
+
+    conn.close()
+    duration = time.time() - start
+    print(f"[SharesHist] 완료 — 성공 {success}/{total_calls}, "
+          f"UPDATE {updated}, corp_map 스킵 {skipped_no_corp}, {duration:.1f}초")
+    return {
+        "tickers": len(tickers),
+        "quarters": len(targets),
+        "calls_made": total_calls,
+        "success": success,
+        "updated": updated,
+        "skipped_no_corp": skipped_no_corp,
+        "duration_sec": round(duration, 1),
+        "target_range": f"{targets[-1]} ~ {targets[0]}",
+    }

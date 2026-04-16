@@ -3751,9 +3751,11 @@ async def dart_quarterly_full(corp_code: str, year: int, quarter: int,
             if amt is None:
                 continue
 
-            # 매출액: "매출액" 정확 매칭 우선 (매출총이익 제외)
+            # 매출액: 변종 대응 ("매출액" / "매출" / "영업수익" / "수익(매출액)")
+            # 매출총이익/매출원가 제외 (포함어)
             if revenue is None and sj in ("IS", "CIS"):
-                if acct in ("매출액", "수익(매출액)", "영업수익") or acct.startswith("매출액"):
+                if acct in ("매출액", "매출", "수익(매출액)", "영업수익") \
+                        or acct.startswith("매출액"):
                     revenue = amt
                     continue
 
@@ -3780,25 +3782,26 @@ async def dart_quarterly_full(corp_code: str, year: int, quarter: int,
                 if dep_intan is None and ("무형자산상각" in acct or "무형자산 상각" in acct):
                     dep_intan = amt
 
-            # 지배주주 귀속 순이익 — PL/CIS
-            if net_income_parent is None and sj in ("IS", "CIS"):
-                if "지배기업" in acct and ("순이익" in acct or "당기순이익" in acct):
+            # 지배주주 귀속 순이익 — IS 만 (CIS는 포괄손익이라 제외)
+            # 계정명 변종: "지배기업 소유주지분", "지배기업 소유지분", "지배기업소유주지분"
+            if net_income_parent is None and sj == "IS":
+                if "지배기업" in acct and "지분" in acct:
                     net_income_parent = amt
                     continue
 
-            # 당기순이익 (전체, 지배+비지배 합산 or 단일)
+            # 당기순이익 (전체, 지배+비지배 합산) — IS 우선, 없으면 CIS
+            # 변종: "당기순이익", "연결당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익"
+            # CIS의 "총포괄이익/총포괄손익"은 제외 (별도 지표)
             if net_income is None and sj in ("IS", "CIS"):
-                if acct in ("당기순이익", "당기순이익(손실)", "분기순이익",
-                            "반기순이익", "당기순손실") or \
-                   (acct.startswith("당기순이익") and "지배" not in acct and
-                    "비지배" not in acct):
+                if ("당기순이익" in acct or "분기순이익" in acct or "반기순이익" in acct) \
+                        and "지배" not in acct and "비지배" not in acct \
+                        and "포괄" not in acct:
                     net_income = amt
                     continue
 
-            # 지배주주 귀속 자본 — BS
+            # 지배주주 귀속 자본 — BS (계정명 변종 포함)
             if equity_parent is None and sj == "BS":
-                if "지배기업" in acct and ("소유주지분" in acct or "지분" in acct or
-                                          "자본" in acct):
+                if "지배기업" in acct and "지분" in acct:
                     equity_parent = amt
                     continue
 
@@ -3830,9 +3833,73 @@ async def dart_quarterly_full(corp_code: str, year: int, quarter: int,
         # 발행주식수 — fnlttSinglAcntAll에는 없음 (별도 API 필요, Phase1 범위 밖)
         out["shares_out"] = None
 
+        # 단위 변환: 원 → 억원 (기존 financial_quarterly 컬럼 단위와 통일)
+        _MONEY_KEYS = ("revenue", "cost_of_sales", "gross_profit", "operating_profit",
+                       "sga", "net_income", "net_income_parent",
+                       "current_assets", "total_assets", "current_liab", "total_liab",
+                       "capital", "total_equity", "equity_parent",
+                       "receivables", "inventory",
+                       "cfo", "capex", "fcf", "depreciation")
+        for k in _MONEY_KEYS:
+            v = out.get(k)
+            if v is not None:
+                out[k] = v // 100_000_000
+
         return out
     except Exception as e:
         print(f"[DART] dart_quarterly_full {corp_code} {year}Q{quarter} 오류: {e}")
+        return None
+    finally:
+        if own_session:
+            await sess.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 주식 총수 (stockTotqySttus: 보통주 발행주식수)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def dart_shares_outstanding(corp_code: str, year: int, quarter: int,
+                                   session: aiohttp.ClientSession | None = None
+                                   ) -> int | None:
+    """DART 주식 총수 API. 보고서 기준 보통주 발행주식수(주) 반환.
+
+    quarter: 1/2/3/4 (reprt_code 11013/11012/11014/11011)
+    우선주/기타주 제외, 보통주만 반환.
+    응답 필드: se='보통주' row의 istc_totqy(발행주식총수).
+
+    DART 분당 1000콜 제한 → 호출자가 0.067초/콜 sleep 삽입.
+    """
+    if not DART_API_KEY or not corp_code:
+        return None
+    reprt_map = {1: "11013", 2: "11012", 3: "11014", 4: "11011"}
+    reprt_code = reprt_map.get(quarter)
+    if not reprt_code:
+        return None
+
+    url = f"{DART_BASE_URL}/stockTotqySttus.json"
+    params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code,
+              "bsns_year": str(year), "reprt_code": reprt_code}
+
+    own_session = session is None
+    sess = session or aiohttp.ClientSession()
+    try:
+        async with sess.get(url, params=params,
+                            timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            data = await resp.json(content_type=None)
+        if data.get("status") != "000":
+            return None
+        items = data.get("list") or []
+        for it in items:
+            se = (it.get("se") or "").strip()
+            # "보통주" 우선 매칭 (일부 회사는 "보통주식" 변종 가능성 대비)
+            if se == "보통주" or se.startswith("보통주"):
+                # istc_totqy: 발행주식총수, totqy: (구버전) 총수
+                raw = it.get("istc_totqy") or it.get("totqy")
+                v = _dart_amt_to_int(raw)
+                if v is not None and v > 0:
+                    return v
+        return None
+    except Exception as e:
+        print(f"[DART] dart_shares_outstanding {corp_code} {year}Q{quarter} 오류: {e}")
         return None
     finally:
         if own_session:
