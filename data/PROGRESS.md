@@ -44,6 +44,7 @@
 | 2026-04-16 | F/M/FCF 알파 메트릭 4-Phase 구축 | TTM 기반 F-Score/M-Score/FCF, 12분기 DART 소급 26,584행, MCP get_alpha_metrics + 3 rank 추가 (커밋 9702a68→2ffa724) |
 | 2026-04-17 | F/M/FCF 완전 가동 | shares_out 12분기 소급 24,310건 완료 + F-Score #7 보강 재계산. 전종목 F-Score 분포 정규(피크 4-5점), 우량 7+ 552종목(22%). 자동화 스케줄(ed5aa72). 다음: DART 증분 수집. |
 | 2026-04-16 | F/M/FCF Phase6 DART 증분 자동화 | `search_dart_periodic_new` (list.json pblntf_ty=A, 정정공시 skip) + `collect_financial_on_disclosure` (중복체크, max_calls=1000 안전장치, _DART_INTERVAL 0.067) + main 02:00 daily 스케줄. 13 pytest 모두 pass (mock only, 실호출 0). |
+| 2026-04-17 | Step 5 딥서치 수급 파이프라인 복구 | `kis_investor_trend_history` output1(현재가 dict)→output2(일별 수급 list) 근본 버그 수정 + today 빈응답 시 yesterday fallback. 부가 효과: `collect_daily` Phase3이 같은 함수 쓰므로 daily_snapshot의 4/8 이후 수급값 0 버그도 자동 복구. 4/13~4/16 11,444건 백필 + foreign_trend 캐시 재계산 (커밋 5014239). |
 
 ---
 
