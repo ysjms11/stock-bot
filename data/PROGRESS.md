@@ -9,9 +9,11 @@
 
 **우선순위 순:**
 
-1. **4/20(월) 첫 정상 수집 확인** — 4/17(금) collect_daily가 수정된 파서로 첫 정상 수급값 기록. 월요일 장 열리면 수급 확장/스크리너 프리셋(`foreign_accumulation` 등) 실제 작동하는지 1종목 샘플 확인.
+1. **4/20(월) 18:30 daily_collect_job 정상동작 검증** — 4/17(금) 미실행 사건 재발방지 안전장치 3종(포트 probe/post_init retry/주간 무결성체크) 배포 완료 (4/18, 8806555). 월요일 수집 후 DB 확인 + `[retry]` 로그 확인. 미실행 시 일요일 07:05 `weekly_sanity_check`가 누락 영업일 텔레그램 경고.
 
-2. **4/8~4/11 4일 row 공백 판단** — 주중 3일(4/8/9/11) daily_snapshot 자체 없음. 복구 필요하면 kis_stock_price 과거 조회로 close/volume부터 전체 row INSERT 필요 — 범위 큼. 일단 "과거 공백 그대로 두고 미래만 정상화" 정책이면 스킵. 결정 필요.
+2. **4/20(월) 9:00~15:30 WS 실시간 연결 검증** — `wss://` → `ws://` scheme fix (4/18, c0b6169) 배포. `[WS] 연결됨` 로그 확인. 장중 손절 감시 동작 확인. 직접 테스트로 `ws://ops.koreainvestment.com:21000` OK 확인 완료.
+
+3. **4/8~4/11 4일 row 공백 판단** — 주중 3일(4/8/9/11) daily_snapshot 자체 없음. 복구 필요하면 kis_stock_price 과거 조회로 close/volume부터 전체 row INSERT 필요 — 범위 큼. 일단 "과거 공백 그대로 두고 미래만 정상화" 정책이면 스킵. 결정 필요. **+ 4/17도 같은 정책 적용 (collect_daily 설계상 backfill 불가 확인)**.
 
 3. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST `daily_dart_incremental` 스케줄 배포 완료 (2026-04-16). 첫 공시 발생일(분기 마감 + 45일 근처) 이후 텔레그램 알림으로 쿼터/수집 건수 확인. 분기 피크일(5/15, 8/14, 11/14) 신규 ~800종목 수집 예상.
 
@@ -51,6 +53,8 @@
 | 2026-04-17 | Step 5 딥서치 수급 파이프라인 복구 | `kis_investor_trend_history` output1(현재가 dict)→output2(일별 수급 list) 근본 버그 수정 + today 빈응답 시 yesterday fallback. 부가 효과: `collect_daily` Phase3이 같은 함수 쓰므로 daily_snapshot의 4/8 이후 수급값 0 버그도 자동 복구. 4/13~4/16 11,444건 백필 + foreign_trend 캐시 재계산 (커밋 5014239). |
 | 2026-04-18 | 뉴스 감성분석: KNU 사전+금융 규칙 교체 | 단순 키워드 카운트 오탐 → 점수 기반+컨텍스트 반전+순위기사 필터 |
 | 2026-04-18 | 감성분석 2차 개선: 양보절+구문보강 (97%) | 없지만/아니지만 concessive 제외 negative lookahead + finance phrase covered 체크 + 구문 17개 추가 (192케이스 66%→97%) |
+| 2026-04-18 | WS scheme `wss://` → `ws://` (c0b6169) | KIS 서버가 plain ws만 지원. TLS 1.2 fix (ea61753)는 오진. openssl/직접테스트로 진짜 원인 확정 |
+| 2026-04-18 | daily_collect 안전장치 3종 (8806555) | 4/17 미실행 사건 재발방지: 포트 probe / post_init 당일 retry / 주간 무결성체크 |
 
 ---
 
@@ -70,6 +74,8 @@
 12. **KIS API 응답 스키마가 조용히 바뀜** — 공식 공지 없이 `output1: list → dict + output2: list` 변경 발생. 상담원도 "공식 자료에서 근거 확인 불가"로 회피. 주기적 응답 구조 스모크 테스트 필요 (특히 장기 운영 TR_ID).
 13. **"수집 성공 but 0값" 함정** — NULL/0 구분 필수. 4/12~4/16 "수급 100% 충원"으로 보였지만 실은 전부 0. `COUNT(col)` 뿐 아니라 `SUM(CASE WHEN col=0 ...)` 도 모니터링에 포함해야.
 14. **KIS 공개 채널은 정책/공지 담당 — 개별 TR 장애는 고객의소리** — 상담원이 "TR_ID 확인 불가"라고 말해도 TR이 없다는 뜻 아님. 개별 로그 분석은 별도 경로 필요. TR 유효성은 우리 쪽 live test가 가장 빠름.
+15. **에이전트 합의 ≠ 정답** — WS WRONG_VERSION_NUMBER를 TLS 버전 이슈로 단정, debugger + code-reviewer 에이전트 둘 다 동의. 사용자 "서버 불안정? 그럴리가" 반문으로 재조사. openssl s_client + 직접 ws 연결 테스트로 `wss://`→`ws://` scheme 이 진짜 원인 확정. **"그럴듯한 진단"은 증거(네트워크/직접 테스트)로 반드시 검증**. 에이전트 여러 명이 동의해도 틀릴 수 있음.
+16. **collect_daily() 과거 backfill 불가** — 내부 `kis_stock_price` (FHKST01010100) 가 현재가 API라 date 파라미터 무시. 과거 일자 복원은 `kis_daily_closes()` (FHKST03010100, 일봉) 기반 별도 스크립트 필요. 기본시세만 복원 가능, 수급/공매도/loan은 별도 일별 API 필요. "재수집 가능" 이라는 전제 깨짐.
 
 ---
 
