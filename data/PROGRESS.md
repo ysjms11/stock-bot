@@ -50,6 +50,7 @@
 | 2026-04-16 | F/M/FCF Phase6 DART 증분 자동화 | `search_dart_periodic_new` (list.json pblntf_ty=A, 정정공시 skip) + `collect_financial_on_disclosure` (중복체크, max_calls=1000 안전장치, _DART_INTERVAL 0.067) + main 02:00 daily 스케줄. 13 pytest 모두 pass (mock only, 실호출 0). |
 | 2026-04-17 | Step 5 딥서치 수급 파이프라인 복구 | `kis_investor_trend_history` output1(현재가 dict)→output2(일별 수급 list) 근본 버그 수정 + today 빈응답 시 yesterday fallback. 부가 효과: `collect_daily` Phase3이 같은 함수 쓰므로 daily_snapshot의 4/8 이후 수급값 0 버그도 자동 복구. 4/13~4/16 11,444건 백필 + foreign_trend 캐시 재계산 (커밋 5014239). |
 | 2026-04-18 | 뉴스 감성분석: KNU 사전+금융 규칙 교체 | 단순 키워드 카운트 오탐 → 점수 기반+컨텍스트 반전+순위기사 필터 |
+| 2026-04-18 | 감성분석 2차 개선: 양보절+구문보강 (97%) | 없지만/아니지만 concessive 제외 negative lookahead + finance phrase covered 체크 + 구문 17개 추가 (192케이스 66%→97%) |
 
 ---
 
