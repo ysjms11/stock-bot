@@ -249,6 +249,19 @@ _FINANCE_PHRASE_SCORES: list[tuple[str, int]] = sorted([
     ("실적 개선", 3), ("실적개선", 3),
     ("수주 확대", 3), ("수주확대", 3),
     ("계약 체결", 2), ("계약체결", 2),
+    ("공급 계약", 2), ("공급계약", 2),
+    ("수출 계약", 2), ("수출계약", 2),
+    ("계약 성사", 3), ("계약성사", 3),
+    ("허가 획득", 4), ("허가획득", 4),
+    ("FDA 허가", 4), ("임상 허가", 3),
+    ("기술 돌파", 3), ("돌파구", 3),
+    ("수주잔고", 2),
+    ("독점 공급", 3), ("독점공급", 3), ("독점 계약", 3),
+    ("영업이익 흑자", 3),
+    ("지지선", 2), ("저항선", 0),
+    # 강력 부정
+    ("리스크 부각", -3), ("리스크 확대", -3),
+    ("수급 악화", -2), ("수급악화", -2),
     # 강력 부정
     ("적자전환", -5), ("어닝쇼크", -5), ("어닝 쇼크", -5),
     ("상장폐지", -5), ("상폐", -4),
@@ -2237,15 +2250,18 @@ def analyze_news_sentiment(news_items: list) -> dict:
                 idx = title.find(phrase, start)
                 if idx == -1:
                     break
-                score += phrase_score
-                matched.append(f"{phrase}({'+' if phrase_score > 0 else ''}{phrase_score})")
+                # 구문 직후 부정어 반전 확인
+                suffix = title[idx + len(phrase): idx + len(phrase) + 10]
+                actual_score = -phrase_score if re.search(r'않|없|못|안\s|아니', suffix) else phrase_score
+                score += actual_score
+                matched.append(f"{phrase}({'+' if actual_score > 0 else ''}{actual_score})")
                 for i in range(idx, idx + len(phrase)):
                     covered.add(i)
                 start = idx + len(phrase)
 
-        # 3. KNU 사전 단어 점수 (covered 범위 제외)
+        # 3. KNU 사전 단어 점수 (covered 범위 제외, 1자 단어는 오매칭 위험으로 제외)
         for word, word_score in knu.items():
-            if not word_score or not word:
+            if not word_score or not word or len(word) < 2:
                 continue
             start = 0
             while True:
@@ -2256,7 +2272,7 @@ def analyze_news_sentiment(news_items: list) -> dict:
                 if covered.isdisjoint(range(idx, idx + len(word))):
                     # 4. 부정어 반전 확인 (키워드 직후 10자 이내)
                     suffix = title[idx + len(word): idx + len(word) + 10]
-                    if re.search(r'않|없|못|안\s|안$|아니', suffix):
+                    if re.search(r'않|없|못|안\s|아니', suffix):
                         score -= word_score  # 부호 반전
                         matched.append(f"{word}(반전:{-word_score:+d})")
                     else:
