@@ -268,21 +268,41 @@ _FINANCE_PHRASE_SCORES: list[tuple[str, int]] = sorted([
     ("구조조정 효과", 2),  # 구조조정 자체는 -3이지만 "효과"와 결합 시 긍정
     ("부담 완화", 2), ("리스크 완화", 2),
     ("효과", 1),  # "효과로"에서 "과로(-1)" 오매칭 방지용 covered
+    # KNU 오매칭 방지 — 양성 복합어 커버
+    ("상한가", 3),           # "상한"(-2) KNU 오매칭 방지
+    ("흑자", 2),             # 단독 흑자 (흑자전환은 이미 별도 +5)
+    ("고성장", 2),
+    ("판매 증가", 2), ("판매증가", 2),
+    ("판매 급증", 3), ("판매급증", 3),
+    ("수요 증가", 2), ("수요증가", 2),
+    # KNU 오매칭 방지 — 음성 복합어 커버
+    ("흥행 부진", -3), ("흥행부진", -3),
+    ("배당 감소", -3), ("배당감소", -3),
+    ("악화", -2),            # 악화됐다, 악화 우려 등 standalone
+    ("침체", -2),            # 경기침체, 업황침체 등
+    ("무산", -3),            # 계약 무산, 협상 무산 등
+    ("규제 리스크", -3),
+    ("원가 상승", -2), ("원가상승", -2),
+    ("대손비용 증가", -3),
+    ("부실", -2),            # 부실채권, 부실기업 등 (부실 확대는 이미 -3)
     # 강력 부정 — 맥락 반전 (긍정어가 부정 맥락에서 등장)
     ("허가 반려", -5), ("임상 실패", -4), ("허가 취소", -4),
     ("수익성 악화", -3), ("수익 악화", -3),
+    ("수익성 압박", -3), ("수익성압박", -3),  # "수익"(KNU+1) 오매칭 방지
     ("영업적자", -4),  # "업적"(KNU+1) 오매칭 방지
     ("가치 하락", -3),  # "가치"(KNU+1) 오매칭 방지
     ("손실 확대", -3), ("손실확대", -3),
     ("연체율 상승", -3), ("부실 확대", -3),
     ("약세장", -3), ("연저점", -3),
-    ("급락", -3),
+    ("급락", -3), ("급감", -3),
     ("매도 폭탄", -4),
     ("공매도잔고 급증", -4),
     ("재고손실", -3),
     ("수출 감소", -2), ("수출감소", -2),
     ("실적 악화", -3), ("실적악화", -3),
+    ("실적 쇼크", -5), ("실적쇼크", -5),  # "목표가 줄줄이 하향" 등 쇼크 표현
     ("수주 취소", -3), ("계약 취소", -3),
+    ("유상증자", -3),   # 주식 희석 이슈
     # 강력 부정
     ("리스크 부각", -3), ("리스크 확대", -3),
     ("수급 악화", -2), ("수급악화", -2),
@@ -290,11 +310,18 @@ _FINANCE_PHRASE_SCORES: list[tuple[str, int]] = sorted([
     ("상장폐지", -5), ("상폐", -4),
     ("목표가 하향", -4), ("목표가하향", -4),
     ("투자의견 하향", -4), ("투자의견하향", -4),
+    ("영업이익 급감", -4), ("영업이익급감", -4),  # "이익"(KNU+2) 오매칭 방지
+    ("이익 급감", -3), ("이익급감", -3),
     ("영업이익 감소", -3), ("영업이익감소", -3),
+    ("부채비율 급증", -3),  # "부채비율 증가"의 급증 변형
     ("적자 확대", -4), ("적자확대", -4),
     ("매출 감소", -2), ("매출감소", -2),
     ("이익 감소", -2), ("이익감소", -2),
     ("구조조정", -3), ("감자", -4),
+    # 긍정 추가 (coverage 보강)
+    ("양호", 2),             # 컨센서스 대비 실적 양호 등
+    ("매출 성장", 3), ("매출성장", 3),
+    ("수주 급증", 4), ("수주급증", 4),
 ], key=lambda x: -len(x[0]))  # 긴 구문 먼저 매칭
 
 # 기계적 순위 기사 필터 패턴 (해당하면 neutral 즉시 반환)
@@ -310,6 +337,9 @@ _RANKING_PATTERNS = [
     r"배당수익률\s*상위",
     r"\d+종목\s*(집계|포함|선정)",
     r"상위에\s*(오른|든)\s*종목",
+    r"상한가\s*종목",
+    r"하한가\s*종목",
+    r"종목\s*\d+\s*개",
 ]
 _RANKING_RE = re.compile("|".join(_RANKING_PATTERNS))
 
@@ -2247,16 +2277,20 @@ def analyze_news_sentiment(news_items: list) -> dict:
         matched = []
         covered = set()  # 이미 finance phrase가 커버한 문자 인덱스
 
-        # 2. 금융 특화 구문 (다단어, 긴 것 먼저)
+        # 2. 금융 특화 구문 (다단어, 긴 것 먼저 — 이미 covered된 위치는 스킵)
         for phrase, phrase_score in _FINANCE_PHRASE_SCORES:
             start = 0
             while True:
                 idx = title.find(phrase, start)
                 if idx == -1:
                     break
+                # 더 긴 구문이 이미 이 위치를 커버했으면 스킵 (중복 점수 방지)
+                if not covered.isdisjoint(range(idx, idx + len(phrase))):
+                    start = idx + len(phrase)
+                    continue
                 # 구문 직후 부정어 반전 확인
                 suffix = title[idx + len(phrase): idx + len(phrase) + 10]
-                actual_score = -phrase_score if re.search(r'않|없|못|안\s|아닌|아니', suffix) else phrase_score
+                actual_score = -phrase_score if re.search(r'않|없(?!지만|더라도)|못|안\s|아닌(?!지만|데)|아니(?!지만|더라도|라도)', suffix) else phrase_score
                 score += actual_score
                 matched.append(f"{phrase}({'+' if actual_score > 0 else ''}{actual_score})")
                 for i in range(idx, idx + len(phrase)):
@@ -2276,7 +2310,7 @@ def analyze_news_sentiment(news_items: list) -> dict:
                 if covered.isdisjoint(range(idx, idx + len(word))):
                     # 4. 부정어 반전 확인 (키워드 직후 10자 이내)
                     suffix = title[idx + len(word): idx + len(word) + 10]
-                    if re.search(r'않|없|못|안\s|아닌|아니', suffix):
+                    if re.search(r'않|없(?!지만|더라도)|못|안\s|아닌(?!지만|데)|아니(?!지만|더라도|라도)', suffix):
                         score -= word_score  # 부호 반전
                         matched.append(f"{word}(반전:{-word_score:+d})")
                     else:
