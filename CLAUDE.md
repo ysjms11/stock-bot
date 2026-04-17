@@ -82,7 +82,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ---
 
-## MCP 도구 (33개)
+## MCP 도구 (35개)
 
 실행 로직: `mcp_tools.py`의 `_execute_tool()` 함수.
 전체 도구 목록/모드/파라미터 → `.claude/rules/mcp-tools.md`

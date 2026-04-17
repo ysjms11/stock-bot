@@ -1,4 +1,4 @@
-# MCP 도구 전체 목록 (33개)
+# MCP 도구 전체 목록 (35개)
 
 > `mcp_tools.py`의 도구 스키마 요약. 새 도구 추가 시 → `.claude/rules/add-mcp-tool.md` 참조
 
@@ -42,15 +42,20 @@
 | 19 | `manage_report` | | 투자 리포트 관리 |
 | 20 | `get_regime` | | 시장 국면 판단 (매크로 기반) |
 | 21 | `get_scan` | | KRX 전종목 스크리너 (시총/PER/PBR/수급/회전율, 6개 프리셋) |
-| 22 | `get_finance_rank` | | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
+| 22 | `get_finance_rank` | (기본) | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
+| | | rank_type=fscore | F-Score >=7 우량 순위 (daily_snapshot, F/M/FCF Phase4) |
+| | | rank_type=mscore_safe | M-Score <=-2.22 안전 순위 (오름차순, F/M/FCF Phase4) |
+| | | rank_type=fcf_yield | FCF/EV 내림차순 순위 (F/M/FCF Phase4) |
 | 23 | `get_highlow` | | 52주 신고가/신저가 근접 종목 순위 (괴리율 필터) |
 | 24 | `get_broker` | | 종목별 거래원(증권사) 매수/매도 상위 5곳 |
 | 25 | `read_file` | | stock-bot 디렉토리 내 파일 읽기 (.md/.py/.json/.txt, 100KB, ../ 차단) |
 | 26 | `write_file` | | stock-bot 디렉토리 내 파일 쓰기 (.md/.json/.txt, .py/.env 불가, 200KB, ../ 차단) |
 | 27 | `list_files` | | stock-bot 디렉토리 내 파일/폴더 목록 (이름·크기·수정일, depth 2, ../ 차단) |
+| 28 | `read_report_pdf` | | 리포트 PDF 페이지 이미지 렌더링 (report_crawler DB 기반) |
 | 28 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout, 복합 콤마 구분) |
 | 29 | `git_status` | | Git 브랜치/변경파일 조회 |
 | 30 | `git_diff` | | 변경내용 조회 (path, staged 옵션) |
 | 31 | `git_log` | | 최근 커밋 로그 |
 | 32 | `git_commit` | | 파일 지정 커밋 (.py/.env 차단) |
 | 33 | `git_push` | | origin/main push |
+| 34 | `get_alpha_metrics` | | 종목별 F-Score/M-Score/FCF 메트릭 조회 (daily_snapshot 최신 기준, F/M/FCF Phase4) |

@@ -1,4 +1,4 @@
--- stock-bot SQLite DB 스키마 v1.3
+-- stock-bot SQLite DB 스키마 v1.5 (F/M/FCF Phase3: daily_snapshot fscore/mscore/FCF 3종)
 -- 5테이블 + 1뷰: stock_master + daily_snapshot + financial_quarterly + consensus_history + reports + v_daily_scan
 -- 확정 API: FHKST01010100 / FHPTJ04160001 / FHPST04830000 / FHPST02320000 / FHKST66430200 / FHKST66430100
 
@@ -148,6 +148,13 @@ CREATE TABLE IF NOT EXISTS daily_snapshot (
     revenue_growth      REAL,                   -- 매출 성장률% (QoQ)
     op_growth           REAL,                   -- 영업이익 성장률% (QoQ)
 
+    -- ── F/M/FCF Phase3 (알파 메트릭) ──
+    fscore              INTEGER,                -- Piotroski F-Score (0~9)
+    mscore              REAL,                   -- Beneish M-Score
+    fcf_to_assets       REAL,                   -- FCF / 총자산 (%)
+    fcf_yield_ev        REAL,                   -- FCF / EV (%)
+    fcf_conversion      REAL,                   -- FCF / 순이익 (%)
+
     -- ── 확장 여유 (ALTER TABLE 없이 지표 추가용) ──
     tech_01             REAL,
     tech_02             REAL,
@@ -201,6 +208,19 @@ CREATE TABLE IF NOT EXISTS financial_quarterly (
     total_liab      REAL,                       -- 부채총계 (total_lblt)
     capital         REAL,                       -- 자본금 (cpfn)
     total_equity    REAL,                       -- 자본총계 (total_cptl)
+
+    -- ── 현금흐름표 / F·M·FCF 확장 (v1.4, DART fnlttSinglAcntAll) ──
+    cfo             INTEGER,                    -- 영업활동 현금흐름 (원)
+    capex           INTEGER,                    -- 유형자산 취득 (원, 절대값)
+    fcf             INTEGER,                    -- CFO - abs(CapEx)
+    depreciation    INTEGER,                    -- 감가상각비 + 무형자산상각비
+    sga             INTEGER,                    -- 판매비와관리비
+    receivables     INTEGER,                    -- 매출채권 (유동자산 중)
+    inventory       INTEGER,                    -- 재고자산
+    shares_out      INTEGER,                    -- 발행주식수 (보고 기준)
+    net_income_parent INTEGER,                  -- 지배주주 귀속 순이익
+    equity_parent   INTEGER,                    -- 지배주주 귀속 자본
+    fs_source       TEXT,                       -- CFS / OFS / OFS_HOLDCO
 
     -- ── 메타 ──
     collected_at    TEXT DEFAULT '',             -- 수집 시각

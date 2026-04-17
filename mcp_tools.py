@@ -696,15 +696,16 @@ MCP_TOOLS = [
                          "market": {"type": "string", "description": "kospi/kosdaq/all (기본 all)"},
                      },
                      "required": []}},
-    # 22. get_finance_rank — 재무비율 순위
+    # 22. get_finance_rank — 재무비율 순위 + 알파 메트릭 순위 (F/M/FCF Phase4)
     {"name": "get_finance_rank",
-     "description": "전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/순이익률/부채비율/매출성장률). KIS FHPST01750000.",
+     "description": "전종목 재무비율 순위. rank_type 생략 시 KIS FHPST01750000 (PER/PBR/ROE/영업이익률/순이익률/부채비율/매출성장률). rank_type=fscore|mscore_safe|fcf_yield 시 daily_snapshot 알파 메트릭 순위.",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "market": {"type": "string", "description": "0000=전체(기본), 0001=거래소, 1001=코스닥, 2001=코스피200"},
-                         "year": {"type": "string", "description": "회계연도 (기본: 전년도)"},
-                         "quarter": {"type": "string", "description": "0=1Q, 1=반기, 2=3Q, 3=결산(기본)"},
-                         "sort": {"type": "string", "description": "7=수익성(기본), 11=안정성, 15=성장성, 20=활동성"},
+                         "rank_type": {"type": "string", "enum": ["fscore", "mscore_safe", "fcf_yield"], "description": "알파 메트릭 순위 모드. fscore=F-Score 내림차순(>=7 필터), mscore_safe=M-Score 오름차순(<=-2.22 필터), fcf_yield=FCF/EV 내림차순"},
+                         "market": {"type": "string", "description": "0000=전체(기본), 0001=거래소, 1001=코스닥, 2001=코스피200. rank_type 지정 시 kospi/kosdaq/all."},
+                         "year": {"type": "string", "description": "회계연도 (기본: 전년도). rank_type 미지정 시 사용."},
+                         "quarter": {"type": "string", "description": "0=1Q, 1=반기, 2=3Q, 3=결산(기본). rank_type 미지정 시 사용."},
+                         "sort": {"type": "string", "description": "7=수익성(기본), 11=안정성, 15=성장성, 20=활동성. rank_type 미지정 시 사용."},
                          "n": {"type": "integer", "description": "결과 수 (기본 30, 최대 100)"},
                      },
                      "required": []}},
@@ -811,6 +812,15 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {},
                      "required": []}},
+
+    # 34. get_alpha_metrics — F-Score/M-Score/FCF 메트릭 조회 (F/M/FCF Phase4)
+    {"name": "get_alpha_metrics",
+     "description": "종목별 F-Score/M-Score/FCF 메트릭 조회 (daily_snapshot 최신 trade_date 기준). 데이터 수집 전이면 error 반환.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
+                     },
+                     "required": ["ticker"]}},
 ]
 
 
@@ -3188,21 +3198,120 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 result = scan_stocks(db, filters, preset=preset)
 
         elif name == "get_finance_rank":
-            market = arguments.get("market", "0000").strip()
-            year = arguments.get("year", "").strip()
-            quarter = arguments.get("quarter", "3").strip()
-            sort = arguments.get("sort", "7").strip()
+            rank_type = (arguments.get("rank_type") or "").strip().lower()
             n = min(int(arguments.get("n", 30) or 30), 100)
-            sort_labels = {"7": "수익성", "11": "안정성", "15": "성장성", "20": "활동성"}
-            items = await kis_finance_ratio_rank(token, market=market, year=year,
-                                                 quarter=quarter, sort=sort, n=n)
-            result = {
-                "sort": sort_labels.get(sort, sort),
-                "year": year or str(datetime.now(KST).year - 1),
-                "quarter": quarter,
-                "count": len(items),
-                "stocks": items,
-            }
+
+            if rank_type in ("fscore", "mscore_safe", "fcf_yield"):
+                # F/M/FCF Phase4: daily_snapshot 알파 메트릭 순위
+                import sqlite3 as _sqlite3
+                from db_collector import DB_PATH as _DB_PATH
+                market_param = (arguments.get("market") or "all").strip().lower()
+                market_filter_sql = ""
+                market_args: list = []
+                if market_param in ("kospi", "kosdaq"):
+                    market_filter_sql = " AND m.market = ?"
+                    market_args = [market_param]
+
+                try:
+                    conn = _sqlite3.connect(_DB_PATH, timeout=10)
+                    conn.row_factory = _sqlite3.Row
+                    # 최신 trade_date
+                    latest = conn.execute(
+                        "SELECT MAX(trade_date) FROM daily_snapshot"
+                    ).fetchone()
+                    latest_date = latest[0] if latest else None
+                    if not latest_date:
+                        result = {"error": "daily_snapshot 비어있음 — Phase 3.5 대기"}
+                    else:
+                        # rank_type 별 SELECT
+                        if rank_type == "fscore":
+                            sql = (
+                                "SELECT d.symbol, m.name, m.market, d.market_cap, "
+                                "       d.fscore AS metric "
+                                "FROM daily_snapshot d "
+                                "LEFT JOIN stock_master m ON d.symbol = m.symbol "
+                                "WHERE d.trade_date = ? "
+                                "  AND d.fscore IS NOT NULL "
+                                "  AND d.fscore >= 7"
+                                + market_filter_sql +
+                                " ORDER BY d.fscore DESC, d.market_cap DESC "
+                                "LIMIT ?"
+                            )
+                        elif rank_type == "mscore_safe":
+                            sql = (
+                                "SELECT d.symbol, m.name, m.market, d.market_cap, "
+                                "       d.mscore AS metric "
+                                "FROM daily_snapshot d "
+                                "LEFT JOIN stock_master m ON d.symbol = m.symbol "
+                                "WHERE d.trade_date = ? "
+                                "  AND d.mscore IS NOT NULL "
+                                "  AND d.mscore <= -2.22"
+                                + market_filter_sql +
+                                " ORDER BY d.mscore ASC "
+                                "LIMIT ?"
+                            )
+                        else:  # fcf_yield
+                            sql = (
+                                "SELECT d.symbol, m.name, m.market, d.market_cap, "
+                                "       d.fcf_yield_ev AS metric "
+                                "FROM daily_snapshot d "
+                                "LEFT JOIN stock_master m ON d.symbol = m.symbol "
+                                "WHERE d.trade_date = ? "
+                                "  AND d.fcf_yield_ev IS NOT NULL"
+                                + market_filter_sql +
+                                " ORDER BY d.fcf_yield_ev DESC "
+                                "LIMIT ?"
+                            )
+                        rows = conn.execute(sql, [latest_date] + market_args + [n]).fetchall()
+                        conn.close()
+
+                        if not rows:
+                            result = {
+                                "error": "데이터 수집 전 — Phase 3.5 대기",
+                                "rank_type": rank_type,
+                                "trade_date": latest_date,
+                            }
+                        else:
+                            label_map = {
+                                "fscore":      "F-Score (>=7 우량)",
+                                "mscore_safe": "M-Score (<=-2.22 안전)",
+                                "fcf_yield":   "FCF Yield / EV (%)",
+                            }
+                            stocks_out = []
+                            for i, r in enumerate(rows, 1):
+                                stocks_out.append({
+                                    "rank":       i,
+                                    "symbol":     r["symbol"],
+                                    "name":       r["name"] or "",
+                                    "market":     r["market"] or "",
+                                    "market_cap": r["market_cap"],
+                                    "metric":     r["metric"],
+                                })
+                            result = {
+                                "rank_type":  rank_type,
+                                "label":      label_map[rank_type],
+                                "trade_date": latest_date,
+                                "count":      len(stocks_out),
+                                "stocks":     stocks_out,
+                            }
+                except Exception as e:
+                    result = {"error": f"알파 메트릭 조회 실패: {e}"}
+            else:
+                # 기존 KIS API 재무비율 순위
+                market = arguments.get("market", "0000").strip()
+                year = arguments.get("year", "").strip()
+                quarter = arguments.get("quarter", "3").strip()
+                sort = arguments.get("sort", "7").strip()
+                sort_labels = {"7": "수익성", "11": "안정성", "15": "성장성", "20": "활동성"}
+                items = await kis_finance_ratio_rank(token, market=market, year=year,
+                                                     quarter=quarter, sort=sort, n=n)
+                result = {
+                    "sort": sort_labels.get(sort, sort),
+                    "year": year or str(datetime.now(KST).year - 1),
+                    "quarter": quarter,
+                    "count": len(items),
+                    "stocks": items,
+                }
 
         elif name == "get_highlow":
             mode = arguments.get("mode", "high").strip().lower()
@@ -3761,6 +3870,142 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                         result = _images + [
                                             {"type": "text", "text": json.dumps(_meta_text, ensure_ascii=False)}
                                         ]
+
+        elif name == "get_alpha_metrics":
+            # F/M/FCF Phase4: daily_snapshot 컬럼 직접 조회
+            ticker = (arguments.get("ticker") or "").strip()
+            if not ticker:
+                result = {"error": "ticker 필수"}
+            else:
+                import sqlite3 as _sqlite3
+                from db_collector import DB_PATH as _DB_PATH
+                try:
+                    conn = _sqlite3.connect(_DB_PATH, timeout=10)
+                    conn.row_factory = _sqlite3.Row
+                    # 종목 기본정보
+                    master = conn.execute(
+                        "SELECT symbol, name, market FROM stock_master WHERE symbol = ?",
+                        (ticker,)
+                    ).fetchone()
+                    if not master:
+                        conn.close()
+                        result = {"error": f"stock_master에 종목 없음: {ticker}"}
+                    else:
+                        # 최신 trade_date의 알파 메트릭 + 재무 파생
+                        row = conn.execute(
+                            "SELECT trade_date, fscore, mscore, "
+                            "       fcf_to_assets, fcf_yield_ev, fcf_conversion, "
+                            "       net_income, total_assets "
+                            "FROM daily_snapshot "
+                            "WHERE symbol = ? "
+                            "ORDER BY trade_date DESC LIMIT 1",
+                            (ticker,)
+                        ).fetchone()
+                        # 재무 분기 (period)
+                        fq = conn.execute(
+                            "SELECT report_period FROM financial_quarterly "
+                            "WHERE symbol = ? "
+                            "ORDER BY report_period DESC LIMIT 1",
+                            (ticker,)
+                        ).fetchone()
+                        conn.close()
+
+                        if not row:
+                            result = {
+                                "ticker": ticker,
+                                "name":   master["name"],
+                                "error":  "daily_snapshot에 해당 종목 데이터 없음 — 수집 대기",
+                            }
+                        elif (row["fscore"] is None and row["mscore"] is None
+                              and row["fcf_to_assets"] is None
+                              and row["fcf_yield_ev"] is None
+                              and row["fcf_conversion"] is None):
+                            result = {
+                                "ticker":     ticker,
+                                "name":       master["name"],
+                                "trade_date": row["trade_date"],
+                                "error":      "데이터 수집 전 — Phase 3.5 대기",
+                            }
+                        else:
+                            # F-Score 해석
+                            fscore_val = row["fscore"]
+                            if fscore_val is None:
+                                fscore_interp = "데이터 없음"
+                            elif fscore_val >= 7:
+                                fscore_interp = "우량"
+                            elif fscore_val >= 4:
+                                fscore_interp = "중립"
+                            else:
+                                fscore_interp = "부실"
+
+                            # M-Score 해석
+                            mscore_val = row["mscore"]
+                            if mscore_val is None:
+                                mscore_risk = "unknown"
+                                mscore_interp = "데이터 없음"
+                            elif mscore_val <= -2.22:
+                                mscore_risk = "low"
+                                mscore_interp = "조작 의심 없음"
+                            elif mscore_val <= -1.78:
+                                mscore_risk = "medium"
+                                mscore_interp = "주의"
+                            else:
+                                mscore_risk = "high"
+                                mscore_interp = "조작 의심"
+
+                            # FCF 해석 (conversion 기준)
+                            fcf_conv = row["fcf_conversion"]
+                            if fcf_conv is None:
+                                fcf_interp = "데이터 없음"
+                            elif fcf_conv >= 80:
+                                fcf_interp = "현금창출 양호"
+                            elif fcf_conv >= 50:
+                                fcf_interp = "보통"
+                            else:
+                                fcf_interp = "우려"
+
+                            # FCF TTM 추정 (fcf_to_assets × total_assets / 100)
+                            fcf_ttm = None
+                            try:
+                                if (row["fcf_to_assets"] is not None
+                                        and row["total_assets"] is not None):
+                                    fcf_ttm = int(row["fcf_to_assets"] *
+                                                  row["total_assets"] / 100.0)
+                            except Exception:
+                                fcf_ttm = None
+
+                            is_complete = (
+                                row["fscore"] is not None
+                                and row["mscore"] is not None
+                                and row["fcf_yield_ev"] is not None
+                            )
+
+                            result = {
+                                "ticker":     ticker,
+                                "name":       master["name"],
+                                "market":     master["market"],
+                                "trade_date": row["trade_date"],
+                                "period":     fq["report_period"] if fq else None,
+                                "fscore": {
+                                    "score":          fscore_val,
+                                    "interpretation": fscore_interp,
+                                },
+                                "mscore": {
+                                    "value":          mscore_val,
+                                    "risk":           mscore_risk,
+                                    "interpretation": mscore_interp,
+                                },
+                                "fcf": {
+                                    "fcf_ttm_won":        fcf_ttm,
+                                    "fcf_to_assets_pct":  row["fcf_to_assets"],
+                                    "fcf_yield_ev_pct":   row["fcf_yield_ev"],
+                                    "fcf_conversion_pct": fcf_conv,
+                                    "interpretation":     fcf_interp,
+                                },
+                                "is_complete": is_complete,
+                            }
+                except Exception as e:
+                    result = {"error": f"get_alpha_metrics 조회 실패: {e}"}
 
         else:
             result = {"error": f"unknown tool: {name}"}

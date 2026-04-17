@@ -1536,29 +1536,48 @@ async def kis_fluctuation_rank(token: str, market: str = "0000",
     return result
 
 
+def _previous_trading_day(date_str: str) -> str:
+    """YYYYMMDD → 직전 영업일 YYYYMMDD (주말만 건너뜀, 공휴일 미반영).
+    공휴일엔 KIS API가 빈응답 반환하므로 호출자가 추가 fallback 처리 권장."""
+    dt = datetime.strptime(date_str, "%Y%m%d") - timedelta(days=1)
+    while dt.weekday() >= 5:  # 5=토, 6=일
+        dt -= timedelta(days=1)
+    return dt.strftime("%Y%m%d")
+
+
 async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5, session=None) -> list:
     """종목별 투자자 일별 수급 히스토리 (FHPTJ04160001).
 
     Returns: [{date, foreign_net, institution_net, individual_net,
                foreign_buy, foreign_sell}, ...] 최신순, 최대 n_days일
+
+    Fallback: KIS API가 today 지정 호출에 빈 응답을 주는 경우(장중 미확정, 공휴일 등)
+    직전 영업일로 한 번 재시도한 뒤에도 비면 빈 리스트 반환.
     """
     today = datetime.now(KST).strftime("%Y%m%d")
     s = session or aiohttp.ClientSession()
-    try:
+
+    async def _call(base_date: str):
         _, d = await _kis_get(s,
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
             "FHPTJ04160001", token,
             {
                 "FID_COND_MRKT_DIV_CODE": "J",
                 "FID_INPUT_ISCD":         ticker,
-                "FID_INPUT_DATE_1":       today,
+                "FID_INPUT_DATE_1":       base_date,
                 "FID_ORG_ADJ_PRC":        "",
                 "FID_ETC_CLS_CODE":       "",
             })
+        # output1=단일 현재가 dict, output2=일별 수급 list (최대 30일)
+        return d.get("output2") if d else None
+
+    try:
+        rows = await _call(today)
+        if not rows:  # 장중 빈 응답 → 직전 영업일로 1회 재시도
+            rows = await _call(_previous_trading_day(today))
     finally:
         if session is None:
             await s.close()
-    rows = d.get("output1") if d else None
     if not isinstance(rows, list):
         rows = []
     result = []
@@ -3738,6 +3757,293 @@ async def dart_quarterly_op(corp_code: str, year: int, quarter: int) -> dict | N
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 전체 재무제표 파서 (F-Score / M-Score / FCF 용)
+# fnlttSinglAcntAll 1회 호출로 PL/BS/CF 전체 계정 파싱
+# CFS(연결) 우선, 없으면 OFS(별도) fallback. 지배주주 귀속 순이익/자본도 파싱.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 계정명 매칭용 토큰 (account_nm에 대한 "in" 포함 검사 — 변종 대응)
+# 주의: 더 구체적인 패턴을 먼저 배치 (예: "매출총이익" 먼저, "매출액"은 별도 처리)
+_DART_ACCT_TOKENS = {
+    # 손익 (sj_div 주로 'IS' 또는 'CIS')
+    "gross_profit":     [("매출총이익",), ("매출총손실",)],
+    "operating_profit": [("영업이익",), ("영업손실",)],
+    "cost_of_sales":    [("매출원가",)],
+    "sga":              [("판매비와관리비",), ("판매비와 관리비",), ("판관비",)],
+    # 당기순이익: 지배/비지배 분리 필요 → 별도 처리
+    # 대차 (sj_div 주로 'BS')
+    "current_assets":   [("유동자산",)],
+    "total_assets":     [("자산총계",)],
+    "current_liab":     [("유동부채",)],
+    "total_liab":       [("부채총계",)],
+    "total_equity":     [("자본총계",)],
+    "capital":          [("자본금",)],
+    "receivables":      [("매출채권",)],
+    "inventory":        [("재고자산",)],
+    # 현금흐름 (sj_div 주로 'CF')
+    "cfo":              [("영업활동",)],   # '영업활동현금흐름' / '영업활동으로 인한 현금흐름'
+    # CapEx / 감가상각 / 무형자산상각 → 별도 처리 (sj='CF' 한정)
+}
+
+
+def _dart_amt_to_int(amt_str: str) -> int | None:
+    """DART amount 문자열 → int (원 단위)."""
+    if not amt_str:
+        return None
+    s = str(amt_str).replace(",", "").replace(" ", "").strip()
+    if not s or s == "-":
+        return None
+    # 음수는 괄호로 오는 경우 처리
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+        neg = True
+    try:
+        v = int(s)
+        return -v if neg else v
+    except ValueError:
+        return None
+
+
+def _dart_acct_match(acct_nm: str, tokens_list) -> bool:
+    """account_nm이 토큰 조합 중 하나에 모두 매치되면 True.
+    tokens_list: [(tok1,), (tok1, tok2), ...] — 각 튜플은 AND, 튜플 간은 OR.
+    """
+    for tokens in tokens_list:
+        if all(t in acct_nm for t in tokens):
+            return True
+    return False
+
+
+async def dart_quarterly_full(corp_code: str, year: int, quarter: int,
+                              session: aiohttp.ClientSession | None = None) -> dict | None:
+    """DART fnlttSinglAcntAll 1회 호출로 PL/BS/CF 전체 파싱.
+
+    quarter: 1=1분기, 2=반기, 3=3분기, 4=사업보고서(연간)
+    CFS(연결) 우선, status!='000'이면 OFS(별도) fallback.
+
+    반환 dict (값은 원 단위 int, 없으면 None):
+      report_period (YYYYMM),
+      revenue, cost_of_sales, gross_profit, operating_profit,
+      net_income, net_income_parent,
+      sga,
+      current_assets, total_assets, current_liab, total_liab,
+      capital, total_equity, equity_parent,
+      receivables, inventory,
+      cfo, capex, fcf, depreciation,
+      shares_out,
+      fs_source ('CFS' | 'OFS')
+    """
+    if not DART_API_KEY or not corp_code:
+        return None
+    reprt_map = {1: "11013", 2: "11012", 3: "11014", 4: "11011"}
+    reprt_code = reprt_map.get(quarter)
+    if not reprt_code:
+        return None
+    url = f"{DART_BASE_URL}/fnlttSinglAcntAll.json"
+
+    async def _fetch(sess, fs_div: str):
+        params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code,
+                  "bsns_year": str(year), "reprt_code": reprt_code, "fs_div": fs_div}
+        async with sess.get(url, params=params,
+                            timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            return await resp.json(content_type=None)
+
+    own_session = session is None
+    sess = session or aiohttp.ClientSession()
+    try:
+        data = await _fetch(sess, "CFS")
+        fs_source = "CFS"
+        if data.get("status") != "000" or not data.get("list"):
+            data = await _fetch(sess, "OFS")
+            fs_source = "OFS"
+        if data.get("status") != "000" or not data.get("list"):
+            return None
+
+        items = data.get("list", [])
+        out = {
+            "report_period": f"{year}{quarter * 3:02d}",
+            "fs_source": fs_source,
+        }
+        # 표준 계정 first-match 파싱
+        fields = ["gross_profit", "operating_profit", "cost_of_sales", "sga",
+                  "current_assets", "total_assets", "current_liab", "total_liab",
+                  "total_equity", "capital", "receivables", "inventory", "cfo"]
+        for f in fields:
+            out[f] = None
+
+        # 당기순이익 / 지배귀속 / CapEx / 감가상각은 별도 처리
+        net_income = None
+        net_income_parent = None
+        equity_parent = None
+        capex = None
+        dep_pt = None
+        dep_intan = None
+        revenue = None
+
+        for item in items:
+            acct = (item.get("account_nm") or "").strip()
+            sj = (item.get("sj_div") or "").strip()   # IS/CIS/BS/CF
+            amt = _dart_amt_to_int(item.get("thstrm_amount"))
+            if amt is None:
+                continue
+
+            # 매출액: 변종 대응 ("매출액" / "매출" / "영업수익" / "수익(매출액)")
+            # 매출총이익/매출원가 제외 (포함어)
+            if revenue is None and sj in ("IS", "CIS"):
+                if acct in ("매출액", "매출", "수익(매출액)", "영업수익") \
+                        or acct.startswith("매출액"):
+                    revenue = amt
+                    continue
+
+            # 표준 계정 (first-match 보존)
+            for key, tokens_list in _DART_ACCT_TOKENS.items():
+                if out.get(key) is None and _dart_acct_match(acct, tokens_list):
+                    # sj 보조 검증 — cfo는 CF, BS 계정은 BS, PL 계정은 IS/CIS
+                    if key == "cfo" and sj != "CF":
+                        continue
+                    if key in ("current_assets", "total_assets", "current_liab",
+                               "total_liab", "total_equity", "capital",
+                               "receivables", "inventory") and sj != "BS":
+                        continue
+                    if key in ("gross_profit", "operating_profit", "cost_of_sales",
+                               "sga") and sj not in ("IS", "CIS"):
+                        continue
+                    out[key] = amt
+                    break
+
+            # 감가상각비 / 무형자산상각비 (CF 간접법 조정항목)
+            if sj == "CF":
+                if dep_pt is None and "감가상각" in acct:
+                    dep_pt = amt
+                if dep_intan is None and ("무형자산상각" in acct or "무형자산 상각" in acct):
+                    dep_intan = amt
+
+            # 지배주주 귀속 순이익 — IS 만 (CIS는 포괄손익이라 제외)
+            # 계정명 변종: "지배기업 소유주지분", "지배기업 소유지분", "지배기업소유주지분"
+            if net_income_parent is None and sj == "IS":
+                if "지배기업" in acct and "지분" in acct:
+                    net_income_parent = amt
+                    continue
+
+            # 당기순이익 (전체, 지배+비지배 합산) — IS 우선, 없으면 CIS
+            # 변종: "당기순이익", "연결당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익"
+            # CIS의 "총포괄이익/총포괄손익"은 제외 (별도 지표)
+            if net_income is None and sj in ("IS", "CIS"):
+                if ("당기순이익" in acct or "분기순이익" in acct or "반기순이익" in acct) \
+                        and "지배" not in acct and "비지배" not in acct \
+                        and "포괄" not in acct:
+                    net_income = amt
+                    continue
+
+            # 지배주주 귀속 자본 — BS (계정명 변종 포함)
+            if equity_parent is None and sj == "BS":
+                if "지배기업" in acct and "지분" in acct:
+                    equity_parent = amt
+                    continue
+
+            # CapEx — CF의 '유형자산 취득' or '유형자산의 증가'
+            if capex is None and sj == "CF":
+                if "유형자산" in acct and ("취득" in acct or "증가" in acct):
+                    capex = abs(amt)
+                    continue
+
+        # 감가상각 합산
+        depreciation = None
+        if dep_pt is not None or dep_intan is not None:
+            depreciation = (dep_pt or 0) + (dep_intan or 0)
+
+        out["revenue"] = revenue
+        out["net_income"] = net_income
+        out["net_income_parent"] = net_income_parent
+        out["equity_parent"] = equity_parent
+        out["capex"] = capex
+        out["depreciation"] = depreciation
+
+        # FCF = CFO - abs(CapEx)
+        if out.get("cfo") is not None:
+            cx = capex if capex is not None else 0
+            out["fcf"] = out["cfo"] - cx
+        else:
+            out["fcf"] = None
+
+        # 발행주식수 — fnlttSinglAcntAll에는 없음 (별도 API 필요, Phase1 범위 밖)
+        out["shares_out"] = None
+
+        # 단위 변환: 원 → 억원 (기존 financial_quarterly 컬럼 단위와 통일)
+        _MONEY_KEYS = ("revenue", "cost_of_sales", "gross_profit", "operating_profit",
+                       "sga", "net_income", "net_income_parent",
+                       "current_assets", "total_assets", "current_liab", "total_liab",
+                       "capital", "total_equity", "equity_parent",
+                       "receivables", "inventory",
+                       "cfo", "capex", "fcf", "depreciation")
+        for k in _MONEY_KEYS:
+            v = out.get(k)
+            if v is not None:
+                out[k] = v // 100_000_000
+
+        return out
+    except Exception as e:
+        print(f"[DART] dart_quarterly_full {corp_code} {year}Q{quarter} 오류: {e}")
+        return None
+    finally:
+        if own_session:
+            await sess.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 주식 총수 (stockTotqySttus: 보통주 발행주식수)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def dart_shares_outstanding(corp_code: str, year: int, quarter: int,
+                                   session: aiohttp.ClientSession | None = None
+                                   ) -> int | None:
+    """DART 주식 총수 API. 보고서 기준 보통주 발행주식수(주) 반환.
+
+    quarter: 1/2/3/4 (reprt_code 11013/11012/11014/11011)
+    우선주/기타주 제외, 보통주만 반환.
+    응답 필드: se='보통주' row의 istc_totqy(발행주식총수).
+
+    DART 분당 1000콜 제한 → 호출자가 0.067초/콜 sleep 삽입.
+    """
+    if not DART_API_KEY or not corp_code:
+        return None
+    reprt_map = {1: "11013", 2: "11012", 3: "11014", 4: "11011"}
+    reprt_code = reprt_map.get(quarter)
+    if not reprt_code:
+        return None
+
+    url = f"{DART_BASE_URL}/stockTotqySttus.json"
+    params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code,
+              "bsns_year": str(year), "reprt_code": reprt_code}
+
+    own_session = session is None
+    sess = session or aiohttp.ClientSession()
+    try:
+        async with sess.get(url, params=params,
+                            timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            data = await resp.json(content_type=None)
+        if data.get("status") != "000":
+            return None
+        items = data.get("list") or []
+        for it in items:
+            se = (it.get("se") or "").strip()
+            # "보통주" 우선 매칭 (일부 회사는 "보통주식" 변종 가능성 대비)
+            if se == "보통주" or se.startswith("보통주"):
+                # istc_totqy: 발행주식총수, totqy: (구버전) 총수
+                raw = it.get("istc_totqy") or it.get("totqy")
+                v = _dart_amt_to_int(raw)
+                if v is not None and v > 0:
+                    return v
+        return None
+    except Exception as e:
+        print(f"[DART] dart_shares_outstanding {corp_code} {year}Q{quarter} 오류: {e}")
+        return None
+    finally:
+        if own_session:
+            await sess.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # DART 내부자 거래 (elestock.json: 임원·주요주주 특정증권등 소유상황보고서)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 DB_PATH_FOR_INSIDER = f"{_DATA_DIR}/stock.db"
@@ -4016,6 +4322,159 @@ async def search_dart_reports(corp_code: str, days_back: int = 365) -> list:
     except Exception as e:
         print(f"[DART] report search error ({corp_code}): {e}")
     return []
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 증분 수집용 — 최근 N일 정기공시(pblntf_ty=A) 전체 조회
+# 기존 search_dart_reports는 특정 corp_code의 사업보고서(A001) 본문 수집용이라 분리.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_RPT_PERIOD_RE = re.compile(r"(\d{4})\.(\d{2})")
+
+
+def _parse_rpt_nm(rpt_nm: str) -> tuple[str | None, str | None]:
+    """rpt_nm 문자열에서 (report_period YYYYMM, report_type) 파싱.
+
+    규칙:
+      - "[기재정정]" / "[첨부정정]" 접두가 붙어 있으면 (None, None) 반환 — 원본 공시만 수집.
+      - "사업보고서 (2024.12)"  → ("202412", "annual")
+      - "반기보고서 (2024.06)"  → ("202406", "semi")
+      - "분기보고서 (2024.03)"  → ("202403", "quarterly")
+      - "분기보고서 (2024.09)"  → ("202409", "quarterly")
+      - 위 3유형이 아니면 (None, None).
+    """
+    nm = (rpt_nm or "").strip()
+    if not nm:
+        return None, None
+    # 정정 공시는 skip (원본이 이미 DB에 있거나, 곧 원본 공시가 나올 것)
+    if nm.startswith("[기재정정]") or nm.startswith("[첨부정정]") or nm.startswith("[정정]"):
+        return None, None
+
+    # 유형 분류 (첫 토큰만 본다; 일부는 "[첨부추가]" 등 변종이 뒤에 붙을 수 있음)
+    if "사업보고서" in nm:
+        rtype = "annual"
+    elif "반기보고서" in nm:
+        rtype = "semi"
+    elif "분기보고서" in nm:
+        rtype = "quarterly"
+    else:
+        return None, None
+
+    m = _RPT_PERIOD_RE.search(nm)
+    if not m:
+        # 괄호 내 날짜 없음 — 비정형. 일단 스킵.
+        return None, None
+    year, month = m.group(1), m.group(2)
+    # month 검증: 03/06/09/12만 유효
+    if month not in ("03", "06", "09", "12"):
+        return None, None
+    # 유형-월 정합성 보조 검증 (사업=12, 반기=06)
+    if rtype == "annual" and month != "12":
+        return None, None
+    if rtype == "semi" and month != "06":
+        return None, None
+    if rtype == "quarterly" and month not in ("03", "09"):
+        return None, None
+    return f"{year}{month}", rtype
+
+
+async def search_dart_periodic_new(days: int = 7,
+                                    session: aiohttp.ClientSession | None = None) -> list[dict]:
+    """DART list.json 지난 N일 정기공시(pblntf_ty=A) 조회.
+
+    기존 search_dart_reports(corp_code별 A001 본문 수집)와 분리 —
+    전체 공시판에서 사업/반기/분기보고서 모두 긁어오는 증분 수집용.
+    본문은 가져오지 않음 (corp_code + rcept_dt + rpt_nm만 필요).
+
+    Args:
+        days: 오늘 KST 기준 N일 전부터 조회 (기본 7).
+        session: 재사용할 aiohttp 세션. None이면 내부에서 생성.
+
+    Returns:
+        [{"corp_code", "ticker" (stock_code, 없을 수 있음), "corp_name",
+          "rcept_no", "rcept_dt", "rpt_nm",
+          "report_period" (YYYYMM), "report_type" ("quarterly"|"semi"|"annual")}]
+        정정공시([기재정정]/[첨부정정])는 제외.
+    """
+    if not DART_API_KEY:
+        print("[DART-Incr] DART_API_KEY 미설정 — 빈 결과 반환")
+        return []
+
+    now = datetime.now(KST)
+    end_de = now.strftime("%Y%m%d")
+    bgn_de = (now - timedelta(days=max(days, 1))).strftime("%Y%m%d")
+    url = f"{DART_BASE_URL}/list.json"
+
+    own_session = session is None
+    sess = session or aiohttp.ClientSession()
+
+    results: list[dict] = []
+    try:
+        page_no = 1
+        total_pages = 1
+        while page_no <= total_pages:
+            params = {
+                "crtfc_key": DART_API_KEY,
+                "bgn_de": bgn_de,
+                "end_de": end_de,
+                "pblntf_ty": "A",
+                "page_count": 100,
+                "page_no": page_no,
+                "sort": "date",
+                "sort_mth": "desc",
+            }
+            try:
+                async with sess.get(url, params=params,
+                                    timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        print(f"[DART-Incr] list.json HTTP {resp.status} page={page_no}")
+                        break
+                    data = await resp.json(content_type=None)
+            except Exception as e:
+                print(f"[DART-Incr] list.json 호출 오류 page={page_no}: {e}")
+                break
+
+            status = data.get("status", "")
+            if status != "000":
+                # 013(조회된 데이터 없음) 포함 — 조용히 종료
+                if status not in ("000", "013"):
+                    print(f"[DART-Incr] list.json status={status} "
+                          f"msg={data.get('message','')}")
+                break
+
+            page_list = data.get("list", []) or []
+            total_pages = int(data.get("total_page", 1) or 1)
+
+            for item in page_list:
+                rpt_nm = (item.get("report_nm") or "").strip()
+                period, rtype = _parse_rpt_nm(rpt_nm)
+                if not period or not rtype:
+                    continue
+                corp_code = (item.get("corp_code") or "").strip()
+                if not corp_code:
+                    continue
+                results.append({
+                    "corp_code":     corp_code,
+                    "ticker":        (item.get("stock_code") or "").strip(),
+                    "corp_name":     (item.get("corp_name") or "").strip(),
+                    "rcept_no":      (item.get("rcept_no") or "").strip(),
+                    "rcept_dt":      (item.get("rcept_dt") or "").strip(),
+                    "rpt_nm":        rpt_nm,
+                    "report_period": period,
+                    "report_type":   rtype,
+                })
+
+            # 과도한 페이징 방지 안전장치 (N일 × 100건/페이지 = 수천 페이지 이론상)
+            if page_no >= 50:
+                print(f"[DART-Incr] 50 페이지 상한 도달 — 중단 (page={page_no})")
+                break
+            page_no += 1
+
+        print(f"[DART-Incr] list.json {bgn_de}~{end_de}: "
+              f"원본 공시 {len(results)}건 (정정/비정기 제외 후)")
+        return results
+    finally:
+        if own_session:
+            await sess.close()
 
 
 async def fetch_dart_document(rcept_no: str) -> str:
