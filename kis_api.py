@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import ssl
 import asyncio
 import aiohttp
 import sqlite3
@@ -3203,6 +3204,10 @@ class KisRealtimeManager:
     """
     _WS_URL = "wss://ops.koreainvestment.com:21000"
 
+    # KIS 서버는 TLS 1.2 이상 필요 (aiohttp 기본 TLS 1.3 협상 시 WRONG_VERSION_NUMBER)
+    _SSL_CTX = ssl.create_default_context()
+    _SSL_CTX.minimum_version = ssl.TLSVersion.TLSv1_2
+
     def __init__(self):
         self._subscribed: set = set()       # KR 종목 set
         self._subscribed_us: set = set()    # US 종목 set
@@ -3273,7 +3278,8 @@ class KisRealtimeManager:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
                 self._WS_URL, heartbeat=30,
-                timeout=aiohttp.ClientTimeout(total=None)
+                timeout=aiohttp.ClientTimeout(total=None),
+                ssl=self._SSL_CTX,
             ) as ws:
                 self._ws = ws
                 print(f"[WS] 연결됨 (KR {kr_count}개 + US {us_count}개 구독)")
