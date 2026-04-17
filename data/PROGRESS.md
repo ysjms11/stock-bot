@@ -9,11 +9,15 @@
 
 **우선순위 순:**
 
-1. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST `daily_dart_incremental` 스케줄 배포 완료 (2026-04-16). 첫 공시 발생일(분기 마감 + 45일 근처) 이후 텔레그램 알림으로 쿼터/수집 건수 확인. 평일 대다수 "공시 없음" → 조용히 skip. 분기별 피크일(5/15, 8/14, 11/14) 신규 ~800종목 수집 예상.
+1. **4/20(월) 첫 정상 수집 확인** — 4/17(금) collect_daily가 수정된 파서로 첫 정상 수급값 기록. 월요일 장 열리면 수급 확장/스크리너 프리셋(`foreign_accumulation` 등) 실제 작동하는지 1종목 샘플 확인.
 
-2. **프리셋 복구 데이터 누적 대기** — credit_unwind/foreign_accumulation 코드 배포 완료 (2026-04-16). ~7일 수집되면 실제 스캔 결과 확인. `short_squeeze`는 ~5/14 자동 작동.
+2. **4/8~4/11 4일 row 공백 판단** — 주중 3일(4/8/9/11) daily_snapshot 자체 없음. 복구 필요하면 kis_stock_price 과거 조회로 close/volume부터 전체 row INSERT 필요 — 범위 큼. 일단 "과거 공백 그대로 두고 미래만 정상화" 정책이면 스킵. 결정 필요.
 
-3. **KR_DEEPSEARCH 실전 검증** — 10 Step 템플릿 + PDF 게이트 추가됨. 다음 한국 종목 딥서치 시 사용자가 직접 복붙하며 Step 누락 여부 / 킬 조건 체감 확인.
+3. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST `daily_dart_incremental` 스케줄 배포 완료 (2026-04-16). 첫 공시 발생일(분기 마감 + 45일 근처) 이후 텔레그램 알림으로 쿼터/수집 건수 확인. 분기 피크일(5/15, 8/14, 11/14) 신규 ~800종목 수집 예상.
+
+4. **프리셋 복구 데이터 누적 대기** — credit_unwind/foreign_accumulation 코드 배포 완료 (2026-04-16). ~7일 수집되면 실제 스캔 결과 확인. `short_squeeze`는 ~5/14 자동 작동.
+
+5. **KR_DEEPSEARCH 실전 검증** — 10 Step 템플릿 + PDF 게이트 추가됨. 다음 한국 종목 딥서치 시 사용자가 직접 복붙하며 Step 누락 여부 / 킬 조건 체감 확인.
 
 ---
 
@@ -60,6 +64,10 @@
 8. **DART API 한도는 stockTotqySttus가 더 빡빡** — 4/16 fnlttSinglAcntAll 34k콜은 통과, 직후 stockTotqySttus 1k콜에서 status=020 (한도초과). 두 API가 다른 쿼터 풀을 쓰거나 stockTotqySttus가 별도 제한. 다음에 같은 일정으로 두 API 모두 돌리면 실패하니 분리.
 9. **DART CF 직접법 회사는 감가상각 노출 안 됨** — 삼성/SK하이닉스/현대차 등 대형 직접법 채택사는 fnlttSinglAcntAll의 sj=CF에 "감가상각" 계정 없음. 결과: 22%만 채워짐 → M-Score DEPI 계산 불가. 별도 데이터 소스(FnGuide/주석) 없으면 구조적 한계.
 10. **Python stdout 버퍼링 함정** — nohup + python3 -u 했는데도 print line buffering이 일정 시점 후 끊김. 장기 실행 모니터링은 DB 카운트 기반 polling이 더 신뢰. (Phase 1.5 백그라운드 80분 진행 중 로그 stuck 경험)
+11. **한 함수 버그가 여러 경로 파급** — `kis_investor_trend_history` 의 output1/output2 파싱 버그 1곳이 MCP `get_supply(history)` + `collect_daily` Phase3 양쪽 동시 고장의 원인이었음. 수정 1줄로 둘 다 복구. 버그 진단 시 "이 함수 누가 쓰는지" 사전 grep 필수 — 영향 범위 과소평가 금지.
+12. **KIS API 응답 스키마가 조용히 바뀜** — 공식 공지 없이 `output1: list → dict + output2: list` 변경 발생. 상담원도 "공식 자료에서 근거 확인 불가"로 회피. 주기적 응답 구조 스모크 테스트 필요 (특히 장기 운영 TR_ID).
+13. **"수집 성공 but 0값" 함정** — NULL/0 구분 필수. 4/12~4/16 "수급 100% 충원"으로 보였지만 실은 전부 0. `COUNT(col)` 뿐 아니라 `SUM(CASE WHEN col=0 ...)` 도 모니터링에 포함해야.
+14. **KIS 공개 채널은 정책/공지 담당 — 개별 TR 장애는 고객의소리** — 상담원이 "TR_ID 확인 불가"라고 말해도 TR이 없다는 뜻 아님. 개별 로그 분석은 별도 경로 필요. TR 유효성은 우리 쪽 live test가 가장 빠름.
 
 ---
 
