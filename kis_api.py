@@ -201,32 +201,94 @@ DART_KEYWORDS = [
     "실적", "매출", "영업이익", "감자", "대규모",
 ]
 
-# 뉴스 감성 키워드 사전
-_POSITIVE_KEYWORDS = [
-    "상승", "급등", "신고가", "호실적", "수주", "계약", "흑자", "성장",
-    "증가", "개선", "호재", "수혜", "기대", "목표가 상향", "매수",
-    "반등", "강세", "돌파", "최고", "확대", "회복", "낙관",
-    "상향", "호황", "투자확대", "수출증가", "영업이익 증가",
-]
+# KNU 감성사전 메모리 캐시
+_KNU_SENTI_CACHE: dict | None = None
 
-_NEGATIVE_KEYWORDS = [
-    "하락", "급락", "신저가", "적자", "감소", "악화", "하향",
-    "리스크", "우려", "경고", "매도", "약세", "손실", "부진",
-    "위기", "제재", "소송", "감자", "상폐", "폭락", "둔화",
-    "불확실", "위축", "수출감소", "영업이익 감소",
-]
 
-# 미국 뉴스 영문 감성 키워드 사전
+def _load_knu_senti_lex() -> dict:
+    """KNU 한국어 감성사전 로드 (최초 1회만 파일 읽기, 이후 메모리 캐싱)."""
+    global _KNU_SENTI_CACHE
+    if _KNU_SENTI_CACHE is not None:
+        return _KNU_SENTI_CACHE
+    path = os.path.join(_DATA_DIR, "knu_senti_lex.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            _KNU_SENTI_CACHE = json.load(f)
+    except Exception:
+        _KNU_SENTI_CACHE = {}
+    return _KNU_SENTI_CACHE
+
+
+# 금융 특화 다단어 구문 점수 (KNU 개별 단어보다 우선 적용, 절댓값 클수록 강함)
+# 양수=긍정, 음수=부정. 문자열 포함 여부로 매칭 (긴 구문 먼저 검사)
+_FINANCE_PHRASE_SCORES: list[tuple[str, int]] = sorted([
+    # 컨텍스트 반전: 감소/축소가 긍정인 경우
+    ("대차잔고 감소", 4), ("대차잔고감소", 4),
+    ("대차거래 잔고감소", 4), ("대차거래잔고감소", 4),
+    ("공매도잔고 감소", 4), ("공매도잔고감소", 4),
+    ("공매도 감소", 3), ("공매도감소", 3),
+    ("공매도 축소", 3), ("공매도축소", 3),
+    ("부채비율 감소", 2), ("부채비율감소", 2),
+    ("적자 감소", 2), ("적자감소", 2),
+    ("적자 축소", 2), ("적자축소", 2),
+    # 컨텍스트 반전: 증가가 부정인 경우
+    ("대차잔고 증가", -4), ("대차잔고증가", -4),
+    ("공매도 증가", -3), ("공매도증가", -3),
+    ("부채비율 증가", -2), ("부채비율증가", -2),
+    # 강력 긍정
+    ("흑자전환", 5), ("어닝서프라이즈", 5), ("어닝 서프라이즈", 5),
+    ("깜짝실적", 4), ("깜짝 실적", 4), ("사상 최대", 4), ("사상최대", 4),
+    ("최대 실적", 4), ("최대실적", 4), ("역대 최대", 4), ("역대최대", 4),
+    ("목표가 상향", 4), ("목표가상향", 4),
+    ("투자의견 상향", 4), ("투자의견상향", 4),
+    ("통 큰 배당", 4), ("특별배당", 4),
+    ("자사주 매입", 3), ("자사주매입", 3),
+    ("배당 증가", 3), ("배당증가", 3), ("배당 확대", 3), ("배당확대", 3),
+    ("영업이익 증가", 3), ("영업이익증가", 3),
+    ("매출 증가", 2), ("매출증가", 2),
+    ("실적 개선", 3), ("실적개선", 3),
+    ("수주 확대", 3), ("수주확대", 3),
+    ("계약 체결", 2), ("계약체결", 2),
+    # 강력 부정
+    ("적자전환", -5), ("어닝쇼크", -5), ("어닝 쇼크", -5),
+    ("상장폐지", -5), ("상폐", -4),
+    ("목표가 하향", -4), ("목표가하향", -4),
+    ("투자의견 하향", -4), ("투자의견하향", -4),
+    ("영업이익 감소", -3), ("영업이익감소", -3),
+    ("적자 확대", -4), ("적자확대", -4),
+    ("매출 감소", -2), ("매출감소", -2),
+    ("이익 감소", -2), ("이익감소", -2),
+    ("구조조정", -3), ("감자", -4),
+], key=lambda x: -len(x[0]))  # 긴 구문 먼저 매칭
+
+# 기계적 순위 기사 필터 패턴 (해당하면 neutral 즉시 반환)
+_RANKING_PATTERNS = [
+    r"순매수\s*상위",
+    r"순매도\s*상위",
+    r"체결강도\s*상위",
+    r"등락률\s*상위",
+    r"거래량\s*상위",
+    r"상위\s*\d+\s*종목",
+    r"상위\s*종목",
+    r"시총\s*상위",
+    r"배당수익률\s*상위",
+    r"\d+종목\s*(집계|포함|선정)",
+    r"상위에\s*(오른|든)\s*종목",
+]
+_RANKING_RE = re.compile("|".join(_RANKING_PATTERNS))
+
+# 미국 뉴스 영문 감성 키워드 사전 (기존 유지, 금융 특화 추가)
 _US_POSITIVE_KEYWORDS = [
     "surge", "soar", "rally", "beat", "upgrade", "bullish", "growth",
     "record", "outperform", "buy", "strong", "raise", "profit", "gain",
-    "upside", "breakout", "momentum", "dividend", "expand",
+    "upside", "breakout", "momentum", "dividend", "expand", "turnaround",
+    "surprise", "exceeded", "record high", "beat estimates", "raised guidance",
 ]
-
 _US_NEGATIVE_KEYWORDS = [
     "drop", "plunge", "crash", "miss", "downgrade", "bearish", "decline",
     "loss", "underperform", "sell", "weak", "cut", "warning", "risk",
     "layoff", "recall", "lawsuit", "investigation", "bankruptcy",
+    "missed estimates", "lowered guidance", "earnings shock",
 ]
 
 
@@ -2119,28 +2181,84 @@ async def kis_news_title(ticker: str, token: str, n: int = 10) -> list:
 
 
 def analyze_news_sentiment(news_items: list) -> dict:
-    """뉴스 헤드라인 감성 분석.
+    """뉴스 헤드라인 감성 분석 (KNU 사전 + 금융 특화 규칙).
+
+    알고리즘:
+    1. 기계적 순위 기사 패턴 → 즉시 neutral
+    2. FINANCE_PHRASE_SCORES (다단어, 우선 적용) → score 누적
+    3. KNU 사전 단어 점수 (finance phrase 커버 범위 제외) → score 누적
+    4. 부정어 반전 (않/없/못/안, 앞 키워드 3자 이내) → 부호 반전
+    5. score > 0 → positive | score < 0 → negative | else → neutral
 
     Returns: {positive: [...], negative: [...], neutral: [...], summary: str}
     """
+    knu = _load_knu_senti_lex()
     positive, negative, neutral = [], [], []
+
     for item in news_items:
         title = item.get("title", "")
-        pos_matched = [kw for kw in _POSITIVE_KEYWORDS if kw in title]
-        neg_matched = [kw for kw in _NEGATIVE_KEYWORDS if kw in title]
         entry = {**item}
-        if len(pos_matched) > len(neg_matched):
+
+        # 1. 기계적 순위 기사 필터
+        if _RANKING_RE.search(title):
+            entry["sentiment"] = "neutral"
+            entry["matched_keywords"] = ["[순위기사]"]
+            entry["score"] = 0
+            neutral.append(entry)
+            continue
+
+        score = 0
+        matched = []
+        covered = set()  # 이미 finance phrase가 커버한 문자 인덱스
+
+        # 2. 금융 특화 구문 (다단어, 긴 것 먼저)
+        for phrase, phrase_score in _FINANCE_PHRASE_SCORES:
+            start = 0
+            while True:
+                idx = title.find(phrase, start)
+                if idx == -1:
+                    break
+                score += phrase_score
+                matched.append(f"{phrase}({'+' if phrase_score > 0 else ''}{phrase_score})")
+                for i in range(idx, idx + len(phrase)):
+                    covered.add(i)
+                start = idx + len(phrase)
+
+        # 3. KNU 사전 단어 점수 (covered 범위 제외)
+        for word, word_score in knu.items():
+            if not word_score or not word:
+                continue
+            start = 0
+            while True:
+                idx = title.find(word, start)
+                if idx == -1:
+                    break
+                # covered 범위와 겹치면 스킵
+                if covered.isdisjoint(range(idx, idx + len(word))):
+                    # 4. 부정어 반전 확인 (키워드 직후 10자 이내)
+                    suffix = title[idx + len(word): idx + len(word) + 10]
+                    if re.search(r'않|없|못|안\s|안$|아니', suffix):
+                        score -= word_score  # 부호 반전
+                        matched.append(f"{word}(반전:{-word_score:+d})")
+                    else:
+                        score += word_score
+                        if abs(word_score) >= 1:
+                            matched.append(f"{word}({word_score:+d})")
+                start = idx + len(word)
+
+        # 5. 점수 → 감성 판정 (임계값 1)
+        entry["matched_keywords"] = matched[:10]  # 상위 10개만 노출
+        entry["score"] = score
+        if score > 0:
             entry["sentiment"] = "positive"
-            entry["matched_keywords"] = pos_matched
             positive.append(entry)
-        elif len(neg_matched) > len(pos_matched):
+        elif score < 0:
             entry["sentiment"] = "negative"
-            entry["matched_keywords"] = neg_matched
             negative.append(entry)
         else:
             entry["sentiment"] = "neutral"
-            entry["matched_keywords"] = pos_matched + neg_matched
             neutral.append(entry)
+
     summary = f"🟢긍정 {len(positive)} / 🔴부정 {len(negative)} / ⚪중립 {len(neutral)}"
     return {"positive": positive, "negative": negative, "neutral": neutral, "summary": summary}
 
