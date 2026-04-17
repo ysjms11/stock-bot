@@ -259,10 +259,33 @@ _FINANCE_PHRASE_SCORES: list[tuple[str, int]] = sorted([
     ("독점 공급", 3), ("독점공급", 3), ("독점 계약", 3),
     ("영업이익 흑자", 3),
     ("지지선", 2), ("저항선", 0),
+    ("신고가 달성", 3), ("52주 신고가", 3), ("연고점 돌파", 3),
+    ("수출 증가", 2), ("수출증가", 2),
+    ("매수세 집중", 2), ("매수세 유입", 2),
+    ("순매수 지속", 2), ("외인 순매수", 2),
+    ("연속 상승", 2), ("연속 매수", 2),
+    ("승소", 3),
+    ("구조조정 효과", 2),  # 구조조정 자체는 -3이지만 "효과"와 결합 시 긍정
+    ("부담 완화", 2), ("리스크 완화", 2),
+    ("효과", 1),  # "효과로"에서 "과로(-1)" 오매칭 방지용 covered
+    # 강력 부정 — 맥락 반전 (긍정어가 부정 맥락에서 등장)
+    ("허가 반려", -5), ("임상 실패", -4), ("허가 취소", -4),
+    ("수익성 악화", -3), ("수익 악화", -3),
+    ("영업적자", -4),  # "업적"(KNU+1) 오매칭 방지
+    ("가치 하락", -3),  # "가치"(KNU+1) 오매칭 방지
+    ("손실 확대", -3), ("손실확대", -3),
+    ("연체율 상승", -3), ("부실 확대", -3),
+    ("약세장", -3), ("연저점", -3),
+    ("급락", -3),
+    ("매도 폭탄", -4),
+    ("공매도잔고 급증", -4),
+    ("재고손실", -3),
+    ("수출 감소", -2), ("수출감소", -2),
+    ("실적 악화", -3), ("실적악화", -3),
+    ("수주 취소", -3), ("계약 취소", -3),
     # 강력 부정
     ("리스크 부각", -3), ("리스크 확대", -3),
     ("수급 악화", -2), ("수급악화", -2),
-    # 강력 부정
     ("적자전환", -5), ("어닝쇼크", -5), ("어닝 쇼크", -5),
     ("상장폐지", -5), ("상폐", -4),
     ("목표가 하향", -4), ("목표가하향", -4),
@@ -2233,7 +2256,7 @@ def analyze_news_sentiment(news_items: list) -> dict:
                     break
                 # 구문 직후 부정어 반전 확인
                 suffix = title[idx + len(phrase): idx + len(phrase) + 10]
-                actual_score = -phrase_score if re.search(r'않|없|못|안\s|아니', suffix) else phrase_score
+                actual_score = -phrase_score if re.search(r'않|없|못|안\s|아닌|아니', suffix) else phrase_score
                 score += actual_score
                 matched.append(f"{phrase}({'+' if actual_score > 0 else ''}{actual_score})")
                 for i in range(idx, idx + len(phrase)):
@@ -2253,7 +2276,7 @@ def analyze_news_sentiment(news_items: list) -> dict:
                 if covered.isdisjoint(range(idx, idx + len(word))):
                     # 4. 부정어 반전 확인 (키워드 직후 10자 이내)
                     suffix = title[idx + len(word): idx + len(word) + 10]
-                    if re.search(r'않|없|못|안\s|아니', suffix):
+                    if re.search(r'않|없|못|안\s|아닌|아니', suffix):
                         score -= word_score  # 부호 반전
                         matched.append(f"{word}(반전:{-word_score:+d})")
                     else:
