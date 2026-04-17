@@ -1,6 +1,8 @@
 import os
+import sys
 import json
 import re
+import socket
 import asyncio
 import html as _html
 from datetime import datetime, timedelta, time as dtime
@@ -3387,6 +3389,38 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 주간 무결성 체크 (일 07:05 KST)
+# 최근 영업일 5일 daily_snapshot 누락 시 텔레그램 경고
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def weekly_sanity_check(context):
+    """매주 일요일 07:05: 최근 영업일 5일 daily_snapshot 존재 확인"""
+    try:
+        from db_collector import _get_db
+        conn = _get_db()
+        cur = conn.execute(
+            "SELECT trade_date, COUNT(*) FROM daily_snapshot "
+            "WHERE trade_date >= ? GROUP BY trade_date ORDER BY trade_date DESC",
+            ((datetime.now(KST) - timedelta(days=9)).strftime("%Y%m%d"),)
+        )
+        rows = cur.fetchall()
+        conn.close()
+        # 지난 5 영업일(월-금) 역산
+        bizdays = []
+        d = datetime.now(KST).date() - timedelta(days=1)
+        while len(bizdays) < 5:
+            if d.weekday() < 5:
+                bizdays.append(d.strftime("%Y%m%d"))
+            d -= timedelta(days=1)
+        have = {r[0] for r in rows if r[1] > 1500}
+        missing = [b for b in bizdays if b not in have]
+        if missing:
+            msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        print(f"[weekly_sanity] 실패: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 봇 시작
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def post_init(application: Application):
@@ -3452,6 +3486,36 @@ async def post_init(application: Application):
                 chat_id=CHAT_ID, text="\n".join(lines), parse_mode="Markdown")
         except Exception as e:
             print(f"KIS 테스트 결과 전송 실패: {e}")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 재시작 시 당일 미완 daily_collect_job 재실행
+    # (포트 충돌/크래시 복구 — 2026-04-17 daily_collect 미실행 사건 재발 방지)
+    # 평일 19시 이후 재시작인데 당일 daily_snapshot 0건이면 재실행
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    dt_kst = datetime.now(KST)
+    if 0 <= dt_kst.weekday() <= 4 and dt_kst.hour >= 19:
+        today = dt_kst.strftime("%Y%m%d")
+        try:
+            from db_collector import _get_db
+            conn = _get_db()
+            row = conn.execute(
+                "SELECT COUNT(*) FROM daily_snapshot WHERE trade_date=?",
+                (today,)
+            ).fetchone()
+            conn.close()
+            if not row or row[0] == 0:
+                print(f"[retry] 당일 ({today}) daily_snapshot 0건 — daily_collect_job 재실행")
+
+                class _CtxShim:
+                    """daily_collect_job(context) 시그니처 호환용 (bot 속성만 필요)"""
+                    def __init__(self, bot):
+                        self.bot = bot
+                t = asyncio.create_task(daily_collect_job(_CtxShim(application.bot)))
+                t.add_done_callback(
+                    lambda f: print(f"[retry] job 에러: {f.exception()}") if f.exception() else None
+                )
+        except Exception as e:
+            print(f"[retry] 미완 job 재실행 체크 실패: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3535,6 +3599,8 @@ def main():
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
     jq.run_daily(check_insider_cluster,   time=dtime(20, 0, tzinfo=KST), days=(0,1,2,3,4), name="insider_cluster")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")
+    # 주간 무결성 체크: 매주 일요일 07:05 KST — daily_snapshot 영업일 누락 감시
+    jq.run_daily(weekly_sanity_check,     time=dtime(7,  5, tzinfo=KST), days=(6,), name="weekly_sanity")
     jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
 
     port = int(os.environ.get("PORT", 8080))
@@ -5035,6 +5101,25 @@ async def _handle_dash_decisions(request: web.Request) -> web.Response:
 
 
 async def _run_all(app, port):
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 포트 바인드 안전장치: 충돌 시 5초×3회 재시도, 실패하면 정상 종료
+    # (launchd 재시작 대기) — 2026-04-17 daily_collect 미실행 사건 재발 방지
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    for attempt in range(3):
+        try:
+            probe = socket.socket()
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("0.0.0.0", port))
+            probe.close()
+            break
+        except OSError as e:
+            print(f"[port] {port} 사용중 (시도 {attempt+1}/3): {e}")
+            if attempt < 2:
+                await asyncio.sleep(5)
+            else:
+                print(f"[port] 포트 해제 실패, 봇 종료 (launchd 재시작 대기)")
+                sys.exit(1)
+
     # MCP aiohttp 서버 시작
     mcp_app = web.Application(client_max_size=50 * 1024 * 1024)  # 50MB for KRX upload
     mcp_app.router.add_get("/mcp", mcp_sse_handler)
