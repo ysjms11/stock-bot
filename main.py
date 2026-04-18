@@ -3420,6 +3420,43 @@ async def weekly_sanity_check(context):
         print(f"[weekly_sanity] 실패: {e}")
 
 
+async def daily_us_rating_scan(context):
+    """매일 KST 07:30 (UTC 22:30) — 감시+보유 미국 종목 애널 레이팅 수집.
+    60종목 × 2초 ≈ 2분 예상.
+    """
+    try:
+        from kis_api import (_stockanalysis_ratings, _save_us_ratings_to_db,
+                              _save_consensus_snapshot, load_us_watchlist,
+                              PORTFOLIO_FILE, load_json)
+        tickers = set()
+        for t in load_us_watchlist().keys():
+            tickers.add(t.upper())
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        for t in portfolio.get("us_stocks", {}).keys():
+            tickers.add(t.upper())
+        if not tickers:
+            print("[us_ratings] 대상 종목 없음")
+            return
+        print(f"[us_ratings] 일일 스캔 시작 ({len(tickers)}종목)")
+        inserted = 0
+        failed = []
+        for ticker in sorted(tickers):
+            try:
+                result = await _stockanalysis_ratings(ticker)
+                if result:
+                    inserted += _save_us_ratings_to_db(result)
+                    _save_consensus_snapshot(result)
+                else:
+                    failed.append(ticker)
+            except Exception as e:
+                print(f"[us_ratings] {ticker} 실패: {e}")
+                failed.append(ticker)
+            await asyncio.sleep(2.0)
+        print(f"[us_ratings] 완료: 신규 {inserted}건, 실패 {len(failed)}종목")
+    except Exception as e:
+        print(f"[us_ratings] 스캔 전체 실패: {e}")
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 봇 시작
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3593,6 +3630,7 @@ def main():
     jq.run_daily(collect_reports_daily,    time=dtime(8, 30, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
     # KRX 전종목 DB 갱신: db_collector가 18:30에 KRX OPEN API로 수집
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
+    jq.run_daily(daily_us_rating_scan,    time=dtime(7, 30, tzinfo=KST), days=(0,1,2,3,4,5,6), name="us_ratings")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     # DART 증분 수집: 매일 02:00 KST — 신규 정기공시만 수집 후 알파 재계산
     jq.run_daily(daily_dart_incremental,  time=dtime(2,  0, tzinfo=KST),                     name="dart_incremental")

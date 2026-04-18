@@ -286,6 +286,43 @@ CREATE TABLE IF NOT EXISTS insider_transactions (
 );
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
+-- 미국 애널 레이팅
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+CREATE TABLE IF NOT EXISTS us_analyst_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    rating_date TEXT NOT NULL,
+    rating_time TEXT,
+    firm TEXT,
+    analyst TEXT,
+    analyst_slug TEXT,
+    action TEXT,
+    rating_new TEXT,
+    rating_old TEXT,
+    pt_now REAL,
+    pt_old REAL,
+    pt_change_pct REAL,
+    stars REAL,
+    success_rate REAL,
+    avg_return REAL,
+    total_ratings INTEGER,
+    fetched_at TEXT NOT NULL,
+    UNIQUE(ticker, rating_date, rating_time, firm, analyst_slug)
+);
+CREATE INDEX IF NOT EXISTS idx_us_ratings_ticker_date ON us_analyst_ratings(ticker, rating_date DESC);
+CREATE INDEX IF NOT EXISTS idx_us_ratings_slug_date ON us_analyst_ratings(analyst_slug, rating_date DESC);
+CREATE INDEX IF NOT EXISTS idx_us_ratings_date ON us_analyst_ratings(rating_date DESC);
+
+CREATE TABLE IF NOT EXISTS us_consensus_snapshot (
+    ticker TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    analyst_count INTEGER,
+    consensus_rating TEXT,
+    target_avg REAL,
+    PRIMARY KEY(ticker, snapshot_date)
+);
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- 인덱스 (최소주의 — 느린 쿼리 확인 후 추가)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- PK (trade_date, symbol)는 자동 인덱스

@@ -821,6 +821,41 @@ MCP_TOOLS = [
                          "ticker": {"type": "string", "description": "종목코드 (예: 005930)"},
                      },
                      "required": ["ticker"]}},
+
+    {"name": "get_us_ratings",
+     "description": "미국 종목 애널 레이팅 조회 (이벤트/추세/컨센). mode별 출력 다름.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "ticker": {"type": "string", "description": "미국 종목 티커 (필수, 예: GEV)"},
+        "mode": {"type": "string", "enum": ["events", "trend", "consensus"], "default": "events",
+                 "description": "events=개별 이벤트, trend=월별 추세, consensus=현재 컨센 요약"},
+        "days": {"type": "integer", "default": 90, "description": "events 조회 기간 (일)"},
+        "months": {"type": "integer", "default": 6, "description": "trend 조회 기간 (월)"},
+        "min_stars": {"type": "number", "default": 0.0, "description": "별점 하한 (0=전체)"}
+      },
+      "required": ["ticker"]}},
+
+    {"name": "get_us_scan",
+     "description": "미국 애널 레이팅 스캔/발굴. watchlist=감시+보유, discovery=감시 밖 관심, sector=섹터 모멘텀.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "mode": {"type": "string", "enum": ["watchlist", "discovery", "sector"], "default": "watchlist"},
+        "days": {"type": "integer", "default": 7},
+        "min_upgrades": {"type": "integer", "default": 3, "description": "discovery 상향 임계값"},
+        "sector": {"type": "string", "description": "sector 모드 필터"}
+      }}},
+
+    {"name": "get_us_analyst",
+     "description": "미국 애널 개인/그룹 조회. name 지정 시 개별, 없으면 top으로 필터된 리스트.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "name": {"type": "string", "description": "애널 slug 또는 full name"},
+        "firm": {"type": "string", "description": "증권사 필터 (3단계 stub)"},
+        "sector": {"type": "string", "description": "섹터 필터 (3단계 stub)"},
+        "top": {"type": "integer", "default": 10},
+        "min_stars": {"type": "number", "default": 4.0},
+        "days": {"type": "integer", "default": 14}
+      }}},
 ]
 
 
@@ -874,7 +909,134 @@ _NO_TOKEN_TOOLS = frozenset({
     "read_file", "write_file", "list_files", "read_report_pdf",
     "git_status", "git_diff", "git_log", "git_commit", "git_push",
     "backup_data",
+    "get_us_ratings", "get_us_scan", "get_us_analyst",
 })
+
+
+async def _exec_us_ratings(ticker: str, mode: str = "events",
+                            days: int = 90, months: int = 6,
+                            min_stars: float = 0.0, **_) -> dict:
+    from db_collector import _get_db
+    ticker = ticker.upper()
+    conn = _get_db()
+    try:
+        if mode == "consensus":
+            row = conn.execute(
+                "SELECT snapshot_date, analyst_count, consensus_rating, target_avg "
+                "FROM us_consensus_snapshot WHERE ticker=? ORDER BY snapshot_date DESC LIMIT 1",
+                (ticker,)).fetchone()
+            if not row:
+                return {"ticker": ticker, "mode": "consensus", "data": None,
+                        "message": "데이터 없음 — 일일 스캔 대기"}
+            return {"ticker": ticker, "mode": "consensus",
+                    "data": {"snapshot_date": row[0], "analyst_count": row[1],
+                             "consensus_rating": row[2], "target_avg": row[3]}}
+        elif mode == "trend":
+            rows = conn.execute(
+                "SELECT substr(snapshot_date, 1, 7) AS ym, "
+                "       AVG(analyst_count), AVG(target_avg) "
+                "FROM us_consensus_snapshot WHERE ticker=? "
+                "  AND snapshot_date >= date('now', ?) "
+                "GROUP BY ym ORDER BY ym DESC",
+                (ticker, f"-{months} months")).fetchall()
+            return {"ticker": ticker, "mode": "trend", "months": months,
+                    "data": [{"month": r[0], "avg_count": r[1], "avg_target": r[2]} for r in rows]}
+        else:
+            rows = conn.execute(
+                "SELECT rating_date, rating_time, firm, analyst, action, "
+                "       rating_new, rating_old, pt_now, pt_old, pt_change_pct, stars "
+                "FROM us_analyst_ratings WHERE ticker=? "
+                "  AND rating_date >= date('now', ?) "
+                "  AND (stars IS NULL OR stars >= ?) "
+                "ORDER BY rating_date DESC, rating_time DESC",
+                (ticker, f"-{days} days", min_stars)).fetchall()
+            return {"ticker": ticker, "mode": "events", "days": days, "min_stars": min_stars,
+                    "count": len(rows),
+                    "events": [{"date": r[0], "time": r[1], "firm": r[2], "analyst": r[3],
+                                "action": r[4], "rating_new": r[5], "rating_old": r[6],
+                                "pt_now": r[7], "pt_old": r[8], "pt_change_pct": r[9],
+                                "stars": r[10]} for r in rows]}
+    finally:
+        conn.close()
+
+
+async def _exec_us_scan(mode: str = "watchlist", days: int = 7,
+                         min_upgrades: int = 3, sector: str = None, **_) -> dict:
+    if mode in ("discovery", "sector"):
+        return {"mode": mode, "message": "3단계에서 구현 예정", "data": []}
+    from kis_api import load_us_watchlist, PORTFOLIO_FILE, load_json
+    from db_collector import _get_db
+    tickers = set()
+    for t in load_us_watchlist().keys():
+        tickers.add(t.upper())
+    for t in load_json(PORTFOLIO_FILE, {}).get("us_stocks", {}).keys():
+        tickers.add(t.upper())
+    if not tickers:
+        return {"mode": "watchlist", "days": days, "tickers": [], "data": []}
+    conn = _get_db()
+    try:
+        out = []
+        for ticker in sorted(tickers):
+            rows = conn.execute(
+                "SELECT rating_date, firm, analyst, action, rating_new, rating_old, "
+                "       pt_now, pt_old, pt_change_pct "
+                "FROM us_analyst_ratings WHERE ticker=? "
+                "  AND rating_date >= date('now', ?) "
+                "ORDER BY rating_date DESC, rating_time DESC",
+                (ticker, f"-{days} days")).fetchall()
+            if not rows:
+                continue
+            upgrades = sum(1 for r in rows if (r[3] or "").lower() == "upgrades")
+            downgrades = sum(1 for r in rows if (r[3] or "").lower() == "downgrades")
+            out.append({
+                "ticker": ticker, "events": len(rows),
+                "upgrades": upgrades, "downgrades": downgrades,
+                "flag_upgrade": upgrades >= min_upgrades,
+                "latest": [{"date": r[0], "firm": r[1], "action": r[3],
+                            "rating_new": r[4], "pt_now": r[6], "pt_change_pct": r[8]}
+                           for r in rows[:3]],
+            })
+        return {"mode": "watchlist", "days": days, "min_upgrades": min_upgrades,
+                "tickers": sorted(tickers), "data": out}
+    finally:
+        conn.close()
+
+
+async def _exec_us_analyst(name: str = None, firm: str = None, sector: str = None,
+                            top: int = 10, min_stars: float = 4.0, days: int = 14, **_) -> dict:
+    from db_collector import _get_db
+    conn = _get_db()
+    try:
+        if name:
+            slug = name.lower().replace(" ", "-")
+            rows = conn.execute(
+                "SELECT ticker, rating_date, firm, action, rating_new, pt_now, "
+                "       pt_change_pct, stars, success_rate "
+                "FROM us_analyst_ratings "
+                "WHERE (analyst_slug=? OR LOWER(analyst)=?) "
+                "  AND rating_date >= date('now', ?) "
+                "ORDER BY rating_date DESC LIMIT 50",
+                (slug, name.lower(), f"-{days} days")).fetchall()
+            return {"name": name, "days": days, "count": len(rows),
+                    "calls": [{"ticker": r[0], "date": r[1], "firm": r[2], "action": r[3],
+                               "rating_new": r[4], "pt_now": r[5], "pt_change_pct": r[6],
+                               "stars": r[7], "success_rate": r[8]} for r in rows]}
+        if firm or sector:
+            return {"mode": "filter", "firm": firm, "sector": sector,
+                    "message": "firm/sector 필터는 3단계에서 구현 예정", "data": []}
+        rows = conn.execute(
+            "SELECT analyst_slug, analyst, firm, AVG(stars), AVG(success_rate), COUNT(*) "
+            "FROM us_analyst_ratings WHERE stars >= ? "
+            "  AND rating_date >= date('now', ?) "
+            "GROUP BY analyst_slug HAVING COUNT(*) > 0 "
+            "ORDER BY AVG(stars) DESC LIMIT ?",
+            (min_stars, f"-{days} days", top)).fetchall()
+        return {"mode": "top", "top": top, "min_stars": min_stars, "days": days,
+                "analysts": [{"slug": r[0], "analyst": r[1], "firm": r[2],
+                              "avg_stars": r[3], "avg_success_rate": r[4], "call_count": r[5]}
+                             for r in rows]}
+    finally:
+        conn.close()
 
 
 async def _execute_tool(name: str, arguments: dict) -> dict | list:
@@ -4006,6 +4168,13 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             }
                 except Exception as e:
                     result = {"error": f"get_alpha_metrics 조회 실패: {e}"}
+
+        elif name == "get_us_ratings":
+            result = await _exec_us_ratings(**arguments)
+        elif name == "get_us_scan":
+            result = await _exec_us_scan(**arguments)
+        elif name == "get_us_analyst":
+            result = await _exec_us_analyst(**arguments)
 
         else:
             result = {"error": f"unknown tool: {name}"}

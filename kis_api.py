@@ -4825,6 +4825,127 @@ def list_dart_reports() -> dict:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# StockAnalysis.com 애널 레이팅
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def _stockanalysis_ratings(ticker: str) -> dict | None:
+    """StockAnalysis.com 비공식 JSON API. 반환: 정규화 dict 또는 None.
+    주의: 2초 sleep은 호출자가 관리.
+    """
+    url = f"https://api.stockanalysis.com/api/symbol/s/{ticker.lower()}/ratings"
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    timeout = aiohttp.ClientTimeout(total=5)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status in (429, 403):
+                    print(f"[stockanalysis] {ticker} rate limited/blocked ({resp.status}), 30s 백오프")
+                    await asyncio.sleep(30)
+                    return None
+                if resp.status != 200:
+                    print(f"[stockanalysis] {ticker} HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+                if data.get("status") != 200:
+                    return None
+                return _normalize_stockanalysis_response(ticker, data)
+    except Exception as e:
+        print(f"[stockanalysis] {ticker} {type(e).__name__}: {e}")
+        return None
+
+
+def _normalize_stockanalysis_response(ticker: str, raw: dict) -> dict:
+    """응답을 flat 구조로 정규화.
+    pt_change_pct = (pt_now - pt_old) / pt_old * 100 (pt_old > 0 일 때만)
+    """
+    widget = raw.get("data", {}).get("widget", {}).get("all", {}) or {}
+    ratings_raw = raw.get("data", {}).get("ratings", []) or []
+    ratings = []
+    for r in ratings_raw:
+        pt_now = r.get("pt_now")
+        pt_old = r.get("pt_old")
+        pt_change_pct = None
+        if pt_now and pt_old and pt_old > 0:
+            pt_change_pct = (pt_now - pt_old) / pt_old * 100
+        scores = r.get("scores") or {}
+        ratings.append({
+            "date": r.get("date"),
+            "time": r.get("time"),
+            "firm": r.get("firm"),
+            "analyst": r.get("analyst"),
+            "slug": r.get("slug"),
+            "action": r.get("action_rt"),
+            "rating_new": r.get("rating_new"),
+            "rating_old": r.get("rating_old"),
+            "pt_now": pt_now,
+            "pt_old": pt_old,
+            "pt_change_pct": pt_change_pct,
+            "stars": scores.get("stars"),
+            "success_rate": scores.get("success_rate"),
+            "avg_return": scores.get("avg_return"),
+            "total_ratings": scores.get("total"),
+        })
+    return {
+        "ticker": ticker.upper(),
+        "consensus": {
+            "count": widget.get("count", 0),
+            "rating": widget.get("consensus"),
+            "target": widget.get("price_target"),
+        },
+        "ratings": ratings,
+    }
+
+
+def _save_us_ratings_to_db(data: dict) -> int:
+    """INSERT OR IGNORE (UNIQUE 제약). 반환: 신규 insert 건수.
+    db_collector._get_db() 로 연결. fetched_at = datetime.now().isoformat().
+    """
+    from db_collector import _get_db
+    conn = _get_db()
+    inserted = 0
+    try:
+        now_iso = datetime.now().isoformat()
+        ticker = data["ticker"]
+        for r in data.get("ratings", []):
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO us_analyst_ratings "
+                "(ticker, rating_date, rating_time, firm, analyst, analyst_slug, action, "
+                " rating_new, rating_old, pt_now, pt_old, pt_change_pct, "
+                " stars, success_rate, avg_return, total_ratings, fetched_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (ticker, r.get("date"), r.get("time"), r.get("firm"),
+                 r.get("analyst"), r.get("slug"), r.get("action"),
+                 r.get("rating_new"), r.get("rating_old"),
+                 r.get("pt_now"), r.get("pt_old"), r.get("pt_change_pct"),
+                 r.get("stars"), r.get("success_rate"),
+                 r.get("avg_return"), r.get("total_ratings"), now_iso)
+            )
+            if cur.rowcount > 0:
+                inserted += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return inserted
+
+
+def _save_consensus_snapshot(data: dict) -> None:
+    """일일 컨센 스냅샷 (INSERT OR REPLACE). snapshot_date = KST 오늘."""
+    from db_collector import _get_db
+    conn = _get_db()
+    try:
+        snap_date = datetime.now(KST).strftime("%Y-%m-%d")
+        c = data.get("consensus", {}) or {}
+        conn.execute(
+            "INSERT OR REPLACE INTO us_consensus_snapshot "
+            "(ticker, snapshot_date, analyst_count, consensus_rating, target_avg) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (data["ticker"], snap_date, c.get("count"), c.get("rating"), c.get("target"))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # GitHub Gist 백업/복원
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def backup_data_files() -> dict:
