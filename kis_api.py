@@ -3726,6 +3726,9 @@ _GOVERNANCE_KEYWORDS = [
     # 배당 (2단계): 주주환원 강화 시그널만
     "특별배당",
     "주식배당",
+    # 밸류업 (3단계): 기업가치 제고 계획 공시
+    "기업가치제고",
+    "기업가치 제고",
 ]
 
 
@@ -3737,13 +3740,15 @@ def filter_governance_disclosures(disclosures):
     for d in disclosures:
         nm = d.get("report_nm", "")
         if any(kw in nm for kw in _GOVERNANCE_KEYWORDS):
-            # 타입 태깅 (우선순위: 소각 > 특별배당 > 주식배당 > 취득 > 처분 > 기타)
+            # 타입 태깅 (우선순위: 소각 > 특별배당 > 주식배당 > 밸류업 > 취득 > 처분 > 기타)
             if "소각" in nm:
                 tag = "소각"
             elif "특별배당" in nm:
                 tag = "특별배당"
             elif "주식배당" in nm:
                 tag = "주식배당"
+            elif "기업가치제고" in nm or "기업가치 제고" in nm:
+                tag = "밸류업"
             elif "취득" in nm or "매입" in nm:
                 tag = "취득"
             elif "처분" in nm:
