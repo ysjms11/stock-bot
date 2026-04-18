@@ -98,7 +98,7 @@ Q8.SBC 과다? 이익 본업?(스미스) Q9.과거 프레임?(막스) Q10.★★
 
 ```
 [티커] 빠른 등급 판정. 현재가 약 $[현재가].
-봇: get_stock_detail + get_alerts(brief=True) + get_regime
+봇: get_stock_detail + get_alerts(brief=True) + get_regime + get_us_ratings(mode='consensus')
 웹서치: "[티커] earnings guidance 2026" + stockanalysis.com/stocks/[티커]/forecast/
 레짐+K/G 분류 → 3대 질문 → PEG 게이트(2.0) → 등급 → 감시가 → set_alert.
 ```
@@ -123,6 +123,7 @@ Q8.SBC 과다? 이익 본업?(스미스) Q9.과거 프레임?(막스) Q10.★★
 봇: get_stock_detail + get_portfolio + get_alerts(brief=True) + get_regime
 웹서치: "[티커] earnings guidance" + stockanalysis.com + "[티커] competition risk"
 0. 현재 시장 K/G 국면 확인 (최근 주가 움직임이 K노이즈인지 G훼손인지 분류)
+봇 trend 체크: get_us_ratings(ticker, mode='trend', months=6) → buy/hold/sell 변화 방향 확인
 5개 질문: 1.thesis 유효? 2.등급 변경? 3.무효화 조건? 4.Fresh Money Test? 5.프리모템(조분류)
 ```
 
@@ -145,6 +146,7 @@ Q8.SBC 과다? 이익 본업?(스미스) Q9.과거 프레임?(막스) Q10.★★
 ```
 미국 워치리스트 일괄 스캔.
 봇: get_alerts(brief=True) + get_regime + get_macro(mode='us_sector')
+감시가 10% 이내 종목에 대해 get_us_scan(mode='watchlist', days=30) 1회 호출로 일괄 확인
 감시가 10% 이내만: 웹서치 "[티커] earnings guidance" → 3대 질문 속판 → 등급/감시가 재조정.
 PEG 게이트 2.0 재확인. 변화 없으면 스킵.
 ```
@@ -200,6 +202,12 @@ PEG 게이트 2.0 재확인. 변화 없으면 스킵.
   2028E EPS $__ × 섹터멀티플 __x = $__
   현재가 대비 __% → 진입가능: Y/N (20%+할인=Y)
 
+■ 애널 컨센 (STEP 3.5):
+  오늘 컨센: 평균 $__ (__명, __등급) | 현재가 대비 __%
+  최근 30일 4⭐+: __명, 평균 $__
+  최고 ⭐ 애널: ___ (___⭐) $__ [outlier Y/N]
+  경고: [없음 / 과열 / outlier / 관심 약화]
+
 ■ 수급:
   내부자 매수: ○/× ($__K) | 클러스터: ○/× | 기관 신규진입: ○/×
   Short Float: __% | UOA: ○/× | 13D: ○/×
@@ -237,3 +245,11 @@ PEG 게이트 2.0 재확인. 변화 없으면 스킵.
 | 소싱 | 5채널 | **7채널(+스핀오프,자사주)** | 각각 33.6%, 12.1% 초과 |
 | 적정가 | 올해FwdPE만 | **2년후EPS×섹터멀티플** | 워치50개 백테스트: 감시가 2%적중, 2yr FV 100%적중(3/3) |
 | **STEP 0 추가** | **없음** | **레짐+K/G 국면 분류** | **Gordon 모형 P=D(1+g)/(K-g). K노이즈/G훼손 구분으로 🔴 트랜치 오작동 방지 (2026-04-17)** |
+
+## v3→v3.1 변경 (2026.04.18)
+
+| 변경 | 이전 | 이후 | 근거 |
+|------|------|------|------|
+| STEP 3.5 신설 | 컨센 체크 분산 | 애널 레이팅 자동화 섹션 | StockAnalysis API 1단계 구축 완료 (커밋 088fe58) |
+| 4⭐+ 필터 | 전체 애널 평균 | 고품질만 (< 4⭐ 노이즈) | BE 분석 사례: 1.14⭐ 의견이 판단 왜곡 |
+| 기간 구분 | 90일 단일 | 30일(최신) + 90일(추세) | 구식 타겟이 평균 끌어내림 방지 |
