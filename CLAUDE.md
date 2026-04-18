@@ -96,6 +96,12 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ---
 
+## 자동 스케줄 (30+ 잡)
+
+전체 타임라인/의존성/신규 잡 추가 절차 → `.claude/rules/schedule.md`
+
+---
+
 ## 알려진 이슈
 
 **🔴 버그 함정**

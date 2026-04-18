@@ -47,7 +47,7 @@
 - [x] 공시 자동 알람 실시간화 — 30분 → 5분 (4/18)
 - [x] 자료 종목별 자동 분류 — data/research/{TICKER}_{NAME}/ 2단계 계층 (4/18, dbc4076)
 - [x] aiohttp 세션 풀링 — 48곳 마이그레이션, 14곳 제외(per-call timeout/WebSocket) (4/18)
-- [ ] bot_architecture.md 생성
+- [x] ~~bot_architecture.md 생성~~ — 대신 `.claude/rules/schedule.md` 작성 (4/19). 전체 아키텍처 문서는 시스템 안정화 후(US 데이터 수집 등) 재고
 
 ### 정리
 - [x] **Railway 완전 삭제** — 중복 발송 원인 (매크로/DART 2회), 4/15 삭제
