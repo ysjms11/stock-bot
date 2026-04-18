@@ -23,6 +23,25 @@
 
 ---
 
+## 📌 미국 애널 레이팅 — 추가 발견 엔드포인트 (메모, 2026-04-18)
+
+StockAnalysis.com 1단계 구축 중 탐색으로 발견. **1단계 스코프 포함 안 함, 2~3단계 참고용 기록.**
+
+**✅ 작동 확인**
+- `/api/symbol/s/{ticker}/overview` — 시총/PE/FwdPE/EPS/컨센타겟/어닝일
+- `/api/symbol/s/{ticker}/statistics` — 밸류에이션/shares
+- `/api/symbol/s/{ticker}/dividend` — 배당 이력
+- `stockanalysis.com/analysts/{slug}/` HTML — 애널 커버 종목 리스트
+
+**❌ 작동 안 함 (다른 경로 있을 수도)**
+- /financials, /forecast, /insider, /institutional, /options, /short-interest
+
+**활용 계획**
+- 2단계: `/overview` → `get_us_ratings(mode="overview")` 통합. 딥서치 Step 1/6 자동화
+- 3단계: 애널 HTML 파서로 톱 100명 커버 종목 리스트 구축
+
+---
+
 ## 🟢 중장기 TODO (TODO_dev.md 참조)
 
 - **P2 Tier 1 알파**: F-Score/M-Score, FCF 메트릭
