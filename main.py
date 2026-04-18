@@ -1520,103 +1520,6 @@ async def daily_change_scan_alert(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🏛️ 거버넌스/밸류업 알림 (매일 19:10 평일)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-GOVERNANCE_SENT_FILE = f"{_DATA_DIR}/governance_sent.json"
-
-
-async def daily_governance_alert(context: ContextTypes.DEFAULT_TYPE):
-    """매일 19:10 평일 — 전종목 DART 공시에서 자사주 취득/소각/처분 감지 → 텔레그램.
-    워치/포트 밖 종목도 포함. 감시 밖 주주환원 시그널 발굴용.
-    """
-    now = datetime.now(KST)
-    if now.weekday() >= 5:
-        return
-    if not DART_API_KEY:
-        return
-
-    try:
-        disclosures = await search_dart_disclosures(days_back=1)
-        if not disclosures:
-            return
-
-        gov = filter_governance_disclosures(disclosures)
-        if not gov:
-            print("[governance] 자사주 공시 없음 — 발송 스킵")
-            return
-
-        # 중복 방지 (rcept_no 기반, 30일 쿨다운)
-        sent = load_json(GOVERNANCE_SENT_FILE, {})
-        today_str = now.strftime("%Y-%m-%d")
-        cutoff = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-        new_items = []
-        for d in gov:
-            rno = d.get("rcept_no", "")
-            if not rno:
-                continue
-            if rno in sent and sent[rno] >= cutoff:
-                continue
-            new_items.append(d)
-
-        if not new_items:
-            print(f"[governance] 신규 없음 (총 {len(gov)}건, 모두 쿨다운 내)")
-            return
-
-        # 워치+포트 종목 이름 집합 (표시용)
-        watchlist = load_watchlist()
-        portfolio = load_json(PORTFOLIO_FILE, {})
-        wa = load_json(WATCHALERT_FILE, {})
-        watch_names = set(watchlist.values())
-        watch_names |= {v.get("name", "") for k, v in portfolio.items()
-                        if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}
-        watch_names |= {v.get("name", "") for v in wa.values() if isinstance(v, dict)}
-        watch_names = {n for n in watch_names if n}
-
-        # 타입별 그룹 (알파 강도 순)
-        TYPE_ORDER = ["소각", "특별배당", "주식배당", "밸류업", "취득", "처분", "기타"]
-        TYPE_ICON = {"소각": "🔥", "특별배당": "💰", "주식배당": "🎁", "밸류업": "💎",
-                     "취득": "🛒", "처분": "📤", "기타": "📋"}
-        TYPE_LABEL = {"소각": "자사주 소각", "특별배당": "특별배당", "주식배당": "주식배당",
-                      "밸류업": "기업가치 제고 계획", "취득": "자사주 취득",
-                      "처분": "자사주 처분", "기타": "자사주 기타"}
-        by_type: dict[str, list] = {t: [] for t in TYPE_ORDER}
-        for d in new_items:
-            t = d.get("_gov_type", "기타")
-            by_type.setdefault(t, []).append(d)
-
-        msg = f"🏛️ *거버넌스 알림* ({now.strftime('%m/%d')})\n"
-        for t in TYPE_ORDER:
-            items = by_type.get(t, [])
-            if not items:
-                continue
-            msg += f"\n{TYPE_ICON[t]} *{TYPE_LABEL[t]}* ({len(items)}건)\n"
-            for d in items[:10]:  # 타입별 상위 10개
-                corp = d.get("corp_name", "?")
-                title = d.get("report_nm", "?")
-                rno = d.get("rcept_no", "")
-                link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rno}"
-                watch_flag = " 👀" if corp in watch_names else ""
-                msg += f" • *{corp}*{watch_flag}\n   [{title}]({link})\n"
-
-        try:
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
-        except Exception as e:
-            print(f"[governance] 텔레그램 실패: {e}")
-            return
-
-        # 쿨다운 기록 (발송 성공 후)
-        for d in new_items:
-            rno = d.get("rcept_no", "")
-            if rno:
-                sent[rno] = today_str
-        sent = {k: v for k, v in sent.items() if isinstance(v, str) and v >= cutoff}
-        save_json(GOVERNANCE_SENT_FILE, sent)
-        print(f"[governance] {len(new_items)}건 발송 완료")
-    except Exception as e:
-        print(f"[governance] 오류: {e}")
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 💾 /data/ 자동 백업 (매일 22:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
@@ -4077,7 +3980,6 @@ def main():
     jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(6,), name="consensus_update")
     jq.run_daily(daily_consensus_check,  time=dtime(19, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_consensus")
     jq.run_daily(daily_change_scan_alert, time=dtime(19,  5, tzinfo=KST), days=(0,1,2,3,4), name="daily_change_scan")
-    jq.run_daily(daily_governance_alert,  time=dtime(19, 10, tzinfo=KST), days=(0,1,2,3,4), name="daily_governance")
     jq.run_daily(auto_backup,            time=dtime(22, 0, tzinfo=KST), name="auto_backup")
     # 매크로 대시보드: 18:55(daily_collect 18:30+~21분 완료 후) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 55, tzinfo=KST), name="macro_pm")

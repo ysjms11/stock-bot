@@ -67,7 +67,6 @@
 | 19:00 | 평일 | `watch_change` | `watch_change_detect` | 워치리스트 변경 감지 | — |
 | 19:00 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | — |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
-| 19:10 | 평일 | `daily_governance` | `daily_governance_alert` | 자사주 취득/소각/처분 감지 | 4/19 신규 |
 | 19:30 | 평일 | `daily_consensus` | `daily_consensus_check` | 컨센서스 상향 체크 | — |
 | 20:00 | 평일 | `insider_cluster` | `check_insider_cluster` | 내부자 군집 감지 (워치종목) | 4/15 신규 |
 | 22:00 | 전체 | `auto_backup` | `auto_backup` | `/data/` Gist 백업 | — |
@@ -83,14 +82,13 @@
 
 19:00  watch_change, sunday_30 (일)
 19:05  daily_change_scan  ─┐
-19:10  daily_governance   │ 모두 daily_collect 결과 또는 DB 의존
-19:30  daily_consensus    ┘
-20:00  insider_cluster
+19:30  daily_consensus    │ daily_collect 결과 또는 DB 의존
+20:00  insider_cluster    ┘
 
 22:00  auto_backup (전체 일괄)
 ```
 
-**5분 간격 분리**로 텔레그램 rate limit 회피. 신규 잡 추가 시 **19:15~19:25 구간** 비어 있음.
+**5분 간격 분리**로 텔레그램 rate limit 회피. 신규 잡 추가 시 **19:10~19:25 구간** 비어 있음.
 
 ## 주말 활동
 
