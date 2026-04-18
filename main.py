@@ -4974,20 +4974,42 @@ def _build_docs_v2_html() -> str:
         ("thesis", "💡", "투자 테제", "💡", "Thesis"),
     ):
         sub_path = os.path.join(_DATA_DIR, subdir)
-        try:
-            sub_files = sorted(
-                f for f in os.listdir(sub_path)
-                if f.endswith(".md") and not f.startswith(".")
-            ) if os.path.isdir(sub_path) else []
-        except Exception:
-            sub_files = []
-        if sub_files:
+        # 엔트리 수집: [(display_name, relative_path), ...]
+        sub_entries: list[tuple[str, str]] = []
+        if subdir == "research":
+            # research/: {TICKER}/{file}.md 계층. TICKER 디렉토리 내부 파일을 카드로
+            try:
+                for ticker_dir in sorted(os.listdir(sub_path)) if os.path.isdir(sub_path) else []:
+                    if ticker_dir.startswith("."):
+                        continue
+                    ticker_path = os.path.join(sub_path, ticker_dir)
+                    if not os.path.isdir(ticker_path):
+                        continue
+                    try:
+                        for f in sorted(os.listdir(ticker_path)):
+                            if f.endswith(".md") and not f.startswith("."):
+                                stem = f.replace(".md", "")
+                                disp = ticker_dir if stem == "main" else f"{ticker_dir} / {stem}"
+                                sub_entries.append((disp, f"{ticker_dir}/{f}"))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        else:
+            # thesis/: flat 유지
+            try:
+                for f in sorted(os.listdir(sub_path)) if os.path.isdir(sub_path) else []:
+                    if f.endswith(".md") and not f.startswith("."):
+                        sub_entries.append((f.replace(".md", ""), f))
+            except Exception:
+                pass
+
+        if sub_entries:
             html += f'<h3 style="margin-top:16px">{section_icon} {section_label}</h3><div class="doc-grid">'
-            for f in sub_files:
-                name = f.replace(".md", "")
-                html += (f'<a href="/dash/file/{subdir}/{f}" class="doc-card">'
+            for disp, rel in sub_entries:
+                html += (f'<a href="/dash/file/{subdir}/{rel}" class="doc-card">'
                          f'<div class="doc-icon">{card_icon}</div>'
-                         f'<div class="doc-name">{name}</div>'
+                         f'<div class="doc-name">{disp}</div>'
                          f'<div class="doc-desc">{card_desc}</div></a>')
             html += '</div>'
     return html
@@ -5180,17 +5202,26 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
 
 
 async def _handle_dash_research_file(request: web.Request) -> web.Response:
-    """GET /dash/file/research/{filename} 또는 /dash/file/thesis/{filename} — 서브폴더 파일 렌더링."""
+    """GET /dash/file/research/{TICKER}/{filename} 또는 /dash/file/thesis/{filename}.
+    research는 2단계 (TICKER 디렉토리), thesis는 flat."""
     try:
         filename = request.match_info.get("filename", "")
-        # URL 경로에서 subdir 판별 (research / thesis)
         subdir = "thesis" if "/thesis/" in request.path else "research"
-        if ".." in filename or "/" in filename or "\\" in filename:
+        # research만 1회 "/" 허용 (TICKER/file 형식). 나머지 path traversal 방어.
+        if ".." in filename or "\\" in filename:
+            return web.Response(text="Forbidden", status=403)
+        max_slashes = 1 if subdir == "research" else 0
+        if filename.count("/") > max_slashes:
             return web.Response(text="Forbidden", status=403)
         if filename.endswith((".py", ".env", ".sh")):
             return web.Response(text="Forbidden", status=403)
 
         filepath = os.path.join(_DATA_DIR, subdir, filename)
+        # realpath 검증: 최종 경로가 subdir 하위여야 함 (심볼릭 링크 등 방어)
+        real_base = os.path.realpath(os.path.join(_DATA_DIR, subdir))
+        real_target = os.path.realpath(filepath)
+        if not real_target.startswith(real_base + os.sep):
+            return web.Response(text="Forbidden", status=403)
         if not os.path.isfile(filepath):
             return web.Response(text="Not Found", status=404)
         if os.path.getsize(filepath) > 500 * 1024:
@@ -5536,8 +5567,8 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash-v2", _handle_dash_v2)
     mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
     mcp_app.router.add_get("/dash/trades", _handle_dash_trades)
-    mcp_app.router.add_get("/dash/file/research/{filename}", _handle_dash_research_file)
-    mcp_app.router.add_get("/dash/file/thesis/{filename}", _handle_dash_research_file)
+    mcp_app.router.add_get("/dash/file/research/{filename:.+}", _handle_dash_research_file)
+    mcp_app.router.add_get("/dash/file/thesis/{filename:.+}", _handle_dash_research_file)
     mcp_app.router.add_get("/dash/reports/{ticker}", _handle_dash_reports)
     mcp_app.router.add_get("/dash/pdf/{ticker}/{filename}", _handle_dash_pdf)
     runner = web.AppRunner(mcp_app)
