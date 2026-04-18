@@ -45,7 +45,7 @@
 - [x] 뉴스 감성 분석 개선 — 오탐 줄이기 (4/18, KNU 사전+구문 보강 97%)
 - [x] DB 변화 감지 스캔 — turnaround/fscore_jump/insider_cluster_buy 3종 추가 + 매일 19:05 알림 (4/18)
 - [x] 공시 자동 알람 실시간화 — 30분 → 5분 (4/18)
-- [ ] 자료 종목별 자동 분류 — data/research/{TICKER}/ (대시보드 `/` 경로 제약 → 코드 수정 필요)
+- [x] 자료 종목별 자동 분류 — data/research/{TICKER}_{NAME}/ 2단계 계층 (4/18, dbc4076)
 - [x] aiohttp 세션 풀링 — 48곳 마이그레이션, 14곳 제외(per-call timeout/WebSocket) (4/18)
 - [ ] bot_architecture.md 생성
 

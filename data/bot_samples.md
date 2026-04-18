@@ -1115,8 +1115,8 @@
 
 ---
 
-## data/research/NVDA.md (파일 포맷 예시)
-> 종목별 리서치 메모. 마크다운 자유형식. 파일명 = ticker.md
+## data/research/NVDA/main.md (파일 포맷 예시)
+> 종목별 리서치 메모. 2단계 계층(4/18~): `data/research/{TICKER}_{NAME}/{종류}_{YYYYMMDD}.md` 또는 `main.md`. 마크다운 자유형식.
 ```markdown
 # NVIDIA (NVDA) — 확신등급 A
 
