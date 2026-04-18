@@ -3421,13 +3421,13 @@ async def weekly_sanity_check(context):
 
 
 async def daily_us_rating_scan(context):
-    """매일 KST 07:30 (UTC 22:30) — 감시+보유 미국 종목 애널 레이팅 수집.
+    """매일 KST 07:30 (UTC 22:30) — 감시+보유 미국 종목 애널 레이팅 수집 + 텔레그램 요약.
     60종목 × 2초 ≈ 2분 예상.
     """
     try:
         from kis_api import (_stockanalysis_ratings, _save_us_ratings_to_db,
                               _save_consensus_snapshot, load_us_watchlist,
-                              PORTFOLIO_FILE, load_json)
+                              PORTFOLIO_FILE, load_json, _load_us_holdings_sent)
         tickers = set()
         for t in load_us_watchlist().keys():
             tickers.add(t.upper())
@@ -3453,8 +3453,253 @@ async def daily_us_rating_scan(context):
                 failed.append(ticker)
             await asyncio.sleep(2.0)
         print(f"[us_ratings] 완료: 신규 {inserted}건, 실패 {len(failed)}종목")
+
+        # ━━━━━━ 신규: 텔레그램 요약 발송 ━━━━━━
+        try:
+            urgent_sent = _load_us_holdings_sent()
+            urgent_sent_tickers = {k.split("_")[0] for k in urgent_sent.keys()}
+            msg = _format_daily_rating_summary(
+                tickers=sorted(tickers),
+                inserted=inserted,
+                failed=failed,
+                urgent_sent_tickers=urgent_sent_tickers,
+            )
+            if msg:
+                await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        except Exception as e:
+            print(f"[us_ratings] 텔레그램 요약 전송 실패: {e}")
+
     except Exception as e:
         print(f"[us_ratings] 스캔 전체 실패: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 미국 애널 레이팅 — 실시간 감시 (2단계)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_US_SELL_RATINGS = frozenset({"Sell", "Strong Sell"})
+_US_DOWNGRADE_PT_THRESHOLD = -15.0  # 타겟 15% 이상 하향 = 다운그레이드 간주
+
+
+def _detect_new_downgrades(ticker: str, events_48h: list) -> list:
+    """48h 이내 이벤트 중 다운그레이드 감지.
+    조건 (OR):
+      A) action == "Downgrades"
+      B) rating_new ∈ _US_SELL_RATINGS 이고 rating_old ∉ _US_SELL_RATINGS
+      C) pt_change_pct < _US_DOWNGRADE_PT_THRESHOLD (-15%)
+    events_48h: list of dict with keys date, firm, action, rating_new, rating_old, pt_now, pt_old, pt_change_pct.
+    반환: 다운그레이드 해당 이벤트 dict list.
+    """
+    out = []
+    for e in events_48h:
+        action = (e.get("action") or "").lower()
+        new_r = e.get("rating_new") or ""
+        old_r = e.get("rating_old") or ""
+        pt_chg = e.get("pt_change_pct")
+        if action == "downgrades":
+            out.append(e)
+            continue
+        if new_r in _US_SELL_RATINGS and old_r not in _US_SELL_RATINGS:
+            out.append(e)
+            continue
+        if pt_chg is not None and pt_chg < _US_DOWNGRADE_PT_THRESHOLD:
+            out.append(e)
+            continue
+    return out
+
+
+async def hourly_us_holdings_check(context):
+    """보유 미국 종목 다운그레이드 실시간 감시. ET 12:00 / 16:30 두 번 실행.
+    발송 조건 (AND):
+      - 보유 종목 (portfolio.us_stocks)
+      - 최근 48h 신규 이벤트 2건 이상
+      - 그 중 다운그레이드 1건 이상
+    중복 방지: us_holdings_sent.json 키 'TICKER_YYYY-MM-DD' 로 하루 1회만.
+    """
+    try:
+        from kis_api import (
+            _stockanalysis_ratings, _save_us_ratings_to_db, _save_consensus_snapshot,
+            _load_us_holdings_sent, _save_us_holdings_sent,
+            PORTFOLIO_FILE, load_json
+        )
+        from db_collector import _get_db
+
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        tickers = sorted({t.upper() for t in portfolio.get("us_stocks", {}).keys()})
+        if not tickers:
+            print("[us_holdings] 보유 미국 종목 없음")
+            return
+
+        # 1. 신규 데이터 fetch (incremental)
+        print(f"[us_holdings] 보유 {len(tickers)}종목 감시 시작")
+        for ticker in tickers:
+            try:
+                result = await _stockanalysis_ratings(ticker)
+                if result:
+                    _save_us_ratings_to_db(result)
+                    _save_consensus_snapshot(result)
+            except Exception as e:
+                print(f"[us_holdings] {ticker} fetch 실패: {e}")
+            await asyncio.sleep(2.0)
+
+        # 2. 다운그레이드 감지 + 알림
+        sent = _load_us_holdings_sent()
+        conn = _get_db()
+        # ET 기준 날짜로 중복키 — 12:00/16:30 ET 이 KST 기준 날짜 경계 넘어도 같은 키
+        today_str = datetime.now(ET).strftime("%Y-%m-%d")
+        try:
+            for ticker in tickers:
+                sent_key = f"{ticker}_{today_str}"
+                if sent_key in sent:
+                    continue  # 오늘 이미 발송
+                rows = conn.execute(
+                    "SELECT rating_date, rating_time, firm, analyst, action, "
+                    "       rating_new, rating_old, pt_now, pt_old, pt_change_pct, stars "
+                    "FROM us_analyst_ratings WHERE ticker=? "
+                    "  AND fetched_at >= datetime('now', '-48 hours') "
+                    "ORDER BY rating_date DESC, rating_time DESC",
+                    (ticker,)
+                ).fetchall()
+                if len(rows) < 2:
+                    continue  # 48h 내 신규 2건 미만
+                events = [
+                    {"date": r[0], "time": r[1], "firm": r[2], "analyst": r[3],
+                     "action": r[4], "rating_new": r[5], "rating_old": r[6],
+                     "pt_now": r[7], "pt_old": r[8], "pt_change_pct": r[9], "stars": r[10]}
+                    for r in rows
+                ]
+                downgrades = _detect_new_downgrades(ticker, events)
+                if not downgrades:
+                    continue
+                # 조건 충족 → 긴급 알림
+                msg = _format_urgent_downgrade_alert(ticker, events, downgrades)
+                try:
+                    await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                    sent[sent_key] = {
+                        "sent_at": datetime.now().isoformat(),
+                        "events_count": len(events),
+                        "downgrades": [f"{d.get('firm')} {d.get('rating_old')}→{d.get('rating_new')}" for d in downgrades],
+                    }
+                    print(f"[us_holdings] 🚨 {ticker} 긴급 발송 ({len(downgrades)} downgrades)")
+                except Exception as e:
+                    print(f"[us_holdings] {ticker} 텔레그램 발송 실패: {e}")
+        finally:
+            conn.close()
+        _save_us_holdings_sent(sent)
+    except Exception as e:
+        print(f"[us_holdings] 감시 전체 실패: {e}")
+
+
+def _md_escape(s) -> str:
+    """텔레그램 Markdown V1 특수문자 이스케이프 (_ * [ `). None → —."""
+    if not s:
+        return "—"
+    s = str(s)
+    for c in ("\\", "_", "*", "[", "`"):
+        s = s.replace(c, "\\" + c)
+    return s
+
+
+def _format_urgent_downgrade_alert(ticker: str, all_events: list, downgrades: list) -> str:
+    """긴급 다운그레이드 메시지 포맷. 4096자 미만."""
+    lines = [f"🚨 *{_md_escape(ticker)}* 다운그레이드 경고", ""]
+    lines.append(f"최근 48h: *{len(all_events)}건* 이벤트, *{len(downgrades)}건* 다운그레이드")
+    lines.append("")
+    lines.append("*다운그레이드:*")
+    for d in downgrades[:5]:  # 최대 5건
+        firm = _md_escape(d.get("firm"))
+        old_r = _md_escape(d.get("rating_old"))
+        new_r = _md_escape(d.get("rating_new"))
+        pt_now = d.get("pt_now")
+        pt_chg = d.get("pt_change_pct")
+        pt_str = f"${pt_now:.0f}" if pt_now else "—"
+        chg_str = f" ({pt_chg:+.1f}%)" if pt_chg is not None else ""
+        lines.append(f"- {firm}: {old_r}→{new_r} {pt_str}{chg_str}")
+    if len(downgrades) > 5:
+        lines.append(f"... +{len(downgrades) - 5}건 더")
+    return "\n".join(lines)
+
+
+def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
+                                  urgent_sent_tickers: set) -> str:
+    """일일 스캔 텔레그램 요약. 긴급 이미 발송된 종목은 '이미 알림' 마크.
+    축약: 내 종목 10개 초과 시 '... N more'.
+    """
+    from db_collector import _get_db
+    conn = _get_db()
+    kst_now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
+    try:
+        lines = [f"📊 *미국 애널 스캔* ({kst_now})", ""]
+
+        # 내 종목 섹션 (최근 24h 이벤트)
+        my_section = []
+        downgrade_section = []
+        for ticker in tickers:
+            rows = conn.execute(
+                "SELECT firm, action, rating_new, pt_now, pt_change_pct "
+                "FROM us_analyst_ratings WHERE ticker=? "
+                "  AND fetched_at >= datetime('now', '-24 hours') "
+                "ORDER BY rating_date DESC, rating_time DESC",
+                (ticker,)
+            ).fetchall()
+            if not rows:
+                continue
+            already_sent = "⚠️ 이미 알림" if ticker in urgent_sent_tickers else ""
+            # 다운그레이드 분리
+            dgs = [r for r in rows if (r[1] or "").lower() == "downgrades"]
+            if dgs:
+                for r in dgs[:2]:
+                    firm, act, new_r, pt, pt_chg = r
+                    pt_str = f"${pt:.0f}" if pt else "—"
+                    downgrade_section.append(
+                        f"- *{_md_escape(ticker)}*: {_md_escape(firm)} {_md_escape(new_r)} {pt_str} {already_sent}"
+                    )
+            else:
+                # 상향/유지 표시
+                firms = ", ".join(
+                    f"{_md_escape(r[0])} ${r[3]:.0f}" if r[3] else _md_escape(r[0])
+                    for r in rows[:2]
+                )
+                my_section.append(f"- {_md_escape(ticker)}: {len(rows)}건 ({firms}) {already_sent}")
+
+        orig_my_count = len(my_section)  # 축약 전 원본 카운트 (폴백 메시지용)
+
+        if my_section:
+            # 축약 전략: 10개 초과면 잘라내기
+            if len(my_section) > 10:
+                cut = my_section[:10]
+                cut.append(f"... +{len(my_section) - 10}종목 더")
+                my_section = cut
+            lines.append("━━ *내 종목* ━━")
+            lines.extend(my_section)
+            lines.append("")
+
+        if downgrade_section:
+            lines.append("━━ *다운그레이드* ━━")
+            lines.extend(downgrade_section[:10])
+            if len(downgrade_section) > 10:
+                lines.append(f"... +{len(downgrade_section) - 10}건 더")
+            lines.append("")
+
+        # 통계
+        lines.append("━━ *통계* ━━")
+        lines.append(f"스캔 {len(tickers)}종목 / 신규 이벤트 {inserted}건 / 실패 {len(failed)}")
+
+        msg = "\n".join(lines)
+        # 4096자 체크 (안전 마진)
+        if len(msg) > 4000:
+            # 압축 — 내 종목 섹션 완전히 축약
+            lines = [f"📊 *미국 애널 스캔* ({kst_now})", ""]
+            if downgrade_section:
+                lines.append("━━ *다운그레이드* ━━")
+                lines.extend(downgrade_section[:5])
+                lines.append("")
+            lines.append(f"내 종목 이벤트: {orig_my_count}종목 (상세 생략)")
+            lines.append(f"스캔 {len(tickers)}종목 / 신규 {inserted}건 / 실패 {len(failed)}")
+            msg = "\n".join(lines)
+        return msg if (my_section or downgrade_section) else ""  # 이벤트 없으면 빈 문자열 → 발송 안 함
+    finally:
+        conn.close()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3631,6 +3876,9 @@ def main():
     # KRX 전종목 DB 갱신: db_collector가 18:30에 KRX OPEN API로 수집
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
     jq.run_daily(daily_us_rating_scan,    time=dtime(7, 30, tzinfo=KST), days=(0,1,2,3,4,5,6), name="us_ratings")
+    # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
+    jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_noon")
+    jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_close")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     # DART 증분 수집: 매일 02:00 KST — 신규 정기공시만 수집 후 알파 재계산
     jq.run_daily(daily_dart_incremental,  time=dtime(2,  0, tzinfo=KST),                     name="dart_incremental")

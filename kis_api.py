@@ -62,6 +62,7 @@ PORTFOLIO_FILE    = f"{_DATA_DIR}/portfolio.json"
 WATCHALERT_FILE   = f"{_DATA_DIR}/watchalert.json"
 WATCH_SENT_FILE      = f"{_DATA_DIR}/watch_sent.json"
 STOPLOSS_SENT_FILE   = f"{_DATA_DIR}/stoploss_sent.json"
+US_HOLDINGS_SENT_FILE = f"{_DATA_DIR}/us_holdings_sent.json"
 DECISION_LOG_FILE = f"{_DATA_DIR}/decision_log.json"
 COMPARE_LOG_FILE  = f"{_DATA_DIR}/compare_log.json"
 WATCHLIST_LOG_FILE = f"{_DATA_DIR}/watchlist_log.json"
@@ -4943,6 +4944,33 @@ def _save_consensus_snapshot(data: dict) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 미국 애널 레이팅 — 보유 감시 알림 중복 방지 저장소
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _load_us_holdings_sent() -> dict:
+    """us_holdings_sent.json 로드 + 48h 초과 엔트리 자동 정리.
+    스키마: {ticker_YYYY-MM-DD: {sent_at: ISO, events_count: int, downgrades: [str]}}
+    cleanup: sent_at 이 48h 초과된 엔트리 제거.
+    """
+    data = load_json(US_HOLDINGS_SENT_FILE, {})
+    cutoff = datetime.now() - timedelta(hours=48)
+    cleaned = {}
+    for k, v in data.items():
+        try:
+            sent_at = datetime.fromisoformat(v.get("sent_at", ""))
+            if sent_at >= cutoff:
+                cleaned[k] = v
+        except (ValueError, TypeError, AttributeError):
+            continue  # 파싱 실패 시 엔트리 drop
+    if len(cleaned) != len(data):
+        save_json(US_HOLDINGS_SENT_FILE, cleaned)  # 정리 반영
+    return cleaned
+
+
+def _save_us_holdings_sent(data: dict) -> None:
+    save_json(US_HOLDINGS_SENT_FILE, data)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
