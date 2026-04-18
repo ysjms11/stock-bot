@@ -762,7 +762,7 @@ MCP_TOOLS = [
                      },
                      "required": ["ticker"]}},
     {"name": "get_change_scan",
-     "description": "변화 감지 스캔. 기술적 지표+수급 기반 종목 발굴. preset: ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout/short_squeeze/credit_unwind/foreign_reversal/foreign_accumulation. 복합: 콤마 구분.",
+     "description": "변화 감지 스캔. 기술적 지표+수급 기반 종목 발굴. preset: ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout/short_squeeze/credit_unwind/foreign_reversal/foreign_accumulation/turnaround/fscore_jump/insider_cluster_buy. 복합: 콤마 구분.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "preset": {"type": "string", "description": "프리셋명 (콤마로 복합 가능, 예: 'earnings_disconnect,vp_support')"},
@@ -3640,6 +3640,111 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         matched &= s_set
                         preset_desc.append(f"외인축적(보유+{hold_min}%p/5d)")
                         default_sort = "foreign_hold_change_5d"
+                    elif p == "turnaround":
+                        # 적자→흑자 전환: 최신 영업이익>0 AND 직전 분기<=0
+                        import sqlite3 as _sql3
+                        from db_collector import DB_PATH as _DB_PATH
+                        s_set = set()
+                        _conn = _sql3.connect(_DB_PATH)
+                        try:
+                            _rows = _conn.execute("""
+                                SELECT symbol, report_period, operating_profit
+                                FROM financial_quarterly
+                                WHERE operating_profit IS NOT NULL
+                                ORDER BY symbol, report_period DESC
+                            """).fetchall()
+                        finally:
+                            _conn.close()
+                        _by_sym = {}
+                        for sym, period, op in _rows:
+                            _by_sym.setdefault(sym, []).append((period, op))
+                        for sym, arr in _by_sym.items():
+                            if len(arr) < 2 or sym not in stocks:
+                                continue
+                            latest_op = arr[0][1]
+                            prev_op = arr[1][1]
+                            if latest_op is None or prev_op is None:
+                                continue
+                            # prev_op=0.0 은 데이터 누락 마커(4k+건) → 엄격한 음수(<0) 만 적자로 인정
+                            if latest_op > 0 and prev_op < 0:
+                                s = stocks[sym]
+                                s["op_profit_latest"] = round(latest_op, 2)
+                                s["op_profit_prev"] = round(prev_op, 2)
+                                s["op_profit_delta"] = round(latest_op - prev_op, 2)
+                                s_set.add(sym)
+                        matched &= s_set
+                        preset_desc.append("적자→흑자전환")
+                        default_sort = "op_profit_delta"
+                    elif p == "fscore_jump":
+                        # F-Score 2점+ 상승: 최신 vs ~90일 전
+                        # NOTE: Phase4(2026-04-17) 배포 후부터 기록. 히스토리 축적 전에는 결과 0.
+                        #       ~7/15 이후 정상 작동 예상 (90d 이상 누적 필요).
+                        import sqlite3 as _sql3
+                        from db_collector import DB_PATH as _DB_PATH
+                        s_set = set()
+                        _conn = _sql3.connect(_DB_PATH)
+                        try:
+                            # fscore 있는 전 행을 한 번에 메모리로 (2485행 수준)
+                            _all = _conn.execute(
+                                "SELECT symbol, trade_date, fscore FROM daily_snapshot "
+                                "WHERE fscore IS NOT NULL ORDER BY trade_date DESC"
+                            ).fetchall()
+                        finally:
+                            _conn.close()
+                        if _all:
+                            _latest_dt = _all[0][1]
+                            _ref_dt = (datetime.strptime(_latest_dt, "%Y%m%d") - timedelta(days=90)).strftime("%Y%m%d")
+                            _by_sym = {}
+                            for sym, dt, f in _all:
+                                _by_sym.setdefault(sym, []).append((dt, f))
+                            for sym, arr in _by_sym.items():
+                                if sym not in stocks:
+                                    continue
+                                # arr은 trade_date DESC 정렬
+                                f_now = arr[0][1]
+                                f_past = None
+                                for dt, f in arr:
+                                    if dt <= _ref_dt:
+                                        f_past = f
+                                        break
+                                if f_past is None or f_now is None:
+                                    continue
+                                delta = f_now - f_past
+                                if delta >= 2:
+                                    s = stocks[sym]
+                                    s["fscore_now"] = f_now
+                                    s["fscore_past"] = f_past
+                                    s["fscore_delta"] = delta
+                                    s_set.add(sym)
+                        matched &= s_set
+                        preset_desc.append("F-Score도약(ΔF>=2)")
+                        default_sort = "fscore_delta"
+                    elif p == "insider_cluster_buy":
+                        # 내부자 군집매수: 30일 내 3명+ 보고 AND 순매수 > 0
+                        import sqlite3 as _sql3
+                        from db_collector import DB_PATH as _DB_PATH
+                        s_set = set()
+                        _conn = _sql3.connect(_DB_PATH)
+                        try:
+                            _rows = _conn.execute("""
+                                SELECT symbol, COUNT(DISTINCT repror) AS n_repror, SUM(stock_irds_cnt) AS net_qty
+                                FROM insider_transactions
+                                WHERE rcept_dt >= date('now', '-30 days')
+                                GROUP BY symbol
+                                HAVING n_repror >= 3 AND net_qty > 0
+                            """).fetchall()
+                        finally:
+                            _conn.close()
+                        for sym, n_rep, net_q in _rows:
+                            if sym not in stocks:
+                                continue
+                            s = stocks[sym]
+                            s["insider_reprors"] = int(n_rep or 0)
+                            s["insider_net_qty"] = int(net_q or 0)
+                            s_set.add(sym)
+                        matched &= s_set
+                        preset_desc.append("내부자군집매수(30d 3명+순매수)")
+                        default_sort = "insider_net_qty"
 
                 if not presets:
                     preset_desc.append("전체 (프리셋 미지정)")
@@ -3683,6 +3788,14 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         "short_change_20d": s.get("short_change_20d"),
                         "credit_change_5d": s.get("credit_change_5d"),
                         "foreign_hold_change_5d": s.get("foreign_hold_change_5d"),
+                        "op_profit_latest": s.get("op_profit_latest"),
+                        "op_profit_prev": s.get("op_profit_prev"),
+                        "op_profit_delta": s.get("op_profit_delta"),
+                        "fscore_now": s.get("fscore_now"),
+                        "fscore_past": s.get("fscore_past"),
+                        "fscore_delta": s.get("fscore_delta"),
+                        "insider_reprors": s.get("insider_reprors"),
+                        "insider_net_qty": s.get("insider_net_qty"),
                         "short_balance": s.get("short_balance"),
                         "short_ratio": s.get("short_ratio"),
                         "foreign_hold_ratio": s.get("foreign_hold_ratio"),

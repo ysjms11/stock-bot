@@ -1405,6 +1405,121 @@ async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔔 일일 발굴 알림 (매일 19:05 KST, 평일)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHANGE_SCAN_SENT_FILE = f"{_DATA_DIR}/change_scan_sent.json"
+
+
+async def daily_change_scan_alert(context: ContextTypes.DEFAULT_TYPE):
+    """매일 19:05 평일 — turnaround/fscore_jump/insider_cluster_buy 스캔 → 워치/포트 제외 → 텔레그램 푸시."""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+
+    try:
+        from mcp_tools import _execute_tool
+
+        # 워치+포트 제외 집합 (한국만)
+        excluded = set()
+        try:
+            wl = load_watchlist()
+            for t in wl.keys():
+                if not _is_us_ticker(t):
+                    excluded.add(t)
+            pf = load_json(PORTFOLIO_FILE, {})
+            for t, v in pf.items():
+                if t in ("us_stocks", "cash_krw", "cash_usd"):
+                    continue
+                if isinstance(v, dict) and not _is_us_ticker(t):
+                    excluded.add(t)
+        except Exception as e:
+            print(f"[change_scan] 워치/포트 로드 실패: {e}")
+
+        # 쿨다운 기록 (7일)
+        sent = load_json(CHANGE_SCAN_SENT_FILE, {})
+        today_str = now.strftime("%Y-%m-%d")
+        cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        cooldown_set = {t for t, d in sent.items() if isinstance(d, str) and d >= cutoff}
+
+        # 프리셋별 스캔
+        presets_config = [
+            ("turnaround",           "📈 적자→흑자 전환"),
+            ("fscore_jump",          "🚀 F-Score 도약"),
+            ("insider_cluster_buy",  "👥 내부자 군집매수"),
+        ]
+
+        sections = []  # [(label, [item, ...])]
+        new_sent_symbols = []
+
+        for preset_name, label in presets_config:
+            try:
+                res = await _execute_tool("get_change_scan", {"preset": preset_name, "n": 10, "market": "all"})
+            except Exception as e:
+                print(f"[change_scan] {preset_name} 실행 오류: {e}")
+                continue
+            if not isinstance(res, dict):
+                continue
+            rows = res.get("results", []) or []
+            filtered = []
+            for r in rows:
+                tk = r.get("ticker", "")
+                if not tk or tk in excluded or tk in cooldown_set:
+                    continue
+                filtered.append(r)
+                if len(filtered) >= 5:
+                    break
+            if filtered:
+                sections.append((preset_name, label, filtered))
+                for r in filtered:
+                    new_sent_symbols.append(r.get("ticker", ""))
+
+        total_hits = sum(len(items) for _, _, items in sections)
+        if total_hits == 0:
+            print("[change_scan] 결과 0건 — 발송 스킵")
+            return
+
+        msg = "🔔 *오늘의 발굴* (워치/보유 제외)\n"
+        for preset_name, label, items in sections:
+            msg += f"\n*{label}* ({len(items)}건)\n"
+            for r in items:
+                tk = r.get("ticker", "")
+                nm = r.get("name", tk)
+                if preset_name == "turnaround":
+                    delta = r.get("op_profit_delta")
+                    latest = r.get("op_profit_latest")
+                    prev = r.get("op_profit_prev")
+                    msg += f" • `{tk}` {nm} 영업이익 {latest:+.1f} (전: {prev:+.1f})\n" if (latest is not None and prev is not None) else f" • `{tk}` {nm}\n"
+                elif preset_name == "fscore_jump":
+                    fn = r.get("fscore_now")
+                    fp = r.get("fscore_past")
+                    fd = r.get("fscore_delta")
+                    msg += f" • `{tk}` {nm} F {fp}→{fn} (ΔF={fd})\n" if (fn is not None and fp is not None) else f" • `{tk}` {nm}\n"
+                elif preset_name == "insider_cluster_buy":
+                    nrep = r.get("insider_reprors")
+                    nq = r.get("insider_net_qty")
+                    msg += f" • `{tk}` {nm} 30일 {nrep}명 {nq:+,}주\n" if (nrep is not None and nq is not None) else f" • `{tk}` {nm}\n"
+                else:
+                    msg += f" • `{tk}` {nm}\n"
+
+        try:
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        except Exception as e:
+            print(f"[change_scan] 텔레그램 발송 실패: {e}")
+            return
+
+        # 쿨다운 업데이트 (발송 성공 후)
+        for tk in new_sent_symbols:
+            if tk:
+                sent[tk] = today_str
+        # 만료된 항목 정리
+        sent = {t: d for t, d in sent.items() if isinstance(d, str) and d >= cutoff}
+        save_json(CHANGE_SCAN_SENT_FILE, sent)
+        print(f"[change_scan] {total_hits}건 발송 완료")
+    except Exception as e:
+        print(f"[change_scan] 오류: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 💾 /data/ 자동 백업 (매일 22:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
@@ -3864,6 +3979,7 @@ def main():
     jq.run_daily(weekly_universe_update,  time=dtime(7,  0, tzinfo=KST), days=(0,), name="universe_update")
     jq.run_daily(weekly_consensus_update, time=dtime(7,  5, tzinfo=KST), days=(6,), name="consensus_update")
     jq.run_daily(daily_consensus_check,  time=dtime(19, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_consensus")
+    jq.run_daily(daily_change_scan_alert, time=dtime(19,  5, tzinfo=KST), days=(0,1,2,3,4), name="daily_change_scan")
     jq.run_daily(auto_backup,            time=dtime(22, 0, tzinfo=KST), name="auto_backup")
     # 매크로 대시보드: 18:55(daily_collect 18:30+~21분 완료 후) + 06:00(미국장 마감)
     jq.run_daily(macro_dashboard, time=dtime(18, 55, tzinfo=KST), name="macro_pm")
