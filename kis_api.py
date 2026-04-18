@@ -3712,8 +3712,10 @@ def filter_important_disclosures(disclosures, watchlist_names):
             if any(name in d.get("corp_name", "") for name in watchlist_names if name)]
 
 
-# 거버넌스/밸류업 시그널 키워드 (자사주 취득/소각/처분)
+# 거버넌스/밸류업 시그널 키워드 (자사주 + 특별/주식배당)
+# 정기 현금배당("현금배당", "중간배당")은 너무 흔해서 제외 — 노이즈 방지
 _GOVERNANCE_KEYWORDS = [
+    # 자사주 (1단계)
     "자기주식취득", "자기주식 취득",
     "자기주식소각", "자기주식 소각",
     "자기주식처분", "자기주식 처분",
@@ -3721,27 +3723,34 @@ _GOVERNANCE_KEYWORDS = [
     "자사주취득", "자사주 취득",
     "자사주소각", "자사주 소각",
     "자사주매입", "자사주 매입",
+    # 배당 (2단계): 주주환원 강화 시그널만
+    "특별배당",
+    "주식배당",
 ]
 
 
 def filter_governance_disclosures(disclosures):
-    """전종목 공시에서 자사주(취득/소각/처분) 관련만 필터.
-    워치리스트 무관 — 전체 시장에서 주주환원 시그널 발굴용.
+    """전종목 공시에서 주주환원 시그널(자사주/특별배당/주식배당) 필터.
+    워치리스트 무관 — 전체 시장 발굴용. 정기 현금배당은 제외 (노이즈).
     """
     out = []
     for d in disclosures:
         nm = d.get("report_nm", "")
         if any(kw in nm for kw in _GOVERNANCE_KEYWORDS):
-            # 소각/취득/처분 구분 태깅
+            # 타입 태깅 (우선순위: 소각 > 특별배당 > 주식배당 > 취득 > 처분 > 기타)
             if "소각" in nm:
-                d = {**d, "_gov_type": "소각"}
+                tag = "소각"
+            elif "특별배당" in nm:
+                tag = "특별배당"
+            elif "주식배당" in nm:
+                tag = "주식배당"
             elif "취득" in nm or "매입" in nm:
-                d = {**d, "_gov_type": "취득"}
+                tag = "취득"
             elif "처분" in nm:
-                d = {**d, "_gov_type": "처분"}
+                tag = "처분"
             else:
-                d = {**d, "_gov_type": "기타"}
-            out.append(d)
+                tag = "기타"
+            out.append({**d, "_gov_type": tag})
     return out
 
 

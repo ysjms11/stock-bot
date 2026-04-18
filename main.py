@@ -1572,10 +1572,12 @@ async def daily_governance_alert(context: ContextTypes.DEFAULT_TYPE):
         watch_names |= {v.get("name", "") for v in wa.values() if isinstance(v, dict)}
         watch_names = {n for n in watch_names if n}
 
-        # 타입별 그룹 (소각 > 취득 > 처분 > 기타 순)
-        TYPE_ORDER = ["소각", "취득", "처분", "기타"]
-        TYPE_ICON = {"소각": "🔥", "취득": "🛒", "처분": "📤", "기타": "📋"}
-        TYPE_LABEL = {"소각": "자사주 소각", "취득": "자사주 취득", "처분": "자사주 처분", "기타": "자사주 기타"}
+        # 타입별 그룹 (알파 강도 순: 소각/특별배당 최우선, 주식배당/취득 다음, 처분/기타 뒤)
+        TYPE_ORDER = ["소각", "특별배당", "주식배당", "취득", "처분", "기타"]
+        TYPE_ICON = {"소각": "🔥", "특별배당": "💰", "주식배당": "🎁",
+                     "취득": "🛒", "처분": "📤", "기타": "📋"}
+        TYPE_LABEL = {"소각": "자사주 소각", "특별배당": "특별배당", "주식배당": "주식배당",
+                      "취득": "자사주 취득", "처분": "자사주 처분", "기타": "자사주 기타"}
         by_type: dict[str, list] = {t: [] for t in TYPE_ORDER}
         for d in new_items:
             t = d.get("_gov_type", "기타")
