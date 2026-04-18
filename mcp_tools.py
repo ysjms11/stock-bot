@@ -13,7 +13,7 @@ from aiohttp import web
 
 from kis_api import *
 from kis_api import (
-    _DATA_DIR, _is_us_ticker, _guess_excd, _kis_get,
+    _DATA_DIR, _is_us_ticker, _guess_excd, _kis_get, _get_session,
     _fetch_sector_flow, _TICKER_SECTOR,
     ws_manager, get_ws_tickers,
     collect_macro_data, format_macro_msg,
@@ -1340,11 +1340,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
                     if _is_us_ticker(ticker):
                         excd = _guess_excd(ticker)
-                        async with aiohttp.ClientSession() as s:
-                            _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
-                                "HHDFS76240000", token,
-                                {"AUTH": "", "EXCD": excd, "SYMB": ticker,
-                                 "GUBN": "0", "BYMD": today_str, "MODP": "0"})
+                        s = _get_session()
+                        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
+                            "HHDFS76240000", token,
+                            {"AUTH": "", "EXCD": excd, "SYMB": ticker,
+                             "GUBN": "0", "BYMD": today_str, "MODP": "0"})
                         candles = d.get("output2", [])
                         result = {
                             "ticker": ticker, "market": "US", "period": period,
@@ -1354,13 +1354,13 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                                         for c in candles[:n]],
                         }
                     else:
-                        async with aiohttp.ClientSession() as s:
-                            _, d = await _kis_get(s,
-                                "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
-                                "FHKST03010100", token,
-                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
-                                 "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": today_str,
-                                 "FID_PERIOD_DIV_CODE": period_type, "FID_ORG_ADJ_PRC": "0"})
+                        s = _get_session()
+                        _, d = await _kis_get(s,
+                            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                            "FHKST03010100", token,
+                            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                             "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": today_str,
+                             "FID_PERIOD_DIV_CODE": period_type, "FID_ORG_ADJ_PRC": "0"})
                         candles = d.get("output2", [])
                         result = {
                             "ticker": ticker, "market": "KR", "period": period,
@@ -2046,10 +2046,10 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     etf_prices = []
                     for etf_code, etf_name in SECTOR_ETFS:
                         try:
-                            async with aiohttp.ClientSession() as s:
-                                _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
-                                    "FHPST02400000", token,
-                                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
+                            s = _get_session()
+                            _, ed = await _kis_get(s, "/uapi/etfetn/v1/quotations/inquire-price",
+                                "FHPST02400000", token,
+                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": etf_code})
                             out = ed.get("output", {})
                             etf_prices.append({
                                 "code": etf_code, "name": etf_name,
@@ -2955,11 +2955,11 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
                     if is_us:
                         excd = _guess_excd(ticker)
-                        async with aiohttp.ClientSession() as s:
-                            _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
-                                "HHDFS76240000", token,
-                                {"AUTH": "", "EXCD": excd, "SYMB": ticker,
-                                 "GUBN": "0", "BYMD": today_str, "MODP": "0"})
+                        s = _get_session()
+                        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
+                            "HHDFS76240000", token,
+                            {"AUTH": "", "EXCD": excd, "SYMB": ticker,
+                             "GUBN": "0", "BYMD": today_str, "MODP": "0"})
                         raw_candles = d.get("output2", [])
                         candles = []
                         for c in raw_candles[:n]:
@@ -2978,40 +2978,40 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         _end = today_str
                         _remaining = n
                         _seen_dates = set()
-                        async with aiohttp.ClientSession() as s:
-                            while _remaining > 0:
-                                _start = (datetime.strptime(_end, "%Y%m%d") - timedelta(days=_chunk * 2)).strftime("%Y%m%d")
-                                _, d = await _kis_get(s,
-                                    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
-                                    "FHKST03010100", token,
-                                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
-                                     "FID_INPUT_DATE_1": _start, "FID_INPUT_DATE_2": _end,
-                                     "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
-                                batch = d.get("output2", [])
-                                if not batch:
-                                    break
-                                added = 0
-                                for c in batch:
-                                    dt = c.get("stck_bsop_date", "")
-                                    if not dt or dt in _seen_dates:
-                                        continue
-                                    _seen_dates.add(dt)
-                                    candles.append({
-                                        "date": dt,
-                                        "open": int(c.get("stck_oprc", 0) or 0),
-                                        "high": int(c.get("stck_hgpr", 0) or 0),
-                                        "low": int(c.get("stck_lwpr", 0) or 0),
-                                        "close": int(c.get("stck_clpr", 0) or 0),
-                                        "vol": int(c.get("acml_vol", 0) or 0),
-                                    })
-                                    added += 1
-                                _remaining -= added
-                                if added < 10:
-                                    break  # 더 이상 데이터 없음
-                                # 다음 구간: 가장 오래된 날짜 전일부터
-                                oldest = min(_seen_dates)
-                                _end = (datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-                                await asyncio.sleep(0.3)
+                        s = _get_session()
+                        while _remaining > 0:
+                            _start = (datetime.strptime(_end, "%Y%m%d") - timedelta(days=_chunk * 2)).strftime("%Y%m%d")
+                            _, d = await _kis_get(s,
+                                "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                "FHKST03010100", token,
+                                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                                 "FID_INPUT_DATE_1": _start, "FID_INPUT_DATE_2": _end,
+                                 "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+                            batch = d.get("output2", [])
+                            if not batch:
+                                break
+                            added = 0
+                            for c in batch:
+                                dt = c.get("stck_bsop_date", "")
+                                if not dt or dt in _seen_dates:
+                                    continue
+                                _seen_dates.add(dt)
+                                candles.append({
+                                    "date": dt,
+                                    "open": int(c.get("stck_oprc", 0) or 0),
+                                    "high": int(c.get("stck_hgpr", 0) or 0),
+                                    "low": int(c.get("stck_lwpr", 0) or 0),
+                                    "close": int(c.get("stck_clpr", 0) or 0),
+                                    "vol": int(c.get("acml_vol", 0) or 0),
+                                })
+                                added += 1
+                            _remaining -= added
+                            if added < 10:
+                                break  # 더 이상 데이터 없음
+                            # 다음 구간: 가장 오래된 날짜 전일부터
+                            oldest = min(_seen_dates)
+                            _end = (datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+                            await asyncio.sleep(0.3)
 
                 # 시간순 정렬 (API는 최신순, Y모드는 이미 정렬)
                 if candles:

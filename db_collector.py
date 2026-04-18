@@ -28,6 +28,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass, field
 
+from kis_api import _get_session
+
 KST = ZoneInfo("Asia/Seoul")
 _DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = f"{_DATA_DIR}/stock.db"
@@ -205,8 +207,8 @@ async def fetch_krx_market_data(date: str, market: str = "STK") -> list[dict]:
         ep = _OPENAPI_ENDPOINTS.get(f"market_{market}")
         if ep:
             try:
-                async with aiohttp.ClientSession() as s:
-                    records = await _krx_openapi_get(s, ep[0], ep[1], date)
+                s = _get_session()
+                records = await _krx_openapi_get(s, ep[0], ep[1], date)
                 result = _parse_market_records(records, market)
                 print(f"[KRX OPENAPI] {market} 시세: {len(result)}종목")
                 return result
@@ -223,8 +225,8 @@ async def fetch_krx_market_data(date: str, market: str = "STK") -> list[dict]:
         "money": "1",
     }
     try:
-        async with aiohttp.ClientSession() as s:
-            body = await _krx_post(s, form)
+        s = _get_session()
+        body = await _krx_post(s, form)
         records = body.get("OutBlock_1", [])
         if not records:
             raise RuntimeError("empty OutBlock_1")
@@ -664,72 +666,72 @@ async def collect_daily(date: str = None) -> dict:
         conn.close()
         return {"error": "KIS 토큰 발급 실패", "date": date}
 
-    async with aiohttp.ClientSession() as session:
-        # Phase 1: KIS 기본시세 + 밸류에이션 (FHKST01010100)
-        print(f"[collect_daily] Phase 1/4 — 기본시세 {len(tickers)}종목")
-        try:
-            p1 = await asyncio.wait_for(
-                _collect_phase("basic", tickers, token, session,
-                               lambda t, tok, s: kis_stock_price(t, tok, session=s)),
-                timeout=_PHASE_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            print(f"[collect_daily] Phase basic 타임아웃 ({_PHASE_TIMEOUT}초)")
-            p1 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
-        report["phases"]["basic"] = {
-            "success": p1["success"], "failed": p1["failed"],
-        }
+    session = _get_session()
+    # Phase 1: KIS 기본시세 + 밸류에이션 (FHKST01010100)
+    print(f"[collect_daily] Phase 1/4 — 기본시세 {len(tickers)}종목")
+    try:
+        p1 = await asyncio.wait_for(
+            _collect_phase("basic", tickers, token, session,
+                           lambda t, tok, s: kis_stock_price(t, tok, session=s)),
+            timeout=_PHASE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        print(f"[collect_daily] Phase basic 타임아웃 ({_PHASE_TIMEOUT}초)")
+        p1 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
+    report["phases"]["basic"] = {
+        "success": p1["success"], "failed": p1["failed"],
+    }
 
-        # Phase 1 후: sector_krx 자동 갱신 (신규 상장 종목 섹터 fallback)
-        try:
-            _update_master_from_basic(conn, p1["results"])
-        except Exception as e:
-            print(f"[collect_daily] sector_krx 갱신 실패: {e}")
+    # Phase 1 후: sector_krx 자동 갱신 (신규 상장 종목 섹터 fallback)
+    try:
+        _update_master_from_basic(conn, p1["results"])
+    except Exception as e:
+        print(f"[collect_daily] sector_krx 갱신 실패: {e}")
 
-        # Phase 2: 시간외 (FHPST02320000)
-        print(f"[collect_daily] Phase 2/4 — 시간외")
-        try:
-            p2 = await asyncio.wait_for(
-                _collect_phase("overtime", tickers, token, session,
-                               lambda t, tok, s: kis_overtime_daily(t, tok, session=s)),
-                timeout=_PHASE_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            print(f"[collect_daily] Phase overtime 타임아웃 ({_PHASE_TIMEOUT}초)")
-            p2 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
-        report["phases"]["overtime"] = {
-            "success": p2["success"], "failed": p2["failed"],
-        }
+    # Phase 2: 시간외 (FHPST02320000)
+    print(f"[collect_daily] Phase 2/4 — 시간외")
+    try:
+        p2 = await asyncio.wait_for(
+            _collect_phase("overtime", tickers, token, session,
+                           lambda t, tok, s: kis_overtime_daily(t, tok, session=s)),
+            timeout=_PHASE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        print(f"[collect_daily] Phase overtime 타임아웃 ({_PHASE_TIMEOUT}초)")
+        p2 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
+    report["phases"]["overtime"] = {
+        "success": p2["success"], "failed": p2["failed"],
+    }
 
-        # Phase 3: 투자자 수급 1일 (FHPTJ04160001)
-        print(f"[collect_daily] Phase 3/4 — 수급")
-        try:
-            p3 = await asyncio.wait_for(
-                _collect_phase("supply", tickers, token, session,
-                               lambda t, tok, s: kis_investor_trend_history(t, tok, n_days=1, session=s)),
-                timeout=_PHASE_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            print(f"[collect_daily] Phase supply 타임아웃 ({_PHASE_TIMEOUT}초)")
-            p3 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
-        report["phases"]["supply"] = {
-            "success": p3["success"], "failed": p3["failed"],
-        }
+    # Phase 3: 투자자 수급 1일 (FHPTJ04160001)
+    print(f"[collect_daily] Phase 3/4 — 수급")
+    try:
+        p3 = await asyncio.wait_for(
+            _collect_phase("supply", tickers, token, session,
+                           lambda t, tok, s: kis_investor_trend_history(t, tok, n_days=1, session=s)),
+            timeout=_PHASE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        print(f"[collect_daily] Phase supply 타임아웃 ({_PHASE_TIMEOUT}초)")
+        p3 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
+    report["phases"]["supply"] = {
+        "success": p3["success"], "failed": p3["failed"],
+    }
 
-        # Phase 4: 공매도 1일 (FHPST04830000)
-        print(f"[collect_daily] Phase 4/4 — 공매도")
-        try:
-            p4 = await asyncio.wait_for(
-                _collect_phase("short", tickers, token, session,
-                               lambda t, tok, s: kis_daily_short_sale(t, tok, n=1, session=s)),
-                timeout=_PHASE_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            print(f"[collect_daily] Phase short 타임아웃 ({_PHASE_TIMEOUT}초)")
-            p4 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
-        report["phases"]["short"] = {
-            "success": p4["success"], "failed": p4["failed"],
-        }
+    # Phase 4: 공매도 1일 (FHPST04830000)
+    print(f"[collect_daily] Phase 4/4 — 공매도")
+    try:
+        p4 = await asyncio.wait_for(
+            _collect_phase("short", tickers, token, session,
+                           lambda t, tok, s: kis_daily_short_sale(t, tok, n=1, session=s)),
+            timeout=_PHASE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        print(f"[collect_daily] Phase short 타임아웃 ({_PHASE_TIMEOUT}초)")
+        p4 = {"results": {}, "success": 0, "failed": len(tickers), "timeout": True}
+    report["phases"]["short"] = {
+        "success": p4["success"], "failed": p4["failed"],
+    }
 
     # 4. daily_snapshot INSERT
     print(f"[collect_daily] daily_snapshot INSERT")
@@ -1600,103 +1602,103 @@ async def collect_financial_weekly(date: str = None) -> dict:
     success_bs = 0
     success_dart = 0
 
-    async with aiohttp.ClientSession() as session:
-        # Phase A: 손익계산서
-        print(f"[Finance] Phase A — 손익계산서 {len(tickers)}종목")
-        for i, ticker in enumerate(tickers):
-            try:
-                from kis_api import kis_income_statement
-                rows_is = await _rate_limited(
-                    kis_income_statement(ticker, token, session=session)
-                )
-                for r in (rows_is or []):
-                    rp = r.get("report_period", "")
-                    if not rp:
-                        continue
-                    conn.execute("""
-                        INSERT OR REPLACE INTO financial_quarterly (
-                            symbol, report_period, revenue, cost_of_sales, gross_profit,
-                            operating_profit, op_profit, net_income, collected_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                    """, (
-                        ticker, rp,
-                        r.get("revenue"), r.get("cost_of_sales"), r.get("gross_profit"),
-                        r.get("operating_profit"), r.get("op_profit"), r.get("net_income"),
-                    ))
-                success_is += 1
-            except Exception:
-                pass
-            if (i + 1) % 200 == 0:
-                print(f"[Finance] 손익계산서: {i+1}/{len(tickers)}")
-                conn.commit()
-
-        conn.commit()
-
-        # Phase B: 대차대조표
-        print(f"[Finance] Phase B — 대차대조표 {len(tickers)}종목")
-        for i, ticker in enumerate(tickers):
-            try:
-                from kis_api import kis_balance_sheet
-                rows_bs = await _rate_limited(
-                    kis_balance_sheet(ticker, token, session=session)
-                )
-                for r in (rows_bs or []):
-                    rp = r.get("report_period", "")
-                    if not rp:
-                        continue
-                    conn.execute("""
-                        UPDATE financial_quarterly SET
-                            current_assets=?, fixed_assets=?, total_assets=?,
-                            current_liab=?, fixed_liab=?, total_liab=?,
-                            capital=?, total_equity=?,
-                            collected_at=datetime('now')
-                        WHERE symbol=? AND report_period=?
-                    """, (
-                        r.get("current_assets"), r.get("fixed_assets"), r.get("total_assets"),
-                        r.get("current_liab"), r.get("fixed_liab"), r.get("total_liab"),
-                        r.get("capital"), r.get("total_equity"),
-                        ticker, rp,
-                    ))
-                success_bs += 1
-            except Exception:
-                pass
-            if (i + 1) % 200 == 0:
-                print(f"[Finance] 대차대조표: {i+1}/{len(tickers)}")
-                conn.commit()
-
-        conn.commit()
-
-        # Phase C: DART 현금흐름표 + 지배귀속 + 판관비/매출채권/재고 (최신 4분기)
-        # F/M/FCF Phase1 — dart_quarterly_full 1콜로 PL/BS/CF 전체
+    session = _get_session()
+    # Phase A: 손익계산서
+    print(f"[Finance] Phase A — 손익계산서 {len(tickers)}종목")
+    for i, ticker in enumerate(tickers):
         try:
-            from kis_api import get_dart_corp_map, dart_quarterly_full
-            corp_map = await get_dart_corp_map({})
-        except Exception as e:
-            print(f"[Finance] Phase C skip — corp_map 로드 실패: {e}")
-            corp_map = {}
-
-        if corp_map:
-            # 최신 4분기 (현재연도 Q1 ~ 전년도 Q2) 기준 — TTM 1회분 확보
-            from datetime import datetime as _dt
-            now = _dt.now(KST)
-            # DART 공시 지연(~45일) 감안: 직전 확정 분기부터 과거로 4개
-            current_q = (now.month - 1) // 3 + 1
-            targets = []  # (year, quarter)
-            y, q = now.year, max(current_q - 1, 1) if current_q > 1 else 4
-            if current_q == 1:
-                y = now.year - 1
-            for _ in range(4):
-                targets.append((y, q))
-                q -= 1
-                if q < 1:
-                    q = 4
-                    y -= 1
-
-            print(f"[Finance] Phase C — DART 현금흐름표 {len(tickers)}종목 × "
-                  f"{len(targets)}분기 = {len(tickers) * len(targets)}콜")
-            success_dart = await _collect_dart_full_batch(
-                conn, tickers, corp_map, targets
+            from kis_api import kis_income_statement
+            rows_is = await _rate_limited(
+                kis_income_statement(ticker, token, session=session)
             )
+            for r in (rows_is or []):
+                rp = r.get("report_period", "")
+                if not rp:
+                    continue
+                conn.execute("""
+                    INSERT OR REPLACE INTO financial_quarterly (
+                        symbol, report_period, revenue, cost_of_sales, gross_profit,
+                        operating_profit, op_profit, net_income, collected_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """, (
+                    ticker, rp,
+                    r.get("revenue"), r.get("cost_of_sales"), r.get("gross_profit"),
+                    r.get("operating_profit"), r.get("op_profit"), r.get("net_income"),
+                ))
+            success_is += 1
+        except Exception:
+            pass
+        if (i + 1) % 200 == 0:
+            print(f"[Finance] 손익계산서: {i+1}/{len(tickers)}")
+            conn.commit()
+
+    conn.commit()
+
+    # Phase B: 대차대조표
+    print(f"[Finance] Phase B — 대차대조표 {len(tickers)}종목")
+    for i, ticker in enumerate(tickers):
+        try:
+            from kis_api import kis_balance_sheet
+            rows_bs = await _rate_limited(
+                kis_balance_sheet(ticker, token, session=session)
+            )
+            for r in (rows_bs or []):
+                rp = r.get("report_period", "")
+                if not rp:
+                    continue
+                conn.execute("""
+                    UPDATE financial_quarterly SET
+                        current_assets=?, fixed_assets=?, total_assets=?,
+                        current_liab=?, fixed_liab=?, total_liab=?,
+                        capital=?, total_equity=?,
+                        collected_at=datetime('now')
+                    WHERE symbol=? AND report_period=?
+                """, (
+                    r.get("current_assets"), r.get("fixed_assets"), r.get("total_assets"),
+                    r.get("current_liab"), r.get("fixed_liab"), r.get("total_liab"),
+                    r.get("capital"), r.get("total_equity"),
+                    ticker, rp,
+                ))
+            success_bs += 1
+        except Exception:
+            pass
+        if (i + 1) % 200 == 0:
+            print(f"[Finance] 대차대조표: {i+1}/{len(tickers)}")
+            conn.commit()
+
+    conn.commit()
+
+    # Phase C: DART 현금흐름표 + 지배귀속 + 판관비/매출채권/재고 (최신 4분기)
+    # F/M/FCF Phase1 — dart_quarterly_full 1콜로 PL/BS/CF 전체
+    try:
+        from kis_api import get_dart_corp_map, dart_quarterly_full
+        corp_map = await get_dart_corp_map({})
+    except Exception as e:
+        print(f"[Finance] Phase C skip — corp_map 로드 실패: {e}")
+        corp_map = {}
+
+    if corp_map:
+        # 최신 4분기 (현재연도 Q1 ~ 전년도 Q2) 기준 — TTM 1회분 확보
+        from datetime import datetime as _dt
+        now = _dt.now(KST)
+        # DART 공시 지연(~45일) 감안: 직전 확정 분기부터 과거로 4개
+        current_q = (now.month - 1) // 3 + 1
+        targets = []  # (year, quarter)
+        y, q = now.year, max(current_q - 1, 1) if current_q > 1 else 4
+        if current_q == 1:
+            y = now.year - 1
+        for _ in range(4):
+            targets.append((y, q))
+            q -= 1
+            if q < 1:
+                q = 4
+                y -= 1
+
+        print(f"[Finance] Phase C — DART 현금흐름표 {len(tickers)}종목 × "
+              f"{len(targets)}분기 = {len(tickers) * len(targets)}콜")
+        success_dart = await _collect_dart_full_batch(
+            conn, tickers, corp_map, targets
+        )
 
     # 재무 파생값 → daily_snapshot UPDATE
     _update_financial_derived(conn, date)
@@ -1796,27 +1798,27 @@ async def _collect_dart_full_batch(conn: sqlite3.Connection, tickers: list,
     done = 0
     skipped_no_corp = 0
 
-    async with aiohttp.ClientSession() as session:
-        for ticker in tickers:
-            corp_code = corp_map.get(ticker)
-            if not corp_code:
-                skipped_no_corp += 1
-                done += len(targets)
-                continue
-            for (y, q) in targets:
-                try:
-                    r = await dart_quarterly_full(corp_code, y, q, session=session)
-                    if r:
-                        _upsert_dart_full_row(conn, ticker, r)
-                        success += 1
-                except Exception:
-                    pass
-                done += 1
-                await asyncio.sleep(_DART_INTERVAL)
-                if done % 500 == 0:
-                    conn.commit()
-                    print(f"[DART-Full] 진행: {done}/{total} (성공 {success})")
-        conn.commit()
+    session = _get_session()
+    for ticker in tickers:
+        corp_code = corp_map.get(ticker)
+        if not corp_code:
+            skipped_no_corp += 1
+            done += len(targets)
+            continue
+        for (y, q) in targets:
+            try:
+                r = await dart_quarterly_full(corp_code, y, q, session=session)
+                if r:
+                    _upsert_dart_full_row(conn, ticker, r)
+                    success += 1
+            except Exception:
+                pass
+            done += 1
+            await asyncio.sleep(_DART_INTERVAL)
+            if done % 500 == 0:
+                conn.commit()
+                print(f"[DART-Full] 진행: {done}/{total} (성공 {success})")
+    conn.commit()
 
     print(f"[DART-Full] 완료 — 성공 {success}/{total}, corp_map 미등록 스킵 {skipped_no_corp}")
     return success
@@ -1963,8 +1965,8 @@ async def collect_financial_on_disclosure(days: int = 2,
 
     # Step 1: 신규 공시 목록
     try:
-        async with aiohttp.ClientSession() as scan_sess:
-            disclosures = await search_dart_periodic_new(days=days, session=scan_sess)
+        scan_sess = _get_session()
+        disclosures = await search_dart_periodic_new(days=days, session=scan_sess)
     except Exception as e:
         print(f"[DART-Incr] search_dart_periodic_new 오류: {e}")
         result["errors"] += 1
@@ -2032,64 +2034,64 @@ async def collect_financial_on_disclosure(days: int = 2,
         to_collect = to_collect[:max_pairs]
 
     latest_period = ""
-    async with aiohttp.ClientSession() as sess:
-        for item in to_collect:
-            ticker    = item["ticker"]
-            corp_code = item["corp_code"]
-            period    = item["report_period"]
+    sess = _get_session()
+    for item in to_collect:
+        ticker    = item["ticker"]
+        corp_code = item["corp_code"]
+        period    = item["report_period"]
 
-            # period "YYYYMM" → (year, quarter)
-            try:
-                year  = int(period[:4])
-                month = int(period[4:])
-                q_map = {3: 1, 6: 2, 9: 3, 12: 4}
-                quarter = q_map.get(month)
-            except Exception:
-                continue
-            if not quarter:
-                continue
+        # period "YYYYMM" → (year, quarter)
+        try:
+            year  = int(period[:4])
+            month = int(period[4:])
+            q_map = {3: 1, 6: 2, 9: 3, 12: 4}
+            quarter = q_map.get(month)
+        except Exception:
+            continue
+        if not quarter:
+            continue
 
-            # 4a. fnlttSinglAcntAll
-            try:
-                r = await dart_quarterly_full(corp_code, year, quarter, session=sess)
-                result["fnltt_calls"] += 1
-                if r:
-                    _upsert_dart_full_row(conn, ticker, r)
-                    if period > latest_period:
-                        latest_period = period
-            except Exception as e:
-                print(f"[DART-Incr] full {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
-                result["errors"] += 1
-                await asyncio.sleep(_DART_INTERVAL)
-                continue
+        # 4a. fnlttSinglAcntAll
+        try:
+            r = await dart_quarterly_full(corp_code, year, quarter, session=sess)
+            result["fnltt_calls"] += 1
+            if r:
+                _upsert_dart_full_row(conn, ticker, r)
+                if period > latest_period:
+                    latest_period = period
+        except Exception as e:
+            print(f"[DART-Incr] full {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
+            result["errors"] += 1
             await asyncio.sleep(_DART_INTERVAL)
+            continue
+        await asyncio.sleep(_DART_INTERVAL)
 
-            if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
-                print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
-                break
+        if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
+            print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
+            break
 
-            # 4b. stockTotqySttus
-            try:
-                shares = await dart_shares_outstanding(
-                    corp_code, year, quarter, session=sess,
+        # 4b. stockTotqySttus
+        try:
+            shares = await dart_shares_outstanding(
+                corp_code, year, quarter, session=sess,
+            )
+            result["shares_calls"] += 1
+            if shares:
+                conn.execute(
+                    "UPDATE financial_quarterly SET shares_out=? "
+                    "WHERE symbol=? AND report_period=?",
+                    (shares, ticker, period),
                 )
-                result["shares_calls"] += 1
-                if shares:
-                    conn.execute(
-                        "UPDATE financial_quarterly SET shares_out=? "
-                        "WHERE symbol=? AND report_period=?",
-                        (shares, ticker, period),
-                    )
-            except Exception as e:
-                print(f"[DART-Incr] shares {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
-                result["errors"] += 1
-            await asyncio.sleep(_DART_INTERVAL)
+        except Exception as e:
+            print(f"[DART-Incr] shares {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
+            result["errors"] += 1
+        await asyncio.sleep(_DART_INTERVAL)
 
-            result["newly_collected"] += 1
+        result["newly_collected"] += 1
 
-            if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
-                print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
-                break
+        if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
+            print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
+            break
 
     conn.commit()
     conn.close()
@@ -2463,43 +2465,43 @@ async def collect_shares_historical(quarters_back: int = 12,
     skipped_no_corp = 0
     start = time.time()
 
-    async with aiohttp.ClientSession() as session:
-        for ticker in tickers:
-            corp_code = corp_map.get(ticker)
-            if not corp_code:
-                skipped_no_corp += 1
-                done += len(targets)
-                continue
-            for (ty, tq) in targets:
-                rp = _build_period(ty, tq)
-                try:
-                    shares = await dart_shares_outstanding(
-                        corp_code, ty, tq, session=session
+    session = _get_session()
+    for ticker in tickers:
+        corp_code = corp_map.get(ticker)
+        if not corp_code:
+            skipped_no_corp += 1
+            done += len(targets)
+            continue
+        for (ty, tq) in targets:
+            rp = _build_period(ty, tq)
+            try:
+                shares = await dart_shares_outstanding(
+                    corp_code, ty, tq, session=session
+                )
+                if shares is not None and shares > 0:
+                    success += 1
+                    # row 없으면 생성 (collect_financial_historical 이후 shares만 채우는 케이스도 대응)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO financial_quarterly "
+                        "(symbol, report_period, collected_at) "
+                        "VALUES (?, ?, datetime('now'))",
+                        (ticker, rp),
                     )
-                    if shares is not None and shares > 0:
-                        success += 1
-                        # row 없으면 생성 (collect_financial_historical 이후 shares만 채우는 케이스도 대응)
-                        conn.execute(
-                            "INSERT OR IGNORE INTO financial_quarterly "
-                            "(symbol, report_period, collected_at) "
-                            "VALUES (?, ?, datetime('now'))",
-                            (ticker, rp),
-                        )
-                        cur = conn.execute(
-                            "UPDATE financial_quarterly SET shares_out=? "
-                            "WHERE symbol=? AND report_period=?",
-                            (shares, ticker, rp),
-                        )
-                        if cur.rowcount > 0:
-                            updated += 1
-                except Exception:
-                    pass
-                done += 1
-                await asyncio.sleep(_DART_INTERVAL)
-                if done % 500 == 0:
-                    conn.commit()
-                    print(f"[SharesHist] {done}/{total_calls} (성공 {success}, UPDATE {updated})")
-        conn.commit()
+                    cur = conn.execute(
+                        "UPDATE financial_quarterly SET shares_out=? "
+                        "WHERE symbol=? AND report_period=?",
+                        (shares, ticker, rp),
+                    )
+                    if cur.rowcount > 0:
+                        updated += 1
+            except Exception:
+                pass
+            done += 1
+            await asyncio.sleep(_DART_INTERVAL)
+            if done % 500 == 0:
+                conn.commit()
+                print(f"[SharesHist] {done}/{total_calls} (성공 {success}, UPDATE {updated})")
+    conn.commit()
 
     conn.close()
     duration = time.time() - start

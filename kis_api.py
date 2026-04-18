@@ -1076,11 +1076,11 @@ async def save_portfolio_snapshot(token: str) -> dict:
 
 async def _fetch_us_price_simple(sym: str, token: str) -> dict:
     """해외 현재가 단순 조회 (save_portfolio_snapshot 전용)"""
-    async with aiohttp.ClientSession() as s:
-        excd = _guess_excd(sym)
-        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
-            "HHDFS00000300", token, {"AUTH": "", "EXCD": excd, "SYMB": sym})
-        return d.get("output", {})
+    s = _get_session()
+    excd = _guess_excd(sym)
+    _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
+        "HHDFS00000300", token, {"AUTH": "", "EXCD": excd, "SYMB": sym})
+    return d.get("output", {})
 
 
 def check_drawdown() -> dict:
@@ -1177,21 +1177,21 @@ async def get_kis_token():
     # 3) 신규 발급
     url = f"{KIS_BASE_URL}/oauth2/tokenP"
     body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers={"content-type": "application/json"}, json=body) as resp:
-            data = await resp.json()
-            token = data.get("access_token")
-            if token:
-                expires = now + timedelta(hours=23)
-                _token_cache["token"] = token
-                _token_cache["expires"] = expires
-                try:
-                    os.makedirs(os.path.dirname(TOKEN_CACHE_FILE), exist_ok=True)
-                    with open(TOKEN_CACHE_FILE, "w", encoding="utf-8") as f:
-                        json.dump({"token": token, "expires": expires.isoformat()}, f)
-                except Exception:
-                    pass
-            return token
+    session = _get_session()
+    async with session.post(url, headers={"content-type": "application/json"}, json=body) as resp:
+        data = await resp.json()
+        token = data.get("access_token")
+        if token:
+            expires = now + timedelta(hours=23)
+            _token_cache["token"] = token
+            _token_cache["expires"] = expires
+            try:
+                os.makedirs(os.path.dirname(TOKEN_CACHE_FILE), exist_ok=True)
+                with open(TOKEN_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"token": token, "expires": expires.isoformat()}, f)
+            except Exception:
+                pass
+        return token
 
 
 async def get_investor_trend(ticker, token):
@@ -1200,9 +1200,9 @@ async def get_investor_trend(ticker, token):
         "content-type": "application/json; charset=utf-8", "authorization": f"Bearer {token}",
         "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010900"
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker}) as resp:
-            return (await resp.json()).get("output", [])
+    session = _get_session()
+    async with session.get(url, headers=headers, params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker}) as resp:
+        return (await resp.json()).get("output", [])
 
 
 async def get_volume_rank(token):
@@ -1218,9 +1218,9 @@ async def get_volume_rank(token):
         "FID_INPUT_PRICE_1": "0", "FID_INPUT_PRICE_2": "0",
         "FID_VOL_CNT": "0", "FID_INPUT_DATE_1": ""
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params=params) as resp:
-            return (await resp.json()).get("output", [])
+    session = _get_session()
+    async with session.get(url, headers=headers, params=params) as resp:
+        return (await resp.json()).get("output", [])
 
 
 async def get_kis_index(token, index_code="0001"):
@@ -1231,9 +1231,9 @@ async def get_kis_index(token, index_code="0001"):
         "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHPUP02100000"
     }
     params = {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": index_code}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params=params) as resp:
-            return (await resp.json()).get("output", {})
+    session = _get_session()
+    async with session.get(url, headers=headers, params=params) as resp:
+        return (await resp.json()).get("output", {})
 
 
 def _kis_headers(token, tr_id):
@@ -1280,71 +1280,71 @@ async def kis_stock_price(ticker, token, session=None):
 
 
 async def kis_stock_info(ticker, token):
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/search-stock-info",
-            "CTPF1002R", token,
-            {"PRDT_TYPE_CD": "300", "PDNO": ticker})
-        return d.get("output", {})
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/search-stock-info",
+        "CTPF1002R", token,
+        {"PRDT_TYPE_CD": "300", "PDNO": ticker})
+    return d.get("output", {})
 
 
 async def kis_investor_trend(ticker, token):
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-investor",
-            "FHKST01010900", token,
-            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
-        return d.get("output", [])
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-investor",
+        "FHKST01010900", token,
+        {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+    return d.get("output", [])
 
 
 async def kis_credit_balance(ticker, token):
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-credit-by-company",
-            "FHKST01010600", token,
-            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
-        return d.get("output", {})
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-credit-by-company",
+        "FHKST01010600", token,
+        {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker})
+    return d.get("output", {})
 
 
 async def kis_short_selling(ticker, token):
     today = datetime.now().strftime("%Y%m%d")
     week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-short-selling",
-            "FHKST01010700", token,
-            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker,
-             "fid_begin_dt": week_ago, "fid_end_dt": today})
-        return d.get("output", [])
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-short-selling",
+        "FHKST01010700", token,
+        {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker,
+         "fid_begin_dt": week_ago, "fid_end_dt": today})
+    return d.get("output", [])
 
 
 async def kis_volume_rank_api(token):
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/volume-rank",
-            "FHPST01710000", token,
-            {"fid_cond_mrkt_div_code": "J", "fid_cond_scr_div_code": "20171",
-             "fid_input_iscd": "0000", "fid_div_cls_code": "0", "fid_blng_cls_code": "0",
-             "fid_trgt_cls_code": "111111111", "fid_trgt_exls_cls_code": "000000",
-             "fid_input_price_1": "", "fid_input_price_2": "", "fid_vol_cnt": "", "fid_input_date_1": ""})
-        return d.get("output", [])
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/volume-rank",
+        "FHPST01710000", token,
+        {"fid_cond_mrkt_div_code": "J", "fid_cond_scr_div_code": "20171",
+         "fid_input_iscd": "0000", "fid_div_cls_code": "0", "fid_blng_cls_code": "0",
+         "fid_trgt_cls_code": "111111111", "fid_trgt_exls_cls_code": "000000",
+         "fid_input_price_1": "", "fid_input_price_2": "", "fid_vol_cnt": "", "fid_input_date_1": ""})
+    return d.get("output", [])
 
 
 async def kis_foreigner_trend(token):
     today = datetime.now().strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-foreigner-trend",
-            "FHPTJ04060100", token,
-            {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": "0000", "fid_input_date_1": today})
-        if not d:
-            return []
-        output = d.get("output") or []
-        return [r for r in output if r is not None]
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-foreigner-trend",
+        "FHPTJ04060100", token,
+        {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": "0000", "fid_input_date_1": today})
+    if not d:
+        return []
+    output = d.get("output") or []
+    return [r for r in output if r is not None]
 
 
 async def kis_sector_price(token):
     today = datetime.now().strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-daily-sector-price",
-            "FHKUP03500100", token,
-            {"fid_cond_mrkt_div_code": "U", "fid_input_iscd": "0001",
-             "fid_input_date_1": today, "fid_period_div_code": "D"})
-        return d.get("output", [])
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-daily-sector-price",
+        "FHKUP03500100", token,
+        {"fid_cond_mrkt_div_code": "U", "fid_input_iscd": "0001",
+         "fid_input_date_1": today, "fid_period_div_code": "D"})
+    return d.get("output", [])
 
 
 WI26_SECTORS = [
@@ -1380,14 +1380,14 @@ async def _fetch_market_investor_flow(token: str, market: str) -> dict:
         "fid_input_iscd_2": "0001",
     }
     try:
-        async with aiohttp.ClientSession() as s:
-            _, d = await _kis_get(
-                s,
-                "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
-                "FHPTJ04040000",
-                token,
-                params,
-            )
+        s = _get_session()
+        _, d = await _kis_get(
+            s,
+            "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
+            "FHPTJ04040000",
+            token,
+            params,
+        )
         if not d or d.get("rt_cd") != "0":
             return {"frgn": 0, "orgn": 0, "prsn": 0}
         rows = d.get("output") or []
@@ -1419,8 +1419,8 @@ async def _fetch_sector_flow(token: str, sector_code: str) -> tuple:
         "/uapi/domestic-stock/v1/quotations/inquire-daily-sector-price",
     ]:
         try:
-            async with aiohttp.ClientSession() as s:
-                _, d = await _kis_get(s, path, "FHKUP03500100", token, params)
+            s = _get_session()
+            _, d = await _kis_get(s, path, "FHKUP03500100", token, params)
             if not d or d.get("rt_cd") != "0":
                 continue
             out = d.get("output2") or d.get("output") or {}
@@ -1500,53 +1500,53 @@ async def kis_us_stock_price(symbol: str, token: str, excd: str = "") -> dict:
     if not excd:
         excd = _guess_excd(symbol)
     # 1차 시도
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
+        "HHDFS00000300", token,
+        {"AUTH": "", "EXCD": excd, "SYMB": symbol})
+    out = d.get("output", {})
+    price = float(out.get("last", 0) or 0)
+    if price > 0:
+        return out
+    # 2차: 다른 거래소로 fallback
+    fallback_codes = [c for c in ("NYS", "NAS", "AMS") if c != excd]
+    for fb in fallback_codes:
+        await asyncio.sleep(0.2)
+        _, d2 = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
             "HHDFS00000300", token,
-            {"AUTH": "", "EXCD": excd, "SYMB": symbol})
-        out = d.get("output", {})
-        price = float(out.get("last", 0) or 0)
-        if price > 0:
-            return out
-        # 2차: 다른 거래소로 fallback
-        fallback_codes = [c for c in ("NYS", "NAS", "AMS") if c != excd]
-        for fb in fallback_codes:
-            await asyncio.sleep(0.2)
-            _, d2 = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price",
-                "HHDFS00000300", token,
-                {"AUTH": "", "EXCD": fb, "SYMB": symbol})
-            out2 = d2.get("output", {})
-            p2 = float(out2.get("last", 0) or 0)
-            if p2 > 0:
-                print(f"[excd fallback] {symbol}: {excd}→{fb} 성공")
-                return out2
-        return out  # 모든 거래소에서 0이면 원래 결과 반환
+            {"AUTH": "", "EXCD": fb, "SYMB": symbol})
+        out2 = d2.get("output", {})
+        p2 = float(out2.get("last", 0) or 0)
+        if p2 > 0:
+            print(f"[excd fallback] {symbol}: {excd}→{fb} 성공")
+            return out2
+    return out  # 모든 거래소에서 0이면 원래 결과 반환
 
 
 async def kis_us_stock_detail(symbol: str, token: str, excd: str = "") -> dict:
     """KIS API 해외주식 현재가상세 (HHDFS76200200) — PER/PBR/시총/52주 등"""
     if not excd:
         excd = _guess_excd(symbol)
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
+        "HHDFS76200200", token,
+        {"AUTH": "", "EXCD": excd, "SYMB": symbol})
+    out = d.get("output", {})
+    p = float(out.get("last", 0) or out.get("t_xprc", 0) or 0)
+    if p > 0:
+        return out
+    fallback_codes = [c for c in ("NYS", "NAS", "AMS") if c != excd]
+    for fb in fallback_codes:
+        await asyncio.sleep(0.2)
+        _, d2 = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
             "HHDFS76200200", token,
-            {"AUTH": "", "EXCD": excd, "SYMB": symbol})
-        out = d.get("output", {})
-        p = float(out.get("last", 0) or out.get("t_xprc", 0) or 0)
-        if p > 0:
-            return out
-        fallback_codes = [c for c in ("NYS", "NAS", "AMS") if c != excd]
-        for fb in fallback_codes:
-            await asyncio.sleep(0.2)
-            _, d2 = await _kis_get(s, "/uapi/overseas-price/v1/quotations/price-detail",
-                "HHDFS76200200", token,
-                {"AUTH": "", "EXCD": fb, "SYMB": symbol})
-            out2 = d2.get("output", {})
-            p2 = float(out2.get("last", 0) or out2.get("t_xprc", 0) or 0)
-            if p2 > 0:
-                print(f"[excd fallback detail] {symbol}: {excd}→{fb} 성공")
-                return out2
-        return out  # 모든 거래소에서 0이면 원래 결과 반환
+            {"AUTH": "", "EXCD": fb, "SYMB": symbol})
+        out2 = d2.get("output", {})
+        p2 = float(out2.get("last", 0) or out2.get("t_xprc", 0) or 0)
+        if p2 > 0:
+            print(f"[excd fallback detail] {symbol}: {excd}→{fb} 성공")
+            return out2
+    return out  # 모든 거래소에서 0이면 원래 결과 반환
 
 
 async def kis_fluctuation_rank(token: str, market: str = "0000",
@@ -2102,11 +2102,11 @@ async def kis_program_trade_today(token: str, market: str = "kospi") -> list:
     Returns: [{investor, total_net_qty, total_net_amt, arb_net_qty, non_arb_net_qty}, ...]
     """
     mrkt_code = "1" if market.lower() == "kospi" else "4"
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s,
-            "/uapi/domestic-stock/v1/quotations/investor-program-trade-today",
-            "HHPPG046600C1", token,
-            {"MRKT_DIV_CLS_CODE": mrkt_code})
+    s = _get_session()
+    _, d = await _kis_get(s,
+        "/uapi/domestic-stock/v1/quotations/investor-program-trade-today",
+        "HHPPG046600C1", token,
+        {"MRKT_DIV_CLS_CODE": mrkt_code})
     result = []
     for row in d.get("output1", []):
         name = (row.get("invr_cls_name") or "").strip()
@@ -2128,11 +2128,11 @@ async def kis_investor_trend_estimate(ticker: str, token: str) -> dict:
     Returns: {ticker, foreign_est_net, institution_est_net, sum_est_net, is_estimate: True}
     """
     try:
-        async with aiohttp.ClientSession() as s:
-            _, d = await _kis_get(s,
-                "/uapi/domestic-stock/v1/quotations/investor-trend-estimate",
-                "HHPTJ04160200", token,
-                {"MKSC_SHRN_ISCD": ticker})
+        s = _get_session()
+        _, d = await _kis_get(s,
+            "/uapi/domestic-stock/v1/quotations/investor-trend-estimate",
+            "HHPTJ04160200", token,
+            {"MKSC_SHRN_ISCD": ticker})
         rows = d.get("output2", [])
         row = rows[-1] if isinstance(rows, list) and rows else (rows if isinstance(rows, dict) else {})
         return {
@@ -2235,20 +2235,20 @@ async def kis_news_title(ticker: str, token: str, n: int = 10) -> list:
     Returns: [{date, time, title, source}, ...]
     """
     try:
-        async with aiohttp.ClientSession() as s:
-            _, d = await _kis_get(s,
-                "/uapi/domestic-stock/v1/quotations/news-title",
-                "FHKST01011800", token,
-                {
-                    "FID_NEWS_OFER_ENTP_CODE": "",
-                    "FID_COND_MRKT_CLS_CODE":  "",
-                    "FID_INPUT_ISCD":          ticker,
-                    "FID_TITL_CNTT":           "",
-                    "FID_INPUT_DATE_1":        "",
-                    "FID_INPUT_HOUR_1":        "",
-                    "FID_RANK_SORT_CLS_CODE":  "0",
-                    "FID_INPUT_SRNO":          "",
-                })
+        s = _get_session()
+        _, d = await _kis_get(s,
+            "/uapi/domestic-stock/v1/quotations/news-title",
+            "FHKST01011800", token,
+            {
+                "FID_NEWS_OFER_ENTP_CODE": "",
+                "FID_COND_MRKT_CLS_CODE":  "",
+                "FID_INPUT_ISCD":          ticker,
+                "FID_TITL_CNTT":           "",
+                "FID_INPUT_DATE_1":        "",
+                "FID_INPUT_HOUR_1":        "",
+                "FID_RANK_SORT_CLS_CODE":  "0",
+                "FID_INPUT_SRNO":          "",
+            })
         result = []
         for row in d.get("output", [])[:n]:
             title = (row.get("hts_pbnt_titl_cntt") or "").strip()
@@ -2363,20 +2363,20 @@ async def kis_vi_status(token: str) -> list:
     """
     today = datetime.now(KST).strftime("%Y%m%d")
     try:
-        async with aiohttp.ClientSession() as s:
-            _, d = await _kis_get(s,
-                "/uapi/domestic-stock/v1/quotations/inquire-vi-status",
-                "FHPST01390000", token,
-                {
-                    "FID_DIV_CLS_CODE":       "0",
-                    "FID_COND_SCR_DIV_CODE":  "20139",
-                    "FID_MRKT_CLS_CODE":      "0",
-                    "FID_INPUT_ISCD":         "",
-                    "FID_RANK_SORT_CLS_CODE": "0",
-                    "FID_INPUT_DATE_1":       today,
-                    "FID_TRGT_CLS_CODE":      "",
-                    "FID_TRGT_EXLS_CLS_CODE": "",
-                })
+        s = _get_session()
+        _, d = await _kis_get(s,
+            "/uapi/domestic-stock/v1/quotations/inquire-vi-status",
+            "FHPST01390000", token,
+            {
+                "FID_DIV_CLS_CODE":       "0",
+                "FID_COND_SCR_DIV_CODE":  "20139",
+                "FID_MRKT_CLS_CODE":      "0",
+                "FID_INPUT_ISCD":         "",
+                "FID_RANK_SORT_CLS_CODE": "0",
+                "FID_INPUT_DATE_1":       today,
+                "FID_TRGT_CLS_CODE":      "",
+                "FID_TRGT_EXLS_CLS_CODE": "",
+            })
         result = []
         for row in d.get("output", []):
             ticker = (row.get("mksc_shrn_iscd") or "").strip()
@@ -2461,23 +2461,23 @@ async def kis_finance_ratio_rank(token: str, market: str = "0000",
     if not year:
         year = str(datetime.now(KST).year - 1)
 
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/finance-ratio",
-                              "FHPST01750000", token, {
-            "fid_trgt_cls_code": "0",
-            "fid_cond_mrkt_div_code": "J",
-            "fid_cond_scr_div_code": "20175",
-            "fid_input_iscd": market,
-            "fid_div_cls_code": "0",
-            "fid_input_price_1": "",
-            "fid_input_price_2": "",
-            "fid_vol_cnt": "",
-            "fid_input_option_1": year,
-            "fid_input_option_2": quarter,
-            "fid_rank_sort_cls_code": sort,
-            "fid_blng_cls_code": "0",
-            "fid_trgt_exls_cls_code": "0",
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/finance-ratio",
+                          "FHPST01750000", token, {
+        "fid_trgt_cls_code": "0",
+        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_scr_div_code": "20175",
+        "fid_input_iscd": market,
+        "fid_div_cls_code": "0",
+        "fid_input_price_1": "",
+        "fid_input_price_2": "",
+        "fid_vol_cnt": "",
+        "fid_input_option_1": year,
+        "fid_input_option_2": quarter,
+        "fid_rank_sort_cls_code": sort,
+        "fid_blng_cls_code": "0",
+        "fid_trgt_exls_cls_code": "0",
+    })
     items = d.get("output", [])
     if os.environ.get("DEBUG") and items:
         print(f"[DEBUG] finance_ratio keys: {list(items[0].keys())}")
@@ -2524,22 +2524,22 @@ async def kis_near_new_highlow(token: str, mode: str = "high",
     market: 0000=전체, 0001=거래소, 1001=코스닥
     gap_min/gap_max: 괴리율 범위 (%)
     """
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/near-new-highlow",
-                              "FHPST01870000", token, {
-            "fid_aply_rang_vol": "0",
-            "fid_cond_mrkt_div_code": "J",
-            "fid_cond_scr_div_code": "20187",
-            "fid_div_cls_code": "0",
-            "fid_input_cnt_1": str(gap_min),
-            "fid_input_cnt_2": str(gap_max),
-            "fid_prc_cls_code": "0" if mode == "high" else "1",
-            "fid_input_iscd": market,
-            "fid_trgt_cls_code": "0",
-            "fid_trgt_exls_cls_code": "0",
-            "fid_aply_rang_prc_1": "0",
-            "fid_aply_rang_prc_2": "10000000",
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/near-new-highlow",
+                          "FHPST01870000", token, {
+        "fid_aply_rang_vol": "0",
+        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_scr_div_code": "20187",
+        "fid_div_cls_code": "0",
+        "fid_input_cnt_1": str(gap_min),
+        "fid_input_cnt_2": str(gap_max),
+        "fid_prc_cls_code": "0" if mode == "high" else "1",
+        "fid_input_iscd": market,
+        "fid_trgt_cls_code": "0",
+        "fid_trgt_exls_cls_code": "0",
+        "fid_aply_rang_prc_1": "0",
+        "fid_aply_rang_prc_2": "10000000",
+    })
     items = d.get("output", [])
     if os.environ.get("DEBUG") and items:
         print(f"[DEBUG] near_new_highlow keys: {list(items[0].keys())}")
@@ -2569,12 +2569,12 @@ async def kis_inquire_member(ticker: str, token: str) -> dict:
 
     Returns: {ticker, name, buy_members: [...], sell_members: [...]}
     """
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-member",
-                              "FHKST01010600", token, {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": ticker,
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-member",
+                          "FHKST01010600", token, {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": ticker,
+    })
     output = d.get("output", {})
     if os.environ.get("DEBUG") and output:
         keys = list(output.keys()) if isinstance(output, dict) else list(output[0].keys()) if output else []
@@ -2614,14 +2614,14 @@ async def kis_daily_credit_balance(ticker: str, token: str, n: int = 20) -> list
     Returns: [{date, credit_balance, credit_ratio, change, ...}, ...]
     """
     today = datetime.now(KST).strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-credit-balance",
-                              "FHPST04760000", token, {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_COND_SCR_DIV_CODE": "20476",
-            "FID_INPUT_ISCD": ticker,
-            "FID_INPUT_DATE_1": today,
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-credit-balance",
+                          "FHPST04760000", token, {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_SCR_DIV_CODE": "20476",
+        "FID_INPUT_ISCD": ticker,
+        "FID_INPUT_DATE_1": today,
+    })
     items = d.get("output", d.get("output1", []))
     if isinstance(items, dict):
         items = [items]
@@ -2651,15 +2651,15 @@ async def kis_daily_loan_trans(ticker: str, token: str, n: int = 20) -> list:
     """
     today = datetime.now(KST).strftime("%Y%m%d")
     start = (datetime.now(KST) - timedelta(days=n * 2)).strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-loan-trans",
-                              "HHPST074500C0", token, {
-            "MRKT_DIV_CLS_CODE": "3",
-            "MKSC_SHRN_ISCD": ticker,
-            "START_DATE": start,
-            "END_DATE": today,
-            "CTS": "",
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/daily-loan-trans",
+                          "HHPST074500C0", token, {
+        "MRKT_DIV_CLS_CODE": "3",
+        "MKSC_SHRN_ISCD": ticker,
+        "START_DATE": start,
+        "END_DATE": today,
+        "CTS": "",
+    })
     items = d.get("output1", d.get("output", []))
     if isinstance(items, dict):
         items = [items]
@@ -2806,12 +2806,12 @@ async def kis_asking_price(ticker: str, token: str) -> dict:
     Returns: {ticker, asks: [{price, volume}], bids: [{price, volume}],
              total_ask_vol, total_bid_vol, bid_ask_ratio}
     """
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
-                              "FHKST01010200", token, {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": ticker,
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+                          "FHKST01010200", token, {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": ticker,
+    })
     out1 = d.get("output1", {})
     out2 = d.get("output2", {})
     if isinstance(out1, list):
@@ -2855,20 +2855,20 @@ async def kis_overtime_fluctuation(token: str, sort: str = "rise",
     market: 0000=전체, 0001=코스피, 1001=코스닥
     """
     div_code = "2" if sort == "rise" else "5"  # 2=상승률, 5=하락률
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/overtime-fluctuation",
-                              "FHPST02340000", token, {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_MRKT_CLS_CODE": "",
-            "FID_COND_SCR_DIV_CODE": "20234",
-            "FID_INPUT_ISCD": market,
-            "FID_DIV_CLS_CODE": div_code,
-            "FID_INPUT_PRICE_1": "",
-            "FID_INPUT_PRICE_2": "",
-            "FID_VOL_CNT": "",
-            "FID_TRGT_CLS_CODE": "",
-            "FID_TRGT_EXLS_CLS_CODE": "",
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/overtime-fluctuation",
+                          "FHPST02340000", token, {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_MRKT_CLS_CODE": "",
+        "FID_COND_SCR_DIV_CODE": "20234",
+        "FID_INPUT_ISCD": market,
+        "FID_DIV_CLS_CODE": div_code,
+        "FID_INPUT_PRICE_1": "",
+        "FID_INPUT_PRICE_2": "",
+        "FID_VOL_CNT": "",
+        "FID_TRGT_CLS_CODE": "",
+        "FID_TRGT_EXLS_CLS_CODE": "",
+    })
     items = d.get("output2", d.get("output", []))
     if isinstance(items, dict):
         items = [items]
@@ -2899,22 +2899,22 @@ async def kis_traded_by_company(token: str, broker: str = "", sort: str = "buy",
     """
     today = datetime.now(KST).strftime("%Y%m%d")
     sort_code = "1" if sort == "buy" else "0"
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/traded-by-company",
-                              "FHPST01860000", token, {
-            "fid_trgt_exls_cls_code": "0",
-            "fid_cond_mrkt_div_code": "J",
-            "fid_cond_scr_div_code": "20186",
-            "fid_div_cls_code": "0",
-            "fid_rank_sort_cls_code": sort_code,
-            "fid_input_date_1": today,
-            "fid_input_date_2": today,
-            "fid_input_iscd": broker if broker else market,
-            "fid_trgt_cls_code": "0",
-            "fid_aply_rang_vol": "0",
-            "fid_aply_rang_prc_1": "",
-            "fid_aply_rang_prc_2": "",
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/traded-by-company",
+                          "FHPST01860000", token, {
+        "fid_trgt_exls_cls_code": "0",
+        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_scr_div_code": "20186",
+        "fid_div_cls_code": "0",
+        "fid_rank_sort_cls_code": sort_code,
+        "fid_input_date_1": today,
+        "fid_input_date_2": today,
+        "fid_input_iscd": broker if broker else market,
+        "fid_trgt_cls_code": "0",
+        "fid_aply_rang_vol": "0",
+        "fid_aply_rang_prc_1": "",
+        "fid_aply_rang_prc_2": "",
+    })
     items = d.get("output", [])
     if isinstance(items, dict):
         items = [items]
@@ -2946,18 +2946,18 @@ async def kis_dividend_rate_rank(token: str, market: str = "0",
     year = str(today.year - 1)
     f_dt = f"{year}0101"
     t_dt = f"{year}1231"
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/dividend-rate",
-                              "HHKDB13470100", token, {
-            "CTS_AREA": " ",
-            "GB1": market,
-            "UPJONG": "",
-            "GB2": "0",
-            "GB3": "2",
-            "F_DT": f_dt,
-            "T_DT": t_dt,
-            "GB4": "0",
-        })
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ranking/dividend-rate",
+                          "HHKDB13470100", token, {
+        "CTS_AREA": " ",
+        "GB1": market,
+        "UPJONG": "",
+        "GB2": "0",
+        "GB3": "2",
+        "F_DT": f_dt,
+        "T_DT": t_dt,
+        "GB4": "0",
+    })
     items = d.get("output", [])
     if isinstance(items, dict):
         items = [items]
@@ -2989,18 +2989,18 @@ async def kis_us_updown_rate(token: str, sort: str = "rise",
     """
     gubn = "1" if sort == "rise" else "0"
     try:
-        async with aiohttp.ClientSession() as s:
-            _, d = await _kis_get(s,
-                "/uapi/overseas-stock/v1/ranking/updown-rate",
-                "HHDFS76290000", token,
-                {
-                    "AUTH":     "",
-                    "EXCD":     exchange.upper(),
-                    "NDAY":     "0",
-                    "GUBN":     gubn,
-                    "VOL_RANG": "0",
-                    "KEYB":     "",
-                })
+        s = _get_session()
+        _, d = await _kis_get(s,
+            "/uapi/overseas-stock/v1/ranking/updown-rate",
+            "HHDFS76290000", token,
+            {
+                "AUTH":     "",
+                "EXCD":     exchange.upper(),
+                "NDAY":     "0",
+                "GUBN":     gubn,
+                "VOL_RANG": "0",
+                "KEYB":     "",
+            })
         result = []
         for item in d.get("output2", [])[:n]:
             symb = (item.get("symb") or "").strip()
@@ -3026,9 +3026,9 @@ async def kis_estimate_perform(ticker: str, token: str) -> dict:
     output2: 연간 추정실적 / output3: 분기 추정실적
     필드: dt(결산년월) data1(매출액) data2(영업이익) data3(세전이익) data4(순이익) data5(EPS)
     """
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/estimate-perform",
-            "HHKST668300C0", token, {"SHT_CD": ticker})
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/quotations/estimate-perform",
+        "HHKST668300C0", token, {"SHT_CD": ticker})
 
     def _row(r):
         return {
@@ -3058,11 +3058,11 @@ async def kis_dividend_schedule(token: str, from_dt: str = "", to_dt: str = "",
         from_dt = datetime.now(KST).strftime("%Y%m%d")
     if not to_dt:
         to_dt = (datetime.now(KST) + timedelta(days=90)).strftime("%Y%m%d")
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ksdinfo/dividend",
-            "HHKDB669102C0", token,
-            {"CTS": " ", "GB1": gb1, "F_DT": from_dt, "T_DT": to_dt,
-             "SHT_CD": ticker or " ", "HIGH_GB": " "})
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/ksdinfo/dividend",
+        "HHKDB669102C0", token,
+        {"CTS": " ", "GB1": gb1, "F_DT": from_dt, "T_DT": to_dt,
+         "SHT_CD": ticker or " ", "HIGH_GB": " "})
     return d.get("output1") or d.get("output") or []
 
 
@@ -3183,14 +3183,14 @@ async def get_kis_ws_approval_key() -> str:
     url = f"{KIS_BASE_URL}/oauth2/Approval"
     body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "secretkey": KIS_APP_SECRET}
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=body) as r:
-                d = await r.json(content_type=None)
-                key = d.get("approval_key", "")
-                if key:
-                    _ws_key_cache["key"] = key
-                    _ws_key_cache["expires"] = now + 82800
-                return _ws_key_cache.get("key") or ""
+        s = _get_session()
+        async with s.post(url, json=body) as r:
+            d = await r.json(content_type=None)
+            key = d.get("approval_key", "")
+            if key:
+                _ws_key_cache["key"] = key
+                _ws_key_cache["expires"] = now + 82800
+            return _ws_key_cache.get("key") or ""
     except Exception as e:
         print(f"[WS] 접속키 발급 오류: {e}")
         return ""
@@ -3405,13 +3405,13 @@ def get_ws_tickers() -> set:
 async def get_yahoo_quote(symbol):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                if resp.status == 200:
-                    meta = (await resp.json()).get("chart", {}).get("result", [{}])[0].get("meta", {})
-                    price = meta.get("regularMarketPrice", 0)
-                    prev = meta.get("chartPreviousClose", 0)
-                    return {"price": price, "prev": prev, "change_pct": ((price - prev) / prev * 100) if prev else 0}
+        session = _get_session()
+        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
+            if resp.status == 200:
+                meta = (await resp.json()).get("chart", {}).get("result", [{}])[0].get("meta", {})
+                price = meta.get("regularMarketPrice", 0)
+                prev = meta.get("chartPreviousClose", 0)
+                return {"price": price, "prev": prev, "change_pct": ((price - prev) / prev * 100) if prev else 0}
     except Exception:
         pass
     return {"price": 0, "prev": 0, "change_pct": 0}
@@ -3695,12 +3695,12 @@ async def search_dart_disclosures(days_back=1):
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("status") == "000":
-                        return data.get("list", [])
+        session = _get_session()
+        async with session.get(url, params=params) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data.get("status") == "000":
+                    return data.get("list", [])
     except Exception as e:
         print(f"DART API 오류: {e}")
     return []
@@ -5013,29 +5013,29 @@ async def backup_data_files() -> dict:
     ts = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
 
     try:
-        async with aiohttp.ClientSession() as s:
-            if gist_id:
-                url = f"https://api.github.com/gists/{gist_id}"
-                payload = {"description": f"stock-bot /data/ backup {ts}", "files": files}
-                async with s.patch(url, json=payload, headers=headers) as resp:
-                    if resp.status == 200:
-                        d = await resp.json()
-                        return {"ok": True, "action": "updated", "gist_id": d["id"],
-                                "files": backed_up, "updated_at": d.get("updated_at", "")}
-                    text = await resp.text()
-                    return {"ok": False, "error": f"PATCH {resp.status}: {text[:200]}"}
-            else:
-                url = "https://api.github.com/gists"
-                payload = {"description": f"stock-bot /data/ backup {ts}", "public": False, "files": files}
-                async with s.post(url, json=payload, headers=headers) as resp:
-                    if resp.status == 201:
-                        d = await resp.json()
-                        new_id = d["id"]
-                        print(f"[backup] 신규 Gist 생성: {new_id} — BACKUP_GIST_ID 환경변수 설정 필요")
-                        return {"ok": True, "action": "created", "gist_id": new_id,
-                                "files": backed_up, "note": f"BACKUP_GIST_ID={new_id} 환경변수 설정 필요"}
-                    text = await resp.text()
-                    return {"ok": False, "error": f"POST {resp.status}: {text[:200]}"}
+        s = _get_session()
+        if gist_id:
+            url = f"https://api.github.com/gists/{gist_id}"
+            payload = {"description": f"stock-bot /data/ backup {ts}", "files": files}
+            async with s.patch(url, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    d = await resp.json()
+                    return {"ok": True, "action": "updated", "gist_id": d["id"],
+                            "files": backed_up, "updated_at": d.get("updated_at", "")}
+                text = await resp.text()
+                return {"ok": False, "error": f"PATCH {resp.status}: {text[:200]}"}
+        else:
+            url = "https://api.github.com/gists"
+            payload = {"description": f"stock-bot /data/ backup {ts}", "public": False, "files": files}
+            async with s.post(url, json=payload, headers=headers) as resp:
+                if resp.status == 201:
+                    d = await resp.json()
+                    new_id = d["id"]
+                    print(f"[backup] 신규 Gist 생성: {new_id} — BACKUP_GIST_ID 환경변수 설정 필요")
+                    return {"ok": True, "action": "created", "gist_id": new_id,
+                            "files": backed_up, "note": f"BACKUP_GIST_ID={new_id} 환경변수 설정 필요"}
+                text = await resp.text()
+                return {"ok": False, "error": f"POST {resp.status}: {text[:200]}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -5055,12 +5055,12 @@ async def restore_data_files(force: bool = False) -> dict:
     }
 
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"https://api.github.com/gists/{gist_id}", headers=headers) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    return {"ok": False, "error": f"GET {resp.status}: {text[:200]}"}
-                data = await resp.json()
+        s = _get_session()
+        async with s.get(f"https://api.github.com/gists/{gist_id}", headers=headers) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                return {"ok": False, "error": f"GET {resp.status}: {text[:200]}"}
+            data = await resp.json()
 
         gist_files = data.get("files", {})
         restored: list = []
@@ -5103,12 +5103,12 @@ async def get_backup_status() -> dict:
     }
 
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"https://api.github.com/gists/{gist_id}", headers=headers) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    return {"ok": False, "error": f"GET {resp.status}: {text[:100]}"}
-                data = await resp.json()
+        s = _get_session()
+        async with s.get(f"https://api.github.com/gists/{gist_id}", headers=headers) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                return {"ok": False, "error": f"GET {resp.status}: {text[:100]}"}
+            data = await resp.json()
 
         return {
             "ok": True,
@@ -5131,20 +5131,20 @@ async def fetch_news(query="주식 시장 한국", max_items=8):
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                if resp.status == 200:
-                    text = await resp.text()
-                    # 간단한 XML 파싱
-                    root = ET.fromstring(text)
-                    items = root.findall(".//item")
-                    results = []
-                    for item in items[:max_items]:
-                        title = item.find("title").text if item.find("title") is not None else ""
-                        pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                        source = item.find("source").text if item.find("source") is not None else ""
-                        results.append({"title": title, "date": pub_date, "source": source})
-                    return results
+        session = _get_session()
+        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
+            if resp.status == 200:
+                text = await resp.text()
+                # 간단한 XML 파싱
+                root = ET.fromstring(text)
+                items = root.findall(".//item")
+                results = []
+                for item in items[:max_items]:
+                    title = item.find("title").text if item.find("title") is not None else ""
+                    pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                    source = item.find("source").text if item.find("source") is not None else ""
+                    results.append({"title": title, "date": pub_date, "source": source})
+                return results
     except Exception as e:
         print(f"뉴스 조회 오류: {e}")
     return []

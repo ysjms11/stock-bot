@@ -3965,7 +3965,7 @@ def main():
     jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")
     jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
     # 환율 알림: 매크로 대시보드(macro_pm/macro_am)로 통합 완료
-    jq.run_repeating(check_dart_disclosure, interval=1800, first=180, name="dart")
+    jq.run_repeating(check_dart_disclosure, interval=300, first=180, name="dart")  # 5분 (실시간화, 8~20시 내부 필터)
     # 모든 run_daily time은 KST-aware(tzinfo=KST)로 지정 → Railway(UTC 서버)에서도 정확한 시각에 실행됨
     jq.run_daily(daily_kr_summary, time=dtime(15, 40, tzinfo=KST), days=(0,1,2,3,4), name="kr_summary")
     # 미국 장 마감 요약: 서머타임(05:05 KST) + 표준시(06:05 KST) 두 시각 등록
