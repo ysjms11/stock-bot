@@ -1,4 +1,4 @@
-# MCP 도구 전체 목록 (35개)
+# MCP 도구 전체 목록 (38개)
 
 > `mcp_tools.py`의 도구 스키마 요약. 새 도구 추가 시 → `.claude/rules/add-mcp-tool.md` 참조
 
@@ -52,10 +52,17 @@
 | 26 | `write_file` | | stock-bot 디렉토리 내 파일 쓰기 (.md/.json/.txt, .py/.env 불가, 200KB, ../ 차단) |
 | 27 | `list_files` | | stock-bot 디렉토리 내 파일/폴더 목록 (이름·크기·수정일, depth 2, ../ 차단) |
 | 28 | `read_report_pdf` | | 리포트 PDF 페이지 이미지 렌더링 (report_crawler DB 기반) |
-| 28 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout, 복합 콤마 구분) |
-| 29 | `git_status` | | Git 브랜치/변경파일 조회 |
-| 30 | `git_diff` | | 변경내용 조회 (path, staged 옵션) |
-| 31 | `git_log` | | 최근 커밋 로그 |
-| 32 | `git_commit` | | 파일 지정 커밋 (.py/.env 차단) |
-| 33 | `git_push` | | origin/main push |
-| 34 | `get_alpha_metrics` | | 종목별 F-Score/M-Score/FCF 메트릭 조회 (daily_snapshot 최신 기준, F/M/FCF Phase4) |
+| 29 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout, 복합 콤마 구분) |
+| 30 | `git_status` | | Git 브랜치/변경파일 조회 |
+| 31 | `git_diff` | | 변경내용 조회 (path, staged 옵션) |
+| 32 | `git_log` | | 최근 커밋 로그 |
+| 33 | `git_commit` | | 파일 지정 커밋 (.py/.env 차단) |
+| 34 | `git_push` | | origin/main push |
+| 35 | `get_alpha_metrics` | | 종목별 F-Score/M-Score/FCF 메트릭 조회 (daily_snapshot 최신 기준, F/M/FCF Phase4) |
+| 36 | `get_us_ratings` | mode=events | 미국 종목 애널 레이팅 이벤트 조회 (days 기간, min_stars 별점 하한) |
+| | | mode=trend | 월별 레이팅 추세 (months 기간) |
+| | | mode=consensus | 현재 컨센서스 요약 |
+| 37 | `get_us_scan` | mode=watchlist | 감시+보유 종목 최근 레이팅 스캔 |
+| | | mode=discovery | 감시 밖 관심 종목 발굴 (min_upgrades 상향 임계값) |
+| | | mode=sector | 섹터별 레이팅 모멘텀 |
+| 38 | `get_us_analyst` | | 미국 애널 개인/그룹 조회 (name=개별, 없으면 top 리스트, firm/sector 필터) |

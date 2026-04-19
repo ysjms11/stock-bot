@@ -1,6 +1,6 @@
 # stock-bot
 
-Railway 배포 Python MCP 서버 + 텔레그램 봇.
+맥미니 M4 로컬 서버 기반 Python MCP 서버 + 텔레그램 봇.
 KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림, 매크로 대시보드, 스크리너 등을 Claude MCP 도구로 제공한다.
 
 ---
@@ -10,11 +10,26 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 | 항목 | 내용 |
 |------|------|
 | 레포 | https://github.com/ysjms11/stock-bot |
-| 배포 | Railway (main 브랜치 push → 자동 배포) |
-| MCP URL | `https://<railway-domain>/mcp` (SSE) |
-| MCP messages | `https://<railway-domain>/mcp/messages?sessionId=<id>` (POST) |
-| Health check | `https://<railway-domain>/health` |
-| 데이터 저장 | Railway `/data` 볼륨 (영구 마운트) |
+| 배포 | 맥미니 M4 (192.168.0.36), launchd 자동시작 |
+| MCP URL | `https://bot.arcbot-server.org/mcp` (SSE) |
+| MCP messages | `https://bot.arcbot-server.org/mcp/messages?sessionId=<id>` (POST) |
+| Health check | `https://bot.arcbot-server.org/health` |
+| Cloudflare Tunnel | `com.stock-bot.cloudflared` (launchd) |
+| 도메인 | `arcbot-server.org` |
+| 포트 | 환경변수 `PORT` (기본 8080) |
+
+---
+
+## 파일 구조
+
+| 파일 | 줄 수 | 역할 |
+|------|-------|------|
+| `main.py` | ~1950 | 텔레그램 봇 + 자동알림 스케줄 + 진입점 |
+| `kis_api.py` | ~2400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업 |
+| `mcp_tools.py` | ~1760 | MCP 도구 스키마 + 실행 로직 + SSE 서버 |
+| `db_collector.py` | ~1700 | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
+| `krx_crawler.py` | ~400 | KRX DB 로드 & 스캐너 (레거시 JSON 파일 호환) |
+| `report_crawler.py` | — | 증권사 리포트 크롤링 + PDF 추출 |
 
 ---
 
@@ -24,111 +39,105 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 - **포트폴리오 관리** — 보유 종목 손익 추적, 히스토리 스냅샷, 드로다운 분석
 - **손절/목표가 자동 알림** — 10분마다 가격 도달 시 텔레그램 알림
 - **매크로 대시보드** — VIX, WTI, 금, DXY, US10Y, 환율 + 레짐 자동판정 (위기/경계/중립/공격)
-- **스크리너** — 이평선 수렴, 영업이익 성장/턴어라운드, DART 기반 재무 스크리닝
+- **스크리너** — KRX 전종목 SQLite 기반, 이평선 수렴, F-Score, M-Score, FCF/EV
 - **수급 분석** — 외국인/기관 순매수, 프로그램매매, 투자자 추정 수급
 - **DART 공시 모니터링** — 중요 공시 자동 알림 + 중요도 태그 (긴급/주의/참고/일반)
 - **컨센서스** — FnGuide 기반 증권사 목표주가/투자의견
+- **미국 애널 레이팅** — 종목별 이벤트/추세/컨센서스, 발굴 스캔, 애널 개인 조회
 - **매매기록 + 성과추적** — 매매 로그, 승률/손익 분석, 확신등급 정확도
-- **자동 백업/복원** — GitHub Gist 기반 데이터 백업, 시작 시 자동복원
+- **자동 백업** — GitHub Gist 백업 (코드=GitHub, DB/data=iCloud)
 
 ---
 
-## MCP 도구 (28개)
+## MCP 도구 (38개)
 
 | # | 이름 | 설명 |
 |---|------|------|
-| 1 | `scan_market` | 거래량 상위 종목 스캔 |
-| 2 | `get_portfolio` | 포트폴리오 조회 또는 수정. mode='set' 시 저장, 생략 시 현재가/손익 조회. cash_krw/cash_usd로 현금 잔고 업데이트 |
-| 3 | `get_stock_detail` | 개별 종목 상세 (현재가/PER/PBR/수급). 한국/미국 자동 판별. period 지정 시 일봉 반환 |
-| 4 | `get_foreign_rank` | 외국인 순매수 상위 종목 |
-| 5 | `get_dart` | 워치리스트 최근 3일 DART 공시 |
-| 6 | `get_macro` | KOSPI/KOSDAQ 지수 + 환율. mode별: dashboard(레짐판정), sector_etf, convergence(이평수렴), op_growth/op_turnaround/dart_op_growth/dart_turnaround(재무스크리너) |
-| 7 | `get_sector_flow` | WI26 주요 업종별 외국인+기관 순매수금액 상위/하위 3개 |
-| 8 | `add_watch` | 한국 워치리스트에 종목 추가 (changelog 자동 기록) |
-| 9 | `remove_watch` | 한국 워치리스트에서 종목 제거. alert_type='buy_alert' 시 매수감시 제거 |
-| 10 | `get_alerts` | 손절가 목록 + 현재가 대비 % + 매수감시 목록 + 최근 변동 이력 20건 |
-| 11 | `get_investor_flow` | 개별 종목 투자자별 수급 (외국인/기관/개인 매수/매도/순매수) |
-| 12 | `get_price_rank` | 등락률 상위/하위 종목 순위 (sort='rise'/'fall', market='all'/'kospi'/'kosdaq') |
-| 13 | `get_investor_trend_history` | 종목별 투자자 일별 수급 히스토리 (최대 N일) |
-| 14 | `get_program_trade` | 프로그램매매 투자자별 당일 동향 |
-| 15 | `get_investor_estimate` | 장중 투자자 추정 순매수 가집계 |
-| 16 | `get_foreign_institution` | 외국인+기관 합산 순매수 상위 종목 (가집계) |
-| 17 | `get_short_sale` | 국내주식 공매도 일별추이 |
-| 18 | `get_news` | KIS 종목 관련 뉴스 헤드라인 최신순 |
-| 19 | `get_vi_status` | 변동성완화장치(VI) 발동 종목 현황 |
-| 20 | `get_volume_power` | 체결강도 상위 종목 순위 (매수/매도 체결 비율) |
-| 21 | `get_us_price_rank` | 미국 주식 등락률 상위/하위 순위 (NAS/NYS/AMS) |
-| 22 | `get_consensus` | 종목별 증권사 컨센서스 목표주가/투자의견 (FnGuide 기반) |
-| 23 | `set_alert` | 손절가/목표가 등록, 매수감시, 투자판단 기록(decision), 종목비교(compare), 매매기록(trade) |
-| 24 | `delete_alert` | 매도 후 stoploss.json에서 알림 완전 삭제 |
-| 25 | `get_portfolio_history` | 포트폴리오 스냅샷 히스토리 + 드로다운 분석, 투자규칙 경고 |
-| 26 | `get_trade_stats` | 매매 기록 성과 분석 (승률/손익/평균보유기간/확신등급 정확도) |
-| 27 | `get_batch_detail` | 여러 한국 종목 일괄 조회 (최대 20종목, 현재가/등락률/PER/PBR/외인기관수급) |
-| 28 | `backup_data` | /data/*.json GitHub Gist 백업/복원/상태조회 (backup/restore/restore_force/status) |
-
-> **참고**: `set_watch_alert`, `get_watch_alerts`, `remove_watch_alert` 기능은 `set_alert`(buy_price), `get_alerts`, `remove_watch`(alert_type='buy_alert')로 통합됨.
-
----
-
-## 텔레그램 명령어 (18개)
-
-| 명령어 | 설명 |
-|--------|------|
-| `/start` | 봇 시작 인사 |
-| `/analyze <종목코드>` | 종목 분석 (수급 포함) |
-| `/scan` | 거래량 급등 TOP10 |
-| `/macro` | VIX/환율/유가/금리/KOSPI/KOSDAQ 매크로 대시보드 |
-| `/news [키워드]` | 뉴스 헤드라인 |
-| `/dart` | 워치리스트 DART 공시 |
-| `/summary` | 한국 장마감 요약 (수동 실행) |
-| `/watchlist` | 한국 워치리스트 조회 |
-| `/watch <코드> <이름>` | 한국 워치리스트 종목 추가 |
-| `/unwatch <코드>` | 한국 워치리스트 종목 제거 |
-| `/uslist` | 미국 워치리스트 조회 |
-| `/addus <심볼> <이름> <수량>` | 미국 워치리스트 종목 추가 |
-| `/remus <심볼>` | 미국 워치리스트 종목 제거 |
-| `/setstop <코드> <이름> <손절가> [진입가]` | 손절/목표가 등록 |
-| `/delstop <코드>` | 손절가 삭제 |
-| `/stops` | 손절가 목록 조회 |
-| `/setportfolio <코드> <이름> <수량> <평단가>` | 한국 포트폴리오 등록 |
-| `/setusportfolio <심볼> <수량> <평단가>` | 미국 포트폴리오 등록 |
-| `/help` | 도움말 |
+| 1 | `get_rank` | 한국 등락률/체결강도/거래량/시간외/배당 순위. type=price/us_price/volume/scan/after_hours/dividend |
+| 2 | `get_portfolio` | 포트폴리오 조회/수정 (한국+미국 손익, cash_krw/cash_usd) |
+| 3 | `get_stock_detail` | 개별 종목 상세 (현재가·PER·PBR·수급). mode=volume_profile/after_hours/orderbook |
+| 4 | `get_supply` | 수급 분석. mode=daily/history/estimate/foreign_rank/combined_rank/broker_rank |
+| 5 | `get_dart` | DART 공시 (워치 3일, report/report_list/read/insider 모드) |
+| 6 | `get_macro` | 매크로 지표. mode=dashboard/sector_etf/convergence/op_growth 등 |
+| 7 | `get_sector` | 업종별 외인+기관 순매수, 업종 로테이션 분석 |
+| 8 | `manage_watch` | 워치리스트 조회/추가/제거 (한국+미국, 매수감시 포함) |
+| 9 | `get_alerts` | 손절가/목표가 목록 + 현재가 대비 % + 매수감시 |
+| 10 | `get_market_signal` | 공매도/VI/프로그램매매/신용잔고/대차. mode=short_sale/vi/program_trade/credit/lending |
+| 11 | `get_news` | 종목 뉴스 헤드라인 (한국/미국, sentiment 감성분석) |
+| 12 | `get_consensus` | 증권사 컨센서스 목표주가/투자의견 (FnGuide) |
+| 13 | `set_alert` | 손절가/목표가, 매수감시, 투자판단, 종목비교, 매매기록 |
+| 14 | `get_portfolio_history` | 포트폴리오 스냅샷 히스토리 + 드로다운 + 투자규칙 경고 |
+| 15 | `get_trade_stats` | 매매 기록 성과 분석 (승률·손익·평균보유기간) |
+| 16 | `backup_data` | /data/*.json GitHub Gist 백업·복원·상태 조회 |
+| 17 | `simulate_trade` | 가상 매매 시뮬레이션 |
+| 18 | `get_backtest` | 백테스트 (ma_cross/momentum_exit/supply_follow/bollinger/hybrid) |
+| 19 | `manage_report` | 투자 리포트 관리 |
+| 20 | `get_regime` | 시장 국면 판단 (매크로 기반) |
+| 21 | `get_scan` | KRX 전종목 스크리너 (시총/PER/PBR/수급/회전율, 6개 프리셋) |
+| 22 | `get_finance_rank` | 전종목 재무비율/F-Score/M-Score/FCF 순위 |
+| 23 | `get_highlow` | 52주 신고가/신저가 근접 종목 순위 |
+| 24 | `get_broker` | 종목별 거래원(증권사) 매수/매도 상위 5곳 |
+| 25 | `read_file` | stock-bot 디렉토리 내 파일 읽기 |
+| 26 | `write_file` | stock-bot 디렉토리 내 파일 쓰기 |
+| 27 | `list_files` | stock-bot 디렉토리 내 파일/폴더 목록 |
+| 28 | `read_report_pdf` | 리포트 PDF 페이지 이미지 렌더링 |
+| 29 | `get_change_scan` | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect 등 9개 프리셋) |
+| 30 | `git_status` | Git 브랜치/변경파일 조회 |
+| 31 | `git_diff` | 변경내용 조회 |
+| 32 | `git_log` | 최근 커밋 로그 |
+| 33 | `git_commit` | 파일 지정 커밋 (.py/.env 차단) |
+| 34 | `git_push` | origin/main push |
+| 35 | `get_alpha_metrics` | 종목별 F-Score/M-Score/FCF 메트릭 조회 |
+| 36 | `get_us_ratings` | 미국 종목 애널 레이팅 조회. mode=events/trend/consensus |
+| 37 | `get_us_scan` | 미국 애널 레이팅 스캔/발굴. mode=watchlist/discovery/sector |
+| 38 | `get_us_analyst` | 미국 애널 개인/그룹 조회 (name=개별, top 리스트, firm/sector 필터) |
 
 ---
 
-## 자동 알림 스케줄
+## 자동 알림 스케줄 (30+ 잡)
 
-| 주기 | 시각 (KST) | 이름 | 설명 |
-|------|-----------|------|------|
-| 10분마다 | 장중 | `check_stoploss` | 손절선/매수희망가 도달 시 텔레그램 알림 |
-| 30분마다 | 장중 | `check_anomaly` | 거래량+외국인 복합 이상 신호 감지 |
-| 30분마다 | 08:00~16:30 | `check_dart_disclosure` | DART 중요 공시 알림 |
-| 평일 15:40 | 15:40 | `daily_kr_summary` | 한국장 마감 요약 (지수/수급/손절/섹터/DART) |
-| 평일 15:40 | 15:40 | `check_supply_drain` | 외국인/기관 수급 급감 감지 |
-| 평일 15:45 | 15:45 | `momentum_exit_check` | 모멘텀 종료 감지 |
-| 평일 15:50 | 15:50 | `snapshot_and_drawdown` | 포트폴리오 스냅샷 저장 + 드로다운 분석 |
-| 평일 05:05/06:05 | 05:05 / 06:05 | `us_market_summary` | 미국장 마감 요약 (서머타임/표준시 이중 등록) |
-| 매일 06:00 | 06:00 | `macro_dashboard` | 매크로 대시보드 (새벽) |
-| 매일 18:00 | 18:00 | `macro_dashboard` | 매크로 대시보드 (한국장 마감 후) |
-| 매일 22:00 | 22:00 | `auto_backup` | /data/*.json GitHub Gist 자동 백업 |
-| 일요일 01:00 | 01:00 | `weekly_review` | 주간 리뷰 리마인더 |
-| 월요일 07:00 | 07:00 | `weekly_universe_update` | 주간 유니버스 업데이트 |
-| 월요일 07:05 | 07:05 | `weekly_consensus_update` | 주간 컨센서스 자동 업데이트 |
+### 반복 잡
 
-> **비활성화**: `check_fx_alert` (환율 ±1% 알림) — 매크로 대시보드로 통합 예정
+| 주기 | 잡 | 핵심 동작 |
+|------|----|-----------|
+| 5분 | `dart` | DART 공시 체크 (8~20시 내부 필터) |
+| 10분 | `stoploss` | 손절/목표가 감시 (한국 WebSocket, 미국 Yahoo 폴링) |
+| 30분 | `anomaly` | 거래량+외국인 이상 신호 감지 |
+| 60분 | `regime_transition` | 시장 레짐 전환 알림 |
+
+### 일일 잡 (주요)
+
+| 시간 (KST) | 요일 | 잡 | 핵심 동작 |
+|-----------|------|-----|-----------|
+| 02:00 | 전체 | `dart_incremental` | DART 신규 정기공시 증분 수집 |
+| 05:05 / 06:05 | 화~토 | `us_summary` | 미국 장 마감 요약 (DST/표준시 이중 등록) |
+| 06:00 | 전체 | `macro_am` | 매크로 대시보드 (AM) |
+| 07:00 | 평일 | `earnings_cal` | 한국 실적/배당 캘린더 |
+| 07:00 | 토 | `weekly` | 주간 리뷰 |
+| 07:00 | 월 | `universe_update` | KOSPI250+KOSDAQ350 유니버스 갱신 |
+| 07:05 | 일 | `consensus_update` | FnGuide 컨센서스 주간 업데이트 |
+| 07:30 | 전체 | `us_ratings` | 미국 애널 레이팅 스캔 |
+| 08:30 | 평일 | `report_collect` | 증권사 리포트 수집 |
+| 15:40 | 평일 | `kr_summary` | 한국 장 마감 요약 + 수급 이탈 감지 |
+| 15:50 | 평일 | `snapshot_dd` | 포트폴리오 스냅샷 + 드로다운 체크 |
+| 16:30 | 평일 | `momentum_check` | 모멘텀 이탈 체크 |
+| 18:30 | 평일 | `daily_collect` | KRX 전종목 DB 수집 (SQLite) |
+| 18:55 | 전체 | `macro_pm` | 매크로 대시보드 (PM) |
+| 19:05 | 평일 | `daily_change_scan` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) |
+| 19:30 | 평일 | `daily_consensus` | 컨센서스 상향 체크 |
+| 20:00 | 평일 | `insider_cluster` | 내부자 군집 감지 (3명+ 매수 AND 순매수>0) |
+| 22:00 | 전체 | `auto_backup` | GitHub Gist 자동 백업 |
 
 ---
 
 ## 매크로 레짐 자동판정
 
-`get_macro(mode='dashboard')` 및 텔레그램 매크로 알림에 포함.
-
 | 레짐 | 조건 |
 |------|------|
-| 🔴 위기 | VIX >= 30, WTI >= $100, KOSPI <= -5% 중 하나 |
-| 🟠 경계 | VIX >= 25, WTI >= $90, KOSPI <= -3%, USD/KRW >= 1500 중 하나 |
-| 🟢 공격 | VIX < 20 AND KOSPI > 0 AND 외인순매수 > 0 AND USD/KRW < 1400 모두 충족 |
-| 🟡 중립 | 위 조건 미해당 |
+| 위기 | VIX >= 30, WTI >= $100, KOSPI <= -5% 중 하나 |
+| 경계 | VIX >= 25, WTI >= $90, KOSPI <= -3%, USD/KRW >= 1500 중 하나 |
+| 공격 | VIX < 20 AND KOSPI > 0 AND 외인순매수 > 0 AND USD/KRW < 1400 모두 충족 |
+| 중립 | 위 조건 미해당 |
 
 ---
 
@@ -140,46 +149,34 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 | `CHAT_ID` | O | 텔레그램 채팅 ID |
 | `KIS_APP_KEY` | O | KIS Open API 앱키 |
 | `KIS_APP_SECRET` | O | KIS Open API 시크릿 |
-| `DART_API_KEY` | - | 전자공시 API 키 (DART 공시 기능 활성화) |
-| `GITHUB_TOKEN` | - | GitHub Personal Access Token (Gist 백업/복원) |
-| `BACKUP_GIST_ID` | - | 백업용 Gist ID (자동 생성 가능) |
-| `PORT` | - | 서버 포트 (Railway 자동 주입, 기본 8080) |
+| `DART_API_KEY` | — | 전자공시 API 키 |
+| `KRX_API_KEY` | — | KRX OPEN API 인증키 (db_collector가 18:30 사용) |
+| `GITHUB_TOKEN` | — | GitHub Personal Access Token (Gist 백업) |
+| `BACKUP_GIST_ID` | — | 백업 Gist ID |
+| `DATA_DIR` | — | 데이터 디렉토리 경로 (기본 /Users/kreuzer/stock-bot/data) |
+| `PORT` | — | 서버 포트 (기본 8080) |
 
 ---
 
-## 데이터 파일 (`/data/*.json`)
+## 데이터 저장
 
-| 파일 | 내용 |
-|------|------|
-| `watchlist.json` | 한국 워치리스트 `{ticker: name}` |
-| `us_watchlist.json` | 미국 워치리스트 `{ticker: {name, qty}}` |
-| `stoploss.json` | 손절/목표가 `{ticker: {name, stop_price, ...}, us_stocks: {...}}` |
-| `portfolio.json` | 보유 포트폴리오 `{ticker: {name, qty, avg_price}, us_stocks: {...}}` |
-| `dart_seen.json` | DART 알림 전송된 공시 ID |
-| `watchalert.json` | 매수 희망가 감시 목록 |
-| `watchlist_log.json` | 워치리스트 변동 이력 (최대 200건) |
-| `portfolio_history.json` | 포트폴리오 일별 스냅샷 + 드로다운 |
-| `trade_log.json` | 매매 기록 로그 |
-| `dart_screener_cache.json` | DART 스크리너 당일 캐시 |
+| 저장소 | 내용 |
+|--------|------|
+| `data/stock.db` | SQLite DB (~320MB) — stock_master / daily_snapshot / financial_quarterly / consensus_history / reports / insider_transactions |
+| `data/*.json` | 워치/포트/손절/알림 등 상태 파일 (전체 목록 → `.claude/rules/data-files.md`) |
+| GitHub Gist | `data/*.json` 자동 백업 (매일 22:00) |
+| iCloud | `stock.db` 및 대용량 데이터 백업 (`backup_to_icloud`) |
 
 ---
 
-## 배포 (Railway)
-
-1. GitHub 레포 `main` 브랜치에 push
-2. Railway가 자동 감지하여 빌드/배포
-3. `/data` 볼륨을 영구 마운트 설정 (재배포 후 데이터 보존)
-4. 환경변수를 Railway Variables에 등록
-5. Health check: `GET /health` → `{"status": "ok"}`
+## 배포
 
 ```
-main push → Railway 자동 빌드 → 배포 → MCP + 텔레그램 봇 동시 실행
+main push → 맥미니 git pull → launchd 재시작 → MCP + 텔레그램 봇 동시 실행
 ```
 
----
-
-## 워치리스트 변동 이력
-
-- `add_watch` / `remove_watch` / `set_alert`(update) / `delete_alert` 실행 시 `/data/watchlist_log.json`에 자동 기록
-- `get_alerts` 응답에 `recent_changelog` (최근 20건) 포함
-- 최대 200건 보관
+맥미니 배포 절차:
+1. GitHub `main` 브랜치에 push
+2. 맥미니에서 `git pull` 후 launchd 서비스 재시작
+3. Health check: `GET https://bot.arcbot-server.org/health` → `{"status": "ok"}`
+4. Cloudflare Tunnel이 외부 → 로컬 8080 포트로 라우팅
