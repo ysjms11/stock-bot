@@ -3671,7 +3671,7 @@ async def hourly_us_holdings_check(context):
                     "SELECT rating_date, rating_time, firm, analyst, action, "
                     "       rating_new, rating_old, pt_now, pt_old, pt_change_pct, stars "
                     "FROM us_analyst_ratings WHERE ticker=? "
-                    "  AND fetched_at >= datetime('now', '-48 hours') "
+                    "  AND rating_date >= date('now', '-2 days') "
                     "ORDER BY rating_date DESC, rating_time DESC",
                     (ticker,)
                 ).fetchall()
@@ -3715,6 +3715,18 @@ def _md_escape(s) -> str:
     return s
 
 
+def _rating_elapsed(rdate: str) -> str:
+    """rating_date → ' (YYYY-MM-DD, N일 전)'. 날짜 없으면 ''."""
+    if not rdate:
+        return ""
+    try:
+        d = datetime.strptime(rdate[:10], "%Y-%m-%d").date()
+        days = (datetime.now(KST).date() - d).days
+        return f" ({rdate[:10]}, {days}일 전)"
+    except Exception:
+        return ""
+
+
 def _format_urgent_downgrade_alert(ticker: str, all_events: list, downgrades: list) -> str:
     """긴급 다운그레이드 메시지 포맷. 4096자 미만."""
     lines = [f"🚨 *{_md_escape(ticker)}* 다운그레이드 경고", ""]
@@ -3729,7 +3741,8 @@ def _format_urgent_downgrade_alert(ticker: str, all_events: list, downgrades: li
         pt_chg = d.get("pt_change_pct")
         pt_str = f"${pt_now:.0f}" if pt_now else "—"
         chg_str = f" ({pt_chg:+.1f}%)" if pt_chg is not None else ""
-        lines.append(f"- {firm}: {old_r}→{new_r} {pt_str}{chg_str}")
+        elapsed_str = _rating_elapsed(d.get("date", ""))
+        lines.append(f"- {firm}: {old_r}→{new_r} {pt_str}{chg_str}{elapsed_str}")
     if len(downgrades) > 5:
         lines.append(f"... +{len(downgrades) - 5}건 더")
     return "\n".join(lines)
@@ -3746,17 +3759,20 @@ def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
     try:
         lines = [f"📊 *미국 애널 스캔* ({kst_now})", ""]
 
-        # 내 종목 섹션 (최근 24h 이벤트)
+        # 내 종목 섹션 (최근 4일 이벤트, rating_date 기준)
         my_section = []
         downgrade_section = []
         for ticker in tickers:
             rows = conn.execute(
-                "SELECT firm, action, rating_new, pt_now, pt_change_pct "
+                "SELECT firm, action, rating_new, rating_old, pt_now, pt_change_pct, rating_date "
                 "FROM us_analyst_ratings WHERE ticker=? "
-                "  AND fetched_at >= datetime('now', '-24 hours') "
+                "  AND rating_date >= date('now', '-4 days') "
                 "ORDER BY rating_date DESC, rating_time DESC",
                 (ticker,)
             ).fetchall()
+            # Hold→Hold 무변화 제외 (Maintains/Reiterates + target 미변동)
+            rows = [r for r in rows
+                    if not ((r[1] or "").lower() in ("maintains", "reiterates") and not r[5])]
             if not rows:
                 continue
             already_sent = "⚠️ 이미 알림" if ticker in urgent_sent_tickers else ""
@@ -3764,15 +3780,16 @@ def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
             dgs = [r for r in rows if (r[1] or "").lower() == "downgrades"]
             if dgs:
                 for r in dgs[:2]:
-                    firm, act, new_r, pt, pt_chg = r
+                    firm, act, new_r, old_r, pt, pt_chg, rdate = r
                     pt_str = f"${pt:.0f}" if pt else "—"
                     downgrade_section.append(
-                        f"- *{_md_escape(ticker)}*: {_md_escape(firm)} {_md_escape(new_r)} {pt_str} {already_sent}"
+                        f"- *{_md_escape(ticker)}*: {_md_escape(firm)} {_md_escape(new_r)} {pt_str}{_rating_elapsed(rdate)} {already_sent}"
                     )
             else:
-                # 상향/유지 표시
+                # 상향/유지 표시 (날짜 포함)
                 firms = ", ".join(
-                    f"{_md_escape(r[0])} ${r[3]:.0f}" if r[3] else _md_escape(r[0])
+                    f"{_md_escape(r[0])} ${r[4]:.0f}{_rating_elapsed(r[6])}" if r[4]
+                    else f"{_md_escape(r[0])}{_rating_elapsed(r[6])}"
                     for r in rows[:2]
                 )
                 my_section.append(f"- {_md_escape(ticker)}: {len(rows)}건 ({firms}) {already_sent}")
