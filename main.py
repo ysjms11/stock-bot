@@ -500,7 +500,8 @@ async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
 
         ss = "🔴" if sp_c < 0 else "🟢"
         ns = "🔴" if nq_c < 0 else "🟢"
-        vix_label = "🔴 위기" if vix_p > 25 else "🟠 경계" if vix_p > 20 else "🟡 중립" if vix_p > 15 else "🟢 공격"
+        # INVESTMENT_RULES v6: VIX 30 / 20 경계 (3단계)
+        vix_label = "🔴 위기" if vix_p > 30 else "🟢 공격" if vix_p < 20 else "🟡 경계"
         msg = (
             f"🇺🇸 *미국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
             f"{ss} S&P500 {sp_p:,.0f} ({sp_c:+.1f}%)  "
@@ -622,7 +623,8 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
 
         ss = "🔴" if sp_c < 0 else "🟢"
         ns = "🔴" if nq_c < 0 else "🟢"
-        vix_label = "🔴 위기" if vix_p > 25 else "🟠 경계" if vix_p > 20 else "🟡 중립" if vix_p > 15 else "🟢 공격"
+        # INVESTMENT_RULES v6: VIX 30 / 20 경계 (3단계)
+        vix_label = "🔴 위기" if vix_p > 30 else "🟢 공격" if vix_p < 20 else "🟡 경계"
         msg = (
             f"🇺🇸 *미국 장 마감* ({now.strftime('%m/%d %H:%M')})\n"
             f"{ss} S&P500 {sp_p:,.0f} ({sp_c:+.1f}%)  "
@@ -2744,9 +2746,9 @@ async def macro(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "VIX" in name:
                 ps = f"{p:.1f}"
                 vix_val = p
-                if p > 25: ps += " 🔴위기"
-                elif p > 20: ps += " 🟠경계"
-                elif p < 15: ps += " 🟢안정"
+                if p > 30: ps += " 🔴위기"
+                elif p < 20: ps += " 🟢안정"
+                else: ps += " 🟡경계"
             elif "유가" in name: ps = f"${p:.1f}"
             else: ps = f"{p:,.1f}"
             msg += f"{cs} *{name}* {ps} ({c:+.1f}%)\n"
@@ -2765,10 +2767,10 @@ async def macro(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"{kqcs} *KOSDAQ* {float(kqp):,.1f} ({kqc}%)\n"
 
         msg += "\n━━━━━━━━━━━━━━━━\n"
-        if vix_val > 25: msg += "🔴 *레짐: 위기* — 신규매수 금지"
-        elif vix_val > 20: msg += "🟠 *레짐: 경계* — 기존 포지션만 관리"
-        elif vix_val > 15: msg += "🟡 *레짐: 중립* — 확신 높은 것만"
-        else: msg += "🟢 *레짐: 공격* — 핵심 섹터 적극 매수"
+        # INVESTMENT_RULES v6: VIX 30 / 20 경계 (S&P 200MA 판정은 /regime·get_macro 참조)
+        if vix_val > 30: msg += "🔴 *레짐: 위기* — 축적 현금 투입, A등급 리더 집중"
+        elif vix_val < 20: msg += "🟢 *레짐: 공격* — 산업 흐름 + 리더 확인 시 진입 OK"
+        else: msg += "🟡 *레짐: 경계* — 근거 더 엄격히, 현금 8~15% 축적"
 
         msg += f"\n\n⏰ {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}"
         await update.message.reply_text(msg, parse_mode="Markdown")

@@ -349,5 +349,96 @@ class TestSigEntry(unittest.TestCase):
         self.assertEqual(s["label"], "test")
 
 
+class TestJudgeRegimeV6(unittest.TestCase):
+    """judge_regime() v6 — INVESTMENT_RULES v6 3단계 판정 (S&P 200MA + VIX)."""
+
+    def _make_data(self, sp_price=None, sp_ma200=None, vix=None):
+        d = {}
+        if sp_price is not None or sp_ma200 is not None:
+            sp = {}
+            if sp_price is not None:
+                sp["price"] = sp_price
+            if sp_ma200 is not None:
+                sp["ma200"] = sp_ma200
+            d["SP500"] = sp
+        if vix is not None:
+            d["VIX"] = {"price": vix}
+        return d
+
+    def test_green_offensive(self):
+        """S&P > 200MA+3% AND VIX < 20 → 🟢 공격."""
+        from kis_api import judge_regime
+        data = self._make_data(sp_price=5000, sp_ma200=4500, vix=15)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟢")
+        self.assertEqual(r["label"], "공격")
+
+    def test_yellow_vix_mid(self):
+        """S&P > 200MA+3% 이지만 VIX 중간 → 🟡 경계."""
+        from kis_api import judge_regime
+        data = self._make_data(sp_price=5000, sp_ma200=4500, vix=25)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+        self.assertEqual(r["label"], "경계")
+
+    def test_yellow_sp_below(self):
+        """S&P 소폭 이탈 (<200MA, VIX 낮음) → 🟡 경계."""
+        from kis_api import judge_regime
+        # 4400 < 4500 - 3%(=4365) 아니므로 버퍼존 → 중립. 더 낮게.
+        data = self._make_data(sp_price=4200, sp_ma200=4500, vix=18)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+
+    def test_yellow_buffer_zone(self):
+        """S&P 200MA 버퍼존(±3%) → 🟡 경계."""
+        from kis_api import judge_regime
+        # 4500 기준 ±3% = 4365 ~ 4635. 4550은 버퍼존.
+        data = self._make_data(sp_price=4550, sp_ma200=4500, vix=15)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+
+    def test_red_crisis(self):
+        """S&P < 200MA-3% AND VIX > 30 → 🔴 위기."""
+        from kis_api import judge_regime
+        data = self._make_data(sp_price=4000, sp_ma200=4500, vix=35)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🔴")
+        self.assertEqual(r["label"], "위기")
+
+    def test_red_requires_both(self):
+        """S&P 하향 but VIX 낮으면 🔴 아님 → 🟡."""
+        from kis_api import judge_regime
+        data = self._make_data(sp_price=4000, sp_ma200=4500, vix=15)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+
+    def test_vix_missing_defensive(self):
+        """VIX 없음 방어 → 🟡 경계 (🟢/🔴 둘 다 불가)."""
+        from kis_api import judge_regime
+        data = self._make_data(sp_price=5000, sp_ma200=4500, vix=None)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+
+    def test_sp500_missing_defensive(self):
+        """S&P 없음 방어 → 🟡 경계."""
+        from kis_api import judge_regime
+        data = self._make_data(sp_price=None, sp_ma200=None, vix=15)
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+
+    def test_empty_data_defensive(self):
+        """빈 데이터 → 🟡 경계 (예외 없이)."""
+        from kis_api import judge_regime
+        r = judge_regime({})
+        self.assertEqual(r["regime"], "🟡")
+
+    def test_question_mark_values(self):
+        """'?' 문자열 값 방어."""
+        from kis_api import judge_regime
+        data = {"SP500": {"price": "?", "ma200": "?"}, "VIX": {"price": "?"}}
+        r = judge_regime(data)
+        self.assertEqual(r["regime"], "🟡")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,6 +97,7 @@ MACRO_SYMBOLS = {
     "COPPER": "HG=F",
     "DXY":    "DX-Y.NYB",
     "US10Y":  "^TNX",
+    "SP500":  "^GSPC",
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3454,6 +3455,20 @@ async def collect_macro_data() -> dict:
             data[key] = {"price": "?", "change_pct": "?"}
         await asyncio.sleep(0.3)
 
+    # 1b. S&P 500 200일 이동평균 (judge_regime v6 기준)
+    try:
+        sp_hist = _yf_history("^GSPC", "1y")
+        if sp_hist and len(sp_hist) >= 200:
+            ma200 = sum(sp_hist[-200:]) / 200.0
+            data.setdefault("SP500", {})["ma200"] = round(ma200, 2)
+            # 현재가가 비어 있으면 히스토리 마지막 값으로 보강
+            if data["SP500"].get("price") in (None, "?", 0):
+                data["SP500"]["price"] = round(sp_hist[-1], 2)
+        else:
+            data.setdefault("SP500", {})["ma200"] = "?"
+    except Exception:
+        data.setdefault("SP500", {})["ma200"] = "?"
+
     # 2. KOSPI
     try:
         q = await get_yahoo_quote("^KS11")
@@ -3551,8 +3566,21 @@ def format_macro_msg(data: dict) -> str:
     # [시장심리]
     vix   = data.get("VIX",   {})
     kospi = data.get("KOSPI", {})
+    sp500 = data.get("SP500", {})
     msg += "[시장심리]\n"
-    msg += f"VIX: {_p(vix)} ({_c(vix)}) | KOSPI: {_p(kospi)} ({_c(kospi)})\n\n"
+    msg += f"VIX: {_p(vix)} ({_c(vix)}) | KOSPI: {_p(kospi)} ({_c(kospi)})\n"
+    # S&P 500 + 200MA (레짐 판정 기준)
+    sp_p = sp500.get("price", "?")
+    sp_ma = sp500.get("ma200", "?")
+    if sp_p != "?" and sp_ma != "?":
+        try:
+            diff_pct = (float(sp_p) / float(sp_ma) - 1) * 100
+            msg += f"S&P500: {sp_p:,} (200MA {sp_ma:,}, {diff_pct:+.1f}%)\n"
+        except Exception:
+            msg += f"S&P500: {_p(sp500)} ({_c(sp500)}) | 200MA: {sp_ma}\n"
+    else:
+        msg += f"S&P500: {_p(sp500)} ({_c(sp500)})\n"
+    msg += "\n"
 
     # [가격지표]
     wti    = data.get("WTI",    {})
@@ -3617,59 +3645,66 @@ def format_macro_msg(data: dict) -> str:
 
 
 def judge_regime(data: dict) -> dict:
-    """매크로 데이터 기반 레짐 자동 판정 (RED > ORANGE > YELLOW > GREEN)"""
+    """매크로 데이터 기반 레짐 자동 판정 v6 (2026-04-23 개정, INVESTMENT_RULES v6)
+
+    3단계 판정:
+    - 🟢 공격: S&P 500 > 200MA (3% 버퍼) AND VIX < 20
+    - 🔴 위기: S&P 500 < 200MA (-3% 버퍼) AND VIX > 30
+    - 🟡 경계: 그 외 (둘 중 하나 이탈)
+
+    USD/KRW / WTI / KOSPI 낙폭 / 외인 순매수는 판정에서 제외.
+    (USD/KRW는 한국 종목 사이징 참고용으로만 사용)
+    """
     def _sf(d, key="price"):
         v = d.get(key, "?")
-        if v == "?":
+        if v == "?" or v is None:
             return None
         try:
             return float(str(v).replace(",", ""))
         except Exception:
             return None
 
-    vix       = _sf(data.get("VIX",   {}))
-    wti       = _sf(data.get("WTI",   {}))
-    kospi_chg = _sf(data.get("KOSPI", {}), "change_pct")
-    usdkrw    = _sf(data.get("USDKRW",{}))
-    ff_amt    = data.get("FOREIGN_FLOW", {}).get("amount_억", "?")
-    frgn_net  = ff_amt if isinstance(ff_amt, (int, float)) else None
+    vix         = _sf(data.get("VIX",   {}))
+    sp500_price = _sf(data.get("SP500", {}), "price")
+    sp500_ma200 = _sf(data.get("SP500", {}), "ma200")
 
-    # RED
-    red = []
-    if vix       is not None and vix       >= 30:  red.append(f"VIX {vix:.2f}")
-    if wti       is not None and wti       >= 100: red.append(f"WTI ${wti:.2f}")
-    if kospi_chg is not None and kospi_chg <= -5:  red.append(f"KOSPI {kospi_chg:+.2f}%")
-    if red:
-        return {"regime": "🔴", "label": "위기", "reasons": red}
+    reasons = []
 
-    # ORANGE
-    orange = []
-    if vix       is not None and vix       >= 25:   orange.append(f"VIX {vix:.2f}")
-    if wti       is not None and wti       >= 90:   orange.append(f"WTI ${wti:.2f}")
-    if kospi_chg is not None and kospi_chg <= -3:   orange.append(f"KOSPI {kospi_chg:+.2f}%")
-    if usdkrw    is not None and usdkrw    >= 1500: orange.append(f"USD/KRW {usdkrw:.1f}")
-    if orange:
-        return {"regime": "🟠", "label": "경계", "reasons": orange}
+    # S&P 500 200MA (3% 버퍼) 판정
+    sp_above_ma = None  # True=위, False=아래, "neutral"=버퍼존
+    if sp500_price is not None and sp500_ma200 is not None and sp500_ma200 > 0:
+        buffer = sp500_ma200 * 0.03
+        if sp500_price > sp500_ma200 + buffer:
+            sp_above_ma = True
+            reasons.append(f"S&P {sp500_price:,.0f} > 200MA {sp500_ma200:,.0f}+3%")
+        elif sp500_price < sp500_ma200 - buffer:
+            sp_above_ma = False
+            reasons.append(f"S&P {sp500_price:,.0f} < 200MA {sp500_ma200:,.0f}-3%")
+        else:
+            sp_above_ma = "neutral"
+            reasons.append(f"S&P 200MA 버퍼존 ({sp500_price:,.0f}/{sp500_ma200:,.0f})")
+    else:
+        reasons.append("S&P/200MA 데이터 없음")
 
-    # GREEN (모든 조건 충족 시)
-    if (vix       is not None and vix       < 20 and
-        kospi_chg is not None and kospi_chg > 0  and
-        frgn_net  is not None and frgn_net  > 0  and
-        usdkrw    is not None and usdkrw    < 1400):
-        return {"regime": "🟢", "label": "공격", "reasons": [
-            f"VIX {vix:.2f}",
-            f"KOSPI {kospi_chg:+.2f}%",
-            f"외인 {frgn_net:+,}억",
-            f"USD/KRW {usdkrw:.1f}",
-        ]}
+    # VIX 판정
+    vix_zone = None  # "low"=<20, "mid"=20~30, "high"=>30
+    if vix is not None:
+        reasons.append(f"VIX {vix:.2f}")
+        if vix < 20:
+            vix_zone = "low"
+        elif vix > 30:
+            vix_zone = "high"
+        else:
+            vix_zone = "mid"
+    else:
+        reasons.append("VIX 데이터 없음")
 
-    # YELLOW (기본)
-    yellow = []
-    if vix is not None and 20 <= vix < 25:
-        yellow.append(f"VIX {vix:.2f}")
-    if not yellow:
-        yellow.append("특이 신호 없음")
-    return {"regime": "🟡", "label": "중립", "reasons": yellow}
+    # 종합 판정
+    if sp_above_ma is True and vix_zone == "low":
+        return {"regime": "🟢", "label": "공격", "reasons": reasons}
+    if sp_above_ma is False and vix_zone == "high":
+        return {"regime": "🔴", "label": "위기", "reasons": reasons}
+    return {"regime": "🟡", "label": "경계", "reasons": reasons}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
