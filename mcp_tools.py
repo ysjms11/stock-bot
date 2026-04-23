@@ -846,16 +846,25 @@ MCP_TOOLS = [
       }}},
 
     {"name": "get_us_analyst",
-     "description": "미국 애널 개인/그룹 조회. name 지정 시 개별, 없으면 top으로 필터된 리스트.",
+     "description": "미국 애널 개인/그룹 조회. name 지정 시 개별, firm/sector 지정 시 메타 필터, 없으면 top 레이팅 리스트.",
      "inputSchema": {"type": "object",
       "properties": {
         "name": {"type": "string", "description": "애널 slug 또는 full name"},
-        "firm": {"type": "string", "description": "증권사 필터 (3단계 stub)"},
-        "sector": {"type": "string", "description": "섹터 필터 (3단계 stub)"},
+        "firm": {"type": "string", "description": "증권사 필터 (us_analysts.firm LIKE)"},
+        "sector": {"type": "string", "description": "섹터 필터 (us_analysts.sectors JSON LIKE)"},
         "top": {"type": "integer", "default": 10},
         "min_stars": {"type": "number", "default": 4.0},
         "days": {"type": "integer", "default": 14}
       }}},
+
+    {"name": "watch_analyst",
+     "description": "미국 톱 애널 확정/해제. slug 지정 + watched=true/false. discovery 모드에서 사용됨.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "slug": {"type": "string", "description": "애널 slug (예: mark-strouse). 필수."},
+        "watched": {"type": "boolean", "default": True, "description": "true=톱 애널 확정, false=해제"}
+      },
+      "required": ["slug"]}},
 ]
 
 
@@ -909,7 +918,7 @@ _NO_TOKEN_TOOLS = frozenset({
     "read_file", "write_file", "list_files", "read_report_pdf",
     "git_status", "git_diff", "git_log", "git_commit", "git_push",
     "backup_data",
-    "get_us_ratings", "get_us_scan", "get_us_analyst",
+    "get_us_ratings", "get_us_scan", "get_us_analyst", "watch_analyst",
 })
 
 
@@ -962,10 +971,72 @@ async def _exec_us_ratings(ticker: str, mode: str = "events",
 
 async def _exec_us_scan(mode: str = "watchlist", days: int = 7,
                          min_upgrades: int = 3, sector: str = None, **_) -> dict:
-    if mode in ("discovery", "sector"):
-        return {"mode": mode, "message": "3단계에서 구현 예정", "data": []}
     from kis_api import load_us_watchlist, PORTFOLIO_FILE, load_json
     from db_collector import _get_db
+
+    if mode == "discovery":
+        excluded = set()
+        for t in load_us_watchlist().keys():
+            excluded.add(t.upper())
+        for t in load_json(PORTFOLIO_FILE, {}).get("us_stocks", {}).keys():
+            excluded.add(t.upper())
+        conn = _get_db()
+        try:
+            top_count = conn.execute(
+                "SELECT COUNT(*) FROM us_analysts WHERE watched=1"
+            ).fetchone()[0]
+            if top_count == 0:
+                return {"mode": "discovery", "days": days, "min_upgrades": min_upgrades,
+                        "message": "톱 애널 확정 없음 — get_us_analyst(top=100) 로 후보 검토 후 watch_analyst 로 watched=1 설정 필요",
+                        "top_analysts": 0, "data": []}
+            rows = conn.execute(
+                "SELECT r.ticker, COUNT(*) AS n_up, "
+                "       AVG(r.pt_now) AS avg_target, "
+                "       GROUP_CONCAT(r.firm, ', ') AS firms "
+                "FROM us_analyst_ratings r "
+                "JOIN us_analysts a ON r.analyst_slug = a.slug "
+                "WHERE a.watched = 1 "
+                "  AND r.action = 'Upgrades' "
+                "  AND r.rating_date >= date('now', ?) "
+                "GROUP BY r.ticker "
+                "HAVING n_up >= ? "
+                "ORDER BY n_up DESC, avg_target DESC",
+                (f"-{days} days", min_upgrades)
+            ).fetchall()
+            filtered = [r for r in rows if r[0] not in excluded]
+            return {"mode": "discovery", "days": days, "min_upgrades": min_upgrades,
+                    "top_analysts": top_count, "excluded_tickers": sorted(excluded),
+                    "data": [{"ticker": r[0], "upgrades": r[1],
+                              "avg_target": r[2], "firms": r[3]} for r in filtered]}
+        finally:
+            conn.close()
+
+    if mode == "sector":
+        if not sector:
+            return {"mode": "sector", "message": "sector 파라미터 필요", "data": []}
+        conn = _get_db()
+        try:
+            rows = conn.execute(
+                "SELECT c.ticker, c.sector, "
+                "       SUM(CASE WHEN r.action='Upgrades' THEN 1 ELSE 0 END) AS up_n, "
+                "       SUM(CASE WHEN r.action='Downgrades' THEN 1 ELSE 0 END) AS down_n, "
+                "       AVG(r.pt_now) AS avg_target "
+                "FROM us_analyst_coverage c "
+                "LEFT JOIN us_analyst_ratings r "
+                "  ON c.ticker = r.ticker "
+                "  AND r.rating_date >= date('now', ?) "
+                "WHERE LOWER(c.sector) LIKE ? "
+                "GROUP BY c.ticker, c.sector "
+                "HAVING up_n > 0 OR down_n > 0 "
+                "ORDER BY up_n DESC",
+                (f"-{days} days", f"%{sector.lower()}%")
+            ).fetchall()
+            return {"mode": "sector", "sector": sector, "days": days,
+                    "data": [{"ticker": r[0], "sector": r[1], "upgrades": r[2],
+                              "downgrades": r[3], "avg_target": r[4]} for r in rows]}
+        finally:
+            conn.close()
+
     tickers = set()
     for t in load_us_watchlist().keys():
         tickers.add(t.upper())
@@ -1022,8 +1093,35 @@ async def _exec_us_analyst(name: str = None, firm: str = None, sector: str = Non
                                "rating_new": r[4], "pt_now": r[5], "pt_change_pct": r[6],
                                "stars": r[7], "success_rate": r[8]} for r in rows]}
         if firm or sector:
+            where_parts = []
+            params = []
+            if firm:
+                where_parts.append("LOWER(firm) LIKE ?")
+                params.append(f"%{firm.lower()}%")
+            if sector:
+                where_parts.append("LOWER(sectors) LIKE ?")
+                params.append(f'%"{sector.lower()}"%')
+            where_parts.append("stars >= ?")
+            params.append(min_stars)
+            params.append(top)
+
+            rows = conn.execute(
+                "SELECT slug, name, firm, sectors, stars, success_rate, total_ratings, watched "
+                "FROM us_analysts "
+                f"WHERE {' AND '.join(where_parts)} "
+                "ORDER BY stars DESC "
+                "LIMIT ?",
+                params
+            ).fetchall()
+
+            import json as _json
             return {"mode": "filter", "firm": firm, "sector": sector,
-                    "message": "firm/sector 필터는 3단계에서 구현 예정", "data": []}
+                    "min_stars": min_stars, "top": top, "count": len(rows),
+                    "analysts": [{"slug": r[0], "name": r[1], "firm": r[2],
+                                  "sectors": _json.loads(r[3]) if r[3] else [],
+                                  "stars": r[4], "success_rate": r[5],
+                                  "total_ratings": r[6], "watched": bool(r[7])}
+                                 for r in rows]}
         rows = conn.execute(
             "SELECT analyst_slug, analyst, firm, AVG(stars), AVG(success_rate), COUNT(*) "
             "FROM us_analyst_ratings WHERE stars >= ? "
@@ -1035,6 +1133,28 @@ async def _exec_us_analyst(name: str = None, firm: str = None, sector: str = Non
                 "analysts": [{"slug": r[0], "analyst": r[1], "firm": r[2],
                               "avg_stars": r[3], "avg_success_rate": r[4], "call_count": r[5]}
                              for r in rows]}
+    finally:
+        conn.close()
+
+
+async def _exec_watch_analyst(slug: str, watched: bool = True, **_) -> dict:
+    from db_collector import _get_db
+    from datetime import datetime
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT slug, name, firm, stars FROM us_analysts WHERE slug=?", (slug,)
+        ).fetchone()
+        if not row:
+            return {"status": "error", "slug": slug,
+                    "message": "애널 메타 없음 — 먼저 fetch_and_store_analyst_meta 로 수집 필요"}
+        conn.execute(
+            "UPDATE us_analysts SET watched=?, curated_at=? WHERE slug=?",
+            (1 if watched else 0, datetime.now().isoformat(), slug)
+        )
+        conn.commit()
+        return {"status": "ok", "slug": slug, "name": row[1], "firm": row[2],
+                "stars": row[3], "watched": watched}
     finally:
         conn.close()
 
@@ -4288,6 +4408,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             result = await _exec_us_scan(**arguments)
         elif name == "get_us_analyst":
             result = await _exec_us_analyst(**arguments)
+        elif name == "watch_analyst":
+            result = await _exec_watch_analyst(**arguments)
 
         else:
             result = {"error": f"unknown tool: {name}"}

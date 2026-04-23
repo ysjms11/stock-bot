@@ -3705,6 +3705,123 @@ async def hourly_us_holdings_check(context):
         print(f"[us_holdings] 감시 전체 실패: {e}")
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 주간 미국 애널 리포트 (일요일 19:00 KST)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def weekly_us_analyst_report(context):
+    """매주 일요일 19:00 KST — 주간 미국 애널 활동 요약.
+    내용:
+    1. 톱 애널 (watched=1) 이번주 활동
+    2. Discovery TOP 10 (감시 밖 + 상향 집중 종목)
+    3. 보유/감시 종목 컨센서스 변화 요약
+    """
+    try:
+        from kis_api import load_us_watchlist, PORTFOLIO_FILE, load_json
+        from db_collector import _get_db
+        conn = _get_db()
+        try:
+            today_kst = datetime.now(KST)
+            week_label = f"{(today_kst - timedelta(days=6)).strftime('%m/%d')}~{today_kst.strftime('%m/%d')}"
+
+            lines = [f"📊 *Weekly Analyst Digest* ({week_label})", ""]
+
+            # 1. 톱 애널 활동 (최근 7일)
+            top_activity = conn.execute(
+                "SELECT a.name, a.firm, "
+                "       SUM(CASE WHEN r.action='Upgrades' THEN 1 ELSE 0 END) AS up_n, "
+                "       SUM(CASE WHEN r.action='Downgrades' THEN 1 ELSE 0 END) AS down_n, "
+                "       COUNT(*) AS total "
+                "FROM us_analysts a "
+                "LEFT JOIN us_analyst_ratings r ON a.slug = r.analyst_slug "
+                "  AND r.rating_date >= date('now', '-7 days') "
+                "WHERE a.watched = 1 "
+                "GROUP BY a.slug "
+                "HAVING total > 0 "
+                "ORDER BY total DESC LIMIT 10"
+            ).fetchall()
+            if top_activity:
+                lines.append("━━ *톱 애널 활동* ━━")
+                for name, firm, up_n, down_n, total in top_activity[:10]:
+                    lines.append(f"- {_md_escape(name)} ({_md_escape(firm)}): ↑{up_n} ↓{down_n} (총 {total})")
+                lines.append("")
+            else:
+                # watched=1 없음 or 활동 없음
+                top_count = conn.execute("SELECT COUNT(*) FROM us_analysts WHERE watched=1").fetchone()[0]
+                if top_count == 0:
+                    lines.append("_톱 애널 확정 없음 — `watch_analyst` 로 후보 확정 필요_")
+                    lines.append("")
+
+            # 2. Discovery TOP 10
+            excluded = set()
+            for t in load_us_watchlist().keys():
+                excluded.add(t.upper())
+            for t in load_json(PORTFOLIO_FILE, {}).get("us_stocks", {}).keys():
+                excluded.add(t.upper())
+
+            discovery_rows = conn.execute(
+                "SELECT r.ticker, COUNT(*) AS n_up, AVG(r.pt_now) AS avg_target "
+                "FROM us_analyst_ratings r "
+                "JOIN us_analysts a ON r.analyst_slug = a.slug "
+                "WHERE a.watched = 1 AND r.action = 'Upgrades' "
+                "  AND r.rating_date >= date('now', '-7 days') "
+                "GROUP BY r.ticker HAVING n_up >= 2 "
+                "ORDER BY n_up DESC LIMIT 15"
+            ).fetchall()
+            discovery_filtered = [r for r in discovery_rows if r[0] not in excluded][:10]
+            if discovery_filtered:
+                lines.append("━━ *🚀 Discovery (감시 밖 신규)* ━━")
+                for t, n, target in discovery_filtered:
+                    target_s = f"${target:.0f}" if target else "—"
+                    lines.append(f"- *{_md_escape(t)}*: {n}건 상향, avg {target_s}")
+                lines.append("")
+
+            # 3. 보유/감시 종목 컨센 변화 (최근 7일 이벤트 요약)
+            tickers_union = sorted(excluded)
+            if tickers_union:
+                placeholders = ",".join("?" * len(tickers_union))
+                portfolio_rows = conn.execute(
+                    f"SELECT r.ticker, "
+                    f"       SUM(CASE WHEN r.action='Upgrades' THEN 1 ELSE 0 END) AS up_n, "
+                    f"       SUM(CASE WHEN r.action='Downgrades' THEN 1 ELSE 0 END) AS down_n, "
+                    f"       COUNT(*) AS total "
+                    f"FROM us_analyst_ratings r "
+                    f"WHERE r.ticker IN ({placeholders}) "
+                    f"  AND r.rating_date >= date('now', '-7 days') "
+                    f"GROUP BY r.ticker HAVING total > 0 "
+                    f"ORDER BY (up_n - down_n) DESC, total DESC",
+                    tickers_union
+                ).fetchall()
+                if portfolio_rows:
+                    lines.append("━━ *💼 내 종목 이번주 이벤트* ━━")
+                    for t, up_n, down_n, total in portfolio_rows[:15]:
+                        if up_n > 0 and down_n == 0:
+                            lines.append(f"- {_md_escape(t)}: ↑{up_n}건")
+                        elif down_n > 0 and up_n == 0:
+                            lines.append(f"- {_md_escape(t)}: ↓{down_n}건 ⚠️")
+                        else:
+                            lines.append(f"- {_md_escape(t)}: ↑{up_n} ↓{down_n}")
+                    lines.append("")
+
+            # 이벤트 전무
+            if len(lines) <= 3:
+                lines.append("_이번주 활동 없음_")
+
+            msg = "\n".join(lines)
+            if len(msg) > 4000:
+                msg = msg[:3900] + "\n\n_... 4000자 제한으로 일부 생략_"
+
+            try:
+                await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                print(f"[weekly_us_report] 발송 완료 ({len(msg)}자)")
+            except Exception as e:
+                print(f"[weekly_us_report] 텔레그램 발송 실패: {e}")
+
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[weekly_us_report] 전체 실패: {e}")
+
+
 def _md_escape(s) -> str:
     """텔레그램 Markdown V1 특수문자 이스케이프 (_ * [ `). None → —."""
     if not s:
@@ -4012,6 +4129,8 @@ def main():
     # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
     jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_noon")
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_close")
+    # 주간 미국 애널 리포트 — 일요일 19:00 KST (다음주 월요일 준비)
+    jq.run_daily(weekly_us_analyst_report, time=dtime(19, 0, tzinfo=KST), days=(6,), name="weekly_us_analyst")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(6,),         name="weekly_financial")
     # DART 증분 수집: 매일 02:00 KST — 신규 정기공시만 수집 후 알파 재계산
     jq.run_daily(daily_dart_incremental,  time=dtime(2,  0, tzinfo=KST),                     name="dart_incremental")
