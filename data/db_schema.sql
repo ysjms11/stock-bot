@@ -424,3 +424,37 @@ SELECT
     d.op_growth
 FROM daily_snapshot d
 JOIN stock_master m ON d.symbol = m.symbol;
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+-- 관세청 수출입 데이터 (data.go.kr)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CREATE TABLE IF NOT EXISTS trade_monthly (
+    yymm         TEXT NOT NULL,
+    hs_code      TEXT NOT NULL,
+    hs_level     INTEGER NOT NULL,
+    country_cd   TEXT DEFAULT '',
+    country_name TEXT DEFAULT '',
+    hs_name      TEXT DEFAULT '',
+    exp_usd      REAL,
+    imp_usd      REAL,
+    exp_wgt_kg   REAL,
+    imp_wgt_kg   REAL,
+    balance_usd  REAL,
+    source       TEXT DEFAULT 'datago',
+    fetched_at   TEXT NOT NULL,
+    PRIMARY KEY (yymm, hs_code, country_cd)
+);
+CREATE INDEX IF NOT EXISTS idx_trade_monthly_hs_yymm ON trade_monthly(hs_code, yymm DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_monthly_country ON trade_monthly(country_cd, yymm DESC);
+
+CREATE TABLE IF NOT EXISTS trade_preliminary_decade (
+    period       TEXT PRIMARY KEY,       -- '202604_1' / '_2' / '_3'
+    period_label TEXT,
+    exp_usd      REAL,
+    imp_usd      REAL,
+    exp_yoy_pct  REAL,
+    imp_yoy_pct  REAL,
+    source_url   TEXT,
+    fetched_at   TEXT NOT NULL
+);
