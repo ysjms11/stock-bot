@@ -743,6 +743,104 @@
 
 ---
 
+## 34. get_alpha_metrics
+**입력**: `{"ticker": "005930"}`
+F-Score/M-Score/FCF 3종 알파 메트릭. 2026-04-16 추가. DART 12분기 소급.
+**응답 개요**: `{f_score: 0~9, m_score: float, fcf_yield_pct, fcf_net_income_ratio, ...}`
+
+---
+
+## 35. read_report_pdf
+**입력**: `{"path": "data/report_pdfs/005930/20250401_미래에셋_이정진.pdf"}`
+리포트 PDF → 100DPI PNG (ImageContent) 렌더. 차트/도표 분석 가능. 2026-04 추가.
+
+---
+
+## 36. get_us_ratings
+**입력**: `{"ticker": "NVDA", "mode": "recent"}` or `{"mode": "overview"}`
+StockAnalysis.com 기반 애널 레이팅 (recent=최근 변경 / firm=증권사별 / analyst=애널별 / overview=시총·PE·EPS·컨센타겟). 2026-04-18 신규.
+
+---
+
+## 37. get_us_scan
+**입력**: `{"mode": "discovery"}` or `{"sector": "Technology"}`
+톱 애널 커버 종목 발굴 (discovery=감시 밖 상향 3건+) / 섹터 필터. 2026-04-23 3단계 확장.
+
+---
+
+## 38. get_us_analyst
+**입력**: `{"slug": "mark-strouse", "mode": "coverage"}`
+개별 애널 커버 종목 + 최근 레이팅. 2026-04-23 3단계.
+
+---
+
+## 39. watch_analyst
+**입력**: `{"slug": "mark-strouse", "watched": true}`
+톱 애널 확정/해제 (watched=1 기반 discovery 트리거). 2026-04-23 신규.
+
+---
+
+## 40. get_export_trend ⭐ (2026-04-23 신규)
+
+관세청 data.go.kr 수출 데이터 → 선행지표 분석. **30종목 × 75 HS 매핑** + **4 modes**.
+
+### 40a. summary (기본)
+**입력**: `{"ticker": "003230"}`  (삼양식품 라면)
+**출력**:
+```json
+{
+  "hs_code": "1902301010",
+  "country": "ALL",
+  "latest_yymm": "202603",
+  "latest_exp_usd": 164700000,
+  "latest_asp": 4.14,
+  "yoy_pct": 42.9,
+  "mom_pct": 17.5,
+  "qoq_pct": 17.9,
+  "peakout": {"peakout": false, "score": 1, "reasons": ["ASP 하락+물량 증가"]},
+  "ticker_info": {"name": "삼양식품", "confidence": 0.4, "sector": "식품/라면", ...},
+  "note": "⚠️ 유튜버 주장 r=0.98 → 실측 +0.41 (무효)",
+  "warning": ""
+}
+```
+
+### 40b. country_breakdown (국가별)
+**입력**: `{"ticker": "000660", "mode": "country_breakdown"}`  (SK하이닉스 HBM)
+**출력**: 최근 월 국가별 수출 TOP 20
+```json
+{
+  "hs_code": "8542323000",
+  "yymm": "202603",
+  "country_breakdown": [
+    {"country_cd": "TW", "country_name": "대만", "exp_usd": 3_600_000_000},
+    {"country_cd": "HK", "country_name": "홍콩",  "exp_usd": 2_600_000_000},
+    {"country_cd": "CN", "country_name": "중국",  "exp_usd":   771_000_000},
+    {"country_cd": "MY", "country_name": "말레이시아", "exp_usd": 582_000_000},
+    ...
+  ]
+}
+```
+→ 엔비디아(대만 TSMC) / 재수출 허브(홍콩/말레이시아) 경로 직접 가시화.
+
+### 40c. timeseries (시계열)
+**입력**: `{"ticker": "003230", "mode": "timeseries", "periods": 12}`
+**출력**: 월별 exp_usd/wgt/asp 12개 + YoY/MoM/QoQ stats + peakout 3지표
+
+### 40d. asp (판가 역산)
+**입력**: `{"hs_code": "8542323000", "mode": "asp", "periods": 12}`
+**출력**: ASP($/kg) 월별 시계열 (수출금액 ÷ 중량)
+
+### 업종별 신뢰도 (실증 2026-04-23 기준)
+- 🟢 고신뢰 3종 (r≥0.7 통계 유의): 005930 삼성전자 / 000660 SK하이닉스 / 009150 삼성전기
+- 🔴 하향됨: 003230 삼양식품 (유튜버 r=0.98 → 실측 0.41), 변압기 3종, 파마리서치
+
+### 자동 알림
+- 매월 11일 09:00 KST — 1~10일 잠정치
+- 매월 21일 09:00 KST — 1~20일 잠정치
+- 매월 16일 03:00 KST — 전월 확정치
+
+---
+
 ## 요약 메모
 
 | 도구 | 특이사항 |
