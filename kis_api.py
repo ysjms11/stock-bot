@@ -4947,6 +4947,89 @@ def _save_consensus_snapshot(data: dict) -> None:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# S&P 500 티커 리스트 (주간 유니버스 스캔용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+US_SP500_FILE = f"{_DATA_DIR}/us_sp500.json"
+_SP500_MAX_AGE_DAYS = 30  # 한 달 이상 오래되면 자동 갱신
+
+
+def _fetch_sp500_from_wikipedia() -> list[str] | None:
+    """Wikipedia S&P 500 페이지 파싱 → 티커 리스트 반환.
+    실패 시 None. BRK.B / BF.B 처럼 점(.)이 들어간 티커는 그대로 반환 (StockAnalysis.com 호환).
+    """
+    import requests as _req
+    from bs4 import BeautifulSoup
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    try:
+        resp = _req.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            print(f"[sp500] wikipedia HTTP {resp.status_code}")
+            return None
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = soup.find("table", {"id": "constituents"})
+        if table is None:
+            # fallback — 첫 번째 wikitable
+            table = soup.find("table", {"class": "wikitable"})
+        if table is None:
+            print("[sp500] wikipedia constituents 테이블을 찾을 수 없음")
+            return None
+        tickers: list[str] = []
+        tbody = table.find("tbody") or table
+        for tr in tbody.find_all("tr")[1:]:
+            td = tr.find("td")
+            if td is None:
+                continue
+            t = td.get_text(strip=True)
+            if t and len(t) <= 10:
+                tickers.append(t.upper())
+        if len(tickers) < 400:  # 정상이면 500 근방. 너무 적으면 파싱 실패로 간주
+            print(f"[sp500] 파싱 결과 비정상 ({len(tickers)}개)")
+            return None
+        return tickers
+    except Exception as e:
+        print(f"[sp500] wikipedia fetch 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def load_sp500_tickers(force_refresh: bool = False) -> list[str]:
+    """S&P 500 티커 리스트 로더.
+    - `data/us_sp500.json` 캐시 파일 사용.
+    - 파일 없거나 mtime 이 30일 이상 오래되면 Wikipedia 에서 자동 갱신.
+    - 네트워크 실패 시 기존 캐시(있으면) 반환, 없으면 빈 리스트.
+    """
+    try:
+        need_refresh = force_refresh
+        if not need_refresh:
+            if not os.path.exists(US_SP500_FILE):
+                need_refresh = True
+            else:
+                age_days = (datetime.now().timestamp() - os.path.getmtime(US_SP500_FILE)) / 86400
+                if age_days > _SP500_MAX_AGE_DAYS:
+                    need_refresh = True
+        if need_refresh:
+            tickers = _fetch_sp500_from_wikipedia()
+            if tickers:
+                try:
+                    with open(US_SP500_FILE, "w", encoding="utf-8") as f:
+                        json.dump({"updated": datetime.now().isoformat(), "tickers": tickers}, f, ensure_ascii=False, indent=2)
+                    print(f"[sp500] 캐시 갱신: {len(tickers)}개 → {US_SP500_FILE}")
+                except Exception as e:
+                    print(f"[sp500] 캐시 저장 실패: {e}")
+                return tickers
+            else:
+                print("[sp500] Wikipedia 갱신 실패, 기존 캐시 fallback")
+        # 캐시 읽기
+        if os.path.exists(US_SP500_FILE):
+            with open(US_SP500_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return list(data.get("tickers", []))
+    except Exception as e:
+        print(f"[sp500] load 실패: {type(e).__name__}: {e}")
+    return []
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # StockAnalysis.com 애널 메타 + HTML 파싱 (3단계)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 

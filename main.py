@@ -3588,6 +3588,65 @@ async def daily_us_rating_scan(context):
         print(f"[us_ratings] 스캔 전체 실패: {e}")
 
 
+async def weekly_us_ratings_universe_scan(context):
+    """매주 일요일 03:00 KST — S&P 500 전체 유니버스 레이팅 수집 (애널 풀 축적용).
+    500 × 2초 ≈ 17분 예상. 진행 50종목마다 로그.
+    알림은 완료 요약 1건만 (개별 이벤트 알림 없음).
+    """
+    import time as _time
+    try:
+        from kis_api import (
+            _stockanalysis_ratings, _save_us_ratings_to_db, _save_consensus_snapshot,
+            load_sp500_tickers,
+        )
+        tickers = load_sp500_tickers()
+        if not tickers:
+            print("[weekly_harvest] S&P 500 티커 로드 실패 — 스캔 건너뜀")
+            return
+        total = len(tickers)
+        print(f"[weekly_harvest] 시작 — {total}종목")
+        start_ts = _time.monotonic()
+        inserted_total = 0
+        failed_count = 0
+        for idx, ticker in enumerate(sorted(tickers), start=1):
+            try:
+                result = await _stockanalysis_ratings(ticker)
+                if result:
+                    new_n = _save_us_ratings_to_db(result)
+                    inserted_total += new_n
+                    try:
+                        _save_consensus_snapshot(result)
+                    except Exception:
+                        pass
+                    if idx % 50 == 0 or idx == total:
+                        print(f"[weekly_harvest] {idx}/{total} — {ticker} {new_n}건 신규 (누적 {inserted_total})")
+                else:
+                    failed_count += 1
+                    if idx % 50 == 0 or idx == total:
+                        print(f"[weekly_harvest] {idx}/{total} — {ticker} 응답 없음 (누적 실패 {failed_count})")
+            except Exception as e:
+                failed_count += 1
+                print(f"[weekly_harvest] {ticker} 실패: {type(e).__name__}: {e}")
+            await asyncio.sleep(2.0)
+        elapsed_min = (_time.monotonic() - start_ts) / 60
+        print(f"[weekly_harvest] 완료: {total}종목, 신규 {inserted_total}건, 실패 {failed_count}, {elapsed_min:.1f}분")
+
+        # 완료 알림 (1건만)
+        try:
+            msg = (
+                "📊 주간 US 레이팅 수집 완료\n"
+                f"• 스캔: {total}종목 (S&P 500)\n"
+                f"• 신규 레이팅: {inserted_total}건\n"
+                f"• 실패: {failed_count}종목\n"
+                f"• 소요: {elapsed_min:.1f}분"
+            )
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        except Exception as e:
+            print(f"[weekly_harvest] 완료 알림 실패: {e}")
+    except Exception as e:
+        print(f"[weekly_harvest] 전체 실패: {type(e).__name__}: {e}")
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 미국 애널 레이팅 — 실시간 감시 (2단계)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4126,6 +4185,8 @@ def main():
     # KRX 전종목 DB 갱신: db_collector가 18:30에 KRX OPEN API로 수집
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
     jq.run_daily(daily_us_rating_scan,    time=dtime(7, 30, tzinfo=KST), days=(0,1,2,3,4,5,6), name="us_ratings")
+    # 주간 S&P 500 유니버스 스캔 — 일요일 03:00 KST (애널 풀 축적용, 약 17분 소요)
+    jq.run_daily(weekly_us_ratings_universe_scan, time=dtime(3, 0, tzinfo=KST), days=(6,), name="weekly_us_harvest")
     # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
     jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_noon")
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_close")

@@ -28,6 +28,7 @@
 | 시간 | D | 잡 이름 | 담당 함수 | 핵심 동작 | 최근 변경 |
 |------|---|---------|-----------|-----------|-----------|
 | 02:00 | 전체 | `dart_incremental` | `daily_dart_incremental` | DART 신규 정기공시 증분 수집 → 알파 재계산 | 4/16 신규 |
+| 03:00 | 일 | `weekly_us_harvest` | `weekly_us_ratings_universe_scan` | S&P 500 전체 레이팅 수집 (애널 풀 축적, ~17분) | 4/23 신규 |
 | 05:05 | 화~토 | `us_summary_dst` | `us_market_summary` | 미국 장 마감 요약 (DST, 내부 가드로 중복 방지) | — |
 | 06:00 | 전체 | `macro_am` | `macro_dashboard` | 매크로 대시보드 (미국장 마감 후) | — |
 | 06:05 | 화~토 | `us_summary_std` | `us_market_summary` | 미국 장 마감 요약 (표준시, 내부 가드로 중복 방지) | — |
@@ -93,6 +94,7 @@
 ## 주말 활동
 
 - **토 07:00**: `weekly_review`
+- **일 03:00**: `weekly_us_harvest` (S&P 500 유니버스 애널 레이팅 수집, ~17분)
 - **일 07:05**: `consensus_update` + `weekly_sanity`
 - **일 07:15**: `weekly_financial`
 - **일 19:00**: `sunday_30`
