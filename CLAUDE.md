@@ -52,15 +52,16 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ## 파일 구조
 
-프로젝트는 5개 주요 Python 파일로 분리되어 있음:
+프로젝트는 6개 주요 Python 파일로 분리되어 있음:
 
 | 파일 | 줄 수 | 역할 |
 |------|-------|------|
-| `kis_api.py` | ~2400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업 |
-| `main.py` | ~1950 | 텔레그램 봇 + 자동알림 스케줄 + 진입점 |
-| `mcp_tools.py` | ~1760 | MCP 도구 스키마 + 실행 로직 + SSE 서버 |
-| `krx_crawler.py` | ~400 | KRX DB 로드 & 스캐너 (레거시 JSON 파일 호환) |
-| `db_collector.py` | ~1700 | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
+| `kis_api.py` | ~6400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업, 미국 애널 레이팅 (StockAnalysis) |
+| `main.py` | ~6700 | 텔레그램 봇 + 자동알림 스케줄 (40+잡) + 진입점 |
+| `mcp_tools.py` | ~4800 | MCP 도구 (40개) 스키마 + 실행 로직 + SSE 서버 |
+| `krx_crawler.py` | ~1500 | KRX DB 로드 & 스캐너 (레거시 JSON 파일 호환) |
+| `db_collector.py` | ~3200 | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
+| `trade_api.py` | ~430 | 관세청 data.go.kr 수출입 API 래퍼 (Itemtrade/nitemtrade/nationtrade) + 시계열 (YoY/MoM/QoQ/ASP/피크아웃) |
 
 기타 파일:
 
@@ -126,7 +127,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ## 코딩 규칙
 
-- **5파일 구조**: API/데이터 → `kis_api.py`, 텔레그램+스케줄 → `main.py`, MCP → `mcp_tools.py`, KRX 크롤러 → `krx_crawler.py`, KIS API 배치 수집+SQLite → `db_collector.py`.
+- **6파일 구조**: API/데이터 → `kis_api.py`, 텔레그램+스케줄 → `main.py`, MCP → `mcp_tools.py`, KRX 크롤러 → `krx_crawler.py`, KIS API 배치 수집+SQLite → `db_collector.py`, 관세청 수출 API → `trade_api.py`.
 - **KIS API 신 방식**: 새 함수는 반드시 `_kis_get()` 래퍼 사용 (구 방식 `get_stock_price()` 패턴 사용 금지).
 - **에러 처리**: 개별 종목 루프 내부는 `try/except Exception: pass` 패턴으로 한 종목 오류가 전체 중단 방지.
 - **KIS API rate limit**: 초당 10건 제한. 연속 호출 시 `await asyncio.sleep(0.3)` 삽입 (실사용 초당 ~3.3건).
