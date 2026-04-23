@@ -4947,6 +4947,224 @@ def _save_consensus_snapshot(data: dict) -> None:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# StockAnalysis.com 애널 메타 + HTML 파싱 (3단계)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _fetch_analyst_coverage_html(slug: str) -> dict | None:
+    """StockAnalysis.com 애널 페이지 HTML 파싱.
+    URL: https://stockanalysis.com/analysts/{slug}/
+    반환: {
+        "slug": str, "name": str, "firm": str,
+        "stars": float, "success_rate": float, "total_ratings": int,
+        "coverage": [{"ticker": str, "sector": str}]  # 애널이 커버하는 종목
+    }
+    실패 시 None.
+    주의: 호출자가 2초 sleep 관리.
+    """
+    from bs4 import BeautifulSoup
+    import re
+    url = f"https://stockanalysis.com/analysts/{slug}/"
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    timeout = aiohttp.ClientTimeout(total=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    print(f"[analyst_html] {slug} HTTP {resp.status}")
+                    return None
+                html = await resp.text()
+        soup = BeautifulSoup(html, "lxml")
+
+        # 이름 추출 — h1 또는 페이지 타이틀
+        name_tag = soup.find("h1")
+        name = name_tag.get_text(strip=True) if name_tag else slug.replace("-", " ").title()
+
+        # 메타 정보 (firm, stars, success_rate, total_ratings)
+        firm = None
+        stars = None
+        success_rate = None
+        total_ratings = None
+
+        # 1차: 페이지 내 embedded JSON payload (가장 안정적)
+        #   예: data:{firm:"JP Morgan",name:"Mark Strouse",count:318,
+        #           scores:{score:73.62,stars:4.59,total:227,...,success_rate:54.19}
+        try:
+            m_firm = re.search(r'firm:"([^"]{1,80})"', html)
+            if m_firm:
+                firm = m_firm.group(1)
+            m_stars = re.search(r'stars:\s*([0-9]+\.?[0-9]*)', html)
+            if m_stars:
+                stars = float(m_stars.group(1))
+            m_succ = re.search(r'success_rate:\s*([0-9]+\.?[0-9]*)', html)
+            if m_succ:
+                success_rate = float(m_succ.group(1))
+            # JSON 내 count:N (페이지 "Total ratings" 표시값). scores.total 과 다름.
+            m_total = re.search(r'\bcount:\s*(\d+)', html)
+            if m_total:
+                total_ratings = int(m_total.group(1))
+        except Exception:
+            pass
+
+        # 2차 fallback: DOM 기반 ("Stock Analyst at {firm}", aria-label stars, "Total ratings")
+        if not firm:
+            for p in soup.find_all(["p", "span", "div"]):
+                txt = p.get_text(" ", strip=True)
+                m = re.search(r"Stock Analyst at\s+(.+)", txt)
+                if m:
+                    firm = m.group(1).strip()[:80]
+                    break
+        if stars is None:
+            st = soup.find(attrs={"aria-label": re.compile(r"Rated\s+[\d.]+\s+out of 5 stars")})
+            if st:
+                m = re.search(r"Rated\s+([\d.]+)", st.get("aria-label", ""))
+                if m:
+                    stars = float(m.group(1))
+        if total_ratings is None:
+            # DOM: <div>318</div><div>Total ratings</div>
+            for d in soup.find_all("div"):
+                if d.get_text(strip=True).lower() == "total ratings":
+                    prev = d.find_previous_sibling("div")
+                    if prev:
+                        m = re.search(r"(\d+)", prev.get_text(strip=True))
+                        if m:
+                            total_ratings = int(m.group(1))
+                            break
+
+        # Coverage — 레이팅 테이블의 unique 티커 추출 (2번째 셀 <a> 태그).
+        # stockanalysis.com 애널 페이지는 섹터 컬럼이 없으므로 sector=None.
+        coverage = []
+        seen_tickers = set()
+        for table in soup.find_all("table"):
+            thead = table.find("thead")
+            if not thead:
+                continue
+            htxt = thead.get_text(" ", strip=True).lower()
+            if not any(kw in htxt for kw in ("symbol", "ticker", "stock")):
+                continue
+            tbody = table.find("tbody")
+            if not tbody:
+                continue
+            for row in tbody.find_all("tr"):
+                cells = row.find_all("td")
+                ticker_val = None
+                # 우선 각 셀의 첫 <a> 태그 텍스트가 유효 티커면 사용
+                for c in cells:
+                    a = c.find("a")
+                    if a:
+                        cand = a.get_text(strip=True).upper()
+                        if 1 <= len(cand) <= 5 and cand.isalpha():
+                            ticker_val = cand
+                            break
+                # fallback: 셀 full 텍스트 첫 토큰
+                if not ticker_val:
+                    for c in cells:
+                        tokens = c.get_text(" ", strip=True).split()
+                        if tokens:
+                            cand = tokens[0].upper()
+                            if 1 <= len(cand) <= 5 and cand.isalpha():
+                                ticker_val = cand
+                                break
+                if ticker_val and ticker_val not in seen_tickers:
+                    seen_tickers.add(ticker_val)
+                    coverage.append({"ticker": ticker_val, "sector": None})
+            break  # 첫 매칭 테이블만
+
+        return {
+            "slug": slug,
+            "name": name,
+            "firm": firm,
+            "stars": stars,
+            "success_rate": success_rate,
+            "total_ratings": total_ratings,
+            "coverage": coverage,
+        }
+    except Exception as e:
+        print(f"[analyst_html] {slug} {type(e).__name__}: {e}")
+        return None
+
+
+def _upsert_analyst_meta(data: dict) -> None:
+    """us_analysts 에 메타 UPSERT (기존 watched 플래그 보존)."""
+    import json as _json
+    from db_collector import _get_db
+    conn = _get_db()
+    try:
+        slug = data["slug"]
+        # sectors 는 coverage 의 sector 중 unique 를 JSON 배열로
+        sectors = sorted({c.get("sector") for c in data.get("coverage", []) if c.get("sector")})
+        sectors_json = _json.dumps(sectors, ensure_ascii=False)
+        # watched 보존 UPSERT
+        conn.execute(
+            "INSERT INTO us_analysts (slug, name, firm, sectors, stars, success_rate, "
+            " total_ratings, watched, curated_at, last_updated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?) "
+            "ON CONFLICT(slug) DO UPDATE SET "
+            " name=excluded.name, firm=excluded.firm, sectors=excluded.sectors, "
+            " stars=excluded.stars, success_rate=excluded.success_rate, "
+            " total_ratings=excluded.total_ratings, last_updated=excluded.last_updated",
+            (slug, data.get("name"), data.get("firm"), sectors_json,
+             data.get("stars"), data.get("success_rate"), data.get("total_ratings"),
+             datetime.now().isoformat())
+        )
+        # coverage UPSERT
+        for cov in data.get("coverage", []):
+            conn.execute(
+                "INSERT OR REPLACE INTO us_analyst_coverage "
+                "(analyst_slug, ticker, sector, last_seen) VALUES (?, ?, ?, ?)",
+                (slug, cov["ticker"], cov.get("sector"), datetime.now().strftime("%Y-%m-%d"))
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def build_top_analysts_candidates(limit: int = 100, days: int = 180) -> list:
+    """us_analyst_ratings 집계로 톱 N 후보 생성.
+    stars * log(count) 가중치 정렬.
+    watched=1 플래그 자동 설정 안 함 — 사용자 확정 대기.
+
+    반환: [{slug, name, firm, avg_stars, avg_success_rate, call_count, score}, ...]
+    """
+    from db_collector import _get_db
+    import math
+    conn = _get_db()
+    try:
+        rows = conn.execute(
+            "SELECT analyst_slug, analyst, firm, "
+            "       AVG(stars), AVG(success_rate), COUNT(*) "
+            "FROM us_analyst_ratings "
+            "WHERE analyst_slug IS NOT NULL AND stars IS NOT NULL "
+            "  AND rating_date >= date('now', ?) "
+            "GROUP BY analyst_slug HAVING COUNT(*) >= 5 AND AVG(stars) >= 3.5 "
+            "ORDER BY AVG(stars) DESC",
+            (f"-{days} days",)
+        ).fetchall()
+        candidates = []
+        for r in rows:
+            slug, name, firm, avg_s, avg_sr, cnt = r
+            score = (avg_s or 0) * math.log((cnt or 0) + 1)
+            candidates.append({
+                "slug": slug, "name": name, "firm": firm,
+                "avg_stars": avg_s, "avg_success_rate": avg_sr,
+                "call_count": cnt, "score": round(score, 2)
+            })
+        # score 순 정렬
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return candidates[:limit]
+    finally:
+        conn.close()
+
+
+async def fetch_and_store_analyst_meta(slug: str) -> bool:
+    """단일 애널 HTML 파싱 + us_analysts/coverage UPSERT. 성공 True."""
+    data = await _fetch_analyst_coverage_html(slug)
+    if not data:
+        return False
+    _upsert_analyst_meta(data)
+    return True
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 미국 애널 레이팅 — 보유 감시 알림 중복 방지 저장소
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def _load_us_holdings_sent() -> dict:
