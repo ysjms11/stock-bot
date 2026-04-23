@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import asyncio
+import hashlib
 import html as _html
 from datetime import datetime, timedelta, time as dtime
 from telegram import Update, ReplyKeyboardMarkup
@@ -4330,6 +4331,135 @@ def _md_to_html(md: str) -> str:
     return "\n".join(html_lines)
 
 
+def _md_to_html_editable(md: str, file_key: str) -> str:
+    """Markdown → HTML (체크박스 클릭 가능 버전, data-* 속성 추가).
+
+    file_key: "dev" | "invest" | "todo" — POST /dash/todo/toggle 에서 파일 식별용.
+    각 체크박스 라인에 data-todo-file/line/hash 속성 부여.
+    라인 번호는 원본 md 의 1-indexed (요청 시 그대로 수정).
+    """
+    lines = md.split("\n")
+    html_lines = []
+    in_code = False
+    in_table = False
+    in_list = False
+
+    for idx, line in enumerate(lines):
+        line_num = idx + 1  # 1-indexed
+
+        # code block
+        if line.strip().startswith("```"):
+            if in_code:
+                html_lines.append("</code></pre>")
+                in_code = False
+            else:
+                lang = line.strip()[3:].strip()
+                html_lines.append(f"<pre><code>")
+                in_code = True
+            continue
+        if in_code:
+            html_lines.append(line.replace("<", "&lt;").replace(">", "&gt;"))
+            continue
+
+        stripped = line.strip()
+
+        # close table
+        if in_table and not stripped.startswith("|"):
+            html_lines.append("</tbody></table>")
+            in_table = False
+
+        # close list
+        if in_list and not stripped.startswith("- ") and not stripped.startswith("* ") and stripped:
+            html_lines.append("</ul>")
+            in_list = False
+
+        # empty line
+        if not stripped:
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append("")
+            continue
+
+        # headers
+        if stripped.startswith("### "):
+            html_lines.append(f"<h3>{_inline(stripped[4:])}</h3>")
+        elif stripped.startswith("## "):
+            html_lines.append(f"<h2>{_inline(stripped[3:])}</h2>")
+        elif stripped.startswith("# "):
+            html_lines.append(f"<h1>{_inline(stripped[2:])}</h1>")
+        elif stripped.startswith("> "):
+            html_lines.append(f"<blockquote style='border-left:3px solid var(--accent);padding-left:12px;color:var(--fg2)'>{_inline(stripped[2:])}</blockquote>")
+        # checkbox (editable)
+        elif stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
+            line_hash = hashlib.sha1(line.encode("utf-8")).hexdigest()[:12]
+            html_lines.append(
+                f"<div class='check'>"
+                f"<input type='checkbox' checked "
+                f"data-todo-file='{_html.escape(file_key)}' "
+                f"data-todo-line='{line_num}' "
+                f"data-todo-hash='{line_hash}'>"
+                f"<span style='text-decoration:line-through;color:var(--fg2)'>{_inline(stripped[6:])}</span>"
+                f"</div>"
+            )
+        elif stripped.startswith("- [ ] "):
+            line_hash = hashlib.sha1(line.encode("utf-8")).hexdigest()[:12]
+            html_lines.append(
+                f"<div class='check'>"
+                f"<input type='checkbox' "
+                f"data-todo-file='{_html.escape(file_key)}' "
+                f"data-todo-line='{line_num}' "
+                f"data-todo-hash='{line_hash}'>"
+                f"<span>{_inline(stripped[6:])}</span>"
+                f"</div>"
+            )
+        # table
+        elif stripped.startswith("|"):
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+            if all(set(c) <= {"-", ":", " "} for c in cells):
+                continue  # separator row
+            if not in_table:
+                html_lines.append("<table><thead><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in cells) + "</tr></thead><tbody>")
+                in_table = True
+            else:
+                html_lines.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells) + "</tr>")
+        # list
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            if not in_list:
+                html_lines.append("<ul>")
+                in_list = True
+            html_lines.append(f"<li>{_inline(stripped[2:])}</li>")
+        # hr
+        elif stripped.startswith("---"):
+            html_lines.append("<hr style='border-color:var(--border);margin:16px 0'>")
+        else:
+            html_lines.append(f"<p>{_inline(stripped)}</p>")
+
+    if in_code:
+        html_lines.append("</code></pre>")
+    if in_table:
+        html_lines.append("</tbody></table>")
+    if in_list:
+        html_lines.append("</ul>")
+    return "\n".join(html_lines)
+
+
+def _atomic_write(filepath: str, content: str) -> None:
+    """파일 쓰기 전 임시 파일에 쓰고 os.replace 로 교체 (전원 나가도 안전)."""
+    tmp = filepath + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, filepath)
+
+
+# 편집 대상 TODO 파일 화이트리스트 (경로 조작 방어)
+_TODO_FILE_MAP = {
+    "dev": "TODO_dev.md",
+    "invest": "TODO_invest.md",
+    "todo": "TODO.md",
+}
+
+
 def _inline(text: str) -> str:
     """인라인 마크다운 (bold, code, link)."""
     text = text.replace("<", "&lt;").replace(">", "&gt;")
@@ -4939,6 +5069,100 @@ document.querySelectorAll('.pf-sort-btn').forEach(btn => {
     btn.classList.add('active');
   });
 });
+
+// 5. TODO 체크박스 토글 (클릭 → 서버에 [ ] ↔ [x] 반영)
+document.addEventListener('change', async (e) => {
+  const cb = e.target;
+  if (cb.type !== 'checkbox' || !cb.dataset.todoFile) return;
+  const payload = {
+    file: cb.dataset.todoFile,
+    line: parseInt(cb.dataset.todoLine),
+    hash: cb.dataset.todoHash,
+    checked: cb.checked
+  };
+  try {
+    const r = await fetch('/dash/todo/toggle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) {
+      cb.checked = !cb.checked;  // rollback
+      const d = await r.json().catch(() => ({}));
+      alert('토글 실패: ' + (d.error || r.status));
+      return;
+    }
+    const d = await r.json();
+    if (d.new_hash) cb.dataset.todoHash = d.new_hash;
+    // 시각 효과: 옆 텍스트 line-through 토글
+    const span = cb.nextElementSibling;
+    if (span) {
+      if (cb.checked) {
+        span.style.textDecoration = 'line-through';
+        span.style.color = 'var(--fg2)';
+      } else {
+        span.style.textDecoration = '';
+        span.style.color = '';
+      }
+    }
+  } catch (err) {
+    cb.checked = !cb.checked;
+    alert('네트워크 오류: ' + err.message);
+  }
+});
+
+// 6. TODO 항목 추가 폼
+document.addEventListener('submit', async (e) => {
+  const form = e.target;
+  if (!form.classList.contains('todo-add-form')) return;
+  e.preventDefault();
+  const text = form.querySelector('[name=text]').value.trim();
+  if (!text) return;
+  const payload = {file: form.dataset.file, text: text};
+  try {
+    const r = await fetch('/dash/todo/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert('추가 실패: ' + (d.error || r.status));
+      return;
+    }
+    location.reload();
+  } catch (err) {
+    alert('네트워크 오류: ' + err.message);
+  }
+});
+
+// 7. 투자판단 저장 폼
+document.getElementById('decision-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const payload = {
+    date: form.date.value,
+    regime: form.regime.value,
+    notes: form.notes.value,
+    actions: form.actions.value,
+    grades: form.grades.value
+  };
+  try {
+    const r = await fetch('/dash/decisions/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert('저장 실패: ' + (d.error || r.status));
+      return;
+    }
+    location.reload();
+  } catch (err) {
+    alert('네트워크 오류: ' + err.message);
+  }
+});
 </script>"""
 
 
@@ -5259,10 +5483,10 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     # 4. 투자판단
     try:
         dl = load_json(f"{_DATA_DIR}/decision_log.json", {})
+        total_decisions = len(dl) if dl else 0
+        cards_html = ""
         if dl:
-            total_decisions = len(dl)
             recent = sorted(dl.items(), key=lambda x: x[0], reverse=True)[:5]
-            cards_html = ""
             for idx, (date, entry) in enumerate(recent):
                 regime_raw = str(entry.get("regime", "?"))
                 regime_esc = _html.escape(regime_raw)
@@ -5315,14 +5539,47 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                     f'</div>'
                     f'</details>'
                 )
-            html += (f'<div class="section" id="decision">'
-                     f'<div style="display:flex;justify-content:space-between;align-items:center">'
-                     f'<h2 style="margin:0">📝 최근 투자판단</h2>'
-                     f'<a href="/dash/decisions" style="color:var(--accent);text-decoration:none;font-size:0.85em">'
-                     f'전체 {total_decisions}건 보기 →</a>'
-                     f'</div>'
-                     f'{cards_html}'
-                     f'</div>')
+
+        # 투자판단 작성 폼 (날짜 기본값: 오늘 KST)
+        _today_kst = datetime.now(KST).strftime("%Y-%m-%d")
+        decision_form = (
+            f'<details class="decision-new" style="margin:12px 0;background:var(--bg);padding:12px;border-radius:6px;border:1px dashed var(--accent)">'
+            f'<summary style="cursor:pointer;color:var(--accent);font-weight:600">➕ 새 투자판단 기록</summary>'
+            f'<form id="decision-form" style="margin-top:12px;display:flex;flex-direction:column;gap:10px">'
+            f'<label>날짜 <input type="date" name="date" value="{_today_kst}" required></label>'
+            f'<label>레짐 '
+            f'<select name="regime" required>'
+            f'<option value="🟢 공격">🟢 공격</option>'
+            f'<option value="🟡 경계">🟡 경계</option>'
+            f'<option value="🔴 위기">🔴 위기</option>'
+            f'</select>'
+            f'</label>'
+            f'<label>메모 (notes)'
+            f'<textarea name="notes" rows="3" maxlength="5000" placeholder="오늘 시장 관찰, 포지션 조정 근거..." '
+            f'style="width:100%;padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:4px"></textarea>'
+            f'</label>'
+            f'<label>액션 (한 줄에 하나씩)'
+            f'<textarea name="actions" rows="3" maxlength="5000" placeholder="HD현대일렉 1주 추가 매수&#10;삼성전자 감시가 72000 → 70000 하향" '
+            f'style="width:100%;padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:4px"></textarea>'
+            f'</label>'
+            f'<label>등급 (티커:등급:이유, 한 줄에 하나씩)'
+            f'<textarea name="grades" rows="3" maxlength="5000" placeholder="005930:A:thesis 유효&#10;066570:B+:실적 개선" '
+            f'style="width:100%;padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:4px"></textarea>'
+            f'</label>'
+            f'<button type="submit" style="padding:8px 16px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer;align-self:flex-start;font-weight:600">저장</button>'
+            f'</form>'
+            f'</details>'
+        )
+
+        html += (f'<div class="section" id="decision">'
+                 f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                 f'<h2 style="margin:0">📝 최근 투자판단</h2>'
+                 f'<a href="/dash/decisions" style="color:var(--accent);text-decoration:none;font-size:0.85em">'
+                 f'전체 {total_decisions}건 보기 →</a>'
+                 f'</div>'
+                 f'{decision_form}'
+                 f'{cards_html}'
+                 f'</div>')
     except Exception:
         pass
 
@@ -5347,21 +5604,47 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    # 6. 투자 TODO
+    # 6. 투자 TODO (체크박스 토글 + 항목 추가)
     try:
         invest_path = os.path.join(_DATA_DIR, "TODO_invest.md")
         if os.path.exists(invest_path):
             with open(invest_path, encoding="utf-8") as f:
-                html += f'<div class="section" id="invest"><h2>📈 투자</h2>{_md_to_html(f.read())}</div>'
+                _invest_md = f.read()
+            html += (
+                f'<div class="section" id="invest"><h2>📈 투자</h2>'
+                f'{_md_to_html_editable(_invest_md, "invest")}'
+                f'<details class="todo-add" style="margin-top:16px;background:var(--bg);padding:12px;border-radius:6px;border:1px dashed var(--border)">'
+                f'<summary style="cursor:pointer;color:var(--accent);font-size:0.9em">➕ 항목 추가</summary>'
+                f'<form class="todo-add-form" data-file="invest" style="margin-top:12px;display:flex;flex-direction:column;gap:8px">'
+                f'<input type="text" name="text" placeholder="새 TODO 항목..." required maxlength="500" '
+                f'style="padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:4px">'
+                f'<button type="submit" style="padding:6px 12px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer;align-self:flex-start">추가</button>'
+                f'</form>'
+                f'</details>'
+                f'</div>'
+            )
     except Exception:
         pass
 
-    # 6b. 봇개발 TODO
+    # 6b. 봇개발 TODO (체크박스 토글 + 항목 추가)
     try:
         dev_path = os.path.join(_DATA_DIR, "TODO_dev.md")
         if os.path.exists(dev_path):
             with open(dev_path, encoding="utf-8") as f:
-                html += f'<div class="section" id="dev"><h2>🔧 봇개발</h2>{_md_to_html(f.read())}</div>'
+                _dev_md = f.read()
+            html += (
+                f'<div class="section" id="dev"><h2>🔧 봇개발</h2>'
+                f'{_md_to_html_editable(_dev_md, "dev")}'
+                f'<details class="todo-add" style="margin-top:16px;background:var(--bg);padding:12px;border-radius:6px;border:1px dashed var(--border)">'
+                f'<summary style="cursor:pointer;color:var(--accent);font-size:0.9em">➕ 항목 추가</summary>'
+                f'<form class="todo-add-form" data-file="dev" style="margin-top:12px;display:flex;flex-direction:column;gap:8px">'
+                f'<input type="text" name="text" placeholder="새 TODO 항목..." required maxlength="500" '
+                f'style="padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:4px">'
+                f'<button type="submit" style="padding:6px 12px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer;align-self:flex-start">추가</button>'
+                f'</form>'
+                f'</details>'
+                f'</div>'
+            )
     except Exception:
         pass
 
@@ -5734,6 +6017,260 @@ async def _handle_dash_decisions(request: web.Request) -> web.Response:
     return web.Response(text=html, content_type="text/html")
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 대시보드 편집 POST 핸들러 (TODO 토글/추가, 투자판단 저장)
+# Cloudflare Access 가 /dash/* 앞단 인증. backend 가드는 입력 검증만 수행.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def _handle_dash_todo_toggle(request: web.Request) -> web.Response:
+    """POST /dash/todo/toggle — TODO 체크박스 [ ] ↔ [x] 토글."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    file_key = body.get("file")
+    line_num = body.get("line")
+    req_hash = body.get("hash")
+    checked = body.get("checked")
+
+    if file_key not in _TODO_FILE_MAP:
+        return web.json_response({"error": "unknown file key"}, status=400)
+    if not isinstance(line_num, int) or line_num < 1:
+        return web.json_response({"error": "invalid line"}, status=400)
+    if not isinstance(req_hash, str) or len(req_hash) != 12:
+        return web.json_response({"error": "invalid hash"}, status=400)
+    if not isinstance(checked, bool):
+        return web.json_response({"error": "invalid checked"}, status=400)
+
+    filename = _TODO_FILE_MAP[file_key]
+    filepath = os.path.join(_DATA_DIR, filename)
+
+    if not os.path.isfile(filepath):
+        return web.json_response({"error": "file not found"}, status=404)
+    try:
+        if os.path.getsize(filepath) > 500 * 1024:
+            return web.json_response({"error": "file too large"}, status=413)
+    except OSError as e:
+        return web.json_response({"error": f"stat failed: {e}"}, status=500)
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return web.json_response({"error": f"read failed: {e}"}, status=500)
+
+    lines = content.split("\n")
+    idx = line_num - 1
+    if idx < 0 or idx >= len(lines):
+        return web.json_response({"error": "line out of range"}, status=400)
+
+    orig_line = lines[idx]
+    cur_hash = hashlib.sha1(orig_line.encode("utf-8")).hexdigest()[:12]
+    if cur_hash != req_hash:
+        return web.json_response({"error": "hash mismatch (file changed)"}, status=409)
+
+    # 체크박스 패턴 확인
+    stripped = orig_line.strip()
+    if checked:
+        # [ ] → [x]
+        if "[ ]" not in orig_line:
+            return web.json_response({"error": "no [ ] found on line"}, status=400)
+        new_line = orig_line.replace("[ ]", "[x]", 1)
+    else:
+        # [x] or [X] → [ ]
+        if "[x]" in orig_line:
+            new_line = orig_line.replace("[x]", "[ ]", 1)
+        elif "[X]" in orig_line:
+            new_line = orig_line.replace("[X]", "[ ]", 1)
+        else:
+            return web.json_response({"error": "no [x]/[X] found on line"}, status=400)
+
+    lines[idx] = new_line
+    new_content = "\n".join(lines)
+
+    try:
+        _atomic_write(filepath, new_content)
+    except Exception as e:
+        return web.json_response({"error": f"write failed: {e}"}, status=500)
+
+    new_hash = hashlib.sha1(new_line.encode("utf-8")).hexdigest()[:12]
+    return web.json_response({"ok": True, "new_hash": new_hash})
+
+
+async def _handle_dash_todo_add(request: web.Request) -> web.Response:
+    """POST /dash/todo/add — 파일 상단 첫 ## 섹션 바로 다음에 `- [ ] {text}` 삽입."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    file_key = body.get("file")
+    text = body.get("text", "")
+
+    if file_key not in _TODO_FILE_MAP:
+        return web.json_response({"error": "unknown file key"}, status=400)
+    if not isinstance(text, str):
+        return web.json_response({"error": "text must be string"}, status=400)
+    text = text.strip()
+    if not text:
+        return web.json_response({"error": "text empty"}, status=400)
+    if len(text) > 500:
+        return web.json_response({"error": "text too long (max 500)"}, status=400)
+    if "\n" in text or "\r" in text:
+        return web.json_response({"error": "newline not allowed"}, status=400)
+
+    filename = _TODO_FILE_MAP[file_key]
+    filepath = os.path.join(_DATA_DIR, filename)
+
+    if not os.path.isfile(filepath):
+        return web.json_response({"error": "file not found"}, status=404)
+    try:
+        if os.path.getsize(filepath) > 500 * 1024:
+            return web.json_response({"error": "file too large"}, status=413)
+    except OSError as e:
+        return web.json_response({"error": f"stat failed: {e}"}, status=500)
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return web.json_response({"error": f"read failed: {e}"}, status=500)
+
+    lines = content.split("\n")
+    new_item = f"- [ ] {text}"
+
+    # 첫 ## 헤더 찾기 → 그 다음 빈 줄 뒤에 삽입
+    insert_at = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("## "):
+            # ## 다음 빈 줄 찾기
+            j = i + 1
+            while j < len(lines) and lines[j].strip() != "":
+                j += 1
+            # 빈 줄이 있으면 그 뒤에, 없으면 파일 끝에
+            insert_at = j + 1 if j < len(lines) else len(lines)
+            break
+
+    if insert_at is None:
+        # ## 없으면 파일 최상단에 삽입
+        insert_at = 0
+
+    lines.insert(insert_at, new_item)
+    new_content = "\n".join(lines)
+
+    try:
+        _atomic_write(filepath, new_content)
+    except Exception as e:
+        return web.json_response({"error": f"write failed: {e}"}, status=500)
+
+    return web.json_response({"ok": True})
+
+
+async def _handle_dash_decision_add(request: web.Request) -> web.Response:
+    """POST /dash/decisions/add — decision_log.json 에 새 엔트리 추가/병합."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    date = body.get("date", "")
+    regime = body.get("regime", "")
+    notes = body.get("notes", "")
+    actions_raw = body.get("actions", "")
+    grades_raw = body.get("grades", "")
+
+    # 입력 검증
+    if not isinstance(date, str) or not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return web.json_response({"error": "invalid date (YYYY-MM-DD)"}, status=400)
+    if not isinstance(regime, str) or not regime.strip():
+        return web.json_response({"error": "regime required"}, status=400)
+    if len(regime) > 200:
+        return web.json_response({"error": "regime too long"}, status=400)
+    for field_name, field_val in [("notes", notes), ("actions", actions_raw), ("grades", grades_raw)]:
+        if not isinstance(field_val, str):
+            return web.json_response({"error": f"{field_name} must be string"}, status=400)
+        if len(field_val) > 5000:
+            return web.json_response({"error": f"{field_name} too long (max 5000)"}, status=400)
+
+    # actions 파싱
+    actions_list = [ln.strip() for ln in actions_raw.split("\n") if ln.strip()]
+
+    # grades 파싱: "티커:등급:이유" 형식, 콜론 부족 라인 무시
+    grades_dict = {}
+    for ln in grades_raw.split("\n"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        parts = ln.split(":", 2)
+        if len(parts) < 2:
+            continue  # 콜론 부족 → 무시
+        ticker = parts[0].strip()
+        grade = parts[1].strip()
+        reason = parts[2].strip() if len(parts) >= 3 else ""
+        if not ticker or not grade:
+            continue
+        grades_dict[ticker] = {"grade": grade, "reason": reason}
+
+    # decision_log.json 로드
+    filepath = os.path.join(_DATA_DIR, "decision_log.json")
+    try:
+        if os.path.isfile(filepath):
+            with open(filepath, encoding="utf-8") as f:
+                dl = json.load(f)
+            if not isinstance(dl, dict):
+                dl = {}
+        else:
+            dl = {}
+    except Exception as e:
+        return web.json_response({"error": f"load failed: {e}"}, status=500)
+
+    # 병합 or 신규
+    existing = dl.get(date)
+    if isinstance(existing, dict):
+        # 기존 entry 와 병합
+        # notes: 기존 + "\n---\n" + 새 (새 notes 있을 때만 구분자 append)
+        old_notes = str(existing.get("notes", ""))
+        if notes.strip():
+            merged_notes = old_notes + ("\n---\n" if old_notes else "") + notes
+        else:
+            merged_notes = old_notes
+        # actions: list 연장
+        old_actions = existing.get("actions", [])
+        if not isinstance(old_actions, list):
+            old_actions = []
+        merged_actions = old_actions + actions_list
+        # grades: dict 병합 (새 값 우선)
+        old_grades = existing.get("grades", {})
+        if not isinstance(old_grades, dict):
+            old_grades = {}
+        merged_grades = dict(old_grades)
+        merged_grades.update(grades_dict)
+        # regime: 새 값으로 덮어쓰기 (비어있으면 유지)
+        merged_regime = regime if regime.strip() else existing.get("regime", "")
+
+        dl[date] = {
+            "regime": merged_regime,
+            "notes": merged_notes,
+            "actions": merged_actions,
+            "grades": merged_grades,
+        }
+    else:
+        dl[date] = {
+            "regime": regime,
+            "notes": notes,
+            "actions": actions_list,
+            "grades": grades_dict,
+        }
+
+    # 저장 (atomic)
+    try:
+        _atomic_write(filepath, json.dumps(dl, ensure_ascii=False, indent=2))
+    except Exception as e:
+        return web.json_response({"error": f"save failed: {e}"}, status=500)
+
+    return web.json_response({"ok": True})
+
+
 async def _run_all(app, port):
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 포트 바인드 안전장치: 충돌 시 5초×3회 재시도, 실패하면 정상 종료
@@ -5772,6 +6309,10 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash/file/thesis/{filename:.+}", _handle_dash_research_file)
     mcp_app.router.add_get("/dash/reports/{ticker}", _handle_dash_reports)
     mcp_app.router.add_get("/dash/pdf/{ticker}/{filename}", _handle_dash_pdf)
+    # 대시보드 편집 기능 (Cloudflare Access 로 인증 통과한 요청만)
+    mcp_app.router.add_post("/dash/todo/toggle", _handle_dash_todo_toggle)
+    mcp_app.router.add_post("/dash/todo/add", _handle_dash_todo_add)
+    mcp_app.router.add_post("/dash/decisions/add", _handle_dash_decision_add)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
