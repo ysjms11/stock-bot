@@ -29,7 +29,6 @@
 |------|---|---------|-----------|-----------|-----------|
 | 02:00 | 전체 | `dart_incremental` | `daily_dart_incremental` | DART 신규 정기공시 증분 수집 → 알파 재계산 | 4/16 신규 |
 | 03:00 | 일 | `weekly_us_harvest` | `weekly_us_ratings_universe_scan` | S&P 500 ∪ Russell 1000 전체 레이팅 수집 (~1000종목, ~33분) | 4/23 Russell 확장 |
-| 03:00 | 매월 16일 | `trade_monthly` | `trade_monthly_report` | 관세청 전월 확정 수출 데이터 수집 + 30종목 매핑 YoY 텔레그램 | 4/23 신규 |
 | 05:05 | 화~토 | `us_summary_dst` | `us_market_summary` | 미국 장 마감 요약 (DST, 내부 가드로 중복 방지) | — |
 | 06:00 | 전체 | `macro_am` | `macro_dashboard` | 매크로 대시보드 (미국장 마감 후) | — |
 | 06:05 | 화~토 | `us_summary_std` | `us_market_summary` | 미국 장 마감 요약 (표준시, 내부 가드로 중복 방지) | — |
@@ -48,7 +47,6 @@
 | 07:15 | 일 | `weekly_financial` | `weekly_financial_job` | 주간 재무 수집 (DART) | — |
 | 07:30 | 전체 | `us_ratings` | `daily_us_rating_scan` | 미국 애널 레이팅 스캔 | 4/18 신규 |
 | 08:30 | 평일 | `report_collect` | `collect_reports_daily` | 증권사 리포트 수집 | — |
-| 09:00 | 매월 11일/21일 | `trade_decade` | `trade_decade_report` | 관세청 10일/20일 수출 잠정치 (korea.kr PDF) + 고신뢰 종목 YoY 알림 | 4/23 신규 |
 
 ### 오후 (12:00 ~ 16:59)
 
@@ -101,13 +99,6 @@
 - **일 07:15**: `weekly_financial`
 - **일 19:00**: `sunday_30`
 - 매일 돌아가는 것: `dart_incremental` (02:00), `us_ratings` (07:30), `macro_am` (06:00), `macro_pm` (18:55), `auto_backup` (22:00), 반복잡 4종
-
-## 월간 잡 (매월 특정일)
-
-- **매월 11일 09:00**: `trade_decade` — 1~10일 수출 잠정치 (korea.kr PDF 파싱)
-- **매월 21일 09:00**: `trade_decade` — 1~20일 수출 잠정치
-- **매월 16일 03:00**: `trade_monthly` — 전월 확정 수출 데이터 (data.go.kr API + 30종목 YoY)
-- JobQueue 특성상 매일 실행 + 함수 내부 `now.day` 체크 방식
 
 ## 타임존 메모
 

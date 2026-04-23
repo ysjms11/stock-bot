@@ -6,7 +6,6 @@ _hankyung.html
 test_*.py
 venv/
 data/*.json
-!data/hs_ticker_map.json
 data/krx_db/
 data/dart_reports/
 data/report_pdfs/

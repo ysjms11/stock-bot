@@ -865,17 +865,6 @@ MCP_TOOLS = [
         "watched": {"type": "boolean", "default": True, "description": "true=톱 애널 확정, false=해제"}
       },
       "required": ["slug"]}},
-
-    {"name": "get_export_trend",
-     "description": "한국 종목/HS 코드 수출입 추이 조회 (data.go.kr 관세청 API). ticker 지정 시 data/hs_ticker_map.json 매핑 사용 (30개 종목). 4 modes: summary=최신월+YoY/MoM/QoQ+피크아웃, timeseries=월별 시계열, country_breakdown=마지막달 국가별 분해, asp=판가 추이($/kg).",
-     "inputSchema": {"type": "object",
-      "properties": {
-        "ticker": {"type": "string", "description": "한국 종목코드 6자리 (예: 005930). data/hs_ticker_map.json 매핑 사용. hs_code 와 둘 중 하나 필수"},
-        "hs_code": {"type": "string", "description": "HS 코드 (2/4/6/10자리). ticker 미지정 시 직접 조회"},
-        "periods": {"type": "integer", "description": "조회 월 수 (기본 12)", "default": 12},
-        "country": {"type": "string", "description": "국가 필터 ISO 2자리 (예: CN, US, TW). 빈값=전체. nitemtrade 엔드포인트 사용"},
-        "mode": {"type": "string", "description": "조회 모드", "enum": ["summary", "timeseries", "country_breakdown", "asp"], "default": "summary"}
-      }}},
 ]
 
 
@@ -930,7 +919,6 @@ _NO_TOKEN_TOOLS = frozenset({
     "git_status", "git_diff", "git_log", "git_commit", "git_push",
     "backup_data",
     "get_us_ratings", "get_us_scan", "get_us_analyst", "watch_analyst",
-    "get_export_trend",
 })
 
 
@@ -4422,165 +4410,6 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             result = await _exec_us_analyst(**arguments)
         elif name == "watch_analyst":
             result = await _exec_watch_analyst(**arguments)
-
-        elif name == "get_export_trend":
-            # data.go.kr 수출입 API. KIS 토큰 불필요 (_NO_TOKEN_TOOLS).
-            ticker = (arguments.get("ticker") or "").strip()
-            hs_code_arg = (arguments.get("hs_code") or "").strip()
-            periods = int(arguments.get("periods") or 12)
-            country = (arguments.get("country") or "").strip().upper()
-            mode = (arguments.get("mode") or "summary").strip()
-
-            # 1. 매핑 해석
-            ticker_info = None
-            hs_codes_to_fetch: list[str] = []
-            mapping_path = os.path.join(_DATA_DIR, "hs_ticker_map.json")
-
-            _err = None
-            if ticker:
-                try:
-                    with open(mapping_path, "r", encoding="utf-8") as _f:
-                        mapping = json.load(_f)
-                except FileNotFoundError:
-                    _err = f"매핑 파일 없음: {mapping_path}"
-                    mapping = {}
-                except Exception as _e:
-                    _err = f"매핑 파일 로드 실패: {_e}"
-                    mapping = {}
-                if not _err:
-                    ticker_info = mapping.get(ticker)
-                    if not ticker_info:
-                        _err = f"티커 {ticker} 매핑 없음. data/hs_ticker_map.json 참조. 30개 종목만 지원."
-                    else:
-                        hs_list = ticker_info.get("hs_codes") or []
-                        doms = [h for h in hs_list if h.get("dominant")]
-                        if doms:
-                            hs_codes_to_fetch = [doms[0]["code"]]
-                        elif hs_list:
-                            top = max(hs_list, key=lambda x: x.get("weight", 0))
-                            hs_codes_to_fetch = [top["code"]]
-                        else:
-                            _err = f"티커 {ticker} 매핑에 hs_codes 없음"
-            elif hs_code_arg:
-                hs_codes_to_fetch = [hs_code_arg]
-            else:
-                _err = "ticker 또는 hs_code 중 하나 필수"
-
-            if _err:
-                result = {"error": _err}
-            else:
-                # 2. trade_api 동적 임포트 (lazy)
-                from trade_api import (
-                    trade_item, trade_item_country,
-                    compute_yoy_mom_qoq, compute_peakout_signal, compute_asp,
-                )
-                # KST 는 kis_api 에서 import * 로 이미 모듈 스코프에 있음 (라인 15-61)
-                # 로컬 재할당 금지 — _execute_tool 전체의 KST 스코프를 파괴 (UnboundLocalError)
-                now = datetime.now(KST)
-                end_year = now.year
-                end_month = now.month - 1
-                if end_month == 0:
-                    end_year -= 1
-                    end_month = 12
-
-                months: list[str] = []
-                y, m = end_year, end_month
-                for _ in range(max(1, periods)):
-                    months.append(f"{y:04d}{m:02d}")
-                    m -= 1
-                    if m == 0:
-                        y -= 1
-                        m = 12
-                months.reverse()  # 오름차순
-
-                hs = hs_codes_to_fetch[0]
-
-                # 3. mode 별 처리
-                if mode == "country_breakdown":
-                    rows = await asyncio.to_thread(
-                        trade_item_country, hs, months[-1], months[-1], 300
-                    )
-                    if country:
-                        rows = [r for r in rows if (r.get("country_cd") or "") == country]
-                    rows.sort(key=lambda x: (x.get("exp_usd") or 0), reverse=True)
-                    result = {
-                        "hs_code": hs,
-                        "yymm": months[-1],
-                        "country_breakdown": rows[:20],
-                        "ticker_info": ticker_info,
-                    }
-                else:
-                    # summary / timeseries / asp: 월별 수집
-                    series: list[dict] = []
-                    for yymm in months:
-                        if country:
-                            rows = await asyncio.to_thread(
-                                trade_item_country, hs, yymm, yymm, 300
-                            )
-                            row = next(
-                                (r for r in rows if (r.get("country_cd") or "") == country),
-                                None,
-                            )
-                        else:
-                            rows = await asyncio.to_thread(
-                                trade_item, hs, yymm, yymm, 10
-                            )
-                            row = rows[0] if rows else None
-
-                        if row:
-                            series.append({
-                                "yymm": yymm,
-                                "exp_usd": row.get("exp_usd") or 0,
-                                "exp_wgt_kg": row.get("exp_wgt_kg") or 0,
-                                "imp_usd": row.get("imp_usd") or 0,
-                                "balance_usd": row.get("balance_usd") or 0,
-                                "asp": compute_asp(row),
-                            })
-                        else:
-                            series.append({"yymm": yymm, "exp_usd": None})
-
-                    stats = compute_yoy_mom_qoq(series, "exp_usd")
-                    peakout = compute_peakout_signal(series, "exp_usd")
-
-                    if mode == "timeseries":
-                        result = {
-                            "hs_code": hs,
-                            "country": country or "ALL",
-                            "series": series,
-                            "stats": stats,
-                            "peakout": peakout,
-                            "ticker_info": ticker_info,
-                        }
-                    elif mode == "asp":
-                        asp_series = [
-                            {"yymm": s["yymm"], "asp": s.get("asp")} for s in series
-                        ]
-                        result = {
-                            "hs_code": hs,
-                            "country": country or "ALL",
-                            "asp_series": asp_series,
-                            "ticker_info": ticker_info,
-                        }
-                    else:  # summary (default)
-                        latest = series[-1] if series else {}
-                        low_conf = (
-                            ticker_info is not None
-                            and (ticker_info.get("confidence") or 1) < 0.35
-                        )
-                        result = {
-                            "hs_code": hs,
-                            "country": country or "ALL",
-                            "latest_yymm": latest.get("yymm"),
-                            "latest_exp_usd": latest.get("exp_usd"),
-                            "latest_asp": latest.get("asp"),
-                            "yoy_pct": stats.get("yoy_pct"),
-                            "mom_pct": stats.get("mom_pct"),
-                            "qoq_pct": stats.get("qoq_pct"),
-                            "peakout": peakout,
-                            "ticker_info": ticker_info,
-                            "note": (ticker_info or {}).get("note", ""),
-                            "warning": "수주공시 우선 업종" if low_conf else "",
-                        }
 
         else:
             result = {"error": f"unknown tool: {name}"}
