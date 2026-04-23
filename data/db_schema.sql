@@ -323,6 +323,36 @@ CREATE TABLE IF NOT EXISTS us_consensus_snapshot (
 );
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
+-- 미국 애널 메타 (3단계)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- 톱 100 애널 마스터 (사용자 확정용)
+CREATE TABLE IF NOT EXISTS us_analysts (
+    slug TEXT PRIMARY KEY,          -- "mark-strouse" 형식 (StockAnalysis.com slug)
+    name TEXT NOT NULL,             -- "Mark Strouse"
+    firm TEXT,                      -- 증권사 (예: "Piper Sandler")
+    sectors TEXT,                   -- JSON 배열: ["Technology", "Healthcare"]
+    stars REAL,                     -- 최근 평균 별점 (0~5)
+    success_rate REAL,              -- 성공률 (%)
+    total_ratings INTEGER,          -- 누적 콜 수
+    watched INTEGER DEFAULT 0,      -- 1=사용자가 톱 100 으로 확정
+    curated_at TEXT,                -- 사용자 확정 날짜 (ISO)
+    last_updated TEXT               -- 메타 업데이트 시각
+);
+CREATE INDEX IF NOT EXISTS idx_us_analysts_watched ON us_analysts(watched);
+CREATE INDEX IF NOT EXISTS idx_us_analysts_stars ON us_analysts(stars DESC);
+
+-- 애널별 커버 종목 (HTML 파싱 결과)
+CREATE TABLE IF NOT EXISTS us_analyst_coverage (
+    analyst_slug TEXT NOT NULL,     -- us_analysts.slug 참조
+    ticker TEXT NOT NULL,
+    sector TEXT,                    -- 종목 섹터 (캐시)
+    last_seen TEXT,                 -- 최근 발견일 (ISO)
+    PRIMARY KEY(analyst_slug, ticker)
+);
+CREATE INDEX IF NOT EXISTS idx_us_coverage_ticker ON us_analyst_coverage(ticker);
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- 인덱스 (최소주의 — 느린 쿼리 확인 후 추가)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- PK (trade_date, symbol)는 자동 인덱스
