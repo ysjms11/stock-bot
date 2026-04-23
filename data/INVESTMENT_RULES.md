@@ -1,296 +1,279 @@
-# 투자 규칙 & 운영 매뉴얼 — 2026-04-15
+# INVESTMENT_RULES.md — 상세 매매 플레이북
 
-## 확신등급 시스템
-| 등급 | 의미 | 액션 |
-|------|------|------|
-| A | 강한 확신 | 비중확대 OK |
-| B+ | 확신 강화 중 | 보유, 촉매 대기 |
-| B | 보유-관망 | 유지 |
-| B- | 확신 약화 시작 | 주시 |
-| C | 확신 약화 | 축소 검토 |
-| D | 근거 소멸 | 즉시 정리 |
-
-## 감시가 프레임워크 (2026-04-11 확정, 딥리서치 3건 근거)
-
-### 핵심 원칙
-- **매수 결정(등급)과 체결 도구(감시가)는 분리**한다
-- A등급에서 0% 보유 = 시스템 오류. pilot으로 노출부터 확보
-- 12개월 컨센은 sanity check. A/B+의 RR 목표가는 보유기간에 맞춘다
-- "놓치는 비용"은 "물리는 비용"보다 장기적으로 더 크다 (Schwab: 즉시투자=완벽타이머의 92%)
-
-### 등급별 진입 규칙
-
-| 등급 | RR 요구 | 목표가 기준 | Pilot | 감시가 역할 | 괴리 상한 |
-|------|---------|-------------|-------|-------------|-----------|
-| A | 1:2 | **24개월** (FY+2 EPS × 적정PE) | **40% 의무** (현재가) | 2~3차 추매용 | 스톱폭의 절반 |
-| B+ | 1:2.5 | **18개월** | **20% 의무** (현재가) | 2~3차 추매용 | 스톱폭의 절반 |
-| B | 1:3 | 12개월 컨센 | 없음 | 1차부터 | 스톱폭의 절반 |
-| C | 매수금지 | — | — | — | — |
-
-### Pilot 안전장치
-- **이익 미확인 스토리주(매출 없는 프리커머셜) = 등급 무관 pilot 금지** (ARKK 방어)
-- PEG 게이트: 🇰🇷 FwdPEG >3.0이면 매수 보류 / 🇺🇸 FwdPEG >**2.0**이면 매수 보류 (Lynch 원래 기준, 딥리서치 검증 2026-04-15)
-- 분할 프로토콜: 40→30→30
-
-### 감시가 괴리 상한 규칙
-- 감시가(2~3차) = 현재가 대비 최대 스톱폭의 절반만 할인
-- 예: 스톱 -26% → 감시가 최대 -13%
-- 이 상한 초과하는 감시가 = 도달불가 → 등록 금지
-
-### RR 역산 공식
-- 감시가 상한 = (목표가 + RR배수 × 손절가) ÷ (1 + RR배수)
-
-## 포트폴리오 규칙
-- 단일종목 비중 한도: 35%
-- 단일섹터 한도: 50%
-- 현금비중: 🟢 5~8% / 🟡 8~15% / 🔴 5%까지 투입
-- 원칙: "현금은 비용." 강세장(🟢)에서 현금 쥐고 있는 건 기회비용. 🟡→🔴 전환하며 서서히 현금 비중 증가 → 🔴 진입 시 저점 매수 투입
-- 미국주식은 환율 리스크 포함 수익률 계산
-
-## 신규 진입 시 필수 명시
-1. 매수근거 (한 문장 thesis)
-2. 확신등급
-3. Pilot 진입가 + 2~3차 분할매수 가격
-4. Kill Switch (이 조건 깨지면 등급 하향/매도)
-5. 24개월/18개월/12개월 목표가 (등급별)
-
-## 레짐 시스템 (2026-04-23 개정)
-
-### 역할 재정의
-- **레짐 = 현금 관리 도구.** 매수 허가 필터 아님.
-- **매수 판단은 "산업 흐름 + 리더 + 근거"로 결정.** 레짐 무관.
-- 6주 매수 0건 경험 교훈: "🟢 신규 자제" 조항이 강세장 초입 매수 차단한 것이 주범.
-
-### 판정 지표
-- 2개: S&P 500 vs 200일 이동평균 (3% 버퍼) + VIX (20/30 기준 + 백워데이션)
-- 🟢 공격: S&P 200MA 위 + VIX < 20
-- 🟡 경계: 둘 중 하나 이탈
-- 🔴 위기: S&P 200MA 아래 + VIX > 30
-
-### 레짐별 행동 원칙
-
-**🟢 공격:**
-- 신규 매수 **기본값 OK** — 산업 흐름 + 리더 확인되면 진입
-- 현금 비중 **5~8%** — 강세장에서 현금 비중 낮게 유지
-- 🟡 전환 기미 보이면 서서히 현금 축적 시작
-- VCP 매도대금은 신규 A등급 or 기존 A등급 추매에 즉시 재배치
-
-**🟡 경계:**
-- 신규 매수 시 근거 더 엄격히 (산업 흐름 + 리더 확실성 재확인)
-- 현금 비중 **8~15%** — 서서히 축적
-- B/C 포지션 정리 → 현금 확보
-- 🔴 전환 대비 VIX·섹터 breadth 모니터 강화
-
-**🔴 위기:**
-- 축적 현금 투입 (VIX 30→40%, VIX 40→40%, VIX 50→잔여)
-- 현금 비중 **5%까지** 투입
-- A등급 리더 + 인덱스 ETF 집중
-- 최소 12개월 보유 커밋
-
-### USD/KRW
-- 레짐 판정에서 분리. 한국 종목 사이징 참고용만.
-
-## Process Loss 추적
-- A/B+ 종목이 thesis intact + 등록 후 +15% 올랐는데 0% 보유 → process loss 1건
-- 2건 연속 → 다음 A등급 pilot 강제
-- 월말에 realized P/L 옆에 missed P/L 별도 집계
+> 프로젝트 지침(매 세션 로드)과 함께 쓰는 참조용 상세 규칙. `read_file("data/INVESTMENT_RULES.md")`로 필요 시 호출.
+> 
+> 수치 범례: ✅ 원문 검증 / ⚠️ 부분확인·사용자결정 / ❌ 원문 없음·정성화
 
 ---
 
-## 종목 분석 프로세스 (2026-04-15 확정, 딥리서치 2건 근거)
+## 0. 연구·인용 규율
 
-### 핵심 원칙
-- **thesis를 먼저 세우고, 그 다음에 목표가를 본다** (앵커링 방지 — Campbell & Sharpe 2007: 가격 먼저 보면 30% 앵커 편향)
-- 컨센서스는 의사결정 입력이 아니라 **기대치 벤치마크** (한국 매수 93.7%, 목표가 알파 2013년 이후 0 — KCMI 2026)
-- 5개 데이터로 정확도 17%, 40개로도 17% — 정보 늘리면 정확도 안 올라가고 **확신만 2배** (Slovic 1973)
-
-### 매수 검증: 10 Step
-
-도구 표기: 🇰🇷 = 한국 전용, 🇺🇸 = 미국 전용, 🌐 = 공통
-
-| Step | 이름 | 도구 | 시간 |
-|------|------|------|------|
-| **0** | 레짐 게이트 | 🌐 `get_regime` | 10초 |
-| **1** | 트렌드 & 유동성 필터 | 🌐 `get_stock_detail`(가격+이평), 🇰🇷 `get_highlow` / 🇺🇸 웹서치(52w range) | 30초 |
-| **2** | 사업 thesis 형성 | 🇰🇷 `read_report_pdf`(산업분석만) + `get_dart`(사업보고서) / 🇺🇸 웹서치(10-K, 경쟁사) | 10분 |
-| **3** | 재무 검증 | 🇰🇷 `get_dart`(재무제표) + `get_finance_rank` / 🇺🇸 웹서치(SEC filing, 재무데이터) | 5분 |
-| **4** | 팩트체크 & 반증 | 🌐 `get_news`(sentiment) + 웹서치, 🇰🇷 `get_dart`(공시) / 🇺🇸 웹서치(SEC 8-K) | 3분 |
-| **5** | 수급 확인 | 🇰🇷 `get_supply` + `get_broker` + `get_market_signal` / 🇺🇸 웹서치(institutional holdings, short interest) | 2분 |
-| **6** | 밸류에이션 | 🇰🇷 리포트 목표가 분해 + `get_consensus` / 🇺🇸 웹서치(analyst estimates). 🌐 `get_stock_detail`(VP) | 5분 |
-| **7** | RR & 과거 비교 | 🌐 `get_alerts`(과거 판단) + `get_backtest` | 2분 |
-| **8** | 포트 시뮬 | 🌐 `simulate_trade` | 1분 |
-| **9** | 결정 & 기록 | 🌐 `set_alert`(등급 + 손절/목표 + decision) | 2분 |
-
-**Step별 상세:**
-
-- **Step 0 — 레짐 체크 (현금 가이드용):** 🟢/🟡/🔴 확인. 현금 비중 가이드만 받음. **레짐은 매수 결정 필터 아님.** 모든 레짐에서 "산업 흐름 + 리더 + 근거" 충족 시 매수 OK.
-- **Step 1 — 트렌드 필터:** Stage 2인가? 유동성 충분한가? 아니면 Kill. Minervini SEPA 기준
-- **Step 2 — 사업 thesis:** "이 회사가 어떻게 돈 버는지" 이해. **목표가 보기 전에** 한 문장 thesis 작성. 리포트에서 산업 데이터만 추출, 투자의견·목표가는 이 단계에서 무시
-- **Step 3 — 재무 검증:** 매출·마진·FCF·부채 검증. Pabrai 1순위: 레버리지. earnings quality 체크
-- **Step 4 — 반증:** thesis에 대한 반증 찾기. "이 thesis가 틀리려면 뭐가 필요한가?"
-- **Step 5 — 수급:** 스마트 머니가 thesis와 같은 방향인가?
-- **Step 6 — 밸류에이션:** 이제 목표가 본다. 산출 근거 뜯기. 피어 멀티플 크로스체크. VP로 진입가. 컨센은 기대치 갭 확인용만
-- **Step 7 — 비교:** 내 기존 판단 히스토리와 비교. RR 계산. 기회비용 체크
-- **Step 8 — 시뮬:** 비중·섹터·현금 변화. 35% 종목한도 / 50% 섹터한도 위반 여부
-- **Step 9 — 기록:** 확신등급 부여. 감시가 등록. thesis 한 문장 + Kill Switch 기록. **한 문장으로 못 쓰면 이해가 부족한 것**
-
-### 라이트 체크 (5분, 기보유 모니터링)
-
-5개 변수만 (Slovic: 5개 넘으면 정확도 안 올라감):
-
-1. 🌐 `get_stock_detail` — 트렌드 유지? (200MA 위?)
-2. 🇰🇷 `get_consensus` or `manage_report` / 🇺🇸 웹서치 — 추정치 상향/하향?
-3. 🌐 `get_stock_detail` — PER/PBR 섹터 대비 이상?
-4. 🇰🇷 `get_supply`(daily) / 🇺🇸 웹서치 — 오늘 수급 방향?
-5. thesis 한 문장 — 아직 유효?
-
-이상 감지 시 → 풀 DD 에스컬레이션
-
-### 풀 DD 트리거 (하나라도 해당 시)
-- 신규 매수 진입
-- A/B+ 확신등급 부여
-- 처음 분석하는 섹터
-- 기보유 종목 thesis 붕괴 의심
-- `get_change_scan`에서 구조적 변화 시그널
+- **데이터 없으면 데이터 불충분**. 수치 제시 시 반드시 출처(저자/연도/저널/URL).
+- 2차 인용(블로그, 요약)은 신뢰도 낮음으로 표시.
+- 확인 불가한 수치는 삭제 또는 정성화.
+- LLM 자체 앵커링 편향 주의: Lou & Sun (2024) arXiv:2412.06593, CBEval (2024) arXiv:2412.03605 — round number, expert anchor에 취약.
 
 ---
 
-### 🇺🇸 미국 종목 딥서치 7단계 v3 (2026-04-15 확정, 딥리서치 3건 근거)
+## 1. 매수 10 Step 검증 (한국·미국 공통 코어)
 
-> 상세 프롬프트 템플릿: `data/US_DEEPSEARCH_v3.md`
+### Step 1. 산업 흐름 확인 ✅
+- 해당 산업 ETF 20/60일 이평 정배열 여부
+- 외인·기관 순매수 최근 5/20일 누적 (KIS `get_sector flow` / `get_supply foreign_rank`)
+- **기준**: 두 개 모두 양이어야 통과. 하나만 양이면 Starter 한정.
 
-**한국과 다른 핵심 차이:** 미국은 **실적+가이던스+멀티플 리레이팅**이 가격을 결정. 수급 대신 내부자 거래+기관 13F. VP는 참고용 (어닝 갭에 무력화).
+### Step 2. 리더십 포지션 ✅
+- 시총 기준 업종 Top 3 이내, 또는 기술/점유율 우위 명확
+- 분기 매출·영업이익 YoY 증가 (KIS `get_finance_rank sort=15`)
+- **Piotroski F-Score ≥8** ✅ (원 논문: Piotroski 2000 JAR 38 Supp, **≥7이 아니라 ≥8이 공식**) — KIS `get_alpha_metrics`
 
-| 단계 | 내용 | 시간 | 한국 대응 |
-|:---:|------|:---:|----------|
-| 1 | **아이디어 소싱** — 13F/내부자클러스터/어닝모멘텀/섹터리더/스핀오프/자사주매입 | 2분 | (한국: 봇 스크리너) |
-| 2 | **3대 질문 속판** — 해자(GM **업종 상위사분위**) + 구조적수요(**매출성장>산업+NRR+가격결정력**) + 이익상향(**가이던스 2x 가중**) | 5분 | (동일 3대 질문) |
-| 3 | **재무건전성** ★밸류에이션보다 먼저 — Altman Z''>2.6, Beneish M<-1.78, D/E, ICR 3x+, FCF, SBC **15%+희석률3%** | 7분 | (한국: DART 재무제표) |
-| 4 | **밸류에이션 삼각측량** — PEG게이트 **2.0**, 업종별 분기(SaaS=EV/Rev+Rule of 40+RevDCF, 반도체=TC-PE, 바이오=rNPV) | 12분 | (한국: 리포트 목표가 분해) |
-| 5 | **수급·내부자·기관** — OpenInsider(P코드,$100K+,루틴제외), 13F, Short Float **5%+**, **UOA(비정상옵션)** | 5분 | (한국: 외인/기관/공매도) |
-| 6 | **기술적 3개만** — EMA 정배열 + 52주 신고가 거리 + 어닝갭 유지. RSI 삭제(EMA 중복). VP 선택적 | 3분 | (한국: VP+수급 7단계) |
-| 7 | **킬질문 10개** — 기존 9개 + **"매도 조건은?"** 추가. 머스트패스 3개 게이트(Q1프리모템·Q3최대손실·Q7사업이해) | 8분 | (동일 킬질문) |
+### Step 3. 실적 모멘텀 ✅
+- 연속 2분기 어닝 서프라이즈 양수 (원조 PEAD: **Bernard & Thomas 1989 JAR, 1990 JAE**) ✅ — Stickel 아님
+- 가이던스 상향 또는 유지
+- 컨센서스 예측 상향 트렌드 (단 Campbell-Sharpe 2007/2009 JFQA: 컨센은 전월 실측치 방향 **~30% 앵커링** 가정 ✅)
 
-**미국 전용 임계값 (한국과 다른 것):**
-- PEG 게이트: **2.0** (한국 3.0)
-- Short Float 경고: **5%** (한국: 공매도 비율 봇 조회)
-- Gross Margin: **업종 상위사분위** (한국: 40% 고정 사용 가능 — 업종 편차 작음)
-- 킬질문: **10개** (매도 조건 추가), 머스트패스 3개 게이트
+### Step 4. 밸류에이션 정합성 ⚠️
+- 업종 peer median 대비 상대 PER/PBR
+- **PEG**: <1 저평가 (Lynch 1989 *One Up on Wall Street* 원문) ✅ / **PEG > 1.5~2 경계는 실무 관행** (Lynch 직접 명시 아님) ⚠️
+- 배당주: PEGY = P/E ÷ (성장률+배당률), <1 저평가
 
-**업종별 밸류에이션 분기:**
-| 업종 | 성장주 | 가치주 | Rule of 40 |
-|------|--------|--------|:----------:|
-| SaaS | EV/NTM Rev + Rule of 40 + Reverse DCF | EV/EBITDA + PEG + F-Score | ✅ |
-| 반도체 | EV/NTM Rev + Through-Cycle P/E | TC EV/EBITDA + PEG + F-Score | ❌ |
-| 바이오 | Pipeline rNPV | Sum-of-Parts + P/E | ❌ |
-| 방산 | EV/EBITDA + 수주잔고 | EV/EBITDA + FCF Yield | ❌ |
-| 금융 | P/E + P/TBV | P/B + ROE | ❌ |
+### Step 5. 수급 ✅
+- 외인+기관 5일 연속 순매수 (KIS `get_scan preset=foreign_streak`)
+- 거래량 20일 평균 대비 1.5x 이상
+- 프로그램매매 동향 확인 (`get_market_signal program_trade`)
 
-**미국 봇 사용 가능 도구:** get_stock_detail(시세/일봉/VP/시간외) + get_backtest + get_regime + get_macro(dashboard/us_sector) + get_rank(us_price) + get_portfolio + simulate_trade + set_alert + manage_watch + write_file
+### Step 6. 기술적 ⚠️
+- 20/60일 이평 정배열
+- 52주 신고가 기준 괴리 10% 이내 (KIS `get_highlow`)
+- 볼륨 프로파일 지지 구간 확인 (`get_stock_detail volume_profile`)
 
-**미국 웹서치 필수 소스:** stockanalysis.com(컨센서스) + openinsider.com(내부자) + whalewisdom.com(13F) + finviz.com(Short/스크리너) + barchart.com(UOA)
+### Step 7. 리스크 지표 — **미국 딥서치용** ⚠️
+- **Altman Z''-Score > 2.6 Safe / 1.1-2.6 Gray / <1.1 Distress** ✅ (Altman 2000/2013 NYU Stern, EMS 모델)
+- **Beneish M > -1.78 분식 의심** ✅ (Beneish 1999 FAJ 55(5); 오류율: FN 26%, FP 13.8%. **확률적 신호**로 해석)
+- **Short Float 10%+ 경계, 20%+ 고위험, 30%+ 극단** ✅ (업계 표준; **기존 5% 기준은 오류** ❌ → 수정됨)
+- **SBC: Net Dilution 3%+ 경고** ✅ (TDM Growth Partners 2024 벤치마크: 희석률 3%+ 기업 Nasdaq 아웃퍼폼 실패). SBC/매출 비율은 업종 peer 상대 비교 (고정 15% 기준 ❌)
+- **Rule of 40 (SaaS: YoY 성장률 + EBITDA 마진 ≥ 40%)** ✅ (Brad Feld 2015 blog; VC 휴리스틱, 후기 SaaS 한정)
 
----
+### Step 8. 셀사이드 편향 보정 ✅
+- **한국 증권사 매수+적극매수 93.1%, 매도 0.1%** (자본시장연구원 김준석 2025.7.21) ✅
+- **12개월 종료 시점 목표가 달성률 38%, 내재수익률이 실제 대비 평균 +15%p 상향편향** (Bradshaw, Brown & Huang 2013 Review of Accounting Studies) ✅
+- **활용 규칙**: 리포트 목표가는 "상한"이 아니라 "편향 포함 참고값". 실제 진입가 = 목표가 × 0.7 이하 고려. 리포트 내러티브·시나리오·리스크는 유용하나 숫자는 편향 가정.
+- `manage_report list brief=true`로 최근 7일 요약 확인, 전문 필요 시 `read_report_pdf`
 
-### 🔴 위기 레짐 매수 규칙
+### Step 9. Claude(LLM) 편향 자기검증 ✅
+- **Anthropic 공식**: 매수 최종 판단 전 다음 체크리스트 (positive instruction 형식)
+  - "내가 방금 round number로 끝나는 목표가를 쓰지 않았는가?" (CBEval 2024)
+  - "첫 제시된 애널 목표가에 anchor 되지 않았는가?" (Lou & Sun 2024)
+  - "매수 편향 리포트만 읽고 판단하지 않았는가?" (자본연 2025)
+- XML 태그로 섹션 분리, `<evidence>` 태그 내에만 수치 기재
 
-**역사적 근거:** VIX 30+ 매수 시 12개월 양수 확률 75%, VIX 40+ 최근 100% (2016~2025 실증). 기관이 🔴에서 안 사는 이유는 환매압력/VaR/커리어 리스크 → 개인은 이 제약 없음 = 구조적 우위.
-
-**실행 규칙:**
-- 트랜치 투입 (VIX 30→40%, VIX 40→40%, VIX 50→잔여)
-- 🟡에서 축적한 현금을 점진 투입 (VIX 단계가 한 번에 여러 개 넘을 경우 3거래일 분할)
-- **인덱스 ETF 또는 최고확신 리더 종목만**
-- **최소 12개월 보유 커밋** (VIX 50+ 단기 3주 내 66.7% 음수 확률)
-
----
-
-## 매도 프로세스 (매수와 별도, 딥리서치 근거)
-
-### 왜 별도인가
-- Akepanidtaworn et al.(2023): 783개 기관 포트, 매수는 스킬 있지만 **매도는 랜덤보다 나쁨**
-- Odean(1998): 이긴 종목 너무 빨리 팔고 진 종목 너무 오래 보유 → 연 3.4% 손실
-- 원인: 매수엔 분석 쏟고, 매도는 "다음 매수 현금 마련" 취급
-
-### 매도 트리거 3개 (Fisher 1958 기반)
-1. **Thesis 붕괴** — 매수 시 기록한 Kill Switch 위반. 가격 무관 매도
-2. **펀더멘털 악화** — 경영진 퀄리티·경쟁력·재무건전성 하락
-3. **더 좋은 대안** — B 이하 등급에서만. A/B+는 이 이유로 매도 금지
-
-### 매도 검토 (트리거 후 10분)
-
-| Step | 하는 것 | 도구 |
-|------|--------|------|
-| S1 | 원래 thesis 다시 읽기 | 🌐 `get_alerts`(decision log) — Kill Switch 위반? |
-| S2 | 현재 펀더멘털 체크 (**손익 안 보고**) | 🌐 `get_stock_detail`, 🇰🇷 `get_dart` + `get_news` / 🇺🇸 웹서치 |
-| S3 | **"오늘 현금이면 이 가격에 살 건가?"** | NO면 매도 강력 후보 (McKinsey: 200bp+ 개선) |
-| S4 | 기회비용 비교 | 🌐 `set_alert`(compare) — 현 보유 vs 대안 |
-| S5 | 수급 확인 | 🇰🇷 `get_supply`(history) + `get_broker` / 🇺🇸 웹서치(institutional flow) |
-| S6 | 기록 | 🌐 `set_alert`(trade, side='sell') — 매도 사유 기록 |
-
-### 매도 금지 행동
-- **매입가 기준 판단** — "본전까지 기다리겠다" = 처분효과
-- **Kill Switch 발동 후 "이번엔 다르다"** — 사전 규칙은 감정 차단용
-- **"이긴 종목이니까 일부 익절"** — thesis 유효 + A/B+ 등급이면 팔지 마라
+### Step 10. 사이즈 결정 & 기록
+- 3-Gate 통과 수에 따라: 3개 통과 → Standard/Core 후보 / 2개 → Starter / 1개 이하 → 매수 금지
+- `set_alert log_type=trade`로 매매 기록 + 매수 사유
+- 분기 재검증 일자 캘린더 기록
 
 ---
 
-## 매매 후 사후처리 (체결 통보 시 자동 실행)
+## 2. 미국 딥서치 7단계 (미국 종목 전용)
 
-1. `set_alert`(log_type='trade') — 매매기록
-2. `manage_watch` — 감시 정리
-3. `set_alert` — 손절/목표 세팅 or 삭제
-4. `get_portfolio`(mode='set') — 포트+현금 업데이트
-5. `set_alert`(log_type='decision') — 판단 기록
+1. **Altman Z''-Score > 2.6** ✅ (EMS 모델)
+2. **Beneish M < -1.78** (비분식) ✅ — M > -1.78이면 분식 의심
+3. **PEG < 1 저평가** (Lynch 원문) ✅
+4. **Short Float < 20%** ✅ (5% 아님 ❌, 표준 20%+ 고위험)
+5. **Net Dilution < 3%** (TDM 2024) ✅
+6. **Rule of 40 (SaaS 한정)** ✅
+7. **SEC 8-K·10-K 최근 이상 공시** — 내부자 거래 집중(2주+), litigation, going concern 등
 
----
-
-## 셀사이드 리포트 읽기 규칙
-
-### 추출할 것 (가치순)
-1. **산업 데이터·경쟁 구도** — 리포트 가치의 41% (2025 arXiv 연구)
-2. **추정치 변경 방향** — EPS 상향/하향이 3~6개월 드리프트 (Stickel 1991)
-3. **채널 체크·수주·CAPEX 데이터** — 입력값으로만, 결론으로 X
-
-### 무시할 것
-- 투자의견 (한국 매수 93.7%, 매도 0.07%)
-- 목표가 숫자 (달성률 38%, 체계적 상향편향 15~28%)
-- "밸류에이션 매력적" 류 결론
-
-### 디바이어싱 체크
-- 해당 증권사가 IB(주관사) 관계인가?
-- 매수 유지하면서 EPS 조용히 하향 = **whisper sell** 감시
-- `get_consensus` 분산도 높으면 리스크 경고
+**데이터 소스**: SEC EDGAR, yfinance, macrotrends, 미국 애널 레이팅은 `get_us_ratings events/consensus`
 
 ---
 
-## 신규 도구 로드맵
+## 3. 매도 4 트리거 (상세)
 
-### 즉시 구현 (Tier 1)
-| 도구 | 내용 | 예상 알파 |
-|------|------|-----------|
-| F-Score / M-Score | Piotroski 9점 + Beneish 8변수. DART 재무제표로 계산 | 5~15%/년 |
-| 내부자 거래 추적 | DART 임원·주요주주 소유보고. 30일 내 3명+ 매수 시 플래그 | 3~8%/년 |
-| FCF 메트릭 | FCF/총자산, FCF/EV, FCF/순이익 전환율 | 4~6%/년 |
+### 트리거 1. Thesis 훼손 — **즉시 청산**
+- 매수 시 기록한 핵심 논리가 근본적으로 무효
+- 예: 경쟁사 기술 우위 역전, 주력 시장 규제 급변, 경영진 사기 의혹
+- **Druckenmiller (The Hustle 2021)**: "I've never used stop loss... But I've also never hung onto a security if the reason I bought it has changed." ✅ (기계 스톱 아닌 thesis 기반 exit)
 
-### 다음 분기 (Tier 2)
-| 도구 | 내용 | 예상 알파 |
-|------|------|-----------|
-| 관세청 10일 수출 | HS 코드별 선행지표 (DRAM/NAND/시스템반도체). data.go.kr 무료 API | 3~7%/년 |
-| 거버넌스/밸류업 | 자사주 소각, 배당 변화, Value-Up 지수 편입 | 3~6%/년 |
+### 트리거 2. 리더십 상실 — 3거래일 쿨링 후 판단
+- **연속 2분기 어닝 미스 + 가이던스 하향**
+- 근거: Bernard & Thomas (1989 JAR) PEAD 하방 드리프트 60일+; 연속 SUE 확인 시 드리프트 강화
+- 조합 레이블은 실무 휴리스틱 (단일 학술 논문 아님) ⚠️
+
+### 트리거 3. 밸류 극단 + 유포리아 — 부분 정리
+- 업종 역사 PER 상단 근접
+- 3주 누적 +30% 이상 급등
+- 컨센서스 연속 상향 + 거래량 이상 폭증
+- 근거: De Bondt-Thaler (1985, 1987) overreaction + Jegadeesh-Titman (1993) momentum reversal. 조합은 실무 합성 ⚠️
+- **부분 정리**: 1/3 또는 1/2, 나머지는 thesis 유지 조건부
+
+### 트리거 4. 포지션 구조 위반
+- 단일 35% 초과 (시총 증가 포함) — 예외 기록 없으면 축소
+- Core 포지션이 3-Gate 탈락 → Standard로 다운그레이드 or 청산
+
+### Core 3거래일 쿨링 룰 (트리거 2·3에만 적용)
+- **근거**: Jegadeesh (1990 JoF) 단기 reversal — 유동성·sentiment 충격은 5일 내 평균회귀 ✅
+- **Odean (1998) 인용 금지** — 이 논문은 "손절 지연 편향"을 비판하는 연구이며 3일 쿨링을 지지하지 않음. 오히려 모멘텀·스윙은 신속 손절(O'Neil/Minervini) 원칙. ❌ 수정됨
+- Thesis-breaking 악재(트리거 1)는 쿨링 없이 즉시.
+
+### 모멘텀/스윙 손절 기준 ✅
+- **William O'Neil CAN SLIM: 매수가 -7~8% 하드 스톱** (*How to Make Money in Stocks*) ✅
+- **Mark Minervini: 평균 -6~7%, 최대 -10%** (*Trade Like a Stock Market Wizard* 2013) ✅
+- 기존 "-15~30%" 기준은 원저자 권장과 큰 괴리 → 삭제 ❌
+
+### Core 손절
+- 정량 기준 아닌 **thesis 훼손 + 분기 재검증 실패** 정성 판단
+- 원저자 이름(O'Neil/Minervini) 차용 불가 — 그들은 모멘텀 매매 전제
 
 ---
 
-## 데이터 파일 구조
-- `data/INVESTMENT_RULES.md` — 이 파일 (투자 규칙 전체)
-- `data/US_DEEPSEARCH_v3.md` — 미국 딥서치 프롬프트 템플릿 (복붙용)
-- `data/research/{TICKER}_{NAME}/{종류}_{YYYYMMDD}.md` — 종목별 딥리서치 (2단계 계층, 4/18~)
-  - 예: `data/research/005930_삼성전자/딥체크_20260418.md`, `data/research/NVDA/main.md`
-  - 대표 파일은 `main.md` (네임 없이 종목 ID 기본 파일)
-- `data/thesis/{TICKER}.md` — 종목별 thesis (flat 유지)
-- `data/stoploss.json` — 손절/목표가
-- `data/watchalert.json` — 매수감시 + 메모
-- `data/decision_log.json` — 투자판단 이력
-- `data/trade_log.json` — 매매기록
-- `data/portfolio.json` — 보유종목
-- `data/events.json` — 매크로/어닝 일정
-- `data/TODO.md` — 할일 목록
+## 4. 분기 재검증 5질문 (Core 포지션)
+
+1. **처음 매수 이유가 지금도 유효한가?** (Thesis check)
+2. **3-Gate (산업흐름·리더·근거) 여전히 통과하는가?**
+3. **펀더멘털 추이**: YoY 매출·영업이익·F-Score 유지 또는 개선?
+4. **리더십**: 업종 내 순위, 점유율, 기술 우위 유지?
+5. **리스크 지표**: Altman Z'' 악화? Beneish M 악화? Short Float 급증?
+
+5질문 중 2개 이상 실패 → Standard로 다운그레이드 검토.
+
+---
+
+## 5. 현금·USD 관리
+
+### 현금 범위 (사용자 결정)
+- 🟢 평상: 5-8%
+- 🟡 경계: 8-15%
+- 🔴 위기: 가능한 풀투자
+
+### USD 비중 ⚠️
+- 현금의 50-70% USD 지향 (개인 가이드, 공식 표준 아님)
+- 레퍼런스 앵커: 한국은행 외환보유액 USD 71.9% (2024 말), 국민연금 해외주식 37% — 맥락 다르므로 참고만
+
+### VIX 기반 분할 진입 ⚠️
+- **임계값은 관행적 참고선, 고정 룰 아님** — Whaley (2000 JPM) mean-reversion 원리 기반
+- VIX 30-40: 스트레스 영역, 분할 매수 시작 검토
+- VIX 40-50: 위기 영역, 분할 단계 심화
+- VIX >50: 극단 공포 (역사적으로 시장 저점 근접, 단 샘플 극소)
+- **삭제**: "75%/100%/66.7%" 구체 확률 (FXEmpire 단일 블로그, 샘플 2-4건) ❌
+- **삭제**: "현금 20% → 20년 31% 감소" (출처 확인 불가) ❌
+
+### 에스컬레이션 일수
+- 7/14/30일은 **내부 샘플 휴리스틱 (조정 가능)**, 학술 근거 없음 ❌
+- 원칙: "공포 지속 시 분할 심화", 정확 일수는 가변
+
+---
+
+## 6. 도구 매핑 (KIS MCP)
+
+| 단계 | 도구 | 용도 |
+|---|---|---|
+| Step 1 산업 흐름 | `get_sector flow`, `get_macro sector_etf` | 섹터 외인·기관 |
+| Step 2 리더 | `get_finance_rank`, `get_alpha_metrics` | F-Score, 재무비율 |
+| Step 3 실적 | `get_consensus`, `get_dart mode=report` | 컨센서스, 사업보고서 |
+| Step 4 밸류 | `get_stock_detail`, `get_finance_rank sort=15` | PER/PBR/PEG |
+| Step 5 수급 | `get_supply history`, `get_scan preset=foreign_streak` | 5일 연속 매수 |
+| Step 6 기술 | `get_stock_detail mode=volume_profile`, `get_highlow` | 이평·매물대 |
+| Step 7 리스크 | `get_alpha_metrics`, `get_us_ratings` | Z''/M/애널 |
+| Step 8 리포트 | `manage_report list`, `read_report_pdf` | 셀사이드 |
+| Step 9 LLM 편향 | 내부 체크 | 자기검증 |
+| Step 10 기록 | `set_alert log_type=trade/decision` | 매매·판단 |
+| 재검증 | `get_portfolio_history`, `get_trade_stats` | 성과 복기 |
+
+---
+
+## 7. 셀사이드 리포트 활용 규칙
+
+- **수치는 편향 포함 참고값**: 한국 매수 93.1%, 매도 0.1% (자본연 2025.7), 목표가 달성률 38% (Bradshaw 2013)
+- **내러티브·시나리오·리스크**는 유용 → 추출 후 Claude가 재해석
+- **목표가 그대로 쓰지 말 것**: 최소 ×0.7 보정 후 진입가 검토
+- **삭제된 인용**: "리포트 가치의 41%" — 실제 논문(Lv 2025 arXiv:2502.20489)의 수치는 **10.41%** (1σ 예측 증가 시 1년 수익률 +10.41%p). 41% 오기 ❌
+
+---
+
+## 8. 산업별 리더십 상실 신호
+
+- **산업마다 고유 신호 존재, 일반 규칙 없음**
+- 기존 "반도체 DRAM -15%" 류 예시는 Claude 창작 판명 → **완전 제거** ❌
+- 각 산업의 핵심 KPI(반도체 재고·ASP, SW ARR·NRR, 방산 백로그 등) 별도 연구 후 기록 필요
+- 현재 워치리스트 종목별 개별 문서화 과제 (TODO)
+
+---
+
+## 9. 연구 규율 자가 체크리스트
+
+매 지침 수정 시:
+1. 모든 수치에 (저자·연도·저널·URL) 태깅됐는가?
+2. 2차 인용은 그렇게 표시됐는가?
+3. 확인 불가 항목은 삭제 또는 정성화됐는가?
+4. "Odean ↔ Core 쿨링" 같은 오인용 없는가?
+5. 원저자 이름(O'Neil/Minervini) 차용 시 그들의 실제 기준과 일치하는가?
+
+**Anthropic 공식 권장 (platform.claude.com/docs/en/build-with-claude/prompt-engineering)**:
+- Positive instruction > negative
+- XML 태그로 구조화
+- Long context at top, query at end
+- Liu et al. (2023) arXiv:2307.03172 "Lost in the Middle" (TACL) — 중간 섹션 주의력 저하 실재
+
+---
+
+## 10. 참고 문헌 (검증된 핵심 인용)
+
+- **Odean (1998)** "Are Investors Reluctant to Realize Their Losses?" JoF 53(5):1775-1798
+- **Barber & Odean (2000)** "Trading Is Hazardous to Your Wealth" JoF 55(2):773-806
+- **Bernard & Thomas (1989)** "Post-Earnings-Announcement Drift" JAR 27 Supp:1-36
+- **Ivković, Sialm, Weisbenner (2008)** "Portfolio Concentration..." JFQA 43(3):613-655
+- **Akepanidtaworn et al. (2023)** "Selling Fast and Buying Slow" JoF 78(6):3055-3098
+- **Campbell & Sharpe (2007/2009)** "Anchoring Bias in Consensus Forecasts" JFQA 44(2)
+- **Piotroski (2000)** "Value Investing..." JAR 38 Supp:1-41 (F-Score ≥8)
+- **Kacperczyk, Sialm, Zheng (2005)** "On the Industry Concentration..." JoF 60(4)
+- **Tversky & Kahneman (1974)** Science 185:1124-1131
+- **Dawes (1979)** American Psychologist 34(7):571-582
+- **Haynes et al. (2009)** NEJM 360:491-499 (체크리스트 사망 47%↓, 합병증 36%↓)
+- **Altman (2000/2013)** NYU Stern Z''-Score
+- **Beneish (1999)** FAJ 55(5) M-Score
+- **Lynch (1989)** *One Up on Wall Street* (PEG)
+- **O'Neil** *How to Make Money in Stocks* (7-8% stop)
+- **Minervini (2013)** *Trade Like a Stock Market Wizard* (6-10% stop)
+- **Bradshaw, Brown & Huang (2013)** RAS 목표가 달성률 38%
+- **김준석 (2025.7)** 자본시장연구원 "애널리스트의 낙관적 편향"
+- **Schwab** "Does Market Timing Work?" (즉시투자 = 완벽타이머 92.4%)
+- **Jegadeesh (1990)** JoF 단기 reversal
+- **Liu et al. (2023)** arXiv:2307.03172 "Lost in the Middle" TACL
+- **Lou & Sun (2024)** arXiv:2412.06593 LLM anchoring
+- **CBEval (Shaikh et al. 2024)** arXiv:2412.03605 round number bias
+- **Zheng et al. (2023)** arXiv:2306.05685 LLM-as-Judge
+- **Druckenmiller** The Hustle 2021 interview (thesis-based exit)
+- **Anthropic Prompt Engineering Docs** platform.claude.com/docs/en/build-with-claude/prompt-engineering
+
+---
+
+## 11. 삭제·수정 변경 이력 (2026-04-23 전면 개정)
+
+| 항목 | 기존 | 변경 |
+|---|---|---|
+| 확신등급 A/B+/B/B-/C/D | 사용 | 폐기, 3-Gate + 비중 3단계로 교체 |
+| Stickel 1991 PEAD | 사용 | Bernard & Thomas 1989/1990으로 교체 |
+| Core 3일 쿨링 Odean 근거 | 사용 | Jegadeesh 1990 reversal로 교체 |
+| Hard Stop -15~30% | 사용 | 모멘텀 7-10%(O'Neil/Minervini), Core는 thesis 정성화 |
+| Short Float 5% | 사용 | 10/20/30% 업계 표준으로 교체 |
+| SBC/매출 15% | 사용 | Net Dilution 3% 주지표, SBC는 peer 상대 |
+| 현금 20% → 31% 감소 | 사용 | 삭제 |
+| 리포트 가치 41% | 사용 | 삭제 또는 10.41% (Lv 2025 정확치)로 수정 |
+| McKinsey 200bp | 사용 | 삭제 (컨텍스트 불명) |
+| Minervini 3일 쿨링 | 사용 | 삭제 (공식 근거 없음) |
+| 한국 매도 0.07% | 사용 | 0.1% (자본연 2025.7 정확치)로 수정 |
+| 반도체 DRAM -15% 예시 | 사용 | 완전 제거, 산업별 개별 연구 TODO |
+| VIX 75%/100%/66.7% 확률 | 사용 | 삭제, 정성 "극단 영역 = 분할 진입 참고선" |
+| 7/14/30일 에스컬레이션 | 사용 | 내부 휴리스틱 표기, 학술 근거 없음 명시 |
+| F-Score ≥7 | 사용 | F-Score ≥8 (Piotroski 2000 공식) |
+| PEG > 2 고평가 (Lynch) | 사용 | "실무 관행, Lynch 직접 명시 아님" 표기 |
+| PEG 게이트 컷 | 사용 | 삭제 (참고 지표로만 활용) |
+| 감시가 괴리 상한 규칙 | 사용 | 삭제 |
+| RR 역산 공식 | 사용 | 삭제 |
+| Process Loss 추적 | 사용 | 삭제 (등급 기반이라 폐기) |
+| 섹터 상한 50% | 사용 | 폐지 (집중 투자 원칙, 킬스위치 대체) |
+| 시간출구 일수 (B+=45일 등) | 사용 | 삭제 (등급 기반이라 폐기) |
+| "🟢 신규 자제" 조항 | 사용 | 삭제 (6주 매수 0건 원인) |
+| 현금 🟢 15-20% | 사용 | 🟢 5-8%로 공격적 조정 |
+| VCP (Virtual Cash Pool) | 사용 | 삭제 (등급 기반) |
