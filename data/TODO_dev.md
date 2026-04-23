@@ -1,4 +1,4 @@
-# 봇 개발 TODO — 2026-04-15
+# 봇 개발 TODO — 2026-04-23
 > 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
 
 ---
@@ -7,7 +7,6 @@
 - [ ] 전종목 수집 결과 — 18:30 자동 실행
 - [ ] 감시종목 US 현재가
 - [ ] DART 공시 알림
-- [ ] LS ELECTRIC 분할 반영 — 수량/평단 정상 확인
 
 ---
 
@@ -56,13 +55,18 @@
 ---
 
 ## ✅ 완료 (최근)
+- [x] **레짐 일수 카운터 버그 수정** — days_in_regime 호출마다 +1 → 히스토리 날짜 기반 계산으로 변경 (4/23)
+- [x] **US 레이팅 날짜 필터 근본 수정** — fetched_at→rating_date 필터, Hold→Hold 무변화 제외, 알림에 경과일수 표시 (4/23)
+- [x] **US 레이팅 알림 이벤트 분류** — downgrade/target_cut/downgrade+target_cut 3분류 (4/23)
+- [x] **문서 전체 업데이트** — CLAUDE.md(38개 도구), README.md(맥미니 전면 재작성), BOT_STATUS.md(최신 반영) (4/23)
+- [x] **INVESTMENT_RULES v5** — 4개 핵심 규칙, 킬질문, 보유관리, VCP, 현금 에스컬레이션, AI 지침 (4/23)
+- [x] **대시보드 이벤트 UI 수정** — D-day 정렬 고정 + 언더스코어→공백 (4/23)
+- [x] **실적/배당 일정 자동 수집 (캘린더)** — kis_api.py 14개 함수, main.py 07:00 스케줄, events.json v2 구조 (4/23)
 - [x] **프리셋 복구 (credit_unwind + foreign_accumulation)** — loan_balance_rate 컬럼 + foreign_hold_change_5d 계산 추가, ~7일 데이터 누적 대기 (4/16)
 - [x] **KR_DEEPSEARCH.md 신설 (10 Step + PDF 게이트)** — US 대칭, 킬 조건 + 체크박스로 Step 생략 방지 (4/16)
 - [x] **대시보드 thesis/ 폴더 노출** — 💡 투자 테제 섹션, 18개 딥서치 문서 (4/16)
 - [x] **HANDOVER.md 폐기** — PROGRESS.md로 인수인계 일원화 (4/16)
 - [x] **문서 stale 정리** — FILES/krx_db_design/bot_reference 업데이트, regime_update_notes 삭제, 네비 주석 추가 (4/16)
-- [x] **실적/배당 일정 자동 수집 (캘린더)** — kis_api.py 14개 함수, main.py 07:00 스케줄, events.json v2 구조 (4/15)
-- [x] **대시보드 이벤트 UI 수정** — D-day 정렬 고정 + 언더스코어→공백 (4/15)
 - [x] **MCP PDF 리포트 시각 분석** — 100DPI PNG, 836개 PDF 대응, 차트/도표 인식 확인
 - [x] **MCP Streamable HTTP 트랜스포트** — POST/DELETE/OPTIONS /mcp, 세션30분, CORS
 - [x] **Gist 백업 409 해결** — reports.json(1.5MB) 포함 Gist 손상 → 신규 Gist 생성
