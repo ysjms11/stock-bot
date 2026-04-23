@@ -29,7 +29,7 @@
   - K(금리·유가·환율·유동성) 주도? → PE 수축 구간, thesis intact 시 진입 기회
   - G(실적·가이던스 하향 연쇄) 주도? → 이 종목 실적 하향 리스크 사전 가중
   - 혼합 → 1차 트랜치만, 2차는 다음 CPI/어닝 후
-※ 🔴에도 매수 가능 (개인 구조적 우위). 단 G 쇼크면 A등급도 thesis 재검증 후 진입.
+※ 🔴에도 매수 가능 (개인 구조적 우위). 단 G 쇼크면 Core 후보도 thesis 재검증 후 진입.
 
 ━━ STEP 1. 트렌드 & 유동성 필터 (30초) ━━
 봇: get_stock_detail(ticker="[티커]") + get_highlow(ticker="[티커]")
@@ -119,23 +119,27 @@
   - 손절가: ____원 (-__%)
   - 목표가: ____원 (+__%)
   - RR = 목표 상승률 / 손절 하락률 = __:1
-  - 등급별 최소 RR: A=1:2, B+=1:2.5, B=1:3, C=매수금지
+  - 최소 RR 1:2 기준. 3-Gate 3개 통과 시 더 관대 (1:1.5), 2개 통과는 1:2 필수, 1개 이하 매수 금지 (INVESTMENT_RULES v6 Step 10)
 ■ 기회비용: 현 포트 내 최고 확신 종목 대비 더 매력적인가?
 
 ━━ STEP 8. 포트 시뮬 (1분) ━━
 봇: simulate_trade(ticker="[티커]", action="buy", qty=__, price=__)
-□ 단일 종목 비중 <35%
-□ 섹터 합계 비중 <50%
-□ 현금 최소선 유지 (레짐별)
-킬: 35% OR 50% 한도 초과 → 비중 축소 or 탈락
+□ 단일 종목 비중 <35% (INVESTMENT_RULES v6 매도 트리거 4)
+□ 현금 최소선 유지 (레짐별: 🟢 5-8% / 🟡 8-15% / 🔴 풀투자)
+킬: 35% 한도 초과 → 비중 축소 or 탈락
+※ 섹터 상한 50% 는 v6 에서 폐지 (집중 투자 원칙, 킬스위치로 대체)
 
 ━━ STEP 9. 결정 & 기록 (2분) ━━
-봇: set_alert(ticker="[티커]", buy_price=__, grade="__", memo="thesis 한 문장 + Kill Switch")
+봇: set_alert(ticker="[티커]", buy_price=__, memo="thesis 한 문장 + Kill Switch")
     + write_file("data/thesis/[티커]_[종목명].md", thesis 본문)
 
-■ 확신등급: A / B+ / B / B- / C (C는 매수 금지)
+■ **3-Gate 결과** (INVESTMENT_RULES v6 §1):
+  1) 산업 흐름 (Step 1): [통과/미달]
+  2) 리더십 포지션 (Step 2, F-Score ≥8): [통과/미달]
+  3) 실적 모멘텀 (Step 3): [통과/미달]
+  → 3개 통과: Core/Standard 후보 / 2개: Starter / 1개 이하: 매수 금지
 ■ 감시가 (RR 기준): ____원
-■ 손절가: ____원
+■ 손절가: ____원 (모멘텀/스윙은 -7~10% O'Neil/Minervini, Core는 thesis 정성)
 ■ 목표가 (2yr): ____원
 ■ Thesis 한 문장: ________________
 ■ Kill Switch (thesis 무효화 조건 2개):
@@ -148,20 +152,20 @@
 
 ---
 
-## ② 빠른 등급 판정 (10분, 복붙용)
+## ② 빠른 3-Gate 판정 (10분, 복붙용)
 
 ```
-[티커] [종목명] 한국 빠른 등급 판정. 현재가 약 [현재가]원.
+[티커] [종목명] 한국 빠른 3-Gate 판정. 현재가 약 [현재가]원.
 봇: get_stock_detail(ticker="[티커]") + get_consensus(ticker="[티커]") + get_alerts(brief=true)
 웹서치: "[종목명] 2026 실적 전망" + "[종목명] 목표주가"
 
 0. 레짐 + K/G 국면 분류 (Step 0 축약)
-1. Stage 2 & 거래대금 확인 (Step 1)
-2. Thesis 한 문장 작성 (Step 2)
-3. 부채비율·ICR·FCF 확인 (Step 3)
+1. 산업 흐름 (Gate 1, Step 1)
+2. 리더십 + F-Score ≥8 (Gate 2, Step 2)
+3. 실적 모멘텀 2분기 (Gate 3, Step 3)
 4. 수급 방향 (Step 5)
 5. 컨센 gap + RR (Step 6-7)
-→ 등급 / 감시가 / set_alert 기록
+→ 3-Gate 통과 수 (3/2/≤1) + 사이즈 (Core·Standard/Starter/매수금지) + 감시가 + set_alert 기록
 ```
 
 ---
@@ -187,7 +191,7 @@
 ## 🚨 풀 DD 트리거 (하나라도 해당 시)
 
 - 신규 매수 진입
-- A / B+ 확신등급 부여
+- 3-Gate 3개 통과 (Core/Standard 후보)
 - 처음 분석하는 섹터
 - 기보유 종목 thesis 붕괴 의심
 - `get_change_scan` 구조적 변화 시그널

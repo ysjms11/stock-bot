@@ -30,6 +30,7 @@
 | MCP URL | `https://bot.arcbot-server.org/mcp` (SSE) |
 | MCP messages | `https://bot.arcbot-server.org/mcp/messages?sessionId=<id>` (POST) |
 | Health check | `https://bot.arcbot-server.org/health` |
+| 웹 대시보드 | `https://bot.arcbot-server.org/dash` (Cloudflare Access Gmail PIN 인증 · TODO 토글/추가 + 투자판단 폼) |
 | Cloudflare Tunnel | `com.stock-bot.cloudflared` (launchd) |
 | 도메인 | `arcbot-server.org` |
 | 포트 | 환경변수 `PORT` (기본 8080) |
