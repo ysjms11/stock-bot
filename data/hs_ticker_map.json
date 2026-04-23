@@ -4,378 +4,686 @@
     "created": "2026-04-23",
     "description": "한국 종목 ↔ HS 코드 매핑. data.go.kr API 기반. confidence 3단계: 0.8+ 고신뢰(선행지표 유효), 0.4-0.7 중간(주의필요), 0.3 이하 저신뢰(수주공시 우선).",
     "lead_time_months": "수출 데이터가 주가에 반영되는 평균 시차 (개월)",
-    "usage": "get_export_trend(ticker) 에서 이 매핑 사용. confidence<0.35 이면 알림에 '수주 우선' 플래그 부착."
+    "usage": "get_export_trend(ticker) 에서 이 매핑 사용. confidence<0.35 이면 알림에 '수주 우선' 플래그 부착.",
+    "last_remap": "2026-04-23",
+    "note": "한국 종목 ↔ HS 코드 매핑. data.go.kr API 기반. confidence 3단계: 0.8+ 고신뢰(선행지표 유효), 0.4-0.7 중간(주의필요), 0.3 이하 저신뢰(수주공시 우선). 2026-04-23: 9종목 4단위 HS를 6/10단위로 세분화 (Itemtrade API는 4단위 요청 시 $0 반환)."
   },
-
   "005930": {
     "name": "삼성전자",
     "sector": "반도체",
     "hs_codes": [
-      {"code": "8542321010", "label": "DRAM", "weight": 0.45},
-      {"code": "8542323000", "label": "HBM/MCP", "weight": 0.15},
-      {"code": "8542329090", "label": "NAND/기타", "weight": 0.30},
-      {"code": "8529", "label": "모바일 카메라모듈", "weight": 0.10}
+      {
+        "code": "8542321010",
+        "label": "DRAM",
+        "weight": 0.45
+      },
+      {
+        "code": "8542323000",
+        "label": "HBM/MCP",
+        "weight": 0.15
+      },
+      {
+        "code": "8542329090",
+        "label": "NAND/기타",
+        "weight": 0.3
+      },
+      {
+        "code": "8529",
+        "label": "모바일 카메라모듈",
+        "weight": 0.1
+      }
     ],
     "confidence": 0.85,
     "lead_time_months": 1,
     "note": "지역: 화성/평택/기흥. SK하이닉스와 HS 겹침 → 시도별 API(sidotrade) 추가 시 완전분리. 4월 첫 20일 반도체 출하 YoY +180% 같은 급등 포착 강점."
   },
-
   "000660": {
     "name": "SK하이닉스",
     "sector": "반도체",
     "hs_codes": [
-      {"code": "8542321010", "label": "DRAM", "weight": 0.30},
-      {"code": "8542323000", "label": "HBM/MCP", "weight": 0.55, "dominant": true},
-      {"code": "8542329090", "label": "NAND", "weight": 0.15}
+      {
+        "code": "8542321010",
+        "label": "DRAM",
+        "weight": 0.3
+      },
+      {
+        "code": "8542323000",
+        "label": "HBM/MCP",
+        "weight": 0.55,
+        "dominant": true
+      },
+      {
+        "code": "8542329090",
+        "label": "NAND",
+        "weight": 0.15
+      }
     ],
-    "confidence": 0.90,
+    "confidence": 0.9,
     "lead_time_months": 1,
     "note": "지역: 이천/청주. HBM 선점 (엔비디아향) → MCP HS 수출이 주가 리딩. 2025.10 수출 $5.49B YoY +80.6% 사상최대 포착 사례. ASP 추적 필수($72,000/kg 수준)."
   },
-
   "003230": {
     "name": "삼양식품",
     "sector": "식품/라면",
     "hs_codes": [
-      {"code": "1902301010", "label": "라면", "weight": 1.00, "dominant": true}
+      {
+        "code": "1902301010",
+        "label": "라면",
+        "weight": 1.0,
+        "dominant": true
+      }
     ],
     "confidence": 0.98,
     "lead_time_months": 1,
     "note": "⭐ r=0.98 매우 높은 상관. 평균 추정오차 -10.7%. 중국/미국 국가별 분해 필수 (불닭볶음면 미국 붐). 2026.02 총 $140M YoY +15.7% 확인. 2025 3월 +45%, 4월 10일치 +91% 폭발."
   },
-
   "267260": {
     "name": "HD현대일렉트릭",
     "sector": "전력기기",
     "hs_codes": [
-      {"code": "850421", "label": "변압기 소용량(650kVA 이하)", "weight": 0.10},
-      {"code": "850422", "label": "변압기 중용량(650~10000kVA)", "weight": 0.30},
-      {"code": "850423", "label": "변압기 대용량(10000kVA 초과)", "weight": 0.40, "dominant": true},
-      {"code": "850433", "label": "건식 변압기", "weight": 0.20}
+      {
+        "code": "850421",
+        "label": "변압기 소용량(650kVA 이하)",
+        "weight": 0.1
+      },
+      {
+        "code": "850422",
+        "label": "변압기 중용량(650~10000kVA)",
+        "weight": 0.3
+      },
+      {
+        "code": "850423",
+        "label": "변압기 대용량(10000kVA 초과)",
+        "weight": 0.4,
+        "dominant": true
+      },
+      {
+        "code": "850433",
+        "label": "건식 변압기",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.80,
+    "confidence": 0.8,
     "lead_time_months": 2,
     "note": "북미 초고압 변압기 수출 집중. 대북미 변압기 2022 $3.84억→2024 $9.30억 (+142%). 효성중공업과 HS 겹침 → 시도별(울산) 분리 필요. 2024 3Q 매출 YoY +41.8% 영업익 +97.3%."
   },
-
   "298040": {
     "name": "효성중공업",
     "sector": "전력기기",
     "hs_codes": [
-      {"code": "850421", "label": "변압기 소용량", "weight": 0.10},
-      {"code": "850422", "label": "변압기 중용량", "weight": 0.30},
-      {"code": "850423", "label": "변압기 대용량(유입)", "weight": 0.40, "dominant": true},
-      {"code": "850433", "label": "건식 변압기", "weight": 0.20}
+      {
+        "code": "850421",
+        "label": "변압기 소용량",
+        "weight": 0.1
+      },
+      {
+        "code": "850422",
+        "label": "변압기 중용량",
+        "weight": 0.3
+      },
+      {
+        "code": "850423",
+        "label": "변압기 대용량(유입)",
+        "weight": 0.4,
+        "dominant": true
+      },
+      {
+        "code": "850433",
+        "label": "건식 변압기",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.80,
+    "confidence": 0.8,
     "lead_time_months": 2,
     "note": "HD현대일렉과 같은 HS. 시도별 API로 창원=효성 / 울산=HD현대일렉 분리 가능."
   },
-
   "010120": {
     "name": "LS ELECTRIC",
     "sector": "전력기기",
     "hs_codes": [
-      {"code": "8504", "label": "변압기/전력기기 전체 4단위", "weight": 0.60},
-      {"code": "8536", "label": "개폐기/보호기기", "weight": 0.40}
+      {
+        "code": "850423",
+        "label": "변압기 대용량(10000kVA 초과)",
+        "weight": 0.4,
+        "dominant": true
+      },
+      {
+        "code": "853720",
+        "label": "배전반(1000V 초과)",
+        "weight": 0.2
+      },
+      {
+        "code": "853620",
+        "label": "자동차단기",
+        "weight": 0.15
+      },
+      {
+        "code": "854420",
+        "label": "동축케이블",
+        "weight": 0.15
+      },
+      {
+        "code": "850422",
+        "label": "변압기 중용량(650~10000kVA)",
+        "weight": 0.1
+      }
     ],
-    "confidence": 0.65,
+    "confidence": 0.75,
     "lead_time_months": 2,
-    "note": "변압기 + 개폐기 포트폴리오 다양. 4단위 매크로 신호만 유효. 단독 효용 낮음."
+    "note": "변압기($111M) + 배전반($32M) + 차단기($16M) + 케이블($11M) 포트폴리오 다양. 2026.02 검증."
   },
-
   "241710": {
     "name": "코스메카코리아",
     "sector": "화장품 ODM",
     "hs_codes": [
-      {"code": "330499", "label": "기초/메이크업", "weight": 0.70, "dominant": true},
-      {"code": "330420", "label": "눈화장품", "weight": 0.15},
-      {"code": "330491", "label": "파우더/팩트", "weight": 0.15}
+      {
+        "code": "330499",
+        "label": "기초/메이크업",
+        "weight": 0.7,
+        "dominant": true
+      },
+      {
+        "code": "330420",
+        "label": "눈화장품",
+        "weight": 0.15
+      },
+      {
+        "code": "330491",
+        "label": "파우더/팩트",
+        "weight": 0.15
+      }
     ],
-    "confidence": 0.50,
+    "confidence": 0.5,
     "lead_time_months": 1,
     "note": "⚠️ ODM — 아모레/LG생건/실리콘투 브랜드와 혼재. 중국/미국/일본 국가별 분해 필수. 2025.09 총 $549M YoY +15.8%, 미국 +42% 중국 -28% 전환 트렌드."
   },
-
   "005380": {
     "name": "현대차",
     "sector": "자동차",
     "hs_codes": [
-      {"code": "870321", "label": "승용차 1500cc 이하", "weight": 0.15},
-      {"code": "870322", "label": "승용차 1500~3000cc", "weight": 0.30},
-      {"code": "870323", "label": "승용차 3000cc 초과", "weight": 0.10},
-      {"code": "870380", "label": "전기차", "weight": 0.30, "dominant": true},
-      {"code": "870333", "label": "디젤 대형", "weight": 0.15}
+      {
+        "code": "870321",
+        "label": "승용차 1500cc 이하",
+        "weight": 0.15
+      },
+      {
+        "code": "870322",
+        "label": "승용차 1500~3000cc",
+        "weight": 0.3
+      },
+      {
+        "code": "870323",
+        "label": "승용차 3000cc 초과",
+        "weight": 0.1
+      },
+      {
+        "code": "870380",
+        "label": "전기차",
+        "weight": 0.3,
+        "dominant": true
+      },
+      {
+        "code": "870333",
+        "label": "디젤 대형",
+        "weight": 0.15
+      }
     ],
     "confidence": 0.55,
     "lead_time_months": 1,
     "note": "⚠️ 해외생산 비중 크다 (북미/체코/인도). 국내 생산분만 통계 잡힘. 아이오닉/제네시스 EV 수출 포착 유효."
   },
-
   "006400": {
     "name": "삼성SDI",
     "sector": "2차전지",
     "hs_codes": [
-      {"code": "850760", "label": "리튬이온전지", "weight": 1.00}
+      {
+        "code": "850760",
+        "label": "리튬이온전지",
+        "weight": 1.0
+      }
     ],
-    "confidence": 0.40,
+    "confidence": 0.4,
     "lead_time_months": 3,
     "note": "⚠️ 해외법인(헝가리/말레이시아/중국) 생산분 제외 → 한국 통계 한정. 국내 생산분은 전체의 20~30% 수준. 해외법인 실적과 불일치 가능."
   },
-
   "066970": {
     "name": "엘앤에프",
     "sector": "2차전지 양극재",
     "hs_codes": [
-      {"code": "284190", "label": "양극재 NCM/NCA", "weight": 1.00}
+      {
+        "code": "284190",
+        "label": "양극재 NCM/NCA",
+        "weight": 1.0
+      }
     ],
     "confidence": 0.55,
     "lead_time_months": 3,
     "note": "2018년 HS 재편(2825→2841). 국내생산 집중이라 통계 신뢰도 상대적 높음. 에코프로비엠도 동일 HS."
   },
-
   "128940": {
     "name": "한미약품",
     "sector": "제약",
     "hs_codes": [
-      {"code": "3004", "label": "의약품 완제", "weight": 0.50},
-      {"code": "3002", "label": "혈청/백신/항체", "weight": 0.30},
-      {"code": "2941", "label": "항생제 원료", "weight": 0.20}
+      {
+        "code": "300439",
+        "label": "호르몬제(뇌하수체/롤론티스 계열)",
+        "weight": 0.45,
+        "dominant": true
+      },
+      {
+        "code": "300490",
+        "label": "항결핵제/항암제",
+        "weight": 0.3
+      },
+      {
+        "code": "300432",
+        "label": "코르티코스테로이드",
+        "weight": 0.25
+      }
     ],
     "confidence": 0.45,
     "lead_time_months": 2,
-    "note": "CMO 수출 + 자체 ETC. 국가별 분해로 미국/유럽 확장 추적 유용."
+    "note": "롤론티스 수출 + CMO. 국가별 분해로 미국/유럽 확장 추적 유용. 2026.02 주요 HS 합 $7M."
   },
-
   "237690": {
     "name": "에스티팜",
     "sector": "제약 CDMO",
     "hs_codes": [
-      {"code": "2934", "label": "올리고뉴클레오타이드 원료", "weight": 0.60, "dominant": true},
-      {"code": "3002", "label": "혈청/백신", "weight": 0.40}
+      {
+        "code": "293499",
+        "label": "기타 헤테로고리 화합물(올리고 CDMO)",
+        "weight": 1.0
+      }
     ],
-    "confidence": 0.55,
+    "confidence": 0.3,
     "lead_time_months": 2,
-    "note": "올리고 CDMO 원료 수출 = 글로벌 신약 임상 진도 선행지표. 노바티스 등 고객사 분석 필요."
+    "note": "⚠️ 2026.02 기준 수출 데이터 미미. CDMO 원료 수출 세분화 어려움. 분기 실적과 교차검증 필요."
   },
-
   "214450": {
     "name": "파마리서치",
-    "sector": "의료용품",
+    "sector": "메디코스메틱(리쥬란)",
     "hs_codes": [
-      {"code": "3004", "label": "의약품", "weight": 0.60},
-      {"code": "3005", "label": "의료용품", "weight": 0.30},
-      {"code": "3006", "label": "의료진단용품", "weight": 0.10}
+      {
+        "code": "330499",
+        "label": "기초화장품(리쥬란)",
+        "weight": 0.9,
+        "dominant": true
+      },
+      {
+        "code": "300490",
+        "label": "의약품",
+        "weight": 0.1
+      }
     ],
-    "confidence": 0.50,
+    "confidence": 0.8,
     "lead_time_months": 1,
-    "note": "리쥬란 수출 — 의료기기/제약 경계. 미용의료기기(9018) 대체재 성격."
+    "note": "⚡ 재분류 (의료용품→메디코스메틱). 리쥬란(330499) $384M 주력. 미용의료기기 수출 트렌드와 연동. 국가별 분해 유용."
   },
-
   "009150": {
     "name": "삼성전기",
     "sector": "전자부품",
     "hs_codes": [
-      {"code": "853400", "label": "인쇄회로 기판(FCBGA)", "weight": 0.30},
-      {"code": "853210", "label": "MLCC 콘덴서", "weight": 0.50, "dominant": true},
-      {"code": "852990", "label": "카메라모듈 부품", "weight": 0.20}
+      {
+        "code": "853400",
+        "label": "인쇄회로 기판(FCBGA)",
+        "weight": 0.3
+      },
+      {
+        "code": "853210",
+        "label": "MLCC 콘덴서",
+        "weight": 0.5,
+        "dominant": true
+      },
+      {
+        "code": "852990",
+        "label": "카메라모듈 부품",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.70,
+    "confidence": 0.7,
     "lead_time_months": 1,
     "note": "MLCC 세계 2위. 패키지 서브스트레이트(FCBGA)는 AI 서버 수혜. 수출 비중 70%+."
   },
-
   "007810": {
     "name": "코리아써키트",
     "sector": "전자부품 PCB",
     "hs_codes": [
-      {"code": "853400", "label": "인쇄회로 기판(HDI/고다층)", "weight": 1.00}
+      {
+        "code": "853400",
+        "label": "인쇄회로 기판(HDI/고다층)",
+        "weight": 1.0
+      }
     ],
-    "confidence": 0.60,
+    "confidence": 0.6,
     "lead_time_months": 1,
     "note": "고다층 PCB — 반도체 패키지용. 삼성전기와 HS 겹침."
   },
-
   "213420": {
     "name": "덕산네오룩스",
     "sector": "OLED 소재",
     "hs_codes": [
-      {"code": "293399", "label": "질소 헤테로고리 화합물", "weight": 0.70, "dominant": true},
-      {"code": "382200", "label": "시약/진단", "weight": 0.30}
+      {
+        "code": "293399",
+        "label": "질소 헤테로고리 화합물",
+        "weight": 0.7,
+        "dominant": true
+      },
+      {
+        "code": "382200",
+        "label": "시약/진단",
+        "weight": 0.3
+      }
     ],
-    "confidence": 0.40,
+    "confidence": 0.4,
     "lead_time_months": 2,
     "note": "OLED HTL 소재. HS가 세부 식별 약함 (일반 화학물질 카테고리). Apple iPhone OLED 채택분 포착 난이도 있음."
   },
-
   "101490": {
     "name": "에스앤에스텍",
     "sector": "반도체 블랭크마스크",
     "hs_codes": [
-      {"code": "900110", "label": "광학 가공부품", "weight": 0.70},
-      {"code": "848690", "label": "반도체 장비부품", "weight": 0.30}
+      {
+        "code": "900110",
+        "label": "광학 가공부품",
+        "weight": 0.7
+      },
+      {
+        "code": "848690",
+        "label": "반도체 장비부품",
+        "weight": 0.3
+      }
     ],
     "confidence": 0.35,
     "lead_time_months": 2,
     "note": "⚠️ EUV/ArF 블랭크마스크 — HS 식별 약함. 매출 규모 작아 통계 노이즈 큼."
   },
-
   "083450": {
     "name": "GST",
     "sector": "반도체장비",
     "hs_codes": [
-      {"code": "848610", "label": "반도체장비 wafer", "weight": 0.40},
-      {"code": "848620", "label": "반도체장비 IC", "weight": 0.40},
-      {"code": "848690", "label": "반도체장비 부품", "weight": 0.20}
+      {
+        "code": "848610",
+        "label": "반도체장비 wafer",
+        "weight": 0.4
+      },
+      {
+        "code": "848620",
+        "label": "반도체장비 IC",
+        "weight": 0.4
+      },
+      {
+        "code": "848690",
+        "label": "반도체장비 부품",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.50,
+    "confidence": 0.5,
     "lead_time_months": 3,
     "note": "스크러버/칠러 — 반도체 CAPEX 사이클 follow. SK하이닉스/삼성 발주 타이밍과 연동."
   },
-
   "114810": {
     "name": "한솔아이원스",
     "sector": "반도체장비 부품",
     "hs_codes": [
-      {"code": "848690", "label": "반도체장비 부품", "weight": 1.00}
+      {
+        "code": "848690",
+        "label": "반도체장비 부품",
+        "weight": 1.0
+      }
     ],
-    "confidence": 0.50,
+    "confidence": 0.5,
     "lead_time_months": 3,
     "note": "정비/부품 — 공정소모품. CAPEX보다 생산량(OPEX) 연동."
   },
-
   "073490": {
     "name": "이노와이어리스",
     "sector": "5G/통신 장비",
     "hs_codes": [
-      {"code": "851762", "label": "디지털 통신장비", "weight": 0.60, "dominant": true},
-      {"code": "851769", "label": "기타 통신장비", "weight": 0.40}
+      {
+        "code": "851762",
+        "label": "디지털 통신장비",
+        "weight": 0.6,
+        "dominant": true
+      },
+      {
+        "code": "851769",
+        "label": "기타 통신장비",
+        "weight": 0.4
+      }
     ],
     "confidence": 0.45,
     "lead_time_months": 3,
     "note": "스몰셀/테스트장비 — 해외 통신사향. 수주 lumpy 특성."
   },
-
   "189300": {
     "name": "인텔리안테크",
     "sector": "위성통신",
     "hs_codes": [
-      {"code": "852691", "label": "레이더/위성 안테나", "weight": 0.60, "dominant": true},
-      {"code": "852560", "label": "송신기", "weight": 0.40}
+      {
+        "code": "852691",
+        "label": "레이더/위성 안테나",
+        "weight": 0.6,
+        "dominant": true
+      },
+      {
+        "code": "852560",
+        "label": "송신기",
+        "weight": 0.4
+      }
     ],
     "confidence": 0.55,
     "lead_time_months": 2,
     "note": "스타링크/LEO 안테나. 해외 매출 비중 90%+. 월간 수주 lumpy."
   },
-
   "064350": {
     "name": "현대로템",
     "sector": "철도/방산",
     "hs_codes": [
-      {"code": "860692", "label": "철도차량 객차/화차", "weight": 0.40},
-      {"code": "860791", "label": "철도차량 부품", "weight": 0.20},
-      {"code": "930621", "label": "전차 포탄(K2)", "weight": 0.40}
+      {
+        "code": "930621",
+        "label": "K2 전차 포탄",
+        "weight": 0.6,
+        "dominant": true
+      },
+      {
+        "code": "860799",
+        "label": "철도차량 부품 기타",
+        "weight": 0.4
+      }
     ],
-    "confidence": 0.30,
+    "confidence": 0.3,
     "lead_time_months": 12,
-    "note": "⚠️ 수주 우선 업종. 수출 시점 = 납품 시기라 2~3년 후행. K2 전차 폴란드 수주 중심."
+    "note": "⚠️ 수주 우선. K2 폴란드 수주 중심. 수출 시점은 납품 시기라 2~3년 후행. 860799 철도부품 $7.5M."
   },
-
   "010820": {
     "name": "퍼스텍",
     "sector": "방산 부품",
     "hs_codes": [
-      {"code": "930629", "label": "탄약/포탄", "weight": 0.60, "dominant": true},
-      {"code": "930320", "label": "소총/화기", "weight": 0.40}
+      {
+        "code": "930629",
+        "label": "탄약/포탄",
+        "weight": 0.6,
+        "dominant": true
+      },
+      {
+        "code": "930320",
+        "label": "소총/화기",
+        "weight": 0.4
+      }
     ],
     "confidence": 0.25,
     "lead_time_months": 12,
     "note": "⚠️ 수주공시 우선. 수출 데이터 후행 (납품 시점 확인용)."
   },
-
   "079550": {
     "name": "LIG넥스원",
     "sector": "방산 미사일",
     "hs_codes": [
-      {"code": "930630", "label": "미사일/유도탄", "weight": 0.70, "dominant": true},
-      {"code": "930690", "label": "방산 기타", "weight": 0.30}
+      {
+        "code": "930630",
+        "label": "미사일/유도탄",
+        "weight": 0.7,
+        "dominant": true
+      },
+      {
+        "code": "930690",
+        "label": "방산 기타",
+        "weight": 0.3
+      }
     ],
     "confidence": 0.25,
     "lead_time_months": 12,
     "note": "⚠️ 천궁-II 수주 $12조+ 가 선행. 수출 데이터 = 납품 확인용. 주가 영향 약함."
   },
-
   "272210": {
     "name": "한화시스템",
     "sector": "방산 IT/레이더",
     "hs_codes": [
-      {"code": "852691", "label": "레이더", "weight": 0.40},
-      {"code": "930690", "label": "방산 IT", "weight": 0.40},
-      {"code": "851762", "label": "통신지휘 장비", "weight": 0.20}
+      {
+        "code": "852691",
+        "label": "레이더",
+        "weight": 0.4
+      },
+      {
+        "code": "930690",
+        "label": "방산 IT",
+        "weight": 0.4
+      },
+      {
+        "code": "851762",
+        "label": "통신지휘 장비",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.30,
+    "confidence": 0.3,
     "lead_time_months": 12,
     "note": "⚠️ 수주 우선. 레이더/통신지휘 수출. 위성 SAR 분야 포텐셜."
   },
-
   "012450": {
     "name": "한화에어로스페이스",
     "sector": "항공우주/방산",
     "hs_codes": [
-      {"code": "841122", "label": "항공기 터보프롭 엔진", "weight": 0.15},
-      {"code": "841191", "label": "엔진 부품", "weight": 0.15},
-      {"code": "930620", "label": "K9 자주포 포탄", "weight": 0.40, "dominant": true},
-      {"code": "870860", "label": "K9 부품/지주", "weight": 0.30}
+      {
+        "code": "930690",
+        "label": "방산 기타(K9 포함)",
+        "weight": 0.35,
+        "dominant": true
+      },
+      {
+        "code": "841191",
+        "label": "항공기 엔진 부품",
+        "weight": 0.25
+      },
+      {
+        "code": "930110",
+        "label": "자주포(K9)",
+        "weight": 0.2
+      },
+      {
+        "code": "930630",
+        "label": "기타 탄약",
+        "weight": 0.1
+      },
+      {
+        "code": "930629",
+        "label": "소화기탄",
+        "weight": 0.1
+      }
     ],
-    "confidence": 0.30,
+    "confidence": 0.4,
     "lead_time_months": 18,
-    "note": "⚠️ K9 누적 수주 $13조+. 폴란드 K9 2차 계약 등. 수출=납품 시점이라 주가 영향 제한적."
+    "note": "K9 수출 확인 ($65M~$105M). 6단위 세분화로 실제 수출 포착 가능. 다만 수주(폴란드 2차 등) 선행이 여전히 더 강함."
   },
-
   "009540": {
     "name": "HD한국조선해양",
     "sector": "조선",
     "hs_codes": [
-      {"code": "8901", "label": "선박 4단위", "weight": 1.00}
+      {
+        "code": "890120",
+        "label": "탱커(LNG/원유)",
+        "weight": 0.65,
+        "dominant": true
+      },
+      {
+        "code": "890190",
+        "label": "화물선(컨테이너/벌크)",
+        "weight": 0.35
+      }
     ],
-    "confidence": 0.20,
+    "confidence": 0.25,
     "lead_time_months": 24,
-    "note": "⚠️⚠️ 수주가 절대선행. 수출=2~3년 전 수주의 납품 시점. 주가 영향 매우 낮음. 수주공시/잔고 트래킹 우선."
+    "note": "⚠️⚠️ 수주가 절대선행. 6단위 세분화로 $1.5B+ 확인되나 수출=2~3년 전 수주 납품. 주가 영향 매우 낮음. 수주공시/잔고 트래킹 우선."
   },
-
   "034020": {
     "name": "두산에너빌리티",
     "sector": "원전/기자재",
     "hs_codes": [
-      {"code": "8401", "label": "원자로/기자재", "weight": 0.50},
-      {"code": "8402", "label": "증기보일러", "weight": 0.30},
-      {"code": "8406", "label": "증기터빈", "weight": 0.20}
+      {
+        "code": "840290",
+        "label": "증기발생보일러",
+        "weight": 0.5,
+        "dominant": true
+      },
+      {
+        "code": "840690",
+        "label": "증기터빈",
+        "weight": 0.3
+      },
+      {
+        "code": "840110",
+        "label": "원자로",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.30,
+    "confidence": 0.3,
     "lead_time_months": 18,
-    "note": "⚠️ 원전 수주 중심. UAE/체코 신규 수주 = 주가 리딩. 기자재 수출은 후행."
+    "note": "⚠️ 원전 수주 중심. 수출 $11M 수준 미미. UAE/체코 신규 수주 = 주가 리딩. 기자재 수출은 후행."
   },
-
   "094820": {
     "name": "일진파워",
     "sector": "원전 정비",
     "hs_codes": [
-      {"code": "8401", "label": "원자로 부품", "weight": 0.80, "dominant": true},
-      {"code": "8414", "label": "펌프", "weight": 0.20}
+      {
+        "code": "841490",
+        "label": "펌프/팬 부품",
+        "weight": 0.5,
+        "dominant": true
+      },
+      {
+        "code": "848490",
+        "label": "기계 부품",
+        "weight": 0.3
+      },
+      {
+        "code": "840140",
+        "label": "원자로 부품",
+        "weight": 0.2
+      }
     ],
-    "confidence": 0.30,
+    "confidence": 0.3,
     "lead_time_months": 12,
-    "note": "⚠️ 원전 정비/부품 — 주로 국내 한수원 매출. 수출 비중 낮음."
+    "note": "⚠️ 원전 정비/부품 — 주로 국내 한수원 매출. 수출 비중 낮음 ($2M 수준)."
   },
-
   "267270": {
     "name": "HD건설기계",
     "sector": "건설기계",
     "hs_codes": [
-      {"code": "842952", "label": "굴착기(무한궤도)", "weight": 0.50, "dominant": true},
-      {"code": "842951", "label": "굴착기(휠)", "weight": 0.30},
-      {"code": "842959", "label": "기타 굴착/적재", "weight": 0.20}
+      {
+        "code": "842952",
+        "label": "굴착기(무한궤도)",
+        "weight": 0.5,
+        "dominant": true
+      },
+      {
+        "code": "842951",
+        "label": "굴착기(휠)",
+        "weight": 0.3
+      },
+      {
+        "code": "842959",
+        "label": "기타 굴착/적재",
+        "weight": 0.2
+      }
     ],
     "confidence": 0.65,
     "lead_time_months": 1,
