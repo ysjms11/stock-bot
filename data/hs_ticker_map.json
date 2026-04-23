@@ -1,11 +1,11 @@
 {
   "_meta": {
-    "version": "3.0",
+    "version": "3.1",
     "created": "2026-04-23",
     "description": "한국 종목 ↔ HS 코드 매핑. data.go.kr API 기반. confidence 3단계: 0.8+ 고신뢰(선행지표 유효), 0.4-0.7 중간(주의필요), 0.3 이하 저신뢰(수주공시 우선).",
     "lead_time_months": "수출 데이터가 주가에 반영되는 평균 시차 (개월)",
     "usage": "get_export_trend(ticker) 에서 이 매핑 사용. confidence<0.35 이면 알림에 '수주 우선' 플래그 부착.",
-    "last_remap": "2026-04-23 v3 (Phase 2 400종목 실증 확장)",
+    "last_remap": "2026-04-23 v3.1 (역상관 심화 + 5종목 inverse alpha 추가)",
     "note": "한국 종목 ↔ HS 코드 매핑. data.go.kr API 기반. confidence 3단계: 0.8+ 고신뢰(선행지표 유효), 0.4-0.7 중간(주의필요), 0.3 이하 저신뢰(수주공시 우선). 2026-04-23: 9종목 4단위 HS를 6/10단위로 세분화 (Itemtrade API는 4단위 요청 시 $0 반환).",
     "evidence_source": "Agent 1 실증 분석 (2026-04-23): 18 종목 x 업종 조합 24~30개월 피어슨 상관 + lag 검정. 스크립트 /tmp/verify_export_leading.py",
     "key_findings": [
@@ -17,8 +17,9 @@
       "양극재(에코프로비엠) r=+0.72 lag=6 — 유효",
       "자동차 r=+0.87 lag=6 but n=10 표본 편향"
     ],
-    "total_tickers": 108,
-    "total_hs_refs": 156
+    "total_tickers": 113,
+    "total_hs_refs": 156,
+    "inverse_alpha_count": 5
   },
   "005930": {
     "name": "삼성전자",
@@ -1871,26 +1872,118 @@
     "lead_time_months": 3,
     "note": "Phase 2 실증 (2026-04-23): r=+0.75 lag=3개월 p=0.000 n=23. 단일 HS 기본 — 세분화는 향후 업데이트."
   },
+  "051910": {
+    "name": "LG화학",
+    "sector": "화학",
+    "hs_codes": [
+      {
+        "code": "390110",
+        "label": "폴리에틸렌(LLDPE)",
+        "weight": 1.0,
+        "dominant": true,
+        "inverse": true
+      }
+    ],
+    "confidence": 0.6,
+    "lead_time_months": 6,
+    "inverse_alpha": true,
+    "note": "⚠️ 역상관 알파 (Phase 2 실증, lag 6m, r=-0.72). PE 수출 ↑ = 공급과잉 = 스프레드 악화 → 주가 ↓. YoY +20% 급증 시 **매도 시그널**. 알림 해석 정반대."
+  },
+  "051915": {
+    "name": "LG화학우",
+    "sector": "화학",
+    "hs_codes": [
+      {
+        "code": "390110",
+        "label": "폴리에틸렌(LLDPE)",
+        "weight": 1.0,
+        "dominant": true,
+        "inverse": true
+      }
+    ],
+    "confidence": 0.6,
+    "lead_time_months": 6,
+    "inverse_alpha": true,
+    "note": "⚠️ 역상관 알파 (Phase 2 실증, lag 6m, r=-0.7). PE 수출 ↑ = 공급과잉 = 스프레드 악화 → 주가 ↓. YoY +20% 급증 시 **매도 시그널**. 알림 해석 정반대."
+  },
+  "011170": {
+    "name": "롯데케미칼",
+    "sector": "화학",
+    "hs_codes": [
+      {
+        "code": "390110",
+        "label": "폴리에틸렌(LLDPE)",
+        "weight": 1.0,
+        "dominant": true,
+        "inverse": true
+      }
+    ],
+    "confidence": 0.6,
+    "lead_time_months": 6,
+    "inverse_alpha": true,
+    "note": "⚠️ 역상관 알파 (Phase 2 실증, lag 6m, r=-0.65). PE 수출 ↑ = 공급과잉 = 스프레드 악화 → 주가 ↓. YoY +20% 급증 시 **매도 시그널**. 알림 해석 정반대."
+  },
+  "006650": {
+    "name": "대한유화",
+    "sector": "화학",
+    "hs_codes": [
+      {
+        "code": "390110",
+        "label": "폴리에틸렌(LLDPE)",
+        "weight": 1.0,
+        "dominant": true,
+        "inverse": true
+      }
+    ],
+    "confidence": 0.6,
+    "lead_time_months": 6,
+    "inverse_alpha": true,
+    "note": "⚠️ 역상관 알파 (Phase 2 실증, lag 6m, r=-0.63). PE 수출 ↑ = 공급과잉 = 스프레드 악화 → 주가 ↓. YoY +20% 급증 시 **매도 시그널**. 알림 해석 정반대."
+  },
+  "011780": {
+    "name": "금호석유화학",
+    "sector": "화학",
+    "hs_codes": [
+      {
+        "code": "390110",
+        "label": "폴리에틸렌(LLDPE)",
+        "weight": 1.0,
+        "dominant": true,
+        "inverse": true
+      }
+    ],
+    "confidence": 0.6,
+    "lead_time_months": 6,
+    "inverse_alpha": true,
+    "note": "⚠️ 역상관 알파 (Phase 2 실증, lag 6m, r=-0.61). PE 수출 ↑ = 공급과잉 = 스프레드 악화 → 주가 ↓. YoY +20% 급증 시 **매도 시그널**. 알림 해석 정반대."
+  },
   "_inverse_correlation": {
-    "note": "Phase 2 실증에서 r ≤ -0.5 역상관 발견된 62종목. B 에이전트 심화 분석 대기 중. A=스프레드 프록시 / B=HS 매핑 오류 / C=표본 편향 / D=판단 불가 로 분류 후 매핑 추가 또는 제외 결정.",
-    "analysis_pending": true,
-    "count": 62,
-    "samples": [
-      "278470 에이피알 HS 330410 r=-0.83 lag=0",
-      "002790 아모레퍼시픽홀딩스 HS 330410 r=-0.77 lag=0",
-      "336260 두산퓨얼셀 HS 850421 r=-0.75 lag=6",
-      "218410 RFHIC HS 852691 r=-0.73 lag=0",
-      "272210 한화시스템 HS 852691 r=-0.72 lag=0",
-      "298040 효성중공업 HS 850421 r=-0.72 lag=6",
-      "437730 삼현 HS 870892 r=-0.71 lag=1",
-      "006650 대한유화 HS 390110 r=-0.69 lag=6",
-      "178320 서진시스템 HS 850440 r=-0.69 lag=0",
-      "000880 한화 HS 390110 r=-0.69 lag=0",
-      "357780 솔브레인 HS 854121 r=-0.69 lag=6",
-      "005070 코스모신소재 HS 854121 r=-0.69 lag=6",
-      "051910 LG화학 HS 390110 r=-0.68 lag=6",
-      "011780 금호석유화학 HS 390110 r=-0.68 lag=6",
-      "058610 에스피지 HS 850421 r=-0.67 lag=6"
-    ]
+    "analyzed": "2026-04-23 B 에이전트",
+    "analysis_file": "/tmp/inverse_correlation_analysis.md",
+    "total_62": {
+      "A_alpha_usable": 8,
+      "A_or_C_reverify": 3,
+      "B_hs_mapping_error": 31,
+      "C_structural_noise": 14,
+      "D_undecidable": 6
+    },
+    "key_findings": [
+      "역상관 50%가 HS 매핑 오류 (Phase 2 자동 섹터→HS 매핑 로직 결함)",
+      "HS 390110 폴리에틸렌 공급과잉 가설 부분 확인 (5종목만 실제 PE 생산자)",
+      "지주회사 5종목 전부 부호 반전 (아모레홀딩스 -0.77 vs 아모레퍼시픽 +0.61)",
+      "lag=6m 역상관 38종목 = 2023~2024 단일 구간 아티팩트 가능성",
+      "서비스/내수 산업 (스튜디오드래곤/한미약품/LIG넥스원) = 구조적 HS 미스매치"
+    ],
+    "excluded_holdings_and_services": [
+      "002790 아모레퍼시픽홀딩스 (지주사)",
+      "000880 한화 (지주사)",
+      "00088K 한화3우B (지주사)",
+      "000210 DL (지주사)",
+      "267250 HD현대 (지주사)",
+      "253450 스튜디오드래곤 (서비스 수출)",
+      "066575 LG전자우 (지주사 성격)",
+      "087010 펩트론 (임상 단계, 수출 미미)"
+    ],
+    "next_action": "재매핑 후보 28종목은 DART 사업보고서 파싱으로 정확한 HS 결정 필요 — Phase 3 작업"
   }
 }
