@@ -23,7 +23,7 @@
 - [x] **MCP Streamable HTTP** — Claude.ai 연결 안정화, SSE 병행
 - [x] **Gist 백업 409 수정** — 손상 Gist 교체, 신규 생성
 - [x] **KRX OPEN API** — 승인됨. KIS API + SQLite로 대체되어 전환 불필요. GitHub Actions KRX 크롤링은 보조 데이터로 유지.
-- [ ] **대시보드 인증** — Cloudflare Access + TODO 수정 + 투자판단 메모 기능
+- [x] **대시보드 인증 + 편집 기능** — Cloudflare Access Gmail PIN + TODO 체크박스/추가 + 투자판단 입력 폼 (4/23, 2d0ae78)
 - [x] **워치리스트 단일화 (3파일 → 1파일)** — 2026-04-16 완료. watchalert.json 단일 소스, load_watchlist/us_watchlist는 wrapper. /watch/unwatch/addus/remus 통합, market 필드, buy_price>0 삭제 보호, WebSocket 40건 캡. 레거시 2파일 .bak 리네임.
 
 ---
