@@ -4460,12 +4460,35 @@ _TODO_FILE_MAP = {
 }
 
 
+_SAFE_URL_SCHEMES = ("http://", "https://", "/", "#", "mailto:")
+
+
+def _sanitize_url(url: str) -> str:
+    """href URL 화이트리스트 — javascript:/data: 등 XSS 벡터 차단 + 속성 탈출 방지.
+
+    허용: http://, https://, 절대경로(/), 앵커(#), mailto:
+    그 외 (javascript:, data:, vbscript: 등) → "#" 으로 치환.
+    쌍따옴표 이스케이프로 href="" 속성 탈출 방어.
+    """
+    u = url.strip()
+    u_lower = u.lower()
+    if not any(u_lower.startswith(s) for s in _SAFE_URL_SCHEMES):
+        return "#"
+    # href 속성값 탈출 방지
+    return u.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _inline(text: str) -> str:
     """인라인 마크다운 (bold, code, link)."""
     text = text.replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    # 링크: URL 은 _sanitize_url 로 스킴 화이트리스트 + 속성 이스케이프
+    text = re.sub(
+        r'\[([^\]]+)\]\(([^)]+)\)',
+        lambda m: f'<a href="{_sanitize_url(m.group(2))}">{m.group(1)}</a>',
+        text,
+    )
     return text
 
 
@@ -5089,7 +5112,13 @@ document.addEventListener('change', async (e) => {
     if (!r.ok) {
       cb.checked = !cb.checked;  // rollback
       const d = await r.json().catch(() => ({}));
-      alert('토글 실패: ' + (d.error || r.status));
+      if (r.status === 409) {
+        if (confirm('다른 세션이 이 파일을 편집했습니다.\n페이지를 새로고침하고 다시 시도할까요?')) {
+          location.reload();
+        }
+      } else {
+        alert('토글 실패: ' + (d.error || r.status));
+      }
       return;
     }
     const d = await r.json();
@@ -6069,8 +6098,18 @@ async def _handle_dash_todo_toggle(request: web.Request) -> web.Response:
     if cur_hash != req_hash:
         return web.json_response({"error": "hash mismatch (file changed)"}, status=409)
 
+    # 코드블록 내부 라인은 편집 거부 (critic #2)
+    # lines[0..idx-1] 에서 ``` 개수가 홀수면 idx 는 코드블록 내부
+    fence_count = 0
+    for prev_line in lines[:idx]:
+        if prev_line.strip().startswith("```"):
+            fence_count += 1
+    if fence_count % 2 == 1:
+        return web.json_response(
+            {"error": "line is inside code block, edit refused"}, status=400
+        )
+
     # 체크박스 패턴 확인
-    stripped = orig_line.strip()
     if checked:
         # [ ] → [x]
         if "[ ]" not in orig_line:
