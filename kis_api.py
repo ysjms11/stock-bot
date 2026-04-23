@@ -4947,49 +4947,158 @@ def _save_consensus_snapshot(data: dict) -> None:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# S&P 500 티커 리스트 (주간 유니버스 스캔용)
+# 미국 인덱스 유니버스 (S&P 500 / Russell 1000) — 주간 스캔용
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 US_SP500_FILE = f"{_DATA_DIR}/us_sp500.json"
-_SP500_MAX_AGE_DAYS = 30  # 한 달 이상 오래되면 자동 갱신
+US_RUSSELL1000_FILE = f"{_DATA_DIR}/us_russell1000.json"
+_US_INDEX_MAX_AGE_DAYS = 30  # 한 달 이상 오래되면 자동 갱신
+_SP500_MAX_AGE_DAYS = _US_INDEX_MAX_AGE_DAYS  # 하위 호환 별칭
+
+
+def _fetch_index_tickers_from_wikipedia(
+    url: str,
+    *,
+    ticker_col_idx: int,
+    min_size: int,
+    table_id: str | None,
+    log_prefix: str,
+) -> list[str] | None:
+    """Wikipedia 인덱스 페이지 파싱 공통 헬퍼 (S&P 500 / Russell 1000 공용).
+
+    Args:
+        url: Wikipedia 페이지 URL.
+        ticker_col_idx: 티커가 있는 td 컬럼 인덱스 (S&P 500 = 0, Russell 1000 = 1).
+        min_size: 파싱 결과 최소 기대 종목 수. 미만이면 비정상으로 간주.
+        table_id: `<table id="...">` 지정 시 우선 탐색. None 이면 첫 wikitable 사용.
+        log_prefix: 로그 태그 (예: "sp500", "russell1000").
+
+    Returns:
+        티커 리스트 (대문자, BRK.B / BF.B 처럼 점(.) 포함 티커는 그대로 유지).
+        파싱 실패 시 None.
+    """
+    import requests as _req
+    from bs4 import BeautifulSoup
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    try:
+        resp = _req.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            print(f"[{log_prefix}] wikipedia HTTP {resp.status_code}")
+            return None
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = None
+        if table_id:
+            table = soup.find("table", {"id": table_id})
+            if table is None:
+                # 원래 S&P 500 로직 보존 — id 없으면 첫 wikitable
+                table = soup.find("table", {"class": "wikitable"})
+        else:
+            # Russell 1000 처럼 id 없는 페이지는 구성종목 테이블이 첫 wikitable 이 아닐 수 있음
+            # (보통 2번째). 티커 컬럼이 유효한 가장 큰 wikitable 자동 선택.
+            wikitables = soup.find_all("table", {"class": "wikitable"})
+            for candidate in wikitables:
+                rows = candidate.find_all("tr")
+                if len(rows) < max(min_size // 2, 50):
+                    continue  # 너무 작은 표는 스킵
+                first_data = rows[1] if len(rows) > 1 else None
+                if first_data is None:
+                    continue
+                tds = first_data.find_all("td")
+                if len(tds) > ticker_col_idx:
+                    table = candidate
+                    break
+        if table is None:
+            print(f"[{log_prefix}] wikipedia 구성종목 테이블을 찾을 수 없음")
+            return None
+        tickers: list[str] = []
+        tbody = table.find("tbody") or table
+        for tr in tbody.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) <= ticker_col_idx:
+                continue
+            t = tds[ticker_col_idx].get_text(strip=True)
+            if t and len(t) <= 10:
+                tickers.append(t.upper())
+        if len(tickers) < min_size:
+            print(f"[{log_prefix}] 파싱 결과 비정상 ({len(tickers)}개, 최소 {min_size})")
+            return None
+        return tickers
+    except Exception as e:
+        print(f"[{log_prefix}] wikipedia fetch 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def _load_index_tickers(
+    cache_file: str,
+    *,
+    fetcher,
+    log_prefix: str,
+    force_refresh: bool,
+    max_age_days: int = _US_INDEX_MAX_AGE_DAYS,
+) -> list[str]:
+    """인덱스 티커 로더 공통 헬퍼 (캐시 + TTL + fallback 공용 로직).
+
+    Args:
+        cache_file: 로컬 JSON 캐시 경로.
+        fetcher: 인자 없이 호출 시 티커 리스트(list[str]) 또는 None 반환하는 callable.
+        log_prefix: 로그 태그.
+        force_refresh: True 면 캐시 유효해도 강제 네트워크 재수집.
+        max_age_days: 캐시 TTL (기본 30일).
+    """
+    try:
+        need_refresh = force_refresh
+        if not need_refresh:
+            if not os.path.exists(cache_file):
+                need_refresh = True
+            else:
+                age_days = (datetime.now().timestamp() - os.path.getmtime(cache_file)) / 86400
+                if age_days > max_age_days:
+                    need_refresh = True
+        if need_refresh:
+            tickers = fetcher()
+            if tickers:
+                try:
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump({"updated": datetime.now().isoformat(), "tickers": tickers}, f, ensure_ascii=False, indent=2)
+                    print(f"[{log_prefix}] 캐시 갱신: {len(tickers)}개 → {cache_file}")
+                except Exception as e:
+                    print(f"[{log_prefix}] 캐시 저장 실패: {e}")
+                return tickers
+            else:
+                print(f"[{log_prefix}] Wikipedia 갱신 실패, 기존 캐시 fallback")
+        # 캐시 읽기
+        if os.path.exists(cache_file):
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return list(data.get("tickers", []))
+    except Exception as e:
+        print(f"[{log_prefix}] load 실패: {type(e).__name__}: {e}")
+    return []
 
 
 def _fetch_sp500_from_wikipedia() -> list[str] | None:
     """Wikipedia S&P 500 페이지 파싱 → 티커 리스트 반환.
     실패 시 None. BRK.B / BF.B 처럼 점(.)이 들어간 티커는 그대로 반환 (StockAnalysis.com 호환).
     """
-    import requests as _req
-    from bs4 import BeautifulSoup
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-    try:
-        resp = _req.get(url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            print(f"[sp500] wikipedia HTTP {resp.status_code}")
-            return None
-        soup = BeautifulSoup(resp.text, "html.parser")
-        table = soup.find("table", {"id": "constituents"})
-        if table is None:
-            # fallback — 첫 번째 wikitable
-            table = soup.find("table", {"class": "wikitable"})
-        if table is None:
-            print("[sp500] wikipedia constituents 테이블을 찾을 수 없음")
-            return None
-        tickers: list[str] = []
-        tbody = table.find("tbody") or table
-        for tr in tbody.find_all("tr")[1:]:
-            td = tr.find("td")
-            if td is None:
-                continue
-            t = td.get_text(strip=True)
-            if t and len(t) <= 10:
-                tickers.append(t.upper())
-        if len(tickers) < 400:  # 정상이면 500 근방. 너무 적으면 파싱 실패로 간주
-            print(f"[sp500] 파싱 결과 비정상 ({len(tickers)}개)")
-            return None
-        return tickers
-    except Exception as e:
-        print(f"[sp500] wikipedia fetch 실패: {type(e).__name__}: {e}")
-        return None
+    return _fetch_index_tickers_from_wikipedia(
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        ticker_col_idx=0,
+        min_size=400,
+        table_id="constituents",
+        log_prefix="sp500",
+    )
+
+
+def _fetch_russell1000_from_wikipedia() -> list[str] | None:
+    """Wikipedia Russell 1000 페이지 파싱 → 티커 리스트 반환.
+    실패 시 None. Russell 1000 위키 표는 2번째 컬럼이 티커 (index 1).
+    """
+    return _fetch_index_tickers_from_wikipedia(
+        "https://en.wikipedia.org/wiki/Russell_1000_Index",
+        ticker_col_idx=1,
+        min_size=900,
+        table_id=None,
+        log_prefix="russell1000",
+    )
 
 
 def load_sp500_tickers(force_refresh: bool = False) -> list[str]:
@@ -4998,35 +5107,48 @@ def load_sp500_tickers(force_refresh: bool = False) -> list[str]:
     - 파일 없거나 mtime 이 30일 이상 오래되면 Wikipedia 에서 자동 갱신.
     - 네트워크 실패 시 기존 캐시(있으면) 반환, 없으면 빈 리스트.
     """
+    return _load_index_tickers(
+        US_SP500_FILE,
+        fetcher=_fetch_sp500_from_wikipedia,
+        log_prefix="sp500",
+        force_refresh=force_refresh,
+    )
+
+
+def load_russell1000_tickers(force_refresh: bool = False) -> list[str]:
+    """Russell 1000 (대형+중형주 1000개) 티커 리스트 로더.
+    - `data/us_russell1000.json` 캐시 파일 사용.
+    - 파일 없거나 mtime 이 30일 이상 오래되면 Wikipedia 에서 자동 갱신.
+    - 네트워크 실패 시 기존 캐시(있으면) 반환, 없으면 빈 리스트.
+    - 파싱 결과 900개 미만이면 비정상으로 간주 (Russell 1000 인덱스는 ~1000개 구성).
+    """
+    return _load_index_tickers(
+        US_RUSSELL1000_FILE,
+        fetcher=_fetch_russell1000_from_wikipedia,
+        log_prefix="russell1000",
+        force_refresh=force_refresh,
+    )
+
+
+def load_us_scan_universe() -> list[str]:
+    """주간 US 레이팅 스캔 유니버스 = S&P 500 ∪ Russell 1000 합집합 (정렬된 리스트).
+    - 둘 중 하나가 실패해도 나머지라도 반환 (방어적).
+    - 중복 제거 + 정렬 후 반환.
+    """
+    merged: set[str] = set()
     try:
-        need_refresh = force_refresh
-        if not need_refresh:
-            if not os.path.exists(US_SP500_FILE):
-                need_refresh = True
-            else:
-                age_days = (datetime.now().timestamp() - os.path.getmtime(US_SP500_FILE)) / 86400
-                if age_days > _SP500_MAX_AGE_DAYS:
-                    need_refresh = True
-        if need_refresh:
-            tickers = _fetch_sp500_from_wikipedia()
-            if tickers:
-                try:
-                    with open(US_SP500_FILE, "w", encoding="utf-8") as f:
-                        json.dump({"updated": datetime.now().isoformat(), "tickers": tickers}, f, ensure_ascii=False, indent=2)
-                    print(f"[sp500] 캐시 갱신: {len(tickers)}개 → {US_SP500_FILE}")
-                except Exception as e:
-                    print(f"[sp500] 캐시 저장 실패: {e}")
-                return tickers
-            else:
-                print("[sp500] Wikipedia 갱신 실패, 기존 캐시 fallback")
-        # 캐시 읽기
-        if os.path.exists(US_SP500_FILE):
-            with open(US_SP500_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return list(data.get("tickers", []))
+        sp = load_sp500_tickers()
+        if sp:
+            merged.update(sp)
     except Exception as e:
-        print(f"[sp500] load 실패: {type(e).__name__}: {e}")
-    return []
+        print(f"[us_universe] S&P 500 로드 실패: {type(e).__name__}: {e}")
+    try:
+        rs = load_russell1000_tickers()
+        if rs:
+            merged.update(rs)
+    except Exception as e:
+        print(f"[us_universe] Russell 1000 로드 실패: {type(e).__name__}: {e}")
+    return sorted(merged)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

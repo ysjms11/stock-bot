@@ -3589,20 +3589,22 @@ async def daily_us_rating_scan(context):
 
 
 async def weekly_us_ratings_universe_scan(context):
-    """매주 일요일 03:00 KST — S&P 500 전체 유니버스 레이팅 수집 (애널 풀 축적용).
-    500 × 2초 ≈ 17분 예상. 진행 50종목마다 로그.
+    """매주 일요일 03:00 KST — S&P 500 ∪ Russell 1000 전체 유니버스 레이팅 수집 (애널 풀 축적용).
+    ~1000종목 × 2초 ≈ 33분 예상. 진행 50종목마다 로그.
     알림은 완료 요약 1건만 (개별 이벤트 알림 없음).
     """
     import time as _time
     try:
         from kis_api import (
             _stockanalysis_ratings, _save_us_ratings_to_db, _save_consensus_snapshot,
-            load_sp500_tickers,
+            load_sp500_tickers, load_russell1000_tickers, load_us_scan_universe,
         )
-        tickers = load_sp500_tickers()
+        tickers = load_us_scan_universe()
         if not tickers:
-            print("[weekly_harvest] S&P 500 티커 로드 실패 — 스캔 건너뜀")
+            print("[weekly_harvest] US 유니버스 로드 실패 — 스캔 건너뜀")
             return
+        sp500_n = len(load_sp500_tickers())
+        russell_n = len(load_russell1000_tickers())
         total = len(tickers)
         print(f"[weekly_harvest] 시작 — {total}종목")
         start_ts = _time.monotonic()
@@ -3635,7 +3637,7 @@ async def weekly_us_ratings_universe_scan(context):
         try:
             msg = (
                 "📊 주간 US 레이팅 수집 완료\n"
-                f"• 스캔: {total}종목 (S&P 500)\n"
+                f"• 스캔: {total:,}종목 (S&P500 {sp500_n} ∪ Russell1000 {russell_n})\n"
                 f"• 신규 레이팅: {inserted_total}건\n"
                 f"• 실패: {failed_count}종목\n"
                 f"• 소요: {elapsed_min:.1f}분"
