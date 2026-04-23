@@ -5064,7 +5064,8 @@ async def _fetch_analyst_coverage_html(slug: str) -> dict | None:
                             if 1 <= len(cand) <= 5 and cand.isalpha():
                                 ticker_val = cand
                                 break
-                if ticker_val and ticker_val not in seen_tickers:
+                # XXXX = StockAnalysis.com 무료 페이월 마스킹 (10개 이후 티커 숨김). 스킵.
+                if ticker_val and ticker_val != "XXXX" and ticker_val not in seen_tickers:
                     seen_tickers.add(ticker_val)
                     coverage.append({"ticker": ticker_val, "sector": None})
             break  # 첫 매칭 테이블만
