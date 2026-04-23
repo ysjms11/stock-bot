@@ -4474,9 +4474,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     trade_item, trade_item_country,
                     compute_yoy_mom_qoq, compute_peakout_signal, compute_asp,
                 )
-                from zoneinfo import ZoneInfo as _ZoneInfo
-
-                KST = _ZoneInfo("Asia/Seoul")
+                # KST 는 kis_api 에서 import * 로 이미 모듈 스코프에 있음 (라인 15-61)
+                # 로컬 재할당 금지 — _execute_tool 전체의 KST 스코프를 파괴 (UnboundLocalError)
                 now = datetime.now(KST)
                 end_year = now.year
                 end_month = now.month - 1
