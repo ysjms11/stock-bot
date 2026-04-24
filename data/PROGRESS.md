@@ -19,6 +19,8 @@
 
 5. **맥미니 배포** — `get_youtube_transcript` MCP 도구 추가됨(2026-04-24). 맥미니 pull 후 `pip install youtube-transcript-api` + 봇 재시작 필요. Claude Desktop/Code에서 유튜브 URL 넣으면 자동 자막 추출.
 
+6. **daily_collect 자가진단 스케줄 추가(2026-04-25)** — 4/24 18:30 미실행 사건(원인 미확정, ccd 세션 retry 이벤트루프 블록 추정) 대응. 평일 19:15/20:15/21:15/22:15 네 번 당일 daily_snapshot 0건 체크 후 발견 시 collect_daily 재실행 + 텔레그램 경보. `daily_collect_sanity_check` 함수 main.py 추가. 첫 실전 동작은 다음 평일(4/27 월) 18:30 수집 여부에 따름.
+
 ---
 
 ## 📌 미국 애널 레이팅 — 추가 발견 엔드포인트 (메모, 2026-04-18)

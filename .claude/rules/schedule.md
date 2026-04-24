@@ -68,9 +68,13 @@
 | 19:00 | 평일 | `watch_change` | `watch_change_detect` | 워치리스트 변경 감지 | — |
 | 19:00 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | — |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
+| 19:15 | 평일 | `collect_sanity_1` | `daily_collect_sanity_check` | 자가진단 — 당일 snapshot 0건이면 collect_daily 재실행 | 4/25 신규 |
 | 19:30 | 평일 | `daily_consensus` | `daily_consensus_check` | 컨센서스 상향 체크 | — |
 | 20:00 | 평일 | `insider_cluster` | `check_insider_cluster` | 내부자 군집 감지 (워치종목) | 4/15 신규 |
+| 20:15 | 평일 | `collect_sanity_2` | `daily_collect_sanity_check` | 자가진단 2차 | 4/25 신규 |
+| 21:15 | 평일 | `collect_sanity_3` | `daily_collect_sanity_check` | 자가진단 3차 | 4/25 신규 |
 | 22:00 | 전체 | `auto_backup` | `auto_backup` | `/data/` Gist 백업 | — |
+| 22:15 | 평일 | `collect_sanity_4` | `daily_collect_sanity_check` | 자가진단 4차 (최종 방어) | 4/25 신규 |
 
 ---
 

@@ -1876,6 +1876,44 @@ async def daily_collect_job(context):
         await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ DB 수집 실패: {report['error']}")
 
 
+async def daily_collect_sanity_check(context):
+    """평일 저녁 정기 자가진단 — 당일 daily_snapshot 0건이면 collect_daily 재실행.
+
+    스케줄: 19:15 / 20:15 / 21:15 / 22:15 (18:30 정규잡 실패 방어).
+    2026-04-24 18:30 미실행 사건(ccd 세션 retry로 이벤트루프 블록 추정) 재발 방지.
+    """
+    if not _HAS_DB_COLLECTOR:
+        return
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    today = now.strftime("%Y%m%d")
+    try:
+        from db_collector import _get_db
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM daily_snapshot WHERE trade_date=?",
+            (today,),
+        ).fetchone()
+        conn.close()
+        if row and row[0] > 0:
+            return  # 이미 수집 완료
+    except Exception as e:
+        print(f"[sanity] DB 체크 실패: {e}")
+        return
+
+    hhmm = now.strftime("%H:%M")
+    print(f"[sanity {hhmm}] 당일 ({today}) daily_snapshot 0건 — collect_daily 재시작")
+    try:
+        await context.bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"⚠️ daily_collect 미실행 감지 ({today} {hhmm}) — 재실행 시작",
+        )
+    except Exception:
+        pass
+    await daily_collect_job(context)
+
+
 async def weekly_financial_job(context):
     """주 1회 재무 수집 (일요일 07:15 KST)."""
     if not _HAS_DB_COLLECTOR:
@@ -4213,6 +4251,11 @@ def main():
     jq.run_daily(collect_reports_daily,    time=dtime(8, 30, tzinfo=KST), days=(0,1,2,3,4), name="report_collect")
     # KRX 전종목 DB 갱신: db_collector가 18:30에 KRX OPEN API로 수집
     jq.run_daily(daily_collect_job,       time=dtime(18, 30, tzinfo=KST), days=(0,1,2,3,4), name="daily_collect")
+    # 자가진단: 18:30 정규잡 실패 방어 (2026-04-24 미실행 사건 재발 방지)
+    jq.run_daily(daily_collect_sanity_check, time=dtime(19, 15, tzinfo=KST), days=(0,1,2,3,4), name="collect_sanity_1")
+    jq.run_daily(daily_collect_sanity_check, time=dtime(20, 15, tzinfo=KST), days=(0,1,2,3,4), name="collect_sanity_2")
+    jq.run_daily(daily_collect_sanity_check, time=dtime(21, 15, tzinfo=KST), days=(0,1,2,3,4), name="collect_sanity_3")
+    jq.run_daily(daily_collect_sanity_check, time=dtime(22, 15, tzinfo=KST), days=(0,1,2,3,4), name="collect_sanity_4")
     jq.run_daily(daily_us_rating_scan,    time=dtime(7, 30, tzinfo=KST), days=(0,1,2,3,4,5,6), name="us_ratings")
     # 주간 S&P 500 유니버스 스캔 — 일요일 03:00 KST (애널 풀 축적용, 약 17분 소요)
     jq.run_daily(weekly_us_ratings_universe_scan, time=dtime(3, 0, tzinfo=KST), days=(6,), name="weekly_us_harvest")
