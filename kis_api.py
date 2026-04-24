@@ -6930,7 +6930,7 @@ def _extract_youtube_id(url_or_id: str) -> str:
 
 
 def fetch_youtube_transcript(url_or_id: str, languages: list | None = None,
-                             max_chars: int = 100000) -> dict:
+                             max_chars: int = 0) -> dict:
     import youtube_transcript_api as _yta
 
     vid = _extract_youtube_id(url_or_id)

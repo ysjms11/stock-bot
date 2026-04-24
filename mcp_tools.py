@@ -870,7 +870,7 @@ MCP_TOOLS = [
       "required": ["slug"]}},
 
     {"name": "get_youtube_transcript",
-     "description": "유튜브 영상 자막 추출. URL 또는 11자 video ID 입력. 한국어 우선, 영어 fallback. 자막 없으면 에러. 긴 영상은 max_chars 로 자르기.",
+     "description": "유튜브 영상 자막 추출. URL 또는 11자 video ID 입력. 한국어 우선, 영어 fallback. 자막 없으면 에러. 기본 무제한 (Claude 1M 컨텍스트).",
      "inputSchema": {"type": "object",
       "properties": {
         "url": {"type": "string", "description": "유튜브 URL 또는 video ID (watch/youtu.be/shorts/embed/live 지원)"},
@@ -878,8 +878,8 @@ MCP_TOOLS = [
                       "description": "언어 우선순위 (기본 ['ko','en'])",
                       "default": ["ko", "en"]},
         "max_chars": {"type": "integer",
-                      "description": "자막 최대 문자수. 초과분은 잘리고 truncated=true 반환 (기본 100000)",
-                      "default": 100000}
+                      "description": "자막 최대 문자수. 0=무제한(기본). 극단적 방어 목적으로만 사용.",
+                      "default": 0}
       },
       "required": ["url"]}},
 ]
@@ -4467,7 +4467,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
         elif name == "get_youtube_transcript":
             url = (arguments.get("url") or "").strip()
             languages = arguments.get("languages") or ["ko", "en"]
-            max_chars = int(arguments.get("max_chars") or 100000)
+            max_chars = int(arguments.get("max_chars") or 0)
             if not url:
                 result = {"error": "url 파라미터 필수"}
             else:
