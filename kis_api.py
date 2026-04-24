@@ -6914,21 +6914,24 @@ async def cmd_regime(mode: str = "current", days: int = 5,
 # YouTube 자막 추출
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
+_YT_URL_RE = re.compile(
+    r"(?:v=|vi=|/v/|/vi/|/shorts/|/embed/|/live/|youtu\.be/)([A-Za-z0-9_-]{11})"
+)
+
+
 def _extract_youtube_id(url_or_id: str) -> str:
     s = (url_or_id or "").strip()
     if not s:
         return ""
-    # 이미 11자 ID 그대로인 경우
     if re.fullmatch(r"[A-Za-z0-9_-]{11}", s):
         return s
-    # URL 패턴들
-    m = re.search(r"(?:v=|/shorts/|/embed/|youtu\.be/)([A-Za-z0-9_-]{11})", s)
+    m = _YT_URL_RE.search(s)
     return m.group(1) if m else ""
 
 
-def fetch_youtube_transcript(url_or_id: str, languages: list | None = None) -> dict:
-    from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
+def fetch_youtube_transcript(url_or_id: str, languages: list | None = None,
+                             max_chars: int = 100000) -> dict:
+    import youtube_transcript_api as _yta
 
     vid = _extract_youtube_id(url_or_id)
     if not vid:
@@ -6936,13 +6939,13 @@ def fetch_youtube_transcript(url_or_id: str, languages: list | None = None) -> d
 
     langs = languages or ["ko", "en"]
     try:
-        api = YouTubeTranscriptApi()
+        api = _yta.YouTubeTranscriptApi()
         t = api.fetch(vid, languages=langs)
-    except TranscriptsDisabled:
+    except _yta.TranscriptsDisabled:
         return {"error": "자막 비활성화된 영상", "video_id": vid}
-    except NoTranscriptFound:
+    except _yta.NoTranscriptFound:
         return {"error": f"요청 언어({','.join(langs)}) 자막 없음", "video_id": vid}
-    except VideoUnavailable:
+    except _yta.VideoUnavailable:
         return {"error": "영상 접근 불가 (삭제/비공개)", "video_id": vid}
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}", "video_id": vid}
@@ -6954,12 +6957,20 @@ def fetch_youtube_transcript(url_or_id: str, languages: list | None = None) -> d
     hh, mm = divmod(mm, 60)
     dur = f"{hh:d}:{mm:02d}:{ss:02d}" if hh else f"{mm:d}:{ss:02d}"
 
+    char_count = len(text)
+    truncated = False
+    if max_chars and char_count > max_chars:
+        text = text[:max_chars] + f"\n...[TRUNCATED: {char_count - max_chars} chars omitted]"
+        truncated = True
+
     return {
         "video_id": vid,
         "url": f"https://www.youtube.com/watch?v={vid}",
-        "language": t.language if hasattr(t, "language") else langs[0],
+        "language": getattr(t, "language", None) or langs[0],
+        "language_code": getattr(t, "language_code", None) or langs[0],
         "duration": dur,
         "line_count": len(snippets),
-        "char_count": len(text),
+        "char_count": char_count,
+        "truncated": truncated,
         "transcript": text,
     }
