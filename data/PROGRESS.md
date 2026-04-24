@@ -17,6 +17,8 @@
 
 4. **KR_DEEPSEARCH 실전 검증** — 다음 한국 종목 딥서치 시 10 Step 누락 여부 / 킬 조건 체감 확인.
 
+5. **맥미니 배포** — `get_youtube_transcript` MCP 도구 추가됨(2026-04-24). 맥미니 pull 후 `pip install youtube-transcript-api` + 봇 재시작 필요. Claude Desktop/Code에서 유튜브 URL 넣으면 자동 자막 추출.
+
 ---
 
 ## 📌 미국 애널 레이팅 — 추가 발견 엔드포인트 (메모, 2026-04-18)

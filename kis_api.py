@@ -6908,3 +6908,58 @@ async def cmd_regime(mode: str = "current", days: int = 5,
         "logic": calc["logic"],
         "date": today,
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# YouTube 자막 추출
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _extract_youtube_id(url_or_id: str) -> str:
+    s = (url_or_id or "").strip()
+    if not s:
+        return ""
+    # 이미 11자 ID 그대로인 경우
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", s):
+        return s
+    # URL 패턴들
+    m = re.search(r"(?:v=|/shorts/|/embed/|youtu\.be/)([A-Za-z0-9_-]{11})", s)
+    return m.group(1) if m else ""
+
+
+def fetch_youtube_transcript(url_or_id: str, languages: list | None = None) -> dict:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
+
+    vid = _extract_youtube_id(url_or_id)
+    if not vid:
+        return {"error": "유효한 유튜브 URL/ID 아님", "input": url_or_id}
+
+    langs = languages or ["ko", "en"]
+    try:
+        api = YouTubeTranscriptApi()
+        t = api.fetch(vid, languages=langs)
+    except TranscriptsDisabled:
+        return {"error": "자막 비활성화된 영상", "video_id": vid}
+    except NoTranscriptFound:
+        return {"error": f"요청 언어({','.join(langs)}) 자막 없음", "video_id": vid}
+    except VideoUnavailable:
+        return {"error": "영상 접근 불가 (삭제/비공개)", "video_id": vid}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}", "video_id": vid}
+
+    snippets = list(t)
+    text = "\n".join(s.text for s in snippets if s.text)
+    total_sec = int(snippets[-1].start + snippets[-1].duration) if snippets else 0
+    mm, ss = divmod(total_sec, 60)
+    hh, mm = divmod(mm, 60)
+    dur = f"{hh:d}:{mm:02d}:{ss:02d}" if hh else f"{mm:d}:{ss:02d}"
+
+    return {
+        "video_id": vid,
+        "url": f"https://www.youtube.com/watch?v={vid}",
+        "language": t.language if hasattr(t, "language") else langs[0],
+        "duration": dur,
+        "line_count": len(snippets),
+        "char_count": len(text),
+        "transcript": text,
+    }

@@ -32,6 +32,7 @@ from kis_api import (
     load_corp_codes, search_dart_reports, save_dart_report,
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
     list_disclosures_for_ticker, fetch_and_cache_disclosure,
+    fetch_youtube_transcript,
 )
 
 from db_collector import load_krx_db, scan_stocks, _load_history
@@ -867,6 +868,17 @@ MCP_TOOLS = [
         "watched": {"type": "boolean", "default": True, "description": "true=톱 애널 확정, false=해제"}
       },
       "required": ["slug"]}},
+
+    {"name": "get_youtube_transcript",
+     "description": "유튜브 영상 자막 추출. URL 또는 11자 video ID 입력. 한국어 우선, 영어 fallback. 자막 없으면 에러.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "url": {"type": "string", "description": "유튜브 URL 또는 video ID (예: https://youtu.be/xxxx 또는 dQw4w9WgXcQ)"},
+        "languages": {"type": "array", "items": {"type": "string"},
+                      "description": "언어 우선순위 (기본 ['ko','en'])",
+                      "default": ["ko", "en"]}
+      },
+      "required": ["url"]}},
 ]
 
 
@@ -4448,6 +4460,14 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             result = await _exec_us_analyst(**arguments)
         elif name == "watch_analyst":
             result = await _exec_watch_analyst(**arguments)
+
+        elif name == "get_youtube_transcript":
+            url = (arguments.get("url") or "").strip()
+            languages = arguments.get("languages") or ["ko", "en"]
+            if not url:
+                result = {"error": "url 파라미터 필수"}
+            else:
+                result = await asyncio.to_thread(fetch_youtube_transcript, url, languages)
 
         else:
             result = {"error": f"unknown tool: {name}"}

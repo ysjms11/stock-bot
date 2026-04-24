@@ -1,4 +1,4 @@
-# MCP 도구 전체 목록 (38개)
+# MCP 도구 전체 목록 (39개)
 
 > `mcp_tools.py`의 도구 스키마 요약. 새 도구 추가 시 → `.claude/rules/add-mcp-tool.md` 참조
 
@@ -66,3 +66,4 @@
 | | | mode=discovery | 감시 밖 관심 종목 발굴 (min_upgrades 상향 임계값) |
 | | | mode=sector | 섹터별 레이팅 모멘텀 |
 | 38 | `get_us_analyst` | | 미국 애널 개인/그룹 조회 (name=개별, 없으면 top 리스트, firm/sector 필터) |
+| 39 | `get_youtube_transcript` | | 유튜브 자막 추출 (URL/ID, ko 우선 en fallback, 자막 없으면 에러) |
