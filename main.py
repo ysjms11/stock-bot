@@ -16,6 +16,7 @@ from kis_api import (
     _DATA_DIR, _is_us_ticker, _is_us_market_hours_kst, _is_us_market_closed, _guess_excd,
     ws_manager, get_ws_tickers, close_session,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
+    fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 from krx_crawler import KRX_DB_DIR, _cleanup_old_db, load_krx_db
 try:
@@ -2131,6 +2132,15 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
         msg = f"📢 *DART 공시 알림* ({now.strftime('%H:%M')})\n\n"
         new_ids = []
 
+        # 요약 파싱 대상 키워드
+        _DART_SUMMARY_KEYWORDS = (
+            "잠정실적", "영업(잠정)실적",
+            "자기주식취득결정", "자기주식 취득",
+            "주식소각", "자기주식소각",
+            "현금배당", "현금·현물배당", "현금ㆍ현물배당", "배당결정",
+            "풍문", "해명",
+        )
+
         for d in new_disclosures[:5]:  # 최대 5개
             corp = d.get("corp_name", "?")
             title = d.get("report_nm", "?")
@@ -2141,6 +2151,20 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
             msg += f"🏢 *{corp}*\n"
             msg += f"📄 {title}\n"
             msg += f"📅 {date}\n"
+
+            # 🆕 요약 시도 (실패해도 알림은 계속 발송)
+            if any(kw in title for kw in _DART_SUMMARY_KEYWORDS):
+                try:
+                    stock_code = (d.get("stock_code", "") or "").strip() or "000000"
+                    body_text = await fetch_and_cache_disclosure(stock_code, rcept_no)
+                    if body_text:
+                        parsed = parse_disclosure_summary(title, body_text)
+                        if parsed and parsed.get("summary"):
+                            for line in parsed["summary"]:
+                                msg += f"{line}\n"
+                except Exception as _e:
+                    print(f"[DART 알림] 요약 파싱 실패 {rcept_no}: {_e}")
+
             msg += f"🔗 [공시 원문]({link})\n\n"
 
             new_ids.append(rcept_no)

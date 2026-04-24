@@ -31,6 +31,7 @@ from kis_api import (
     kis_overtime_fluctuation, kis_traded_by_company, kis_dividend_rate_rank,
     load_corp_codes, search_dart_reports, save_dart_report,
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
+    list_disclosures_for_ticker, fetch_and_cache_disclosure,
 )
 
 from db_collector import load_krx_db, scan_stocks, _load_history
@@ -494,12 +495,13 @@ MCP_TOOLS = [
                      "required": ["mode"]}},
     # 5. get_dart (유지 + report/report_list 모드 추가)
     {"name": "get_dart",
-     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록. mode='read': 저장된 사업보고서 txt 내용 반환 (ticker 필수). mode='insider': 종목별 임원·주요주주 내부자 거래 집계 (ticker 필수, days 지정 가능).",
+     "description": "DART 공시 조회. mode 생략: 워치리스트 최근 3일 공시. mode='report': 보유+워치 종목 사업보고서 본문을 txt 저장 (ticker 지정 가능). mode='report_list': 저장된 txt 파일 목록. mode='read': 저장된 사업보고서 txt 내용 반환 (ticker 필수). mode='disclosure_list': 종목별 최근 N일 수시공시 목록 (ticker 필수, days 기본 7). mode='disclosure_read': 특정 rcept_no 공시 본문 다운로드·캐시 (ticker+rcept_no 필수). mode='insider': 종목별 임원·주요주주 내부자 거래 집계 (ticker 필수, days 지정 가능).",
      "inputSchema": {"type": "object",
                      "properties": {
-                         "mode":   {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 'read'=저장된 보고서 읽기(ticker 필수), 'insider'=내부자거래집계(ticker 필수), 생략=기존 공시"},
-                         "ticker": {"type": "string", "description": "[report/read/insider] 종목코드 (report: 생략 시 전체, read/insider: 필수)"},
-                         "days":   {"type": "integer", "description": "[insider] 집계 기간 (기본 30일)"},
+                         "mode":     {"type": "string", "description": "'report'=사업보고서 저장, 'report_list'=저장 파일 목록, 'read'=저장된 보고서 읽기(ticker 필수), 'disclosure_list'=수시공시 목록(ticker 필수), 'disclosure_read'=공시본문 다운로드(ticker+rcept_no 필수), 'insider'=내부자거래집계(ticker 필수), 생략=기존 공시"},
+                         "ticker":   {"type": "string", "description": "[report/read/disclosure_list/disclosure_read/insider] 종목코드"},
+                         "rcept_no": {"type": "string", "description": "[disclosure_read] DART 접수번호 (필수)"},
+                         "days":     {"type": "integer", "description": "[insider] 집계 기간 (기본 30일), [disclosure_list] 조회 기간 (기본 7일)"},
                      },
                      "required": []}},
     # 6. get_macro (유지)
@@ -1781,6 +1783,42 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                             "total_skipped": len(skipped_no_report),
                             "total_failed": len(failed),
                         }
+
+            elif dart_mode == "disclosure_list":
+                target_ticker = (arguments.get("ticker") or "").strip()
+                if not target_ticker:
+                    result = {"error": "ticker를 지정하세요. 예: get_dart(mode='disclosure_list', ticker='064350', days=3)"}
+                elif _is_us_ticker(target_ticker):
+                    result = {"error": "수시공시는 한국 종목만 지원합니다."}
+                else:
+                    days = int(arguments.get("days", 7) or 7)
+                    disclosures = await list_disclosures_for_ticker(target_ticker, days)
+                    result = {
+                        "ticker": target_ticker,
+                        "days": days,
+                        "count": len(disclosures),
+                        "disclosures": disclosures,
+                    }
+
+            elif dart_mode == "disclosure_read":
+                target_ticker = (arguments.get("ticker") or "").strip()
+                rcept_no = (arguments.get("rcept_no") or "").strip()
+                if not target_ticker or not rcept_no:
+                    result = {"error": "ticker와 rcept_no를 모두 지정하세요. 예: get_dart(mode='disclosure_read', ticker='064350', rcept_no='20260424000123')"}
+                else:
+                    body = await fetch_and_cache_disclosure(target_ticker, rcept_no)
+                    MAX_BYTES = 50_000
+                    body_bytes = body.encode("utf-8") if body else b""
+                    truncated = len(body_bytes) > MAX_BYTES
+                    if truncated:
+                        body = body_bytes[:MAX_BYTES].decode("utf-8", errors="ignore")
+                    result = {
+                        "ticker": target_ticker,
+                        "rcept_no": rcept_no,
+                        "body": body,
+                        "truncated": truncated,
+                        "bytes": len(body_bytes),
+                    }
 
             elif dart_mode == "insider":
                 target_ticker = (arguments.get("ticker") or "").strip()

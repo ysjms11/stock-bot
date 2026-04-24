@@ -4695,6 +4695,457 @@ async def fetch_dart_document(rcept_no: str) -> str:
         return ""
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 수시공시 본문 조회 + 요약 파싱
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+DART_DISCLOSURE_CACHE_DIR = f"{_DATA_DIR}/dart_disclosures"
+
+
+async def list_disclosures_for_ticker(ticker: str, days: int = 7) -> list[dict]:
+    """특정 종목의 최근 N일 DART 공시 목록 조회.
+
+    Args:
+        ticker: 종목코드 (6자리)
+        days: 조회 기간 (일)
+
+    Returns:
+        [{"rcept_no", "report_nm", "rcept_dt"}, ...] 또는 빈 리스트 (에러/키없음)
+    """
+    if not DART_API_KEY:
+        return []
+    if not ticker or not isinstance(ticker, str):
+        return []
+
+    try:
+        corp_map = await get_dart_corp_map({})
+        corp_code = corp_map.get(ticker, "")
+        if not corp_code:
+            return []
+
+        now = datetime.now(KST)
+        end_date = now.strftime("%Y%m%d")
+        start_date = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+        url = f"{DART_BASE_URL}/list.json"
+        params = {
+            "crtfc_key": DART_API_KEY,
+            "corp_code": corp_code,
+            "bgn_de": start_date,
+            "end_de": end_date,
+            "page_count": 100,
+            "sort": "date",
+            "sort_mth": "desc",
+        }
+
+        session = _get_session()
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json(content_type=None)
+            if data.get("status") != "000":
+                return []
+
+            out = []
+            for item in data.get("list", []):
+                out.append({
+                    "rcept_no": item.get("rcept_no", ""),
+                    "report_nm": item.get("report_nm", ""),
+                    "rcept_dt": item.get("rcept_dt", ""),
+                })
+            return out
+    except Exception as e:
+        print(f"[DART] list_disclosures_for_ticker({ticker}) 오류: {e}")
+        return []
+
+
+async def fetch_and_cache_disclosure(ticker: str, rcept_no: str) -> str:
+    """공시 본문을 다운로드하여 data/dart_disclosures/ticker_rcept.txt 캐시.
+
+    - 이미 있으면 파일 로드
+    - 없으면 fetch_dart_document 호출 → 저장 → 반환
+    - path traversal 방지
+    """
+    if not ticker or not rcept_no:
+        return ""
+    # path traversal 차단
+    for bad in ("/", "\\", ".."):
+        if bad in ticker or bad in rcept_no:
+            return ""
+
+    try:
+        os.makedirs(DART_DISCLOSURE_CACHE_DIR, exist_ok=True)
+        cache_path = os.path.join(DART_DISCLOSURE_CACHE_DIR,
+                                  f"{ticker}_{rcept_no}.txt")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, encoding="utf-8") as f:
+                    return f.read()
+            except Exception as e:
+                print(f"[DART] 캐시 읽기 실패 {cache_path}: {e}")
+
+        body = await fetch_dart_document(rcept_no)
+        if body:
+            try:
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    f.write(body)
+            except Exception as e:
+                print(f"[DART] 캐시 저장 실패 {cache_path}: {e}")
+        return body or ""
+    except Exception as e:
+        print(f"[DART] fetch_and_cache_disclosure({ticker}, {rcept_no}) 오류: {e}")
+        return ""
+
+
+def _fmt_krw_amount(val: int) -> str:
+    """원 단위 금액 → 한국어 요약 포맷."""
+    if val is None:
+        return "?"
+    absv = abs(val)
+    sign = "-" if val < 0 else ""
+    if absv >= 1_0000_0000_0000:  # 1조 이상
+        return f"{sign}{absv / 1_0000_0000_0000:.2f}조"
+    elif absv >= 100_000_000:  # 1억 이상
+        return f"{sign}{absv / 100_000_000:,.0f}억"
+    elif absv >= 1_000_000:  # 백만 이상
+        return f"{sign}{absv / 1_000_000:,.0f}백만"
+    else:
+        return f"{sign}{absv:,}원"
+
+
+def _parse_pct(s: str) -> float | None:
+    """'23.9%' / '+23.9' / '(23.9)' 등에서 % 값 추출."""
+    if not s:
+        return None
+    m = re.search(r'([+\-]?\d+\.?\d*)\s*%?', s.replace(",", ""))
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _detect_krw_unit(body_text: str) -> int:
+    """본문에서 '(단위: 백만원)', '(단위: 원)', '(단위: 천원)' 감지 → 원 환산 곱수."""
+    m = re.search(r'단위\s*[:\：]?\s*([가-힣]+원)', body_text[:3000])
+    if not m:
+        return 1  # 기본 원
+    unit = m.group(1)
+    if "백만" in unit:
+        return 1_000_000
+    if "천원" in unit or "천 원" in unit:
+        return 1_000
+    if "억" in unit:
+        return 100_000_000
+    return 1
+
+
+def parse_disclosure_summary(report_nm: str, body_text: str) -> dict | None:
+    """공시 본문 → 요약 dict. 5종 타입 분기. 매칭 안 되면 None.
+
+    Returns:
+        {"type": str, "summary": [str, ...]} 또는 None
+    """
+    if not report_nm or not body_text:
+        return None
+    try:
+        title = report_nm
+        # ━━ 타입 1: 잠정실적 ━━
+        if "잠정실적" in title or "영업(잠정)실적" in title:
+            return _parse_earnings_preview(body_text)
+
+        # ━━ 타입 2: 자기주식 취득/소각 ━━
+        if ("자기주식취득결정" in title or "자기주식 취득" in title
+                or "주식소각" in title or "자기주식소각" in title):
+            return _parse_buyback(title, body_text)
+
+        # ━━ 타입 3: 배당결정 ━━
+        if ("현금배당" in title or "현금·현물배당" in title
+                or "현금ㆍ현물배당" in title or "배당결정" in title):
+            return _parse_dividend(body_text)
+
+        # ━━ 타입 4: 풍문·보도해명 ━━
+        if "풍문" in title or "해명" in title:
+            return _parse_rumor(body_text)
+
+        # ━━ 타입 5: 매칭 안됨 ━━
+        return None
+    except Exception as e:
+        print(f"[DART] parse_disclosure_summary 오류 ({report_nm[:40]}): {e}")
+        return None
+
+
+def _parse_earnings_preview(body: str) -> dict | None:
+    """잠정실적 파싱. 매출/영업이익/순이익 + YoY%."""
+    try:
+        unit = _detect_krw_unit(body)
+        lines_out = []
+
+        # 계정별 키워드 (순서 중요 — 매출총이익/영업이익 등 구분)
+        targets = [
+            ("매출", "💰 매출", ["매출액", "매출 액"]),
+            ("영업이익", "💰 영업익", ["영업이익", "영업 이익"]),
+            ("순이익", "💰 순익",
+             ["당기순이익", "당기 순이익", "반기순이익", "분기순이익", "순이익"]),
+        ]
+
+        for label, emoji, keywords in targets:
+            amount_won = None
+            yoy_pct = None
+
+            for kw in keywords:
+                # 라인 단위로 찾기 — 키워드가 포함된 라인 검색
+                # 잠정실적 테이블은 세로 라인 구조: 항목\n당기실적\n전년동기\n증감률...
+                idx = body.find(kw)
+                if idx < 0:
+                    continue
+
+                # 키워드 이후 500자 윈도우에서 숫자들 수집
+                window = body[idx:idx + 800]
+                # 숫자 (콤마 포함, 괄호음수, 소수점) 추출
+                # 1,462,345 또는 (1,462) 또는 1462345
+                nums = re.findall(r'\(?([\-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{4,}(?:\.\d+)?|\d+\.\d+)\)?', window)
+                # 필터: 연도(19xx/20xx)와 너무 작은 숫자 제거
+                filtered = []
+                for n in nums:
+                    clean = n.replace(",", "")
+                    try:
+                        v = float(clean)
+                    except ValueError:
+                        continue
+                    # 연도 제외 (2015~2030)
+                    if 2015 <= v <= 2030 and "." not in clean:
+                        continue
+                    filtered.append((v, clean))
+
+                if not filtered:
+                    continue
+
+                # 첫 번째 큰 숫자 = 당기실적
+                # 영업이익/순이익은 작을 수 있음 → min threshold 완화
+                for v, clean in filtered:
+                    if abs(v) >= 100:  # 단위가 원일 경우 매우 큰 값. 단위가 백만원이면 작을 수도.
+                        amount_won = int(v) * unit
+                        break
+
+                if amount_won is None and filtered:
+                    v, _ = filtered[0]
+                    amount_won = int(v) * unit
+
+                # YoY% 찾기 — 증감률/전년대비 키워드 근처
+                # 윈도우 내에서 "증감률" 또는 "전년동기대비" 뒤의 소수
+                pct_match = re.search(
+                    r'(?:증감률|전년(?:동기)?(?:대비)?|대비)[^%\n]{0,100}?([\-]?\d+\.?\d*)\s*%?',
+                    window)
+                if pct_match:
+                    try:
+                        yoy_pct = float(pct_match.group(1))
+                    except ValueError:
+                        pass
+                # 또는 단순히 소수점 있는 % 값 (% 부호 있는 경우 우선)
+                if yoy_pct is None:
+                    pct_m2 = re.findall(r'([\-]?\d+\.\d+)\s*%', window)
+                    if pct_m2:
+                        try:
+                            yoy_pct = float(pct_m2[0])
+                        except ValueError:
+                            pass
+                # 마지막 fallback: 필터링된 숫자 중 소수점 있고 합리적 범위(-99~999)인 값
+                # 보통 잠정실적 테이블은 [당기, 전년동기, 증감률] 3열이므로
+                # filtered[2]이 증감률 (소수점)
+                if yoy_pct is None:
+                    for v, clean in filtered:
+                        if "." in clean and -99 <= v <= 999 and v != amount_won:
+                            yoy_pct = v
+                            break
+                break  # 첫 매칭 키워드 사용
+
+            if amount_won is not None:
+                amt_str = _fmt_krw_amount(amount_won)
+                if yoy_pct is not None:
+                    sign = "+" if yoy_pct >= 0 else ""
+                    lines_out.append(f"{emoji} {amt_str} ({sign}{yoy_pct:.1f}%)")
+                else:
+                    lines_out.append(f"{emoji} {amt_str}")
+
+        if not lines_out:
+            return None
+        return {"type": "earnings_preview", "summary": lines_out}
+    except Exception as e:
+        print(f"[DART] _parse_earnings_preview 오류: {e}")
+        return None
+
+
+def _parse_buyback(title: str, body: str) -> dict | None:
+    """자기주식 취득/소각. 규모(원) + 주수."""
+    try:
+        summary = []
+        is_cancel = ("소각" in title)
+        amount_won = None
+        shares = None
+
+        # 취득예정금액 / 소각예정금액 / 총액
+        amt_keywords = ["취득예정금액", "소각예정금액", "취득금액", "소각금액", "취득 예정 금액"]
+        for kw in amt_keywords:
+            idx = body.find(kw)
+            if idx < 0:
+                continue
+            window = body[idx:idx + 300]
+            # 숫자 찾기
+            nums = re.findall(r'([\-]?\d{1,3}(?:,\d{3})+|\d{4,})', window)
+            for n in nums:
+                try:
+                    v = int(n.replace(",", ""))
+                    if v >= 1_000_000:  # 1백만원 이상만 유효
+                        amount_won = v
+                        break
+                except ValueError:
+                    continue
+            if amount_won:
+                break
+
+        # 취득예정주식수 / 소각예정주식수
+        share_keywords = ["취득예정주식", "소각예정주식", "취득 예정 주식",
+                          "소각 예정 주식", "취득주식수", "소각주식수"]
+        for kw in share_keywords:
+            idx = body.find(kw)
+            if idx < 0:
+                continue
+            window = body[idx:idx + 300]
+            nums = re.findall(r'([\-]?\d{1,3}(?:,\d{3})+|\d{4,})', window)
+            for n in nums:
+                try:
+                    v = int(n.replace(",", ""))
+                    if 100 <= v <= 10_000_000_000:  # 합리적 주수 범위
+                        shares = v
+                        break
+                except ValueError:
+                    continue
+            if shares:
+                break
+
+        if amount_won:
+            summary.append(f"💼 규모 {_fmt_krw_amount(amount_won)}")
+        if shares:
+            summary.append(f"💼 주수 {shares:,}주")
+
+        if not summary:
+            return None
+        return {"type": "buyback_cancel" if is_cancel else "buyback",
+                "summary": summary}
+    except Exception as e:
+        print(f"[DART] _parse_buyback 오류: {e}")
+        return None
+
+
+def _parse_dividend(body: str) -> dict | None:
+    """현금·현물배당. DPS + 기준일."""
+    try:
+        summary = []
+        dps = None
+        base_date = None
+
+        # 1주당 배당금 (주식배당은 제외하고 현금배당만)
+        dps_keywords = ["1주당 현금배당금", "1주당 배당금", "주당 배당금",
+                        "1주당현금배당금", "1주당배당금"]
+        for kw in dps_keywords:
+            idx = body.find(kw)
+            if idx < 0:
+                continue
+            window = body[idx:idx + 300]
+            # 보통주/우선주가 나올 수 있음 → 첫 매칭만
+            nums = re.findall(r'([\-]?\d{1,3}(?:,\d{3})+|\d{2,})', window)
+            for n in nums:
+                try:
+                    v = int(n.replace(",", ""))
+                    if 10 <= v <= 1_000_000:  # 합리적 DPS 범위
+                        dps = v
+                        break
+                except ValueError:
+                    continue
+            if dps:
+                break
+
+        # 배당기준일
+        base_keywords = ["배당기준일", "기준일"]
+        for kw in base_keywords:
+            idx = body.find(kw)
+            if idx < 0:
+                continue
+            window = body[idx:idx + 200]
+            # YYYY-MM-DD or YYYY.MM.DD or YYYY년 MM월 DD일 or YYYYMMDD
+            m = re.search(r'(20\d{2})[\-.\s년]+(\d{1,2})[\-.\s월]+(\d{1,2})', window)
+            if m:
+                y, mo, d = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
+                base_date = f"{y}-{mo}-{d}"
+                break
+            m2 = re.search(r'(20\d{6})', window)
+            if m2:
+                s = m2.group(1)
+                base_date = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+                break
+
+        if dps is not None:
+            summary.append(f"💵 DPS {dps:,}원")
+        if base_date:
+            summary.append(f"📅 기준일 {base_date}")
+
+        if not summary:
+            return None
+        return {"type": "dividend", "summary": summary}
+    except Exception as e:
+        print(f"[DART] _parse_dividend 오류: {e}")
+        return None
+
+
+def _parse_rumor(body: str) -> dict | None:
+    """풍문·보도해명. 상태 + 재공시예정일."""
+    try:
+        summary = []
+        status = None
+
+        # 상태 판정 (우선순위: 사실무근 > 부인 > 미확정 > 확인)
+        if "사실무근" in body or "사실이 아닙니다" in body or "사실이 아님" in body:
+            status = "사실무근"
+        elif "부인" in body:
+            status = "부인"
+        elif "미확정" in body or "확정된 바 없" in body or "확정되지 않" in body:
+            status = "미확정"
+        elif "사실" in body and ("확인" in body or "인정" in body):
+            status = "사실확인"
+
+        # 재공시예정일
+        redate = None
+        redate_keywords = ["재공시예정일", "향후 재공시", "향후재공시", "추후 재공시"]
+        for kw in redate_keywords:
+            idx = body.find(kw)
+            if idx < 0:
+                continue
+            window = body[idx:idx + 300]
+            m = re.search(r'(20\d{2})[\-.\s년]+(\d{1,2})[\-.\s월]+(\d{1,2})', window)
+            if m:
+                y, mo, d = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
+                redate = f"{y}-{mo}-{d}"
+                break
+            m2 = re.search(r'(20\d{6})', window)
+            if m2:
+                s = m2.group(1)
+                redate = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+                break
+
+        if status:
+            summary.append(f"📰 상태: {status}")
+        if redate:
+            summary.append(f"📅 재공시 예정일: {redate}")
+
+        if not summary:
+            return None
+        return {"type": "rumor_clarification", "summary": summary}
+    except Exception as e:
+        print(f"[DART] _parse_rumor 오류: {e}")
+        return None
+
+
 def _report_file_exists(rcept_no: str) -> str | None:
     """접수번호로 기존 파일 검색. 있으면 파일경로, 없으면 None."""
     if not rcept_no or not os.path.exists(DART_REPORTS_DIR):
