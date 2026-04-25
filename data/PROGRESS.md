@@ -23,6 +23,8 @@
 
 7. **US 애널 마스터 자동 sync(2026-04-25)** — 시스템 의도와 구현 갭 발견 후 복구. weekly_us_harvest 1,902명 ratings 데이터 vs us_analysts 마스터 13명만 있던 문제. `sync_us_analyst_master` (db_collector) + `weekly_us_analyst_sync` (main.py 일요일 04:00) + post_init 부트시 1회 실행 추가. 즉시 실행 결과 마스터 13→1,902명, watched 12→183명 (별점 4.5+ 콜 5+ 자동). discovery 시그널 강력화. 단 mcp_tools `_exec_us_scan` discovery 모드의 action='Upgrades'만 검색 → Upgrades+Initiates로 확장 검토 필요(별도 개선).
 
+8. **US 애널 3-Tier 시스템(2026-04-25)** — sync 기준 단순화의 한계 보완. avg_return 컬럼 us_analysts 추가 + `is_tier_s_analyst()` 런타임 분류. **Tier A** (watched=1): 별점≥4.0 AND 적중률≥60% AND 콜≥10 OR (별점≥4.8 AND 적중률≥80% AND 콜≥7 잠수형 거장). **Tier S** (런타임): ① 활발 톱(별점≥4.5 AND 적중률≥70% AND 콜≥20) OR ② 잠수형 거장 OR ③ 고수익 거장(별점≥4.5 AND avg_return≥+50% AND 콜≥10 — Goldsmith UBS 같은 한 방 거장). 결과 Tier A 254명, Tier S **31명**. 알림 차등 헤더(🚨🚨🚨 Tier S 동시 → 즉시 비중축소 / 🚨🚨 Tier S 단독 / 🚨 Tier A / ⚠️ 일반). daily_summary + urgent_alert 두 함수 모두 Tier S 분리 섹션 추가.
+
 ---
 
 ## 📌 미국 애널 레이팅 — 추가 발견 엔드포인트 (메모, 2026-04-18)

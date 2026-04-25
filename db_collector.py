@@ -103,6 +103,8 @@ def _init_schema(conn: sqlite3.Connection):
         "ALTER TABLE daily_snapshot ADD COLUMN fcf_to_assets REAL",
         "ALTER TABLE daily_snapshot ADD COLUMN fcf_yield_ev REAL",
         "ALTER TABLE daily_snapshot ADD COLUMN fcf_conversion REAL",
+        # v1.6: 톱 애널 평가용 — 콜 후 평균 수익률 (Tier S 경로 ③ 핵심, 2026-04-25)
+        "ALTER TABLE us_analysts ADD COLUMN avg_return REAL",
     ):
         try:
             conn.execute(alter_sql)
@@ -3225,27 +3227,36 @@ def update_all_alpha_metrics(end_period: str | None = None,
 # (weekly_us_harvest 후 04:00 실행, ratings 1,902명 → 마스터 자동 인구)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def sync_us_analyst_master(min_stars_for_auto_watch: float = 4.5,
-                           min_calls_for_auto_watch: int = 5) -> dict:
+def sync_us_analyst_master() -> dict:
     """ratings 테이블의 모든 애널을 us_analysts 마스터로 자동 동기화.
+    + 3-Tier 자동 분류 (Tier A=watched=1, Tier S는 알림 시 런타임 분기).
 
-    - 신규 애널: INSERT (별점/성공률/콜수 평균 계산)
-    - 기존 애널: stars/success_rate/total_ratings 갱신 (watched/curated_at 보존)
-    - 자동 watched=1 처리: 별점 >= min_stars AND 콜수 >= min_calls AND 미확정만
+    **Tier A (watched=1) 진입 조건 (OR)**:
+      - 일반 톱: 별점≥4.0 AND 적중률≥60% AND 콜≥10
+      - 잠수형 거장: 별점≥4.8 AND 적중률≥80% AND 콜≥7
 
-    Returns: {inserted, updated, auto_watched, total_master, total_watched}
+    **Tier S (런타임 분기, watched=1 안에서)**:
+      ① 활발 톱: 별점≥4.5 AND 적중률≥70% AND 콜≥20
+      ② 잠수형 거장: 별점≥4.8 AND 적중률≥80% AND 콜≥7
+      ③ 고수익 거장: 별점≥4.5 AND avg_return≥50% AND 콜≥10
+
+    - 신규 애널: INSERT (avg_return 포함)
+    - 기존 애널: stars/success_rate/total_ratings/avg_return 갱신
+    - watched/curated_at 사용자 큐레이션 보존 (수동 watched=1만 자동 watched=0으로 안 됨)
+
+    Returns: {inserted, updated, auto_watched_a, tier_s_count, total_master, total_watched}
     """
     conn = _get_db()
     try:
         before_master = conn.execute("SELECT COUNT(*) FROM us_analysts").fetchone()[0]
-        before_watched = conn.execute("SELECT COUNT(*) FROM us_analysts WHERE watched=1").fetchone()[0]
 
-        # Step 1: ratings → 마스터 INSERT or UPDATE
-        # MAX(analyst), MAX(firm) 사용 — 시간에 따라 이름 변경 가능
+        # Step 1: ratings → 마스터 INSERT or UPDATE (avg_return 포함)
         conn.execute("""
-            INSERT INTO us_analysts (slug, name, firm, stars, success_rate, total_ratings, last_updated)
+            INSERT INTO us_analysts (slug, name, firm, stars, success_rate,
+                                     total_ratings, avg_return, last_updated)
             SELECT analyst_slug, MAX(analyst), MAX(firm),
                    AVG(stars), AVG(success_rate), COUNT(*),
+                   AVG(avg_return),
                    datetime('now')
             FROM us_analyst_ratings
             WHERE analyst_slug IS NOT NULL AND analyst_slug != ''
@@ -3256,21 +3267,35 @@ def sync_us_analyst_master(min_stars_for_auto_watch: float = 4.5,
               stars         = excluded.stars,
               success_rate  = excluded.success_rate,
               total_ratings = excluded.total_ratings,
+              avg_return    = excluded.avg_return,
               last_updated  = excluded.last_updated
         """)
         conn.commit()
 
-        # Step 2: 자동 watched=1 (사용자 큐레이션 보존 — watched=0 → 1만)
+        # Step 2: Tier A 자동 watched=1 (OR 2 경로, 사용자 큐레이션 보존)
         cur = conn.execute("""
             UPDATE us_analysts SET
               watched = 1,
               curated_at = datetime('now')
-            WHERE watched = 0
-              AND stars >= ?
-              AND total_ratings >= ?
-        """, (min_stars_for_auto_watch, min_calls_for_auto_watch))
+            WHERE watched = 0 AND (
+              -- 일반 톱
+              (stars >= 4.0 AND success_rate >= 60 AND total_ratings >= 10)
+              OR
+              -- 잠수형 거장 (Wildcard)
+              (stars >= 4.8 AND success_rate >= 80 AND total_ratings >= 7)
+            )
+        """)
         auto_watched_count = cur.rowcount
         conn.commit()
+
+        # Step 3: Tier S 카운트 (런타임 분기지만 통계 목적)
+        tier_s_count = conn.execute("""
+            SELECT COUNT(*) FROM us_analysts WHERE watched = 1 AND (
+              (stars >= 4.5 AND success_rate >= 70 AND total_ratings >= 20)
+              OR (stars >= 4.8 AND success_rate >= 80 AND total_ratings >= 7)
+              OR (stars >= 4.5 AND avg_return >= 50 AND total_ratings >= 10)
+            )
+        """).fetchone()[0]
 
         after_master = conn.execute("SELECT COUNT(*) FROM us_analysts").fetchone()[0]
         after_watched = conn.execute("SELECT COUNT(*) FROM us_analysts WHERE watched=1").fetchone()[0]
@@ -3278,12 +3303,30 @@ def sync_us_analyst_master(min_stars_for_auto_watch: float = 4.5,
         return {
             "inserted": after_master - before_master,
             "updated": before_master,
-            "auto_watched": auto_watched_count,
+            "auto_watched_a": auto_watched_count,
+            "tier_s_count": tier_s_count,
             "total_master": after_master,
             "total_watched": after_watched,
-            "min_stars": min_stars_for_auto_watch,
-            "min_calls": min_calls_for_auto_watch,
+            "criteria": "Tier A: 별점≥4.0 AND 적중률≥60% AND 콜≥10 OR (별점≥4.8 AND 적중률≥80% AND 콜≥7)",
         }
     finally:
         conn.close()
+
+
+def is_tier_s_analyst(stars: float, success_rate: float, total_ratings: int,
+                       avg_return: float = 0.0) -> bool:
+    """Tier S 엘리트 판정 — 알림 시 런타임 분기용.
+    3 경로 OR — 자주 정확 / 잠수형 거장 / 고수익 거장."""
+    if stars is None:
+        return False
+    s = stars
+    sr = success_rate or 0.0
+    n = total_ratings or 0
+    ret = avg_return or 0.0
+    return (
+        (s >= 4.5 and sr >= 70 and n >= 20) or       # ① 활발 톱
+        (s >= 4.8 and sr >= 80 and n >= 7) or        # ② 잠수형 거장
+        (s >= 4.5 and ret >= 50 and n >= 10)         # ③ 고수익 거장
+    )
+
 
