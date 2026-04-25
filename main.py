@@ -3815,11 +3815,15 @@ async def hourly_us_holdings_check(context):
                 if sent_key in sent:
                     continue  # 오늘 이미 발송
                 rows = conn.execute(
-                    "SELECT rating_date, rating_time, firm, analyst, action, "
-                    "       rating_new, rating_old, pt_now, pt_old, pt_change_pct, stars "
-                    "FROM us_analyst_ratings WHERE ticker=? "
-                    "  AND rating_date >= date('now', '-2 days') "
-                    "ORDER BY rating_date DESC, rating_time DESC",
+                    "SELECT r.rating_date, r.rating_time, r.firm, r.analyst, r.action, "
+                    "       r.rating_new, r.rating_old, r.pt_now, r.pt_old, r.pt_change_pct, "
+                    "       COALESCE(a.stars, r.stars) AS stars, "
+                    "       COALESCE(a.watched, 0) AS watched "
+                    "FROM us_analyst_ratings r "
+                    "LEFT JOIN us_analysts a ON r.analyst_slug = a.slug "
+                    "WHERE r.ticker=? "
+                    "  AND r.rating_date >= date('now', '-2 days') "
+                    "ORDER BY r.rating_date DESC, r.rating_time DESC",
                     (ticker,)
                 ).fetchall()
                 if len(rows) < 2:
@@ -3827,7 +3831,8 @@ async def hourly_us_holdings_check(context):
                 events = [
                     {"date": r[0], "time": r[1], "firm": r[2], "analyst": r[3],
                      "action": r[4], "rating_new": r[5], "rating_old": r[6],
-                     "pt_now": r[7], "pt_old": r[8], "pt_change_pct": r[9], "stars": r[10]}
+                     "pt_now": r[7], "pt_old": r[8], "pt_change_pct": r[9],
+                     "stars": r[10], "watched": bool(r[11])}
                     for r in rows
                 ]
                 downgrades = _detect_new_downgrades(ticker, events)
@@ -3992,23 +3997,59 @@ def _rating_elapsed(rdate: str) -> str:
 
 
 def _format_urgent_downgrade_alert(ticker: str, all_events: list, downgrades: list) -> str:
-    """긴급 다운그레이드 메시지 포맷. 4096자 미만."""
-    lines = [f"🚨 *{_md_escape(ticker)}* 다운그레이드 경고", ""]
+    """긴급 다운그레이드 메시지 포맷. 4096자 미만.
+    톱 애널(watched=1) 다운그레이드 별도 강조 + 별점 표시.
+    """
+    top_dgs = [d for d in downgrades if d.get("watched")]
+    other_dgs = [d for d in downgrades if not d.get("watched")]
+
+    # 헤더: 톱 애널 2명+ 동시 다운그레이드 = 최강 시그널
+    if len(top_dgs) >= 2:
+        header = f"🚨🚨 *{_md_escape(ticker)}* 톱 애널 {len(top_dgs)}명 동시 다운그레이드"
+    elif len(top_dgs) == 1:
+        header = f"🚨 *{_md_escape(ticker)}* 톱 애널 다운그레이드 경고"
+    else:
+        header = f"⚠️ *{_md_escape(ticker)}* 다운그레이드 경고 (일반 애널)"
+
+    lines = [header, ""]
     lines.append(f"최근 48h: *{len(all_events)}건* 이벤트, *{len(downgrades)}건* 다운그레이드")
+    if top_dgs:
+        lines.append(f"  └ 톱 애널 (별점 4.5+): *{len(top_dgs)}명*")
     lines.append("")
-    lines.append("*다운그레이드:*")
-    for d in downgrades[:5]:  # 최대 5건
+
+    def _fmt_dg(d):
         firm = _md_escape(d.get("firm"))
-        old_r = _md_escape(d.get("rating_old"))
-        new_r = _md_escape(d.get("rating_new"))
+        old_r = _md_escape(d.get("rating_old") or "—")
+        new_r = _md_escape(d.get("rating_new") or "—")
         pt_now = d.get("pt_now")
         pt_chg = d.get("pt_change_pct")
         pt_str = f"${pt_now:.0f}" if pt_now else "—"
         chg_str = f" ({pt_chg:+.1f}%)" if pt_chg is not None else ""
         elapsed_str = _rating_elapsed(d.get("date", ""))
-        lines.append(f"- {firm}: {old_r}→{new_r} {pt_str}{chg_str}{elapsed_str}")
-    if len(downgrades) > 5:
-        lines.append(f"... +{len(downgrades) - 5}건 더")
+        stars = d.get("stars")
+        star_str = f" ⭐{stars:.1f}" if stars is not None else ""
+        return f"- {firm}{star_str}: {old_r}→{new_r} {pt_str}{chg_str}{elapsed_str}"
+
+    if top_dgs:
+        lines.append("*🔥 톱 애널 다운그레이드:*")
+        for d in top_dgs[:5]:
+            lines.append(_fmt_dg(d))
+        if len(top_dgs) > 5:
+            lines.append(f"... +{len(top_dgs) - 5}건 더")
+        lines.append("")
+
+    if other_dgs:
+        lines.append(f"*일반 애널 다운그레이드:* {len(other_dgs)}건")
+        for d in other_dgs[:3]:
+            lines.append(_fmt_dg(d))
+        if len(other_dgs) > 3:
+            lines.append(f"... +{len(other_dgs) - 3}건 더")
+
+    # 비중 축소 권장 메시지 (톱 2명+ 동시)
+    if len(top_dgs) >= 2:
+        lines.append("")
+        lines.append("→ *비중 축소 검토 권장*")
+
     return "\n".join(lines)
 
 
@@ -4024,14 +4065,21 @@ def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
         lines = [f"📊 *미국 애널 스캔* ({kst_now})", ""]
 
         # 내 종목 섹션 (최근 4일 이벤트, rating_date 기준)
+        # us_analysts JOIN — 별점(stars) + 톱(watched) 정보 가져옴
         my_section = []
         downgrade_section = []
+        top_downgrade_section = []  # 톱 애널 다운그레이드 강조용
         for ticker in tickers:
             rows = conn.execute(
-                "SELECT firm, action, rating_new, rating_old, pt_now, pt_change_pct, rating_date "
-                "FROM us_analyst_ratings WHERE ticker=? "
-                "  AND rating_date >= date('now', '-4 days') "
-                "ORDER BY rating_date DESC, rating_time DESC",
+                "SELECT r.firm, r.action, r.rating_new, r.rating_old, "
+                "       r.pt_now, r.pt_change_pct, r.rating_date, "
+                "       COALESCE(a.stars, r.stars) AS stars, "
+                "       COALESCE(a.watched, 0) AS watched "
+                "FROM us_analyst_ratings r "
+                "LEFT JOIN us_analysts a ON r.analyst_slug = a.slug "
+                "WHERE r.ticker=? "
+                "  AND r.rating_date >= date('now', '-4 days') "
+                "ORDER BY r.rating_date DESC, r.rating_time DESC",
                 (ticker,)
             ).fetchall()
             # Hold→Hold 무변화 제외 (Maintains/Reiterates + target 미변동)
@@ -4040,25 +4088,53 @@ def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
             if not rows:
                 continue
             already_sent = "⚠️ 이미 알림" if ticker in urgent_sent_tickers else ""
-            # 다운그레이드 분리
+            # 다운그레이드 분리 (톱/일반)
             dgs = [r for r in rows if (r[1] or "").lower() == "downgrades"]
-            if dgs:
-                for r in dgs[:2]:
-                    firm, act, new_r, old_r, pt, pt_chg, rdate = r
+            top_dgs = [r for r in dgs if r[8]]  # watched=1
+            other_dgs = [r for r in dgs if not r[8]]
+
+            if top_dgs:
+                for r in top_dgs[:2]:
+                    firm, act, new_r, old_r, pt, pt_chg, rdate, stars, watched = r
                     pt_str = f"${pt:.0f}" if pt else "—"
-                    downgrade_section.append(
-                        f"- *{_md_escape(ticker)}*: {_md_escape(firm)} {_md_escape(new_r)} {pt_str}{_rating_elapsed(rdate)} {already_sent}"
+                    star_str = f" ⭐{stars:.1f}" if stars is not None else ""
+                    top_downgrade_section.append(
+                        f"- 🔥 *{_md_escape(ticker)}*: {_md_escape(firm)}{star_str} {_md_escape(new_r)} {pt_str}{_rating_elapsed(rdate)} {already_sent}"
                     )
-            else:
-                # 상향/유지 표시 (날짜 포함)
-                firms = ", ".join(
-                    f"{_md_escape(r[0])} ${r[4]:.0f}{_rating_elapsed(r[6])}" if r[4]
-                    else f"{_md_escape(r[0])}{_rating_elapsed(r[6])}"
-                    for r in rows[:2]
-                )
+                # 톱 2명+ 동시 다운그레이드 = 강조 마크
+                if len(top_dgs) >= 2:
+                    top_downgrade_section.append(f"  ⚠️ {_md_escape(ticker)} 톱 애널 {len(top_dgs)}명 동시 다운 → 비중 축소 검토")
+
+            if other_dgs and not top_dgs:
+                # 톱 애널 다운 없을 때만 일반 표시
+                for r in other_dgs[:2]:
+                    firm, act, new_r, old_r, pt, pt_chg, rdate, stars, watched = r
+                    pt_str = f"${pt:.0f}" if pt else "—"
+                    star_str = f" ⭐{stars:.1f}" if stars is not None else ""
+                    downgrade_section.append(
+                        f"- *{_md_escape(ticker)}*: {_md_escape(firm)}{star_str} {_md_escape(new_r)} {pt_str}{_rating_elapsed(rdate)} {already_sent}"
+                    )
+
+            if not dgs:
+                # 상향/유지 표시 (날짜 + 별점 포함)
+                def _firm_str(r):
+                    firm = _md_escape(r[0])
+                    stars = r[7]
+                    star_mark = f"⭐{stars:.1f}" if stars is not None else ""
+                    pt_str = f" ${r[4]:.0f}" if r[4] else ""
+                    return f"{firm}{star_mark}{pt_str}{_rating_elapsed(r[6])}"
+                firms = ", ".join(_firm_str(r) for r in rows[:2])
                 my_section.append(f"- {_md_escape(ticker)}: {len(rows)}건 ({firms}) {already_sent}")
 
         orig_my_count = len(my_section)  # 축약 전 원본 카운트 (폴백 메시지용)
+
+        # 톱 다운그레이드 먼저 (가장 중요)
+        if top_downgrade_section:
+            lines.append("━━ 🔥 *톱 애널 다운그레이드* ━━")
+            lines.extend(top_downgrade_section[:10])
+            if len(top_downgrade_section) > 10:
+                lines.append(f"... +{len(top_downgrade_section) - 10}건 더")
+            lines.append("")
 
         if my_section:
             # 축약 전략: 10개 초과면 잘라내기
@@ -4071,7 +4147,7 @@ def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
             lines.append("")
 
         if downgrade_section:
-            lines.append("━━ *다운그레이드* ━━")
+            lines.append("━━ *다운그레이드 (일반)* ━━")
             lines.extend(downgrade_section[:10])
             if len(downgrade_section) > 10:
                 lines.append(f"... +{len(downgrade_section) - 10}건 더")
@@ -4084,16 +4160,20 @@ def _format_daily_rating_summary(tickers: list, inserted: int, failed: list,
         msg = "\n".join(lines)
         # 4096자 체크 (안전 마진)
         if len(msg) > 4000:
-            # 압축 — 내 종목 섹션 완전히 축약
+            # 압축 — 내 종목 섹션 완전히 축약, 톱 다운그레이드는 보존
             lines = [f"📊 *미국 애널 스캔* ({kst_now})", ""]
+            if top_downgrade_section:
+                lines.append("━━ 🔥 *톱 애널 다운그레이드* ━━")
+                lines.extend(top_downgrade_section[:5])
+                lines.append("")
             if downgrade_section:
-                lines.append("━━ *다운그레이드* ━━")
+                lines.append("━━ *다운그레이드 (일반)* ━━")
                 lines.extend(downgrade_section[:5])
                 lines.append("")
             lines.append(f"내 종목 이벤트: {orig_my_count}종목 (상세 생략)")
             lines.append(f"스캔 {len(tickers)}종목 / 신규 {inserted}건 / 실패 {len(failed)}")
             msg = "\n".join(lines)
-        return msg if (my_section or downgrade_section) else ""  # 이벤트 없으면 빈 문자열 → 발송 안 함
+        return msg if (my_section or downgrade_section or top_downgrade_section) else ""  # 이벤트 없으면 빈 문자열 → 발송 안 함
     finally:
         conn.close()
 
