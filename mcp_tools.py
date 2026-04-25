@@ -869,6 +869,23 @@ MCP_TOOLS = [
       },
       "required": ["slug"]}},
 
+    {"name": "get_us_buy_candidates",
+     "description": "톱 애널 추천 + TP 대비 업사이드 충족 미국 매수 후보 발굴. raw 데이터 반환 (정렬·필터·해석은 사용 측). watched=1 (Tier A 254명) 애널의 최근 N일 Upgrades/Initiates만 검색. 보유/워치 제외 기본. min_upside=20%면 ~50종목, 30%면 ~23종목, 10%면 ~100종목.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "days": {"type": "integer", "default": 180,
+                 "description": "최근 N일 추천만 (기본 180, 최대 365)"},
+        "min_advisors": {"type": "integer", "default": 1,
+                          "description": "최소 추천 톱 애널 수 (기본 1 — Tier S 거장 단독도 OK)"},
+        "min_upside": {"type": "number", "default": 20.0,
+                        "description": "TP 대비 최소 업사이드 % (기본 20). 음수 가능 (TP 초과도 보려면)"},
+        "exclude_held_and_watch": {"type": "boolean", "default": True,
+                                     "description": "보유/워치 종목 제외 (기본 true)"},
+        "limit": {"type": "integer", "default": 50,
+                   "description": "반환 최대 종목 수 (기본 50, 최대 200)"}
+      },
+      "required": []}},
+
     {"name": "get_youtube_transcript",
      "description": "유튜브 영상 자막 추출. URL 또는 11자 video ID 입력. 한국어 우선, 영어 fallback. 자막 없으면 에러. 기본 무제한 (Claude 1M 컨텍스트).",
      "inputSchema": {"type": "object",
@@ -4463,6 +4480,20 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             result = await _exec_us_analyst(**arguments)
         elif name == "watch_analyst":
             result = await _exec_watch_analyst(**arguments)
+
+        elif name == "get_us_buy_candidates":
+            from db_collector import find_us_buy_candidates
+            days = int(arguments.get("days") or 180)
+            days = max(1, min(days, 365))
+            min_advisors = int(arguments.get("min_advisors") or 1)
+            min_upside = float(arguments.get("min_upside") if arguments.get("min_upside") is not None else 20.0)
+            exclude = bool(arguments.get("exclude_held_and_watch", True))
+            limit = int(arguments.get("limit") or 50)
+            limit = max(1, min(limit, 200))
+            result = await asyncio.to_thread(
+                find_us_buy_candidates,
+                days, min_advisors, min_upside, exclude, limit
+            )
 
         elif name == "get_youtube_transcript":
             url = (arguments.get("url") or "").strip()

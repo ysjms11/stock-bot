@@ -3330,3 +3330,194 @@ def is_tier_s_analyst(stars: float, success_rate: float, total_ratings: int,
     )
 
 
+def find_us_buy_candidates(
+    days: int = 180,
+    min_advisors: int = 1,
+    min_upside: float = 20.0,
+    exclude_held_and_watch: bool = True,
+    limit: int = 50,
+) -> dict:
+    """톱 애널 추천 + 가격 적정 미국 매수 후보 발굴.
+
+    원시 데이터 반환. 정렬·필터·해석은 LLM/사용자가 동적으로.
+
+    조건:
+    - watched=1 (Tier A, 254명) 애널의 Upgrades or Initiates
+    - 최근 N일 (기본 180)
+    - 종목별 추천 애널 N명+ (기본 1)
+    - TP 대비 현재가 업사이드 N%+ (기본 20%, TP 초과 자동 컷)
+    - 보유/워치 제외 (기본)
+
+    Returns: {
+      "criteria": {...},
+      "total_pool": int,           # 풀 크기
+      "after_upside_filter": int,  # 업사이드 필터 후
+      "candidates": [
+        {ticker, price, avg_target, upside_pct,
+         tier_s_count, tier_a_count, others_count, total_advisors,
+         latest_call_days_ago, tier_s_analysts, tier_a_analysts}
+      ]
+    }
+    """
+    import yfinance as yf
+    from datetime import datetime, timezone
+
+    conn = _get_db()
+    try:
+        # Step 1: 종목별 watched 애널 추천 집계
+        rows = conn.execute("""
+            SELECT r.ticker,
+                   AVG(r.pt_now) AS avg_tp,
+                   COUNT(*) AS total_advisors,
+                   MAX(r.rating_date) AS latest_rating,
+                   GROUP_CONCAT(DISTINCT r.action) AS actions
+            FROM us_analyst_ratings r
+            JOIN us_analysts a ON r.analyst_slug = a.slug
+            WHERE a.watched = 1
+              AND r.action IN ('Upgrades', 'Initiates')
+              AND r.rating_date >= date('now', ?)
+            GROUP BY r.ticker
+            HAVING COUNT(*) >= ?
+        """, (f"-{days} days", min_advisors)).fetchall()
+
+        if not rows:
+            return {"criteria": {"days": days, "min_advisors": min_advisors,
+                                  "min_upside": min_upside},
+                    "total_pool": 0, "after_upside_filter": 0, "candidates": []}
+
+        # Step 2: 보유/워치 제외 처리
+        excluded = set()
+        if exclude_held_and_watch:
+            try:
+                from kis_api import load_us_watchlist, PORTFOLIO_FILE, load_json
+                for t in load_us_watchlist().keys():
+                    excluded.add(t.upper())
+                for t in load_json(PORTFOLIO_FILE, {}).get("us_stocks", {}).keys():
+                    excluded.add(t.upper())
+            except Exception:
+                pass
+
+        candidate_rows = [r for r in rows if r["ticker"].upper() not in excluded]
+        total_pool = len(candidate_rows)
+        if not candidate_rows:
+            return {"criteria": {"days": days, "min_advisors": min_advisors,
+                                  "min_upside": min_upside},
+                    "total_pool": 0, "after_upside_filter": 0, "candidates": []}
+
+        # Step 3: 종목별 Tier S/A/일반 카운트 + 톱 애널 정보 수집
+        ticker_details = {}
+        for r in candidate_rows:
+            ticker = r["ticker"]
+            advisor_rows = conn.execute("""
+                SELECT r.firm, r.analyst, r.action, r.rating_new, r.pt_now, r.rating_date,
+                       a.stars, a.success_rate, a.total_ratings, a.avg_return, a.watched
+                FROM us_analyst_ratings r
+                JOIN us_analysts a ON r.analyst_slug = a.slug
+                WHERE r.ticker = ? AND a.watched = 1
+                  AND r.action IN ('Upgrades', 'Initiates')
+                  AND r.rating_date >= date('now', ?)
+                ORDER BY r.rating_date DESC, a.stars DESC
+            """, (ticker, f"-{days} days")).fetchall()
+
+            tier_s_list, tier_a_list = [], []
+            for ar in advisor_rows:
+                meta = {
+                    "name": ar["analyst"], "firm": ar["firm"],
+                    "stars": ar["stars"], "success_rate": ar["success_rate"],
+                    "total_calls": ar["total_ratings"], "avg_return": ar["avg_return"],
+                    "action": ar["action"], "rating": ar["rating_new"],
+                    "pt": ar["pt_now"], "rated_at": ar["rating_date"],
+                }
+                if is_tier_s_analyst(ar["stars"], ar["success_rate"],
+                                       ar["total_ratings"], ar["avg_return"]):
+                    tier_s_list.append(meta)
+                else:
+                    tier_a_list.append(meta)
+
+            ticker_details[ticker] = {
+                "tier_s_count": len(tier_s_list),
+                "tier_a_count": len(tier_a_list),
+                "tier_s_analysts": tier_s_list[:3],  # 상위 3명만
+                "tier_a_analysts": tier_a_list[:3],
+                "actions": (r["actions"] or "").split(","),
+                "latest_rating": r["latest_rating"],
+            }
+
+        # Step 4: yfinance 배치 다운로드 (현재가)
+        tickers_list = [r["ticker"] for r in candidate_rows]
+        prices = {}
+        try:
+            data = yf.download(tickers=tickers_list, period="1d",
+                                progress=False, auto_adjust=True, threads=True)
+            if not data.empty:
+                close = data["Close"]
+                if hasattr(close, "iloc"):
+                    last = close.iloc[-1]
+                    if hasattr(last, "to_dict"):
+                        prices = last.to_dict()
+                    else:
+                        # 단일 종목 케이스
+                        prices = {tickers_list[0]: float(last)}
+        except Exception as e:
+            print(f"[buy_candidates] yfinance 실패: {e}")
+
+        # Step 5: 업사이드 계산 + 필터
+        today = datetime.now(timezone.utc).date()
+        candidates = []
+        for r in candidate_rows:
+            ticker = r["ticker"]
+            avg_tp = r["avg_tp"]
+            price = prices.get(ticker)
+            if price is None or price != price or not avg_tp or avg_tp <= 0:
+                continue
+            try:
+                price = float(price)
+            except (TypeError, ValueError):
+                continue
+            upside = (avg_tp - price) / price * 100.0
+            if upside < min_upside:
+                continue
+
+            details = ticker_details.get(ticker, {})
+            # 최근 콜 days ago
+            latest = details.get("latest_rating") or r["latest_rating"]
+            try:
+                from datetime import date as _date
+                ld = _date.fromisoformat(latest) if latest else today
+                days_ago = (today - ld).days
+            except Exception:
+                days_ago = None
+
+            candidates.append({
+                "ticker": ticker,
+                "price": round(price, 2),
+                "avg_target": round(avg_tp, 2),
+                "upside_pct": round(upside, 2),
+                "total_advisors": r["total_advisors"],
+                "tier_s_count": details.get("tier_s_count", 0),
+                "tier_a_count": details.get("tier_a_count", 0),
+                "others_count": 0,  # watched=1만 보므로 일반은 0
+                "latest_call_days_ago": days_ago,
+                "actions": details.get("actions", []),
+                "tier_s_analysts": details.get("tier_s_analysts", []),
+                "tier_a_analysts": details.get("tier_a_analysts", []),
+            })
+
+        # Step 6: 정렬 (업사이드 내림차순) + limit
+        candidates.sort(key=lambda c: -c["upside_pct"])
+        after_filter = len(candidates)
+        candidates = candidates[:limit]
+
+        return {
+            "criteria": {
+                "days": days, "min_advisors": min_advisors,
+                "min_upside": min_upside, "limit": limit,
+                "exclude_held_and_watch": exclude_held_and_watch,
+            },
+            "total_pool": total_pool,
+            "after_upside_filter": after_filter,
+            "candidates": candidates,
+        }
+    finally:
+        conn.close()
+

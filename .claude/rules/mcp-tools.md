@@ -1,4 +1,4 @@
-# MCP 도구 전체 목록 (39개)
+# MCP 도구 전체 목록 (41개)
 
 > `mcp_tools.py`의 도구 스키마 요약. 새 도구 추가 시 → `.claude/rules/add-mcp-tool.md` 참조
 
@@ -67,3 +67,4 @@
 | | | mode=sector | 섹터별 레이팅 모멘텀 |
 | 38 | `get_us_analyst` | | 미국 애널 개인/그룹 조회 (name=개별, 없으면 top 리스트, firm/sector 필터) |
 | 39 | `get_youtube_transcript` | | 유튜브 자막 추출 (URL/ID, ko 우선 en fallback, 자막 없으면 에러) |
+| 40 | `get_us_buy_candidates` | | 톱 애널 추천 + TP 업사이드 충족 미국 매수 후보 (raw 데이터, watched=1 풀 254명, Tier S/A 카운트 포함, 기본 180일/1명+/+20%/limit 50) |
