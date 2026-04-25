@@ -21,6 +21,8 @@
 
 6. **daily_collect 자가진단 스케줄 추가(2026-04-25)** — 4/24 18:30 미실행 사건(원인 미확정, ccd 세션 retry 이벤트루프 블록 추정) 대응. 평일 19:15/20:15/21:15/22:15 네 번 당일 daily_snapshot 0건 체크 후 발견 시 collect_daily 재실행 + 텔레그램 경보. `daily_collect_sanity_check` 함수 main.py 추가. 첫 실전 동작은 다음 평일(4/27 월) 18:30 수집 여부에 따름.
 
+7. **US 애널 마스터 자동 sync(2026-04-25)** — 시스템 의도와 구현 갭 발견 후 복구. weekly_us_harvest 1,902명 ratings 데이터 vs us_analysts 마스터 13명만 있던 문제. `sync_us_analyst_master` (db_collector) + `weekly_us_analyst_sync` (main.py 일요일 04:00) + post_init 부트시 1회 실행 추가. 즉시 실행 결과 마스터 13→1,902명, watched 12→183명 (별점 4.5+ 콜 5+ 자동). discovery 시그널 강력화. 단 mcp_tools `_exec_us_scan` discovery 모드의 action='Upgrades'만 검색 → Upgrades+Initiates로 확장 검토 필요(별도 개선).
+
 ---
 
 ## 📌 미국 애널 레이팅 — 추가 발견 엔드포인트 (메모, 2026-04-18)

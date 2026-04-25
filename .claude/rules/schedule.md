@@ -29,6 +29,7 @@
 |------|---|---------|-----------|-----------|-----------|
 | 02:00 | 전체 | `dart_incremental` | `daily_dart_incremental` | DART 신규 정기공시 증분 수집 → 알파 재계산 | 4/16 신규 |
 | 03:00 | 일 | `weekly_us_harvest` | `weekly_us_ratings_universe_scan` | S&P 500 ∪ Russell 1000 전체 레이팅 수집 (~1000종목, ~33분) | 4/23 Russell 확장 |
+| 04:00 | 일 | `weekly_us_analyst_sync` | `weekly_us_analyst_sync` | ratings → us_analysts 마스터 자동 동기화 + 별점 4.5+ 콜 5+ 자동 watched=1 | 4/25 신규 |
 | 05:05 | 화~토 | `us_summary_dst` | `us_market_summary` | 미국 장 마감 요약 (DST, 내부 가드로 중복 방지) | — |
 | 06:00 | 전체 | `macro_am` | `macro_dashboard` | 매크로 대시보드 (미국장 마감 후) | — |
 | 06:05 | 화~토 | `us_summary_std` | `us_market_summary` | 미국 장 마감 요약 (표준시, 내부 가드로 중복 방지) | — |

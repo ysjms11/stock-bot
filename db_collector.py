@@ -3220,3 +3220,70 @@ def update_all_alpha_metrics(end_period: str | None = None,
         conn.close()
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# us_analyst_ratings → us_analysts 마스터 자동 동기화
+# (weekly_us_harvest 후 04:00 실행, ratings 1,902명 → 마스터 자동 인구)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def sync_us_analyst_master(min_stars_for_auto_watch: float = 4.5,
+                           min_calls_for_auto_watch: int = 5) -> dict:
+    """ratings 테이블의 모든 애널을 us_analysts 마스터로 자동 동기화.
+
+    - 신규 애널: INSERT (별점/성공률/콜수 평균 계산)
+    - 기존 애널: stars/success_rate/total_ratings 갱신 (watched/curated_at 보존)
+    - 자동 watched=1 처리: 별점 >= min_stars AND 콜수 >= min_calls AND 미확정만
+
+    Returns: {inserted, updated, auto_watched, total_master, total_watched}
+    """
+    conn = _get_db()
+    try:
+        before_master = conn.execute("SELECT COUNT(*) FROM us_analysts").fetchone()[0]
+        before_watched = conn.execute("SELECT COUNT(*) FROM us_analysts WHERE watched=1").fetchone()[0]
+
+        # Step 1: ratings → 마스터 INSERT or UPDATE
+        # MAX(analyst), MAX(firm) 사용 — 시간에 따라 이름 변경 가능
+        conn.execute("""
+            INSERT INTO us_analysts (slug, name, firm, stars, success_rate, total_ratings, last_updated)
+            SELECT analyst_slug, MAX(analyst), MAX(firm),
+                   AVG(stars), AVG(success_rate), COUNT(*),
+                   datetime('now')
+            FROM us_analyst_ratings
+            WHERE analyst_slug IS NOT NULL AND analyst_slug != ''
+            GROUP BY analyst_slug
+            ON CONFLICT(slug) DO UPDATE SET
+              name          = excluded.name,
+              firm          = excluded.firm,
+              stars         = excluded.stars,
+              success_rate  = excluded.success_rate,
+              total_ratings = excluded.total_ratings,
+              last_updated  = excluded.last_updated
+        """)
+        conn.commit()
+
+        # Step 2: 자동 watched=1 (사용자 큐레이션 보존 — watched=0 → 1만)
+        cur = conn.execute("""
+            UPDATE us_analysts SET
+              watched = 1,
+              curated_at = datetime('now')
+            WHERE watched = 0
+              AND stars >= ?
+              AND total_ratings >= ?
+        """, (min_stars_for_auto_watch, min_calls_for_auto_watch))
+        auto_watched_count = cur.rowcount
+        conn.commit()
+
+        after_master = conn.execute("SELECT COUNT(*) FROM us_analysts").fetchone()[0]
+        after_watched = conn.execute("SELECT COUNT(*) FROM us_analysts WHERE watched=1").fetchone()[0]
+
+        return {
+            "inserted": after_master - before_master,
+            "updated": before_master,
+            "auto_watched": auto_watched_count,
+            "total_master": after_master,
+            "total_watched": after_watched,
+            "min_stars": min_stars_for_auto_watch,
+            "min_calls": min_calls_for_auto_watch,
+        }
+    finally:
+        conn.close()
+

@@ -3714,6 +3714,27 @@ async def weekly_us_ratings_universe_scan(context):
         print(f"[weekly_harvest] 전체 실패: {type(e).__name__}: {e}")
 
 
+async def weekly_us_analyst_sync(context):
+    """주간 US 애널 마스터 자동 동기화 (일요일 04:00 KST, harvest 끝난 직후).
+
+    us_analyst_ratings 1,902명 → us_analysts 마스터 자동 인구 + 별점 4.5+ 콜 5+ 자동 watched=1.
+    discovery 시그널 풀 확장이 목적.
+    """
+    try:
+        from db_collector import sync_us_analyst_master
+        result = await asyncio.to_thread(sync_us_analyst_master)
+        msg = (
+            "🔄 US 애널 마스터 동기화 완료\n"
+            f"• 신규 애널: {result['inserted']}명\n"
+            f"• 자동 watched=1: {result['auto_watched']}명 (별점≥{result['min_stars']} 콜≥{result['min_calls']})\n"
+            f"• 마스터 총: {result['total_master']}명 / watched: {result['total_watched']}명"
+        )
+        print(f"[us_analyst_sync] {result}")
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        print(f"[us_analyst_sync] 실패: {type(e).__name__}: {e}")
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 미국 애널 레이팅 — 실시간 감시 (2단계)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4174,6 +4195,26 @@ async def post_init(application: Application):
         except Exception as e:
             print(f"[retry] 미완 job 재실행 체크 실패: {e}")
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # US 애널 마스터 1회 동기화 (us_analysts 거의 비어있을 때만)
+    # (정상 운영 후엔 매주 일요일 04:00 weekly_us_analyst_sync 잡이 처리)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    try:
+        from db_collector import _get_db, sync_us_analyst_master
+        conn = _get_db()
+        master_count = conn.execute("SELECT COUNT(*) FROM us_analysts").fetchone()[0]
+        ratings_count = conn.execute(
+            "SELECT COUNT(DISTINCT analyst_slug) FROM us_analyst_ratings WHERE analyst_slug IS NOT NULL"
+        ).fetchone()[0]
+        conn.close()
+        # ratings 풀 대비 마스터가 10% 미만이면 sync 필요
+        if ratings_count > 100 and master_count < ratings_count * 0.1:
+            print(f"[us_analyst_sync] 부트시 마스터({master_count}) << ratings({ratings_count}) — 1회 동기화 실행")
+            r = await asyncio.to_thread(sync_us_analyst_master)
+            print(f"[us_analyst_sync] 부트 완료: {r}")
+    except Exception as e:
+        print(f"[us_analyst_sync] 부트 동기화 실패: {e}")
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Reply Keyboard 버튼 텍스트 핸들러
@@ -4259,6 +4300,8 @@ def main():
     jq.run_daily(daily_us_rating_scan,    time=dtime(7, 30, tzinfo=KST), days=(0,1,2,3,4,5,6), name="us_ratings")
     # 주간 S&P 500 유니버스 스캔 — 일요일 03:00 KST (애널 풀 축적용, 약 17분 소요)
     jq.run_daily(weekly_us_ratings_universe_scan, time=dtime(3, 0, tzinfo=KST), days=(6,), name="weekly_us_harvest")
+    # harvest 33분 + 여유 → 04:00에 마스터 sync (ratings → us_analysts 자동 인구)
+    jq.run_daily(weekly_us_analyst_sync,        time=dtime(4, 0, tzinfo=KST), days=(6,), name="weekly_us_analyst_sync")
     # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
     jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_noon")
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_close")
