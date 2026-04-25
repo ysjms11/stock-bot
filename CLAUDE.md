@@ -59,7 +59,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 |------|-------|------|
 | `kis_api.py` | ~6400 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업, 미국 애널 레이팅 (StockAnalysis) |
 | `main.py` | ~5800 | 텔레그램 봇 + 자동알림 스케줄 (40+잡) + 진입점 |
-| `mcp_tools.py` | ~4600 | MCP 도구 (41개) 스키마 + 실행 로직 + SSE 서버 |
+| `mcp_tools.py` | ~4600 | MCP 도구 (43개) 스키마 + 실행 로직 + SSE 서버 |
 | `krx_crawler.py` | ~1500 | KRX DB 로드 & 스캐너 (레거시 JSON 파일 호환) |
 | `db_collector.py` | ~3200 | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
 
@@ -83,7 +83,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ---
 
-## MCP 도구 (41개)
+## MCP 도구 (43개)
 
 실행 로직: `mcp_tools.py`의 `_execute_tool()` 함수.
 전체 도구 목록/모드/파라미터 → `.claude/rules/mcp-tools.md`

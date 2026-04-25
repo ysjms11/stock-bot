@@ -33,6 +33,8 @@ from kis_api import (
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
     list_disclosures_for_ticker, fetch_and_cache_disclosure,
     fetch_youtube_transcript,
+    fmp_earnings_transcript, fmp_price_target_summary,
+    fmp_analyst_estimates, fmp_stock_grades,
 )
 
 from db_collector import load_krx_db, scan_stocks, _load_history
@@ -868,6 +870,29 @@ MCP_TOOLS = [
         "watched": {"type": "boolean", "default": True, "description": "true=톱 애널 확정, false=해제"}
       },
       "required": ["slug"]}},
+
+    {"name": "get_us_earnings_transcript",
+     "description": "FMP 미국 종목 실적 발표 컨퍼런스콜 본문(transcript) 조회. CEO/CFO 가이던스 발언 + 톱애널 Q&A 직접 확인 가능. 분기당 4~6만자. 본문 큰 만큼 max_chars 절삭 옵션 제공.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "ticker": {"type": "string", "description": "미국 티커 (예: AMD, NVDA)"},
+        "year": {"type": "integer", "description": "회계연도 (예: 2025, 2026)"},
+        "quarter": {"type": "integer", "description": "분기 1~4"},
+        "max_chars": {"type": "integer", "default": 0,
+                      "description": "본문 최대 문자수. 0=무제한 (기본). 50000 등 지정 시 절삭."}
+      },
+      "required": ["ticker", "year", "quarter"]}},
+
+    {"name": "get_us_analyst_research",
+     "description": "FMP 미국 종목 분석가 데이터 통합: 1) Price Target Summary (1m/3m/1y 평균 TP, 카운트) 2) Analyst Estimates (매출/EBITDA/순이익/EPS Low/High/Avg, 향후 5년) 3) Stock Grades (증권사 등급 변경 이력, 최근 N건). 한 번 호출로 'TP 근거 + 추정치 + 등급 흐름' 파악.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "ticker": {"type": "string", "description": "미국 티커"},
+        "estimates_period": {"type": "string", "enum": ["annual", "quarter"], "default": "annual"},
+        "estimates_limit": {"type": "integer", "default": 5, "description": "추정치 N년/분기"},
+        "grades_limit": {"type": "integer", "default": 20, "description": "등급 변경 이력 N건"}
+      },
+      "required": ["ticker"]}},
 
     {"name": "get_us_buy_candidates",
      "description": "톱 애널 추천 + TP 대비 업사이드 충족 미국 매수 후보 발굴. raw 데이터 반환 (정렬·필터·해석은 사용 측). watched=1 (Tier A 254명) 애널의 최근 N일 Upgrades/Initiates만 검색. 보유/워치 제외 기본. min_upside=20%면 ~50종목, 30%면 ~23종목, 10%면 ~100종목.",
@@ -4480,6 +4505,34 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             result = await _exec_us_analyst(**arguments)
         elif name == "watch_analyst":
             result = await _exec_watch_analyst(**arguments)
+
+        elif name == "get_us_earnings_transcript":
+            ticker = (arguments.get("ticker") or "").strip().upper()
+            year = int(arguments.get("year") or 0)
+            quarter = int(arguments.get("quarter") or 0)
+            max_chars = int(arguments.get("max_chars") or 0)
+            if not ticker or not year or quarter not in (1, 2, 3, 4):
+                result = {"error": "ticker/year/quarter(1-4) 필수"}
+            else:
+                result = await fmp_earnings_transcript(ticker, year, quarter, max_chars)
+
+        elif name == "get_us_analyst_research":
+            ticker = (arguments.get("ticker") or "").strip().upper()
+            period = (arguments.get("estimates_period") or "annual").lower()
+            est_limit = int(arguments.get("estimates_limit") or 5)
+            grades_limit = int(arguments.get("grades_limit") or 20)
+            if not ticker:
+                result = {"error": "ticker 필수"}
+            else:
+                summary = await fmp_price_target_summary(ticker)
+                estimates = await fmp_analyst_estimates(ticker, period, est_limit)
+                grades = await fmp_stock_grades(ticker, grades_limit)
+                result = {
+                    "ticker": ticker,
+                    "price_target_summary": summary,
+                    "analyst_estimates": estimates,
+                    "stock_grades": grades,
+                }
 
         elif name == "get_us_buy_candidates":
             from db_collector import find_us_buy_candidates

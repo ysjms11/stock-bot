@@ -6974,3 +6974,167 @@ def fetch_youtube_transcript(url_or_id: str, languages: list | None = None,
         "truncated": truncated,
         "transcript": text,
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Financial Modeling Prep (FMP) — 미국 종목 본문 데이터
+# 무료 250 calls/day, .env FMP_API_KEY 필요
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
+FMP_BASE_URL = "https://financialmodelingprep.com/stable"
+
+
+async def fmp_earnings_transcript(ticker: str, year: int, quarter: int,
+                                    max_chars: int = 0) -> dict:
+    """FMP earnings call transcript 본문 조회.
+
+    Returns: {"symbol", "period", "year", "date", "char_count", "transcript", "truncated"}
+    """
+    if not FMP_API_KEY:
+        return {"error": "FMP_API_KEY 미설정 (.env 추가 필요)"}
+    ticker = ticker.upper()
+    url = f"{FMP_BASE_URL}/earning-call-transcript"
+    params = {"symbol": ticker, "year": year, "quarter": quarter, "apikey": FMP_API_KEY}
+    async with aiohttp.ClientSession() as s:
+        try:
+            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                if r.status != 200:
+                    return {"error": f"FMP HTTP {r.status}", "ticker": ticker}
+                data = await r.json()
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}", "ticker": ticker}
+
+    if not data or not isinstance(data, list):
+        return {"error": "transcript 없음 (분기 미발표 또는 미커버)",
+                "ticker": ticker, "year": year, "quarter": quarter}
+
+    rec = data[0]
+    text = rec.get("content", "") or ""
+    char_count = len(text)
+    truncated = False
+    if max_chars and char_count > max_chars:
+        text = text[:max_chars] + f"\n...[TRUNCATED: {char_count - max_chars} chars omitted]"
+        truncated = True
+
+    return {
+        "symbol": rec.get("symbol", ticker),
+        "period": rec.get("period"),
+        "year": rec.get("year"),
+        "date": rec.get("date"),
+        "char_count": char_count,
+        "truncated": truncated,
+        "transcript": text,
+    }
+
+
+async def fmp_price_target_summary(ticker: str) -> dict:
+    """FMP analyst price target 평균/추세."""
+    if not FMP_API_KEY:
+        return {"error": "FMP_API_KEY 미설정"}
+    ticker = ticker.upper()
+    url = f"{FMP_BASE_URL}/price-target-summary"
+    params = {"symbol": ticker, "apikey": FMP_API_KEY}
+    async with aiohttp.ClientSession() as s:
+        try:
+            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return {"error": f"FMP HTTP {r.status}"}
+                data = await r.json()
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    if not data or not isinstance(data, list):
+        return {"ticker": ticker, "data": None, "message": "price target 없음"}
+
+    rec = data[0]
+    return {
+        "symbol": rec.get("symbol", ticker),
+        "last_month": {"count": rec.get("lastMonthCount"),
+                        "avg_target": rec.get("lastMonthAvgPriceTarget")},
+        "last_quarter": {"count": rec.get("lastQuarterCount"),
+                          "avg_target": rec.get("lastQuarterAvgPriceTarget")},
+        "last_year": {"count": rec.get("lastYearCount"),
+                       "avg_target": rec.get("lastYearAvgPriceTarget")},
+        "all_time": {"count": rec.get("allTimeCount"),
+                      "avg_target": rec.get("allTimeAvgPriceTarget")},
+    }
+
+
+async def fmp_analyst_estimates(ticker: str, period: str = "annual",
+                                  limit: int = 5) -> dict:
+    """FMP analyst estimates — 매출/EBITDA/순이익 Low/High/Avg 추정.
+
+    period: 'annual' or 'quarter'
+    """
+    if not FMP_API_KEY:
+        return {"error": "FMP_API_KEY 미설정"}
+    ticker = ticker.upper()
+    url = f"{FMP_BASE_URL}/analyst-estimates"
+    params = {"symbol": ticker, "period": period, "apikey": FMP_API_KEY}
+    async with aiohttp.ClientSession() as s:
+        try:
+            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return {"error": f"FMP HTTP {r.status}"}
+                data = await r.json()
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    if not data or not isinstance(data, list):
+        return {"ticker": ticker, "estimates": []}
+
+    estimates = []
+    for rec in data[:limit]:
+        estimates.append({
+            "date": rec.get("date"),
+            "revenue": {"low": rec.get("revenueLow"),
+                         "avg": rec.get("revenueAvg"),
+                         "high": rec.get("revenueHigh")},
+            "ebitda": {"low": rec.get("ebitdaLow"),
+                        "avg": rec.get("ebitdaAvg"),
+                        "high": rec.get("ebitdaHigh")},
+            "ebit": {"low": rec.get("ebitLow"),
+                      "avg": rec.get("ebitAvg"),
+                      "high": rec.get("ebitHigh")},
+            "net_income": {"low": rec.get("netIncomeLow"),
+                            "avg": rec.get("netIncomeAvg"),
+                            "high": rec.get("netIncomeHigh")},
+            "eps": {"low": rec.get("epsLow"),
+                     "avg": rec.get("epsAvg"),
+                     "high": rec.get("epsHigh")},
+            "analyst_count": rec.get("numAnalystsRevenue") or rec.get("numAnalystsEps"),
+        })
+    return {"symbol": ticker, "period": period, "estimates": estimates}
+
+
+async def fmp_stock_grades(ticker: str, limit: int = 20) -> dict:
+    """FMP stock grades — 증권사 등급 변경 이력.
+
+    Returns: 최근 N건의 등급 변경 (action: upgrade/downgrade/maintain)
+    """
+    if not FMP_API_KEY:
+        return {"error": "FMP_API_KEY 미설정"}
+    ticker = ticker.upper()
+    url = f"{FMP_BASE_URL}/grades"
+    params = {"symbol": ticker, "apikey": FMP_API_KEY}
+    async with aiohttp.ClientSession() as s:
+        try:
+            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return {"error": f"FMP HTTP {r.status}"}
+                data = await r.json()
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    if not data or not isinstance(data, list):
+        return {"ticker": ticker, "grades": []}
+
+    grades = [{
+        "date": r.get("date"),
+        "firm": r.get("gradingCompany"),
+        "previous": r.get("previousGrade"),
+        "new": r.get("newGrade"),
+        "action": r.get("action"),
+    } for r in data[:limit]]
+    return {"symbol": ticker, "count": len(grades), "grades": grades}
