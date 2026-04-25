@@ -138,25 +138,6 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ---
 
-## 🚨 매수 관련 질문 처리 모드 (필수)
-
-사용자 발화에 다음 키워드가 있으면 **단순 정보 모드** 적용 — 풀딥서치(KR/US_DEEPSEARCH 10 Step) 발동 금지:
-- "리스트", "리스트만", "후보만", "종목만", "추천 알려줘", "raw", "그냥", "분석 빼고", "간단히"
-- 매수 검토 어휘 없이 단순 발굴 요청 (예: "톱애널 추천 미국주 리스트", "살만한 종목 5개")
-
-### 단순 정보 모드 동작
-1. **도구 1번 호출로 끝** (`get_us_buy_candidates`, `get_us_scan`, `get_finance_rank` 등)
-2. **표 + 한 줄 코멘트만**, 50줄 이내
-3. **금지**: 매크로 레짐, 자금 매칭, 3-Gate, RR, Kill Switch, Bear Case, 보유 재평가, 다른 종목 끌어들이기
-
-### 풀딥서치 발동은 명시 시에만
-- "딥서치", "검증해줘", "이거 사도 돼?", "1차 진입 권고", "RR 분석", "포트 편입"
-- 위 어휘가 없으면 **무조건 단순 정보 모드 유지**.
-
-상세 룰: `data/INVESTMENT_RULES.md` 0-A 섹션.
-
----
-
 ## Token Optimization Rules
 
 1. Trust skills/memory — skip re-reading files already in context
