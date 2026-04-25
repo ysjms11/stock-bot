@@ -9,21 +9,62 @@
 
 **우선순위 순:**
 
-0. **다음 일요일 03:00 KST 주간 US harvest 첫 실행 확인** — 1,010종목 × ~33분 스캔. 애널 풀 확장 트래킹.
+1. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
+   - **자동 알림 자동 작동**: 미국 애널 다운그레이드 시 차등 헤더 (🚨🚨🚨 Tier S / 🚨🚨 Tier A / ⚠️ 일반)
+   - 직후 활용: `get_us_earnings_transcript(ticker="AMD", year=2026, quarter=1)` 본문 호출 + `get_us_analyst_research(ticker="AMD")` 등급 변경 추적
+   - 보유 영향: AMD(11.49%) + HD현대일렉(5.13%) = 포트 16.6% 노출
 
-2. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST. 분기 피크일(5/15, 8/14, 11/14) 신규 ~800종목 예상.
+2. **다음 일요일 04:00 KST `weekly_us_analyst_sync` 첫 자동 실행** — 신규 애널 자동 추가 + Tier 재분류. Mac mini 서버 launchd 정상 작동 검증.
 
-3. **4/17/4/8~4/11 공백 정책** — 미래만 정상화 확정. collect_daily backfill 불가 (현재가 API만 사용). 예외 케이스만 `backfill_gaps.py` 로 처리.
+3. **워치리스트 한국 11종 + 미국 17종 딥서치 (~28종목)** — 워치 50개 → 매수 가능 검증된 종목으로 압축 목표.
 
-4. **KR_DEEPSEARCH 실전 검증** — 다음 한국 종목 딥서치 시 10 Step 누락 여부 / 킬 조건 체감 확인.
+4. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST. 분기 피크일(5/15, 8/14, 11/14) 신규 ~800종목 예상.
 
-5. **맥미니 배포** — `get_youtube_transcript` MCP 도구 추가됨(2026-04-24). 맥미니 pull 후 `pip install youtube-transcript-api` + 봇 재시작 필요. Claude Desktop/Code에서 유튜브 URL 넣으면 자동 자막 추출.
+5. **공매도 비중 높은 보유 종목 모니터링** — LG엔솔(딥서치 결과) 12~20% 공매도 비중. 숏스퀴즈 vs 추가 하락 변곡점.
 
-6. **daily_collect 자가진단 스케줄 추가(2026-04-25)** — 4/24 18:30 미실행 사건(원인 미확정, ccd 세션 retry 이벤트루프 블록 추정) 대응. 평일 19:15/20:15/21:15/22:15 네 번 당일 daily_snapshot 0건 체크 후 발견 시 collect_daily 재실행 + 텔레그램 경보. `daily_collect_sanity_check` 함수 main.py 추가. 첫 실전 동작은 다음 평일(4/27 월) 18:30 수집 여부에 따름.
+6. **TODO_invest.md v14 갱신 후속 액션** — 4/26 갱신본 따라 진행 (워치 딥서치, 4/28 시나리오, 포트 비중 분산).
 
-7. **US 애널 마스터 자동 sync(2026-04-25)** — 시스템 의도와 구현 갭 발견 후 복구. weekly_us_harvest 1,902명 ratings 데이터 vs us_analysts 마스터 13명만 있던 문제. `sync_us_analyst_master` (db_collector) + `weekly_us_analyst_sync` (main.py 일요일 04:00) + post_init 부트시 1회 실행 추가. 즉시 실행 결과 마스터 13→1,902명, watched 12→183명 (별점 4.5+ 콜 5+ 자동). discovery 시그널 강력화. 단 mcp_tools `_exec_us_scan` discovery 모드의 action='Upgrades'만 검색 → Upgrades+Initiates로 확장 검토 필요(별도 개선).
+---
 
-8. **US 애널 3-Tier 시스템(2026-04-25)** — sync 기준 단순화의 한계 보완. avg_return 컬럼 us_analysts 추가 + `is_tier_s_analyst()` 런타임 분류. **Tier A** (watched=1): 별점≥4.0 AND 적중률≥60% AND 콜≥10 OR (별점≥4.8 AND 적중률≥80% AND 콜≥7 잠수형 거장). **Tier S** (런타임): ① 활발 톱(별점≥4.5 AND 적중률≥70% AND 콜≥20) OR ② 잠수형 거장 OR ③ 고수익 거장(별점≥4.5 AND avg_return≥+50% AND 콜≥10 — Goldsmith UBS 같은 한 방 거장). 결과 Tier A 254명, Tier S **31명**. 알림 차등 헤더(🚨🚨🚨 Tier S 동시 → 즉시 비중축소 / 🚨🚨 Tier S 단독 / 🚨 Tier A / ⚠️ 일반). daily_summary + urgent_alert 두 함수 모두 Tier S 분리 섹션 추가.
+## 📜 이번 세션 (4/24~4/26) 큰 작업 종합
+
+### ① daily_collect 자가진단 (4/25) ✅
+- 4/24 18:30 미실행 사건(원인 미확정) 대응
+- 평일 19:15/20:15/21:15/22:15 네 번 자가진단 → 0건 시 재실행
+- `daily_collect_sanity_check` 함수 (main.py)
+
+### ② US 애널 마스터 자동 sync (4/25) ✅
+- 1,902명 ratings 데이터 vs 마스터 13명 갭 복구
+- `sync_us_analyst_master` (db_collector) + 일요일 04:00 자동
+- 결과: 마스터 13→1,902명, watched 12→254명
+
+### ③ 3-Tier 시스템 (4/25) ✅
+- avg_return 컬럼 추가 + `is_tier_s_analyst()` 런타임 분류
+- **Tier A** (watched=1): 별점≥4.0 AND 적중률≥60% AND 콜≥10 OR 잠수형 거장 (4.8/80/7)
+- **Tier S** (런타임 31명): ① 활발 톱 ② 잠수형 거장 ③ 고수익 거장(Goldsmith UBS +265%)
+- 차등 알림 (🚨🚨🚨 / 🚨🚨 / 🚨 / ⚠️)
+
+### ④ get_us_buy_candidates (4/25) ✅
+- 톱애널 추천 + TP 업사이드 충족 미국 매수 후보 raw 데이터
+- 기본 180일/1명+/+20%/limit 50 → ~50종목 sweet spot
+- 정렬·필터·해석은 LLM이 동적 (점수제 박지 않음)
+- 검증: SARO +36% / WWD +22% / BIIB +25% (Tier S+A 강함)
+
+### ⑤ FMP 통합 (4/26) ✅
+- "왜 그 TP인가" 본문 답
+- `fmp_earnings_transcript`: 분기 5만자 (CEO 가이던스 + 톱애널 Q&A)
+- `fmp_price_target_summary`: 1m/3m/1y 평균 TP + 카운트
+- `fmp_analyst_estimates`: 매출/EBITDA/순이익 향후 5년
+- `fmp_stock_grades`: 증권사 등급 변경 이력
+- MCP 도구 2개 추가 (`get_us_earnings_transcript`, `get_us_analyst_research`)
+- 무료 250 calls/day (보유/워치 충분)
+- `.env FMP_API_KEY` 설정 완료
+
+### 🎯 MCP 도구 카운트: 39 → **43개**
+- get_youtube_transcript (40, 4/24)
+- get_us_buy_candidates (41, 4/25)
+- get_us_earnings_transcript (42, 4/26)
+- get_us_analyst_research (43, 4/26)
 
 ---
 

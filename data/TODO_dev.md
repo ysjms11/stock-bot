@@ -1,12 +1,24 @@
-# 봇 개발 TODO — 2026-04-23
+# 봇 개발 TODO — 2026-04-26
 > 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
 
 ---
 
-## 🔴 확인 (매일)
-- [ ] 전종목 수집 결과 — 18:30 자동 실행
+## 🔴 확인 (매일/주간)
+- [ ] 전종목 수집 결과 — 18:30 자동 실행 (자가진단 4종 백업: 19:15/20:15/21:15/22:15)
 - [ ] 감시종목 US 현재가
 - [ ] DART 공시 알림
+- [ ] 4/27 (일) 04:00 `weekly_us_analyst_sync` 첫 자동 실행 검증
+
+---
+
+## 🟢 P1 — 이번 세션 완료 (4/24~4/26)
+
+- [x] **MCP 도구 39 → 43개 확장** — youtube_transcript / get_us_buy_candidates / get_us_earnings_transcript / get_us_analyst_research
+- [x] **daily_collect 자가진단 4종** — 18:30 정규 실패 시 19:15/20:15/21:15/22:15 자동 복구
+- [x] **US 애널 마스터 자동 sync** — 1,902명 ratings → us_analysts (Tier A 254명, Tier S 31명)
+- [x] **3-Tier 시스템** — Tier S 3 경로 OR (활발/잠수형/고수익), 알림 차등 헤더
+- [x] **get_us_buy_candidates** — "살만한 미국주 리스트" 1줄 답
+- [x] **FMP 통합** — earnings transcript + price target + estimates + grades 4종 함수
 
 ---
 
