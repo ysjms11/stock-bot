@@ -455,6 +455,49 @@ _NAVER_LISTING_URLS = {
     "bond":     "https://finance.naver.com/research/debenture_list.naver",
 }
 
+# 노이즈 차단 룰 (수집 단계 SKIP) — 실측 기반 broker × 카테고리 × 제목 패턴
+# 1주일치 정독 결과 발견된 데일리 시리즈만 차단 (정밀, 실수 적게)
+_NOISE_RULES = [
+    # 시장 데일리 모닝/마감 (모든 broker)
+    {"title_keywords": ["morning brief", "wake up", "snapshot",
+                         "Daily Bond Morning Brief", "안녕하세요 데일리에요",
+                         "Morning Letter", "시황 데일리", "장마감",
+                         "마감 시황", "DAILY MARKET VIEW", "아침에 슥",
+                         "아침에 슼", "morning meeting", "start with ibks",
+                         "ibks morning brief", "ibks daily"]},
+    # 유진투자증권 산업 News Comment (단일종목 영문 데일리)
+    {"source": "유진투자증권", "category": "industry",
+     "title_keywords": ["News Comment"]},
+    # 키움증권 시황/FICC 데일리 (전략 카테고리에 분류된 거)
+    {"source": "키움증권", "category": "strategy",
+     "title_pattern": r"^\d{2}/\d{2}[, ]"},  # "04/24, 미 증시" / "04/24 달러"
+    # 대신증권 퀀틴전시 플랜 (이경민 매일 시장 코멘트)
+    {"source": "대신증권", "category": "strategy",
+     "title_keywords": ["퀀틴전시 플랜"]},
+]
+
+
+def _is_noise(title: str, source: str, category: str) -> bool:
+    """수집 SKIP 여부. _NOISE_RULES 실측 기반 패턴 매칭."""
+    import re as _re
+    title_lower = title.lower()
+    for rule in _NOISE_RULES:
+        # broker 매칭 (있을 때만)
+        if "source" in rule and rule["source"] != source:
+            continue
+        # category 매칭 (있을 때만)
+        if "category" in rule and rule["category"] != category:
+            continue
+        # title_keywords (소문자 contains)
+        if "title_keywords" in rule:
+            if any(kw.lower() in title_lower for kw in rule["title_keywords"]):
+                return True
+        # title_pattern (정규식)
+        if "title_pattern" in rule:
+            if _re.search(rule["title_pattern"], title):
+                return True
+    return False
+
 _HANKYUNG_REPORT_TYPES = {
     "industry": "IN",
     "market":   "MA",
@@ -540,6 +583,10 @@ def crawl_naver_listing(category: str, existing_urls: set) -> list:
         source = source_td.get_text(strip=True)
         date_str = _parse_date(date_td.get_text(strip=True))
 
+        # 노이즈 차단 (실측 기반 broker × 패턴)
+        if _is_noise(title, source, category):
+            continue
+
         reports.append({
             "date": date_str,
             "ticker": _category_ticker(category, pdf_url),
@@ -570,41 +617,96 @@ def crawl_hankyung_listing(category: str, existing_urls: set) -> list:
     today = datetime.now(KST).strftime("%Y-%m-%d")
     sdate = (datetime.now(KST) - timedelta(days=180)).strftime("%Y-%m-%d")
     url = "https://consensus.hankyung.com/analysis/list"
-    params = {
-        "sdate": sdate, "edate": today, "now_page": "1",
-        "search_text": "", "pagenum": "100", "report_type": rtype,
-    }
-    try:
-        resp = requests.get(url, headers=_HEADERS, params=params, timeout=15)
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"[hankyung-{category}] 요청 실패: {e}")
+
+    # 페이지네이션 (최대 5페이지 = 500건). cap 도달 broker 분류용.
+    all_rows = []
+    for page in range(1, 6):
+        params = {
+            "sdate": sdate, "edate": today, "now_page": str(page),
+            "search_text": "", "pagenum": "100", "report_type": rtype,
+        }
+        try:
+            resp = requests.get(url, headers=_HEADERS, params=params, timeout=15)
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"[hankyung-{category}] page {page} 요청 실패: {e}")
+            break
+
+        page_soup = BeautifulSoup(resp.text, "html.parser")
+        page_table = page_soup.find("table")
+        if not page_table:
+            break
+
+        page_data_rows = [tr for tr in page_table.find_all("tr")[1:]
+                          if tr.find_all("td")]
+        # 빈 페이지 (결과 없음)면 종료
+        if not page_data_rows:
+            break
+        # "결과가 없습니다" 행만 있으면 종료
+        first_text = page_data_rows[0].get_text(strip=True) if page_data_rows else ""
+        if "결과가 없습니다" in first_text:
+            break
+
+        all_rows.extend(page_data_rows)
+        # 100건 미만이면 마지막 페이지
+        if len(page_data_rows) < 100:
+            break
+        time.sleep(0.5)  # 페이지 간 짧은 휴식
+
+    # 첫 페이지가 비었으면 빈 리스트 반환
+    if not all_rows:
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    table = soup.find("table")
-    if not table:
-        return []
+    # 호환을 위한 더미 table-like
+    class _DummyTable:
+        def __init__(self, rows): self._rows = rows
+        def find_all(self, name):
+            if name == "tr":
+                # [1:] 슬라이스를 위해 첫 row를 헤더 더미로 추가
+                return [None] + self._rows
+            return []
+    table = _DummyTable(all_rows)
 
+    # 한경컨센은 카테고리에 따라 컬럼 구조 다름:
+    #   IN (7col): 날짜|제목|적정가|작성자|broker|차트|첨부
+    #   MA (6col): 날짜|제목|작성자|broker|차트|첨부 (라벨 X)
+    #   EC (6col): 날짜|"경제"라벨|제목|작성자|broker|첨부 (라벨 O)
+    #   ST (5col): 날짜|제목|작성자|broker|첨부 (드물게 발간)
+    # 차이: td[1]에 라벨("기업"/"산업"/"경제"/"시황"/"투자"/"채권")이 있으면 +1 시프트
+    CATEGORY_LABELS = {"기업", "산업", "경제", "시황", "투자", "채권"}
     reports = []
     for row in table.find_all("tr")[1:]:
         tds = row.find_all("td")
         n = len(tds)
-        # IN(산업): 7 cols. MA/ST/EC: 6 cols. (적정가격 col 유무 차이)
-        if n == 7:
-            analyst_idx, source_idx, pdf_idx = 3, 4, 6
-        elif n == 6:
-            analyst_idx, source_idx, pdf_idx = 2, 3, 5
-        else:
-            continue
 
-        date_str = tds[0].get_text(strip=True)
+        date_str = tds[0].get_text(strip=True) if tds else ""
         if not date_str or "결과가 없습니다" in date_str:
             continue
 
-        title_a = tds[1].find("a")
+        # td[1]이 짧은 카테고리 라벨이면 시프트
+        label_text = tds[1].get_text(strip=True) if len(tds) > 1 else ""
+        has_label = (label_text in CATEGORY_LABELS and not tds[1].find("a"))
+        title_idx = 2 if has_label else 1
+
+        # 컬럼 매핑 (n + has_label 조합)
+        if n == 7 and not has_label:
+            # IN: 날짜|제목|적정가|작성자|broker|차트|첨부
+            analyst_idx, source_idx, pdf_idx = 3, 4, 6
+        elif n == 6 and has_label:
+            # EC: 날짜|라벨|제목|작성자|broker|첨부
+            analyst_idx, source_idx, pdf_idx = 3, 4, 5
+        elif n == 6 and not has_label:
+            # MA: 날짜|제목|작성자|broker|차트|첨부
+            analyst_idx, source_idx, pdf_idx = 2, 3, 5
+        elif n == 5 and not has_label:
+            # ST 등: 날짜|제목|작성자|broker|첨부
+            analyst_idx, source_idx, pdf_idx = 2, 3, 4
+        else:
+            continue
+
+        title_a = tds[title_idx].find("a")
         title = (title_a.get_text(strip=True) if title_a
-                 else tds[1].get_text(strip=True))
+                 else tds[title_idx].get_text(strip=True))
 
         # PDF: 첨부 col 우선, 없으면 제목 링크
         pdf_a = tds[pdf_idx].find("a") or title_a
@@ -618,8 +720,12 @@ def crawl_hankyung_listing(category: str, existing_urls: set) -> list:
         if pdf_url in existing_urls:
             continue
 
-        analyst = tds[analyst_idx].get_text(strip=True)
-        source = tds[source_idx].get_text(strip=True)
+        analyst = tds[analyst_idx].get_text(strip=True) if analyst_idx < n else ""
+        source = tds[source_idx].get_text(strip=True) if source_idx < n else ""
+
+        # 노이즈 차단 (실측 기반 broker × 패턴)
+        if _is_noise(title, source, category):
+            continue
 
         reports.append({
             "date": date_str,
