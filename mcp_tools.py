@@ -654,12 +654,13 @@ MCP_TOOLS = [
                      },
                      "required": ["ticker"]}},
     {"name": "manage_report",
-     "description": "증권사 리포트 관리. action별: list=수집된 리포트 조회(days/ticker 필터), collect=수동 수집 트리거, tickers=수집 대상 종목 목록",
+     "description": "증권사 리포트 관리. category 필터로 종목/산업/시황/전략/경제 구분. action별: list=수집된 리포트 조회, collect=수동 수집 트리거(비종목 카테고리도 지원), tickers=수집 대상 종목 목록",
      "inputSchema": {"type": "object",
                      "properties": {
                          "action": {"type": "string", "enum": ["list", "collect", "tickers"], "description": "list=조회, collect=수집, tickers=대상종목"},
                          "days": {"type": "integer", "description": "list 시 최근 N일 (기본 7)"},
-                         "ticker": {"type": "string", "description": "list/collect 시 특정 종목 필터"},
+                         "ticker": {"type": "string", "description": "list/collect 시 특정 종목 필터 (종목 분석만)"},
+                         "category": {"type": "string", "enum": ["company", "industry", "market", "strategy", "economy", "bond"], "description": "list/collect 시 카테고리 필터. company=종목분석(기본), industry=산업, market=시황, strategy=투자전략, economy=경제, bond=채권"},
                          "brief": {"type": "boolean", "description": "list 시 true면 제목+증권사만 (full_text 제외)"},
                      },
                      "required": ["action"]}},
@@ -3477,20 +3478,23 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     import sqlite3 as _sqlite3
                     days = int(arguments.get("days", 7) or 7)
                     ticker_filter = arguments.get("ticker", "").strip()
+                    category_filter = arguments.get("category", "").strip().lower()
                     brief = arguments.get("brief", False)
 
                     cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+                    where = ["date >= ?"]
+                    params = [cutoff]
+                    if ticker_filter:
+                        where.append("ticker = ?")
+                        params.append(ticker_filter)
+                    if category_filter:
+                        where.append("category = ?")
+                        params.append(category_filter)
+                    sql = f"SELECT * FROM reports WHERE {' AND '.join(where)} ORDER BY date DESC"
                     try:
                         _conn = _sqlite3.connect(REPORT_DB_PATH, timeout=10)
                         _conn.row_factory = _sqlite3.Row
-                        if ticker_filter:
-                            rows = _conn.execute(
-                                "SELECT * FROM reports WHERE date >= ? AND ticker = ? ORDER BY date DESC",
-                                (cutoff, ticker_filter)).fetchall()
-                        else:
-                            rows = _conn.execute(
-                                "SELECT * FROM reports WHERE date >= ? ORDER BY date DESC",
-                                (cutoff,)).fetchall()
+                        rows = _conn.execute(sql, tuple(params)).fetchall()
                         reports = [dict(r) for r in rows]
                         _conn.close()
                     except Exception as _e:
@@ -3518,18 +3522,29 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
 
                 elif action == "collect":
                     ticker_filter = arguments.get("ticker", "").strip()
-                    tickers = get_collection_tickers()
-                    if ticker_filter:
-                        name_for_ticker = tickers.get(ticker_filter, ticker_filter)
-                        tickers = {ticker_filter: name_for_ticker}
+                    category_arg = arguments.get("category", "").strip().lower()
 
                     loop = asyncio.get_running_loop()
-                    new_reports = await loop.run_in_executor(None, collect_reports, tickers)
+                    if category_arg in ("industry", "market", "strategy", "economy", "bond"):
+                        # 비종목 카테고리 수집
+                        from report_crawler import collect_market_reports
+                        new_reports = await loop.run_in_executor(
+                            None, collect_market_reports, [category_arg])
+                    else:
+                        # 종목 분석 (기본)
+                        tickers = get_collection_tickers()
+                        if ticker_filter:
+                            name_for_ticker = tickers.get(ticker_filter, ticker_filter)
+                            tickers = {ticker_filter: name_for_ticker}
+                        new_reports = await loop.run_in_executor(None, collect_reports, tickers)
+
                     result = {
                         "collected": len(new_reports),
+                        "category": category_arg or "company",
                         "reports": [{"date": r.get("date"), "ticker": r.get("ticker"),
                                      "name": r.get("name"), "source": r.get("source"),
                                      "title": r.get("title"),
+                                     "category": r.get("category", "company"),
                                      "extraction_status": r.get("extraction_status", "unknown")} for r in new_reports],
                     }
 
