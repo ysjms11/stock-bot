@@ -39,7 +39,7 @@
 | 16 | `backup_data` | | /data/*.json GitHub Gist 백업·복원·상태 조회 |
 | 17 | `simulate_trade` | | 가상 매매 시뮬레이션 |
 | 18 | `get_backtest` | | 백테스트 (ma_cross/momentum_exit/supply_follow/bollinger/hybrid) |
-| 19 | `manage_report` | | 투자 리포트 관리 |
+| 19 | `manage_report` | action=list/collect/tickers | 리포트 관리. `category=company/industry/market/strategy/economy/bond` 필터 (4/26 신규). collect 시 비종목 카테고리 자동 수집. |
 | 20 | `get_regime` | | 시장 국면 판단 (매크로 기반) |
 | 21 | `get_scan` | | KRX 전종목 스크리너 (시총/PER/PBR/수급/회전율, 6개 프리셋) |
 | 22 | `get_finance_rank` | (기본) | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
