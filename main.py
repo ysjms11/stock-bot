@@ -2572,6 +2572,66 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
         print(f"sunday_30_reminder 오류: {e}")
 
 
+async def weekly_report_digest_notify(context: ContextTypes.DEFAULT_TYPE):
+    """매주 일요일 19:00 — 비종목 리포트 분석 시작 알림.
+
+    봇 역할: 통계 + 프롬프트 템플릿만 (판단 X). 실제 분석은 Claude.ai에서.
+    """
+    if not _REPORT_AVAILABLE:
+        return
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_weekly_report_digest"
+    if _sent.get("weekly_report_digest") == _key:
+        return
+
+    try:
+        import sqlite3
+        # 1주일치 카테고리별 카운트
+        cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        conn = sqlite3.connect(REPORT_DB_PATH, timeout=10)
+        counts = {}
+        for cat in ("industry", "strategy", "economy", "market"):
+            cur = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(full_text)), 0) "
+                "FROM reports WHERE category=? AND date >= ?",
+                (cat, cutoff),
+            )
+            cnt, chars = cur.fetchone()
+            counts[cat] = (cnt, chars)
+        conn.close()
+
+        total_cnt = sum(c for c, _ in counts.values())
+        total_chars = sum(ch for _, ch in counts.values())
+        token_estimate = int(total_chars * 1.2 / 1000)
+
+        msg = (
+            f"📊 *이번주 비종목 리포트 분석 시간*\n"
+            f"({(now - timedelta(days=7)).strftime('%m/%d')}~{now.strftime('%m/%d')})\n\n"
+            f"수집 현황:\n"
+            f"• 산업 {counts['industry'][0]}건 / 전략 {counts['strategy'][0]}건 / "
+            f"경제 {counts['economy'][0]}건 / 시황 {counts['market'][0]}건\n"
+            f"• 합계 {total_cnt}건, 약 {token_estimate}K 토큰\n\n"
+            f"🤖 Claude.ai에 그대로 붙여넣기:\n"
+            f"```\n"
+            f"이번주 산업·전략·경제 리포트 텍스트 싹 읽고, "
+            f"가치 있어 보이는 거 PDF 풀 정독해서 새 투자 아이디어 5개 뽑아줘. "
+            f"내 포트 직격 종목 thesis 점검도.\n"
+            f"```\n\n"
+            f"📱 https://claude.ai"
+        )
+
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        _sent["weekly_report_digest"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
+    except Exception as e:
+        print(f"weekly_report_digest_notify 오류: {e}")
+
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 텔레그램 명령어
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4462,6 +4522,8 @@ def main():
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
     jq.run_daily(check_insider_cluster,   time=dtime(20, 0, tzinfo=KST), days=(0,1,2,3,4), name="insider_cluster")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")
+    # 주간 비종목 리포트 분석 시간 알림 (일요일 19:07 KST — sunday_30 직후)
+    jq.run_daily(weekly_report_digest_notify, time=dtime(19, 7, tzinfo=KST), days=(6,), name="weekly_report_digest")
     # 주간 무결성 체크: 매주 일요일 07:05 KST — daily_snapshot 영업일 누락 감시
     jq.run_daily(weekly_sanity_check,     time=dtime(7,  5, tzinfo=KST), days=(6,), name="weekly_sanity")
     jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
