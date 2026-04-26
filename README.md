@@ -71,7 +71,7 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 | 16 | `backup_data` | /data/*.json GitHub Gist 백업·복원·상태 조회 |
 | 17 | `simulate_trade` | 가상 매매 시뮬레이션 |
 | 18 | `get_backtest` | 백테스트 (ma_cross/momentum_exit/supply_follow/bollinger/hybrid) |
-| 19 | `manage_report` | 투자 리포트 관리 |
+| 19 | `manage_report` | 리포트 관리 (`category=company/industry/market/strategy/economy/bond` 필터, 비종목 카테고리 자동 수집) |
 | 20 | `get_regime` | 시장 국면 판단 (매크로 기반) |
 | 21 | `get_scan` | KRX 전종목 스크리너 (시총/PER/PBR/수급/회전율, 6개 프리셋) |
 | 22 | `get_finance_rank` | 전종목 재무비율/F-Score/M-Score/FCF 순위 |
@@ -117,7 +117,7 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 | 07:00 | 월 | `universe_update` | KOSPI250+KOSDAQ350 유니버스 갱신 |
 | 07:05 | 일 | `consensus_update` | FnGuide 컨센서스 주간 업데이트 |
 | 07:30 | 전체 | `us_ratings` | 미국 애널 레이팅 스캔 |
-| 08:30 | 평일 | `report_collect` | 증권사 리포트 수집 |
+| 08:30 | 평일 | `report_collect` | 증권사 리포트 수집 (종목+산업/시황/전략/경제 4 카테고리) |
 | 15:40 | 평일 | `kr_summary` | 한국 장 마감 요약 + 수급 이탈 감지 |
 | 15:50 | 평일 | `snapshot_dd` | 포트폴리오 스냅샷 + 드로다운 체크 |
 | 16:30 | 평일 | `momentum_check` | 모멘텀 이탈 체크 |
@@ -126,6 +126,7 @@ KIS Open Trading API 기반 한국/미국 주식 조회, 손절/목표가 알림
 | 19:05 | 평일 | `daily_change_scan` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) |
 | 19:30 | 평일 | `daily_consensus` | 컨센서스 상향 체크 |
 | 20:00 | 평일 | `insider_cluster` | 내부자 군집 감지 (3명+ 매수 AND 순매수>0) |
+| 19:07 | 일 | `weekly_report_digest` | 비종목 리포트 분석 시간 알림 (통계 + Claude.ai 프롬프트 템플릿) |
 | 22:00 | 전체 | `auto_backup` | GitHub Gist 자동 백업 |
 
 ---
