@@ -2572,6 +2572,58 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
         print(f"sunday_30_reminder 오류: {e}")
 
 
+async def weekly_sat_port_check_notify(context: ContextTypes.DEFAULT_TYPE):
+    """매주 토요일 09:00 — SAT_PORT_CHECK 시작 알림."""
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_sat_port_check"
+    if _sent.get("sat_port_check") == _key:
+        return
+    try:
+        msg = (
+            "🛡️ *토요일 포트폴리오 점검 시간*\n\n"
+            "방어 모드 · 디폴트 HOLD · 30~40분\n\n"
+            "🤖 Claude.ai 붙여넣기:\n"
+            "```\n"
+            "data/SAT_PORT_CHECK (토요일_포트관리).md 보고 진행해\n"
+            "```"
+        )
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        _sent["sat_port_check"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
+    except Exception as e:
+        print(f"weekly_sat_port_check_notify 오류: {e}")
+
+
+async def weekly_sun_discovery_notify(context: ContextTypes.DEFAULT_TYPE):
+    """매주 일요일 09:00 — SUN_DISCOVERY 시작 알림."""
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_sun_discovery"
+    if _sent.get("sun_discovery") == _key:
+        return
+    try:
+        msg = (
+            "🔍 *일요일 신규 발굴 시간*\n\n"
+            "탐색 모드 · 워치 thesis review 80% · 60~90분\n\n"
+            "🤖 Claude.ai 붙여넣기:\n"
+            "```\n"
+            "data/SUN_DISCOVERY (일요일_신규발굴).md 보고 진행해\n"
+            "```"
+        )
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        _sent["sun_discovery"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
+    except Exception as e:
+        print(f"weekly_sun_discovery_notify 오류: {e}")
+
+
 async def weekly_report_digest_notify(context: ContextTypes.DEFAULT_TYPE):
     """매주 일요일 19:00 — 비종목 리포트 분석 시작 알림.
 
@@ -4522,6 +4574,9 @@ def main():
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(0,1,2,3,4), name="watch_change")
     jq.run_daily(check_insider_cluster,   time=dtime(20, 0, tzinfo=KST), days=(0,1,2,3,4), name="insider_cluster")
     jq.run_daily(sunday_30_reminder,      time=dtime(19, 0, tzinfo=KST), days=(6,), name="sunday_30")
+    # 주말 루틴 v2: SAT 포트관리 + SUN 신규발굴 (각각 09:00 KST)
+    jq.run_daily(weekly_sat_port_check_notify, time=dtime(9, 0, tzinfo=KST), days=(5,), name="weekly_sat_port_check")
+    jq.run_daily(weekly_sun_discovery_notify,  time=dtime(9, 0, tzinfo=KST), days=(6,), name="weekly_sun_discovery")
     # 주간 비종목 리포트 분석 시간 알림 (일요일 19:07 KST — sunday_30 직후)
     jq.run_daily(weekly_report_digest_notify, time=dtime(19, 7, tzinfo=KST), days=(6,), name="weekly_report_digest")
     # 주간 무결성 체크: 매주 일요일 07:05 KST — daily_snapshot 영업일 누락 감시
