@@ -8,6 +8,7 @@
 - [ ] 감시종목 US 현재가
 - [ ] DART 공시 알림
 - [ ] 4/27 (일) 04:00 `weekly_us_analyst_sync` 첫 자동 실행 검증
+- [ ] 4/27 (일) 19:07 `weekly_report_digest` 첫 자동 알림 검증 (비종목 리포트 분석 시간)
 
 ---
 
@@ -32,7 +33,16 @@
 - [x] **실적/배당 일정 자동 수집** — events.json v2 구조, 매일 07:00 자동수집 (KIS+DART+yfinance), 매크로일정 포함, 텔레그램 알림
 
 ### 인프라
-- [x] **🆕 비종목 리포트 카테고리 4종 추가** (4/26) — 산업/시황/투자전략/경제. 네이버+한경 무로그인. 백필 372건 (industry 129 / market 119 / economy 98 / strategy 26). DB `reports.category` 컬럼 + `_IND_<sha1[:10]>` 합성 ticker. `manage_report(category='industry')` MCP 필터. 일일 잡 08:30 자동 통합.
+- [x] **🆕 비종목 리포트 카테고리 4종 추가 + 정밀 노이즈 필터 + 위클리 알림** (4/26) — 산업/시황/투자전략/경제. 네이버+한경 무로그인.
+  - 백필 + 한경 페이지네이션 (5페이지) → industry 419 / market 234 / economy 90 / strategy 20 누적 (180일치)
+  - DB `reports.category` 컬럼 + `_IND_/_MKT_/_STR_/_ECO_<sha1[:10]>` 합성 ticker
+  - 1주일치 실측 정독 후 `_NOISE_RULES` (broker × category × 제목 패턴): 시장 모닝브리프 + 유진 News Comment + 키움 시황/FICC Daily + 대신 퀀틴전시 플랜
+  - 한경 EC 파싱 버그 수정 (카테고리 라벨 cell 감지)
+  - dedup (date+source+title)
+  - 결과: 1주 168 → 107건 (876K 토큰, Claude.ai 1M 안전)
+  - `manage_report(category=, ...)` MCP 다중 카테고리 + 카테고리별 collect 지원
+  - 일일 잡 08:30 자동 통합 (`collect_market_reports`)
+  - **매주 일요일 19:07 `weekly_report_digest_notify`** — 통계 + Claude.ai 프롬프트 템플릿 텔레그램 push (봇 판단 X)
 - [ ] **한국 리포트 PDF 입수 경로 확장 (종목분석)** — 와이즈리포트 미수집 1,990건 (KB 182 / 한투 164 / 삼성 149 / 신한 138 / NH 134 / 다올 122 / 메리츠 90 ...). 메리츠 가입 막힘 (공동인증서 + 보안프로그램). **현재 보류**. 3옵션:
   - A 무료 영구: 키움/유안타 쿠키 + 무로그인 소형 → 회수율 50~60%
   - B 무료 월10분: A + 한투/KB/삼성 쿠키 (인증서 2~4주 만료) → 회수율 80~90%

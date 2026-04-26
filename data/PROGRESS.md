@@ -14,9 +14,11 @@
    - 직후 활용: `get_us_earnings_transcript(ticker="AMD", year=2026, quarter=1)` 본문 호출 + `get_us_analyst_research(ticker="AMD")` 등급 변경 추적
    - 보유 영향: AMD(11.49%) + HD현대일렉(5.13%) = 포트 16.6% 노출
 
-2. **다음 일요일 04:00 KST `weekly_us_analyst_sync` 첫 자동 실행** — 신규 애널 자동 추가 + Tier 재분류. Mac mini 서버 launchd 정상 작동 검증.
+2. **🆕 4/27 (일) 19:07 첫 `weekly_report_digest` 자동 알림 검증** — 비종목 리포트 분석 시간 알림. 통계 (산업/전략/경제/시황 카운트) + Claude.ai 프롬프트 템플릿 텔레그램 push. 매주 일요일 자동.
 
-3. **워치리스트 한국 11종 + 미국 17종 딥서치 (~28종목)** — 워치 50개 → 매수 가능 검증된 종목으로 압축 목표.
+3. **다음 일요일 04:00 KST `weekly_us_analyst_sync` 첫 자동 실행** — 신규 애널 자동 추가 + Tier 재분류. Mac mini 서버 launchd 정상 작동 검증.
+
+4. **워치리스트 한국 11종 + 미국 17종 딥서치 (~28종목)** — 워치 50개 → 매수 가능 검증된 종목으로 압축 목표.
 
 4. **DART 증분 수집 Phase6 모니터링** — 매일 02:00 KST. 분기 피크일(5/15, 8/14, 11/14) 신규 ~800종목 예상.
 
@@ -61,6 +63,21 @@
 - MCP 도구 2개 추가 (`get_us_earnings_transcript`, `get_us_analyst_research`)
 - 무료 250 calls/day (보유/워치 충분)
 - `.env FMP_API_KEY` 설정 완료
+
+### ⑦ 비종목 리포트 카테고리 풀구축 + 노이즈 필터 (4/26 저녁) ✅
+- **DB 스키마**: `reports.category` 컬럼 + 인덱스. 기존 3,356건 = 'company'
+- **신규 4 카테고리**: industry / market / strategy / economy (네이버+한경 무로그인)
+  - 한경 페이지네이션 (5페이지, 100건 cap 해제) — industry 419건, market 234건 누적
+  - `_IND_/_MKT_/_STR_/_ECO_<sha1[:10]>` 합성 ticker (UNIQUE 충돌 회피)
+- **실측 1주일 정독 (4/20~4/26 산업+전략 37건)** 후 정밀 노이즈 필터:
+  - `_NOISE_RULES`: 시장 모닝브리프 + 유진투자증권 News Comment + 키움 시황/FICC Daily + 대신 퀀틴전시 플랜
+  - `_is_noise()` 헬퍼 — 수집 단계 SKIP
+  - 한경 EC 파싱 버그 수정 (td[1] 카테고리 라벨 cell 감지)
+  - dedup (date+source+title) — 35건 중복 제거
+- **결과**: 1주 168 → 107건 (876K 토큰, Claude.ai 1M 안전)
+- **MCP 확장**: `manage_report(category=, days=, ...)` 다중 카테고리 + 카테고리별 collect
+- **위클리 알림 (4/26 추가)**: 매주 일요일 19:07 `weekly_report_digest_notify` 잡 — 통계 + Claude.ai 프롬프트 템플릿 텔레그램 push. 봇 판단 X (사용자 직접 Claude.ai 호출). 첫 자동 발송 4/27(일) 19:07.
+- 커밋: f401d9d / 8d7112e / 7aaae48 / e5f0746 / f26e01c
 
 ### ⑥ KR_EXIT.md + US_EXIT.md 매도 프레임 신설 (4/25~4/26) ✅
 - **US_EXIT.md** (4/25, 30.7KB): 미국 매도 판단 프레임 (Martineau 2022 PEAD 대형주 소멸, FactSet Sell 4.8% 희소성, IRS LTCG/STCG 22%p 격차, Munger 1994 USC 정확 인용)
