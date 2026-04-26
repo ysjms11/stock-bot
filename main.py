@@ -38,7 +38,8 @@ from mcp_tools import (
 )
 
 try:
-    from report_crawler import collect_reports, get_collection_tickers, DB_PATH as REPORT_DB_PATH
+    from report_crawler import (collect_reports, get_collection_tickers,
+                                  collect_market_reports, DB_PATH as REPORT_DB_PATH)
     _REPORT_AVAILABLE = True
 except ImportError:
     _REPORT_AVAILABLE = False
@@ -2022,7 +2023,17 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_running_loop()
         new_reports = await loop.run_in_executor(None, collect_reports, tickers)
 
-        if new_reports:
+        # 비종목 리포트 (산업/시황/투자전략/경제) 수집
+        try:
+            market_reports = await loop.run_in_executor(
+                None, collect_market_reports,
+                ["industry", "market", "strategy", "economy"],
+            )
+        except Exception as e:
+            print(f"[market_reports] 오류: {e}")
+            market_reports = []
+
+        if new_reports or market_reports:
             def _esc(s: str) -> str:
                 """Telegram Markdown v1 특수문자 이스케이프"""
                 for ch in ("*", "_", "`", "["):
@@ -2052,6 +2063,16 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
             msg = header + "\n\n" + "\n".join(lines[:15])  # 최대 15종목
             if len(by_name) > 15:
                 msg += f"\n... 외 {len(by_name) - 15}종목"
+
+            # 비종목 카테고리 요약
+            if market_reports:
+                from collections import Counter
+                cat_count = Counter(r.get("category", "") for r in market_reports)
+                cat_label = {"industry": "🏭산업", "market": "🌐시황",
+                             "strategy": "📊전략", "economy": "💹경제"}
+                cat_summary = " / ".join(f"{cat_label.get(c, c)} {n}"
+                                         for c, n in cat_count.most_common())
+                msg += f"\n\n*비종목 ({len(market_reports)}건)*: {cat_summary}"
 
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 

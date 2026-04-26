@@ -71,6 +71,15 @@ def _get_report_db() -> sqlite3.Connection:
         conn.commit()
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE reports ADD COLUMN category TEXT DEFAULT 'company'")
+        conn.commit()
+        conn.execute("UPDATE reports SET category='company' WHERE category IS NULL OR category=''")
+        conn.commit()
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rpt_category ON reports(category)")
+        conn.commit()
+    except Exception:
+        pass
     return conn
 
 
@@ -436,6 +445,291 @@ def crawl_hankyung_reports(ticker: str, name: str, existing_urls: set) -> list:
     return reports
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━ 비종목 리포트 listing 크롤러 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_NAVER_LISTING_URLS = {
+    "industry": "https://finance.naver.com/research/industry_list.naver",
+    "market":   "https://finance.naver.com/research/market_info_list.naver",
+    "strategy": "https://finance.naver.com/research/invest_list.naver",
+    "economy":  "https://finance.naver.com/research/economy_list.naver",
+    "bond":     "https://finance.naver.com/research/debenture_list.naver",
+}
+
+_HANKYUNG_REPORT_TYPES = {
+    "industry": "IN",
+    "market":   "MA",
+    "strategy": "ST",
+    "economy":  "EC",
+}
+
+_CATEGORY_TICKER_PREFIX = {
+    "industry": "_IND_",
+    "market":   "_MKT_",
+    "strategy": "_STR_",
+    "economy":  "_ECO_",
+    "bond":     "_BND_",
+}
+
+
+def _category_ticker(category: str, pdf_url: str) -> str:
+    """비종목 리포트의 합성 ticker. UNIQUE(date, source, ticker) 충돌 회피용."""
+    import hashlib
+    h = hashlib.sha1(pdf_url.encode("utf-8")).hexdigest()[:10]
+    prefix = _CATEGORY_TICKER_PREFIX.get(category, "_OTH_")
+    return f"{prefix}{h}"
+
+
+def crawl_naver_listing(category: str, existing_urls: set) -> list:
+    """네이버 리서치 비종목 카테고리 listing 크롤링.
+
+    category: 'industry' | 'market' | 'strategy' | 'economy' | 'bond'
+    페이지 컬럼 수가 카테고리마다 다름 (industry=6, others=5). PDF 링크는 끝에서 3번째 td.
+    PDF 없는 행(HTML view only)은 스킵.
+    """
+    url = _NAVER_LISTING_URLS.get(category)
+    if not url:
+        return []
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=15)
+        resp.raise_for_status()
+        # 네이버 리서치는 EUC-KR
+        resp.encoding = "euc-kr"
+    except Exception as e:
+        print(f"[naver-{category}] 요청 실패: {e}")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    table = soup.find("table", class_="type_1")
+    if not table:
+        return []
+
+    reports = []
+    for row in table.find_all("tr"):
+        tds = row.find_all("td")
+        # 데이터 행은 5 또는 6 컬럼
+        if len(tds) not in (5, 6):
+            continue
+
+        # 컬럼 매핑
+        # 6 cols: 분류 | 제목 | 증권사 | 첨부 | 작성일 | 조회수
+        # 5 cols: 제목 | 증권사 | 첨부 | 작성일 | 조회수
+        if len(tds) == 6:
+            sector = tds[0].get_text(strip=True)
+            title_td, source_td, file_td, date_td = tds[1], tds[2], tds[3], tds[4]
+        else:
+            sector = ""
+            title_td, source_td, file_td, date_td = tds[0], tds[1], tds[2], tds[3]
+
+        # PDF URL (끝에서 3번째 td 안의 a)
+        pdf_link = file_td.find("a")
+        if not pdf_link:
+            continue
+        pdf_url = (pdf_link.get("href") or "").strip()
+        if not pdf_url or ".pdf" not in pdf_url.lower():
+            continue
+        if pdf_url.startswith("//"):
+            pdf_url = "https:" + pdf_url
+        elif pdf_url.startswith("/"):
+            pdf_url = "https://finance.naver.com" + pdf_url
+        if pdf_url in existing_urls:
+            continue
+
+        title_a = title_td.find("a")
+        title = (title_a.get_text(strip=True) if title_a
+                 else title_td.get_text(strip=True))
+        source = source_td.get_text(strip=True)
+        date_str = _parse_date(date_td.get_text(strip=True))
+
+        reports.append({
+            "date": date_str,
+            "ticker": _category_ticker(category, pdf_url),
+            "name": sector,  # 산업분석은 섹터 분류 들어감, 나머지는 ""
+            "source": source,
+            "analyst": "",
+            "title": title,
+            "pdf_url": pdf_url,
+            "category": category,
+        })
+
+    return reports
+
+
+def crawl_hankyung_listing(category: str, existing_urls: set) -> list:
+    """한경컨센 비종목 카테고리 listing 크롤링 (180일 윈도우).
+
+    category: 'industry' | 'market' | 'strategy' | 'economy'
+
+    비종목 7-col 구조: [0]날짜 [1]제목+PDF [2]적정가(-) [3]작성자 [4]출처
+                       [5]차트 [6]첨부+PDF
+    종목분석(CO)은 9-col이라 다른 함수(crawl_hankyung_reports) 사용.
+    """
+    rtype = _HANKYUNG_REPORT_TYPES.get(category)
+    if not rtype:
+        return []
+
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    sdate = (datetime.now(KST) - timedelta(days=180)).strftime("%Y-%m-%d")
+    url = "https://consensus.hankyung.com/analysis/list"
+    params = {
+        "sdate": sdate, "edate": today, "now_page": "1",
+        "search_text": "", "pagenum": "100", "report_type": rtype,
+    }
+    try:
+        resp = requests.get(url, headers=_HEADERS, params=params, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[hankyung-{category}] 요청 실패: {e}")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    table = soup.find("table")
+    if not table:
+        return []
+
+    reports = []
+    for row in table.find_all("tr")[1:]:
+        tds = row.find_all("td")
+        n = len(tds)
+        # IN(산업): 7 cols. MA/ST/EC: 6 cols. (적정가격 col 유무 차이)
+        if n == 7:
+            analyst_idx, source_idx, pdf_idx = 3, 4, 6
+        elif n == 6:
+            analyst_idx, source_idx, pdf_idx = 2, 3, 5
+        else:
+            continue
+
+        date_str = tds[0].get_text(strip=True)
+        if not date_str or "결과가 없습니다" in date_str:
+            continue
+
+        title_a = tds[1].find("a")
+        title = (title_a.get_text(strip=True) if title_a
+                 else tds[1].get_text(strip=True))
+
+        # PDF: 첨부 col 우선, 없으면 제목 링크
+        pdf_a = tds[pdf_idx].find("a") or title_a
+        if not pdf_a:
+            continue
+        pdf_href = (pdf_a.get("href") or "").strip()
+        if not pdf_href or "downpdf" not in pdf_href:
+            continue
+        pdf_url = ("https://consensus.hankyung.com" + pdf_href
+                   if pdf_href.startswith("/") else pdf_href)
+        if pdf_url in existing_urls:
+            continue
+
+        analyst = tds[analyst_idx].get_text(strip=True)
+        source = tds[source_idx].get_text(strip=True)
+
+        reports.append({
+            "date": date_str,
+            "ticker": _category_ticker(category, pdf_url),
+            "name": "",
+            "source": source,
+            "analyst": analyst,
+            "title": title,
+            "pdf_url": pdf_url,
+            "category": category,
+        })
+
+    return reports
+
+
+def collect_market_reports(categories: list = None) -> list:
+    """비종목 리포트 수집. 네이버 + 한경컨센 통합.
+
+    categories: ['industry','market','strategy','economy','bond']. None=기본 4개.
+    Returns: 새로 수집된 리포트 리스트.
+    """
+    if categories is None:
+        categories = ["industry", "market", "strategy", "economy"]
+
+    _conn = _get_report_db()
+    rows = _conn.execute("SELECT pdf_url, date, source, ticker FROM reports").fetchall()
+    _conn.close()
+    existing_urls = {r["pdf_url"] for r in rows if r["pdf_url"]}
+    existing_keys = {(r["date"], r["source"], r["ticker"]) for r in rows}
+
+    new_reports = []
+    for cat in categories:
+        merged = []
+        try:
+            merged.extend(crawl_naver_listing(cat, existing_urls))
+        except Exception as e:
+            print(f"[market-{cat}] naver 실패: {e}")
+        if cat in _HANKYUNG_REPORT_TYPES:
+            try:
+                merged.extend(crawl_hankyung_listing(cat, existing_urls))
+            except Exception as e:
+                print(f"[market-{cat}] hankyung 실패: {e}")
+
+        # 같은 카테고리 내 중복 제거 (pdf_url 기준)
+        seen_urls = set()
+        unique = []
+        for r in merged:
+            if r["pdf_url"] in seen_urls:
+                continue
+            seen_urls.add(r["pdf_url"])
+            unique.append(r)
+        unique.sort(key=lambda x: x.get("date", ""), reverse=True)
+
+        for r in unique:
+            key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
+            if key in existing_keys:
+                continue
+            try:
+                full_text, status, pdf_bytes = extract_pdf_text(r["pdf_url"])
+                r["full_text"] = full_text
+                r["extraction_status"] = status
+                r["pdf_path"] = ""
+                if pdf_bytes:
+                    try:
+                        r["pdf_path"] = _save_pdf_local(
+                            pdf_bytes, r["ticker"], r.get("date", ""),
+                            r.get("source", ""), r.get("analyst", ""),
+                        )
+                    except Exception as e:
+                        print(f"[market-{cat}] PDF 저장 실패: {e}")
+                meta = extract_report_meta(full_text)
+                r["target_price"] = meta["target_price"] or 0
+                r["opinion"] = meta["opinion"]
+            except Exception as e:
+                print(f"[market-{cat}] 추출 실패 ({r.get('title','')[:30]}): {e}")
+                r["full_text"] = ""
+                r["extraction_status"] = "failed"
+                r["pdf_path"] = ""
+                r["target_price"] = 0
+                r["opinion"] = ""
+
+            r["collected_at"] = datetime.now(KST).isoformat()
+            new_reports.append(r)
+            existing_urls.add(r["pdf_url"])
+            existing_keys.add(key)
+            time.sleep(1)
+
+    if new_reports:
+        conn = _get_report_db()
+        for r in new_reports:
+            conn.execute(
+                """INSERT OR IGNORE INTO reports
+                   (date, ticker, name, source, analyst, title, pdf_url,
+                    full_text, pdf_path, extraction_status, collected_at,
+                    target_price, opinion, category)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
+                 r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
+                 r.get("pdf_url", ""), r.get("full_text", ""),
+                 r.get("pdf_path", ""), r.get("extraction_status", ""),
+                 r.get("collected_at", ""),
+                 r.get("target_price", 0), r.get("opinion", ""),
+                 r.get("category", "")),
+            )
+        conn.commit()
+        conn.close()
+
+    return new_reports
+
+
 def _parse_date(raw: str) -> str:
     """'26.03.23' → '2026-03-23' 형태로 변환."""
     raw = raw.strip()
@@ -709,14 +1003,15 @@ def collect_reports(tickers_dict: dict) -> list:
                 """INSERT OR IGNORE INTO reports
                    (date, ticker, name, source, analyst, title, pdf_url,
                     full_text, pdf_path, extraction_status, collected_at,
-                    target_price, opinion)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    target_price, opinion, category)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
                  r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
                  r.get("pdf_url", ""), r.get("full_text", ""),
                  r.get("pdf_path", ""), r.get("extraction_status", ""),
                  r.get("collected_at", ""),
-                 r.get("target_price", 0), r.get("opinion", "")),
+                 r.get("target_price", 0), r.get("opinion", ""),
+                 "company"),
             )
         # 영구 보관 (삭제 없음)
         conn.commit()
