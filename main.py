@@ -2772,23 +2772,28 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
             print("[pension_alert] 시총 매핑 0")
             return
 
-        # 보유+워치 set
-        held_watch_set = set()
+        # 보유/워치 분리
+        held_set = set()
+        watch_set = set()
         try:
             pf = load_json(PORTFOLIO_FILE, {})
             for k in pf.keys():
                 if k not in ("us_stocks", "cash_krw", "cash_usd") and not _is_us_ticker(k):
-                    held_watch_set.add(k)
+                    held_set.add(k)
             for k in load_watchalert().keys():
-                if not _is_us_ticker(k):
-                    held_watch_set.add(k)
+                if not _is_us_ticker(k) and k not in held_set:
+                    watch_set.add(k)
         except Exception:
             pass
+        held_watch_set = held_set | watch_set
 
         # 분류 + 정렬 (% 기준)
-        # 너 포트/워치 외: 매수 시그널만 (매도는 무의미)
-        held_watch_flow = sorted(
-            [x for x in items if x["ticker"] in held_watch_set],
+        held_flow = sorted(
+            [x for x in items if x["ticker"] in held_set],
+            key=lambda x: -abs(x["pct"]),
+        )
+        watch_flow = sorted(
+            [x for x in items if x["ticker"] in watch_set],
             key=lambda x: -abs(x["pct"]),
         )
         external_buys = [x for x in items if x["ticker"] not in held_watch_set
@@ -2801,7 +2806,7 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
         # TOP 10 by 절대금액 (시장 임팩트 기준)
         buy_top_amount = sorted(external_buys, key=lambda x: -x["net_5d"])[:10]
 
-        if not (buy_top_pct or buy_top_amount or held_watch_flow):
+        if not (buy_top_pct or buy_top_amount or held_flow or watch_flow):
             return
 
         def _fmt_amt(won: int) -> str:
@@ -2812,19 +2817,29 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
         msg = f"📊 *연기금 5일 매매* ({now.strftime('%m/%d')})\n"
         msg += "_시총 대비 %_\n\n"
 
-        # 1) 너 포트/워치 양방향 (매수+매도 다)
-        if held_watch_flow:
-            msg += "📍 *너 포트/워치 양방향*\n"
-            for x in held_watch_flow[:15]:
-                emoji = "📈" if x["pct"] > 0 else "📉"
-                sign = "+" if x["pct"] > 0 else ""
-                star = ""
-                ap = abs(x["pct"])
-                if ap >= 1.0:
-                    star = emoji + emoji + " "
-                elif ap >= 0.5:
-                    star = emoji + " "
-                msg += f"{emoji} {star}*{x['name']}* {sign}{x['pct']:.2f}% ({_fmt_amt(x['net_5d'])})\n"
+        def _flow_line(x: dict) -> str:
+            emoji = "📈" if x["pct"] > 0 else "📉"
+            ap = abs(x["pct"])
+            star = ""
+            if ap >= 1.0:
+                star = emoji + emoji + " "
+            elif ap >= 0.5:
+                star = emoji + " "
+            sign = "+" if x["pct"] > 0 else ""
+            return f"{emoji} {star}*{x['name']}* {sign}{x['pct']:.2f}% ({_fmt_amt(x['net_5d'])})\n"
+
+        # 1) 보유 종목 양방향
+        if held_flow:
+            msg += "📍 *보유 종목 양방향*\n"
+            for x in held_flow[:15]:
+                msg += _flow_line(x)
+            msg += "\n"
+
+        # 2) 워치 종목 양방향
+        if watch_flow:
+            msg += "👀 *워치 종목 양방향*\n"
+            for x in watch_flow[:15]:
+                msg += _flow_line(x)
             msg += "\n"
 
         # 2) 발굴 매수 — 시총% 기준 TOP 10 (강도 시그널)
