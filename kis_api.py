@@ -7138,3 +7138,248 @@ async def fmp_stock_grades(ticker: str, limit: int = 20) -> dict:
         "action": r.get("action"),
     } for r in data[:limit]]
     return {"symbol": ticker, "count": len(grades), "grades": grades}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🌐 외부 시그널 (Polymarket + Treasury Curve + Fed)
+# 투자에 직접 영향: 매크로/지정학/정치 베팅 + 금리 곡선
+# Susquehanna·Jump Trading·Bloomberg·CNBC 다 활용
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POLYMARKET_API = "https://gamma-api.polymarket.com"
+FRED_BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"  # 무료, API key 불필요
+
+# 노이즈 카테고리 (sports/esports/pop culture 자동 컷)
+_POLY_NOISE_TAGS = {"Sports", "Esports", "NBA", "NHL", "NFL", "MLB", "Soccer",
+                    "Football", "Tennis", "Cricket", "Pop Culture", "Music",
+                    "Film", "TV", "Award", "Celebrity", "Hide From New", "Game",
+                    "Games", "Olympics", "Boxing", "MMA", "Golf"}
+
+
+async def fetch_polymarket(top: int = 10, min_volume: float = 500_000,
+                            query: str = "") -> dict:
+    """Polymarket 매크로/지정학/정치 prediction market 조회.
+
+    24시간 거래량 정렬, sports/esports/pop culture 노이즈 자동 컷,
+    min_volume 이하 제외 (저거래량 = 노이즈).
+
+    Args:
+        top: 반환 시장 수 (기본 10)
+        min_volume: 최소 누적 거래량 USD (기본 500K)
+        query: 키워드 (예: "Fed", "Iran", "Trump") 시 제목·설명 매칭 필터
+
+    Returns:
+        {"markets": [{title, prob_yes, prob_no, change_24h, change_7d, volume, vol_24h, end_date, tags}], "fetched_at": ...}
+    """
+    url = f"{POLYMARKET_API}/events"
+    params = {
+        "limit": "100",
+        "active": "true",
+        "closed": "false",
+        "order": "volume24hr",
+        "ascending": "false",
+    }
+    # ssl=False — read-only public API, macOS aiohttp 인증서 이슈 우회
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as s:
+        try:
+            async with s.get(url, params=params,
+                             timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return {"error": f"Polymarket HTTP {r.status}"}
+                data = await r.json()
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    if not isinstance(data, list):
+        return {"error": "unexpected response", "raw": str(data)[:200]}
+
+    query_lower = (query or "").lower()
+    results = []
+    for ev in data:
+        # 노이즈 태그 1개라도 있으면 제외
+        tags = [t.get("label", "") for t in ev.get("tags", [])]
+        if any(n in tags for n in _POLY_NOISE_TAGS):
+            continue
+        # 거래량 필터
+        vol_total = float(ev.get("volume", 0) or 0)
+        if vol_total < min_volume:
+            continue
+        # 키워드 필터
+        title = ev.get("title", "")
+        if query_lower:
+            desc_blob = (title + " " + (ev.get("description") or "")[:300]).lower()
+            if query_lower not in desc_blob:
+                continue
+        # 멀티 아웃컴 이벤트: 모든 sub-market의 (그룹제목, YES 확률, 변동) 추출
+        markets = ev.get("markets", [])
+        outcomes = []
+        import json as _j
+        for m in markets:
+            try:
+                op = m.get("outcomePrices", "[]")
+                if isinstance(op, str):
+                    op = _j.loads(op)
+                if not op or len(op) < 1:
+                    continue
+                yes_prob = float(op[0])
+                # group title (예: "Hold rates", "Cut 25bp")
+                grp = (m.get("groupItemTitle") or m.get("question") or "").strip()
+                chg_24h = float(m.get("oneDayPriceChange", 0) or 0) if m.get("oneDayPriceChange") is not None else None
+                chg_7d = float(m.get("oneWeekPriceChange", 0) or 0) if m.get("oneWeekPriceChange") is not None else None
+                outcomes.append({
+                    "outcome": grp[:60],
+                    "prob": round(yes_prob, 4),
+                    "change_24h": round(chg_24h, 4) if chg_24h is not None else None,
+                    "change_7d": round(chg_7d, 4) if chg_7d is not None else None,
+                })
+            except Exception:
+                pass
+
+        # 확률 내림차순 정렬, 가장 높은 거 우선
+        outcomes.sort(key=lambda x: x.get("prob", 0), reverse=True)
+        # binary 시장 (Yes/No 1개): outcomes[0]만 의미. 멀티: 상위 5개 표시
+        is_binary = (len(outcomes) == 1)
+        top_outcome = outcomes[0] if outcomes else None
+
+        results.append({
+            "title": title,
+            "is_binary": is_binary,
+            "top_outcome": top_outcome,  # 가장 가능성 큰 결과
+            "outcomes": outcomes[:5],  # 멀티시 상위 5개
+            "vol_total": vol_total,
+            "vol_24h": float(ev.get("volume24hr", 0) or 0),
+            "vol_1wk": float(ev.get("volume1wk", 0) or 0),
+            "end_date": (ev.get("endDate", "") or "")[:10],
+            "tags": tags[:4],
+            "slug": ev.get("slug", ""),
+        })
+        if len(results) >= top:
+            break
+
+    return {
+        "count": len(results),
+        "min_volume": min_volume,
+        "query": query,
+        "fetched_at": datetime.now(KST).isoformat(),
+        "markets": results,
+    }
+
+
+async def fetch_treasury_curve() -> dict:
+    """미국 Treasury 수익률 곡선 — 침체 시그널 (10Y-2Y, 10Y-3M).
+
+    FRED 공개 CSV (no API key) 사용. 최근 5거래일 데이터.
+    역전 (10Y-2Y < 0) = Estrella-Mishkin 1998 NY Fed 침체 선행지표.
+
+    Returns:
+        {"yields": {"10y", "2y", "3m"}, "spreads": {"10y_2y", "10y_3m"},
+         "spreads_1w_ago", "recession_signal": "정상/주의/역전"}
+    """
+    series = {"10y": "DGS10", "2y": "DGS2", "3m": "DGS3MO"}
+    yields = {}
+    yields_1w_ago = {}
+
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as s:
+        for key, sid in series.items():
+            url = f"{FRED_BASE}?id={sid}"
+            try:
+                async with s.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    if r.status != 200:
+                        continue
+                    text = await r.text()
+            except Exception:
+                continue
+            # CSV 파싱: 첫 줄 헤더, 마지막 N줄 = 최근 데이터
+            lines = [ln for ln in text.strip().split("\n")[1:] if "," in ln]
+            if not lines:
+                continue
+            # 최근 비결측 값
+            for ln in reversed(lines):
+                parts = ln.split(",")
+                if len(parts) >= 2 and parts[1] not in (".", "", "NA"):
+                    try:
+                        yields[key] = float(parts[1])
+                        break
+                    except Exception:
+                        pass
+            # 1주 전 (5영업일 전 정도) 비결측
+            if len(lines) >= 7:
+                for ln in reversed(lines[:-5]):
+                    parts = ln.split(",")
+                    if len(parts) >= 2 and parts[1] not in (".", "", "NA"):
+                        try:
+                            yields_1w_ago[key] = float(parts[1])
+                            break
+                        except Exception:
+                            pass
+
+    spread_10y_2y = None
+    spread_10y_3m = None
+    spread_10y_2y_1w = None
+    if "10y" in yields and "2y" in yields:
+        spread_10y_2y = round(yields["10y"] - yields["2y"], 3)
+    if "10y" in yields and "3m" in yields:
+        spread_10y_3m = round(yields["10y"] - yields["3m"], 3)
+    if "10y" in yields_1w_ago and "2y" in yields_1w_ago:
+        spread_10y_2y_1w = round(yields_1w_ago["10y"] - yields_1w_ago["2y"], 3)
+
+    # 침체 시그널 (Estrella-Mishkin 1998)
+    if spread_10y_2y is None:
+        signal = "데이터 부족"
+    elif spread_10y_2y < 0:
+        signal = "역전 (침체 선행)"
+    elif spread_10y_2y < 0.25:
+        signal = "주의 (역전 임박)"
+    else:
+        signal = "정상"
+
+    return {
+        "yields": yields,
+        "yields_1w_ago": yields_1w_ago,
+        "spread_10y_2y": spread_10y_2y,
+        "spread_10y_3m": spread_10y_3m,
+        "spread_10y_2y_1w_ago": spread_10y_2y_1w,
+        "recession_signal": signal,
+        "fetched_at": datetime.now(KST).isoformat(),
+    }
+
+
+async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
+    """외부 매크로 시그널 통합 — Polymarket + Treasury curve + Fed Polymarket.
+
+    한 번 호출로 매크로 전체 외부 베팅 컨센서스 + 금리 곡선 침체 시그널 조회.
+    SAT_PORT_CHECK / SUN_DISCOVERY / 매크로 대시보드 자동 통합용.
+
+    Returns:
+        {"polymarket": [...], "fed": {...polymarket Fed decision...},
+         "treasury": {...}, "summary": "1줄 요약"}
+    """
+    poly = await fetch_polymarket(top=top_polymarket, min_volume=500_000)
+    fed = await fetch_polymarket(top=3, min_volume=100_000, query="Fed decision")
+    curve = await fetch_treasury_curve()
+
+    # 1줄 요약
+    summary_parts = []
+    if not fed.get("error") and fed.get("markets"):
+        fed_top = fed["markets"][0]
+        top_o = fed_top.get("top_outcome") or {}
+        prob = top_o.get("prob")
+        outcome_name = top_o.get("outcome", "")
+        if prob is not None:
+            summary_parts.append(
+                f"Fed: {outcome_name} {prob*100:.0f}% ({fed_top['title'][:30]})"
+            )
+    if not curve.get("error") and curve.get("spread_10y_2y") is not None:
+        summary_parts.append(
+            f"10Y-2Y: {curve['spread_10y_2y']:+.2f}% ({curve['recession_signal']})"
+        )
+
+    return {
+        "polymarket": poly,
+        "fed": fed,
+        "treasury": curve,
+        "summary": " | ".join(summary_parts) if summary_parts else "데이터 부족",
+        "fetched_at": datetime.now(KST).isoformat(),
+    }

@@ -24,10 +24,13 @@
 - [ ] `get_macro(op_growth)` → 매크로 성장 신호
 - [ ] `get_sector` → 섹터 로테이션
 - [ ] `get_supply(foreign_rank)` → KR 외인 sector 흐름 (WI26 대용)
+- [ ] `get_macro_external` → **외부 시그널** (Polymarket TOP 10 + Fed + 10Y-2Y)
+  - **Mispricing 후보**: 셀사이드 컨센과 Polymarket 차이 큰 시장 = 알파 영역
 - [ ] **웹서치 1**: Yardeni S&P sector EPS revision breadth
 - [ ] **웹서치 2**: 미 ISM·중국 PMI (한국 6개월 후행 인지)
 
 **판정 1줄**: 현재 leadership sector __, __, __ / **Gate 1이 새로 열린 산업: 있음/없음**
+**Polymarket 1줄**: Fed __% / 이란 __% / 트럼프 관세 __% / 변동 큰 시장 __, __
 
 ---
 

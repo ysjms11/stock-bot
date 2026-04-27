@@ -22,8 +22,9 @@
 - [ ] `get_portfolio` → 현금 비중, 35% 초과 종목, NAV 주간 변동
 - [ ] `get_alerts` → triggered 손절·목표·매수감시
 - [ ] `get_macro` → KR/US 통합
+- [ ] `get_macro_external` → **외부 시그널** (Polymarket TOP 8 + Fed decision + 10Y-2Y 침체)
 
-**매크로 6변수 임계값 돌파 체크:**
+**매크로 8변수 임계값 돌파 체크:**
 
 | 변수 | 임계값 | 상태 |
 |---|---|---|
@@ -33,8 +34,11 @@
 | WTI | ±5% | __ |
 | DXY | ±1% | __ |
 | KOSPI/SPY 60일 MA | 이탈 | __ |
+| **Fed 인하 확률 (Polymarket)** | **±10pp 1주** | __ |
+| **10Y-2Y 스프레드** | **역전 / 0.25 미만** | __ |
 
 → 2개 이상 돌파 시 Phase 5에서 카테고리별 대응 차등 적용
+→ Polymarket 변동 큰 시장 (이란·관세·AI 규제) 별도 점검
 
 ---
 

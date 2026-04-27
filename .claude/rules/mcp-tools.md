@@ -70,3 +70,5 @@
 | 40 | `get_us_buy_candidates` | | 톱 애널 추천 + TP 업사이드 충족 미국 매수 후보 (raw 데이터, watched=1 풀 254명, Tier S/A 카운트 포함, 기본 180일/1명+/+20%/limit 50) |
 | 41 | `get_us_earnings_transcript` | | FMP 실적 컨퍼런스콜 본문 (CEO/CFO 발언 + 톱애널 Q&A, 분기당 5만자, max_chars 절삭 옵션) |
 | 42 | `get_us_analyst_research` | | FMP 분석가 통합: Price Target Summary + Estimates(향후 5년 매출/EBITDA/순이익) + Grades(등급 변경 이력) |
+| 43 | `get_polymarket` | | Polymarket prediction market — 매크로/지정학/정치/Fed/이란/관세/대선 베팅 컨센서스. 24h 거래량 정렬, sports/esports/pop culture 자동 컷, $500K 미만 노이즈 제외. (4/27 신규) |
+| 44 | `get_macro_external` | | 외부 매크로 시그널 통합 — Polymarket Fed decision + Treasury 수익률 곡선 (Estrella-Mishkin 1998 침체 선행지표). 매크로 대시보드/SAT-SUN/D-1 자동 호출. (4/27 신규) |

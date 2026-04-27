@@ -2086,6 +2086,75 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 매크로 대시보드 (매일 18:00 + 06:00 KST)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _format_external_signals(ext: dict) -> str:
+    """외부 시그널 섹션 포맷 (Polymarket + Treasury). 매크로 대시보드 + D-1 알림 공용.
+
+    Args:
+        ext: fetch_external_macro_signals() 결과
+    Returns: "\n[외부 시그널]\n• ..." 또는 ""
+    """
+    if not ext or ext.get("error"):
+        return ""
+
+    lines = ["\n[외부 시그널 — 돈 걸린 베팅]"]
+
+    # Treasury Curve
+    tr = ext.get("treasury", {})
+    sp = tr.get("spread_10y_2y")
+    sp_1w = tr.get("spread_10y_2y_1w_ago")
+    sig = tr.get("recession_signal", "")
+    if sp is not None:
+        chg_str = ""
+        if sp_1w is not None:
+            d = sp - sp_1w
+            chg_str = f" ({d:+.2f}pp 1주)"
+        lines.append(f"• 10Y-2Y: {sp:+.2f}%{chg_str} — {sig}")
+
+    # Fed Polymarket
+    fed_data = ext.get("fed", {})
+    fed_markets = fed_data.get("markets", []) if isinstance(fed_data, dict) else []
+    if fed_markets:
+        m = fed_markets[0]
+        top_o = m.get("top_outcome", {}) or {}
+        prob = top_o.get("prob")
+        if prob is not None:
+            outcome = top_o.get("outcome", "")[:20]
+            chg = top_o.get("change_7d")
+            chg_str = f" ({chg*100:+.0f}pp 1주)" if chg else ""
+            title = m.get("title", "")[:30]
+            lines.append(f"• Fed: {outcome} {prob*100:.0f}%{chg_str} ({title})")
+
+    # Polymarket TOP 매크로/지정학
+    poly = ext.get("polymarket", {})
+    poly_markets = poly.get("markets", []) if isinstance(poly, dict) else []
+    skip_first_fed = bool(fed_markets)
+    shown = 0
+    for m in poly_markets:
+        # Fed 시장은 위에 따로 보였으니 스킵
+        if skip_first_fed and "Fed" in m.get("title", ""):
+            continue
+        top_o = m.get("top_outcome", {}) or {}
+        prob = top_o.get("prob")
+        if prob is None:
+            continue
+        outcome = (top_o.get("outcome") or "")[:18]
+        title = m.get("title", "")[:35]
+        chg = top_o.get("change_7d")
+        chg_str = f" ({chg*100:+.0f}pp 1주)" if chg and abs(chg) >= 0.02 else ""
+        # 멀티 outcome이면 outcome도 표시
+        if not m.get("is_binary") and outcome:
+            lines.append(f"• {title} → {outcome} {prob*100:.0f}%{chg_str}")
+        else:
+            lines.append(f"• {title} {prob*100:.0f}%{chg_str}")
+        shown += 1
+        if shown >= 4:  # 최대 4개
+            break
+
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines)
+
+
 def _format_overtime_movers(data: dict) -> str:
     """시간외 급등락 섹션 포맷 (pm 슬롯 전용)"""
     movers = data.get("OVERTIME_MOVERS", {})
@@ -2132,6 +2201,16 @@ async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
                 msg += f"\n[자금 유입] {', '.join(inflow_names)}"
         except Exception:
             pass
+
+        # 🆕 외부 시그널 — 돈 걸린 베팅 (Polymarket + Treasury)
+        try:
+            from kis_api import fetch_external_macro_signals
+            ext = await fetch_external_macro_signals(top_polymarket=5)
+            ext_section = _format_external_signals(ext)
+            if ext_section:
+                msg += ext_section
+        except Exception as _e:
+            print(f"[macro_dashboard] 외부 시그널 실패: {_e}")
 
         # pm 슬롯에만 시간외 급등락 추가
         if slot == "pm":
@@ -2570,6 +2649,72 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
         print(f"sunday_30_reminder 오류: {e}")
+
+
+async def daily_event_d1_alert(context: ContextTypes.DEFAULT_TYPE):
+    """매일 19:30 KST — 내일 발생할 주요 이벤트(FOMC/어닝) D-1 알림.
+
+    events.json에서 tomorrow 날짜 매칭 + 핵심 키워드 (FOMC/AMD/NVDA/SK하이닉스/HD현대일렉/효성/LS/삼성전자/AVGO/CRSP/LITE/코웨이/HD조선)
+    감지 시 Polymarket + Treasury 시그널 첨부해서 발송.
+    """
+    now = datetime.now(KST)
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_event_d1"
+    if _sent.get("event_d1") == _key:
+        return
+
+    try:
+        from kis_api import fetch_external_macro_signals, EVENTS_FILE as _EV_FILE
+        events = load_json(_EV_FILE, {})
+        if not isinstance(events, dict):
+            return
+
+        tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # 핵심 키워드 (보유/워치 종목 + FOMC + 매크로 지표)
+        IMPORTANT_KEYWORDS = (
+            "FOMC", "CPI", "PPI", "고용", "GDP",
+            "AMD", "NVDA", "SK하이닉스", "HD현대일렉", "효성", "LS_ELECTRIC", "LS ELECTRIC",
+            "삼성전자", "AVGO", "CRSP", "LITE", "코웨이", "HD조선", "한국조선해양",
+        )
+        matches = []
+        for k, v in events.items():
+            if not isinstance(v, str):
+                continue
+            if v == tomorrow and any(kw in k for kw in IMPORTANT_KEYWORDS):
+                matches.append(k)
+
+        if not matches:
+            return  # 내일 핵심 이벤트 없음
+
+        is_fomc = any("FOMC" in m for m in matches)
+        is_macro = any(kw in m for m in matches for kw in ("CPI", "PPI", "GDP", "고용"))
+
+        msg = f"🔥 *D-1 이벤트 알림* ({(now + timedelta(days=1)).strftime('%m/%d')})\n\n"
+        msg += "내일 핵심 이벤트:\n"
+        for m in matches[:8]:
+            msg += f"• {m}\n"
+
+        # FOMC/매크로 이벤트면 Polymarket + Treasury 첨부
+        if is_fomc or is_macro:
+            try:
+                ext = await fetch_external_macro_signals(top_polymarket=4)
+                ext_section = _format_external_signals(ext)
+                if ext_section:
+                    msg += ext_section
+            except Exception as _e:
+                print(f"[event_d1] 외부 시그널 실패: {_e}")
+
+        msg += "\n\n_헤지 vs 풀 노출 결정 시간._"
+
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        _sent["event_d1"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
+    except Exception as e:
+        print(f"daily_event_d1_alert 오류: {e}")
 
 
 async def weekly_sat_port_check_notify(context: ContextTypes.DEFAULT_TYPE):
@@ -4577,6 +4722,8 @@ def main():
     # 주말 루틴 v2: SAT 포트관리 + SUN 신규발굴 (각각 09:00 KST)
     jq.run_daily(weekly_sat_port_check_notify, time=dtime(9, 0, tzinfo=KST), days=(5,), name="weekly_sat_port_check")
     jq.run_daily(weekly_sun_discovery_notify,  time=dtime(9, 0, tzinfo=KST), days=(6,), name="weekly_sun_discovery")
+    # D-1 이벤트 알림 (매일 19:30, FOMC/어닝/매크로 지표 감지 시 Polymarket+Treasury 첨부)
+    jq.run_daily(daily_event_d1_alert, time=dtime(19, 30, tzinfo=KST), days=(0, 1, 2, 3, 4, 5, 6), name="event_d1")
     # 주간 비종목 리포트 분석 시간 알림 (일요일 19:07 KST — sunday_30 직후)
     jq.run_daily(weekly_report_digest_notify, time=dtime(19, 7, tzinfo=KST), days=(6,), name="weekly_report_digest")
     # 주간 무결성 체크: 매주 일요일 07:05 KST — daily_snapshot 영업일 누락 감시

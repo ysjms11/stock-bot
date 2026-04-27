@@ -35,6 +35,7 @@ from kis_api import (
     fetch_youtube_transcript,
     fmp_earnings_transcript, fmp_price_target_summary,
     fmp_analyst_estimates, fmp_stock_grades,
+    fetch_polymarket, fetch_treasury_curve, fetch_external_macro_signals,
 )
 
 from db_collector import load_krx_db, scan_stocks, _load_history
@@ -894,6 +895,24 @@ MCP_TOOLS = [
         "grades_limit": {"type": "integer", "default": 20, "description": "등급 변경 이력 N건"}
       },
       "required": ["ticker"]}},
+
+    {"name": "get_polymarket",
+     "description": "Polymarket prediction market — 매크로/지정학/정치/Fed/이란/관세/대선 등 '돈 걸린 베팅 컨센서스' 조회. Susquehanna·Jump Trading·Bloomberg·CNBC가 활용. 24h 거래량 정렬, sports/esports/pop culture 자동 컷, $500K 미만 노이즈 제외. 매크로/이벤트 점검 시, FOMC/Fed/이란/관세/대선 키워드 언급 시, SAT_PORT_CHECK / SUN_DISCOVERY Phase 1 시 자동 호출.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "top": {"type": "integer", "default": 10, "description": "반환 시장 수 (기본 10)"},
+        "min_volume": {"type": "number", "default": 500000, "description": "최소 누적 거래량 USD (기본 500K, 노이즈 컷)"},
+        "query": {"type": "string", "description": "키워드 (예: 'Fed', 'Iran', 'Trump tariff'). 제목·설명에서 매칭 필터."}
+      },
+      "required": []}},
+
+    {"name": "get_macro_external",
+     "description": "외부 매크로 시그널 통합 — Polymarket Fed decision 베팅 + Treasury 수익률 곡선 침체 시그널 (Estrella-Mishkin 1998). 한 번 호출로 'Fed 금리 결정 확률 + 10Y-2Y 스프레드 + 지정학·정치 매크로 베팅' 파악. 매크로 점검·SAT/SUN Phase 1·이벤트 D-1 시 자동 호출.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "top_polymarket": {"type": "integer", "default": 8, "description": "Polymarket TOP N 시장 (기본 8)"}
+      },
+      "required": []}},
 
     {"name": "get_us_buy_candidates",
      "description": "톱 애널 추천 + TP 대비 업사이드 충족 미국 매수 후보 발굴. raw 데이터 반환 (정렬·필터·해석은 사용 측). watched=1 (Tier A 254명) 애널의 최근 N일 Upgrades/Initiates만 검색. 보유/워치 제외 기본. min_upside=20%면 ~50종목, 30%면 ~23종목, 10%면 ~100종목.",
@@ -4548,6 +4567,16 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     "analyst_estimates": estimates,
                     "stock_grades": grades,
                 }
+
+        elif name == "get_polymarket":
+            top = int(arguments.get("top") or 10)
+            min_volume = float(arguments.get("min_volume") if arguments.get("min_volume") is not None else 500_000)
+            query = (arguments.get("query") or "").strip()
+            result = await fetch_polymarket(top=top, min_volume=min_volume, query=query)
+
+        elif name == "get_macro_external":
+            top_poly = int(arguments.get("top_polymarket") or 8)
+            result = await fetch_external_macro_signals(top_polymarket=top_poly)
 
         elif name == "get_us_buy_candidates":
             from db_collector import find_us_buy_candidates
