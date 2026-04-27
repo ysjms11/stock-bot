@@ -9,18 +9,21 @@
 
 **우선순위 순:**
 
-1. **🆕 NPS 대시보드 (whale-insight 미러) — Phase A부터** ⭐ 작업 중 (4/27 저녁)
-   - **Phase A (1시간)**: data.go.kr CSV 자동 다운로드 + DB 저장 (NPS 5%룰 누적)
-     - URL: `https://www.data.go.kr/cmm/cmm/fileDownload.do?atchFileId=FILE_000000003618528&fileDetailSn=1&insertDataPrcus=N`
-     - publicDataPk=15106890, EUC-KR CSV, 컬럼: 번호/발행기관명/보고서 작성기준일/지분율(%)
-     - 4Q25 (10~12월) 분량 = 111 보고
-     - DB 테이블: `nps_holdings_disclosed` (분기 갱신)
-   - **Phase B (2시간)**: NPS 사업보고서 PDF 파싱 (연 1회, 매년 3월)
+1. **🆕 NPS 대시보드 Whale Watch — Phase A + D 완료 (4/27 밤)** ✅
+   - **Phase A 완료**: `nps_holdings_disclosed` 테이블 + `collect_nps_5percent_disclosed()` 함수 (kis_api.py)
+     - data.go.kr CSV 자동 다운로드 (atchFileId 메타페이지 동적 추출 + fallback)
+     - 한글→영문약자 매핑 (LG/SK/HD/KCC 등 22개) + suffix prefix substring fallback → **111/111 (100%) 매칭**
+     - 일요일 03:30 KST `weekly_nps_5pct` 잡 등록 (분기 갱신 신규분 자동 누적, 텔레그램 알림)
+     - 4Q25 분량 111건 DB 저장 완료
+   - **Phase D 완료**: `/dash` 🐋 Whale Watch 섹션 추가 (`_build_whale_section_html`)
+     - 카드 1: 🏛 NPS 5%룰 (최신 분기, 지분율↓, 10%↑ 빨강)
+     - 카드 2: 🟢 연기금 5일 매수 TOP 20 (시총% 정규화)
+     - 카드 3: 🔴 연기금 5일 매도 TOP 20 (시총% 정규화)
+     - 카드 4: 👤 임원·5%↑ 주주 매매 (insider_transactions, 30일, 10%↑ 빨강)
+   - **Phase B (다음, 우선도 낮음)**: NPS 사업보고서 PDF 파싱 (연 1회, 매년 3월)
      - 풀 포트 200+ 종목 + 비중 (whale-insight `weight` 필드)
-   - **Phase D (3시간)**: `/dash/whale` 4 카드 통합
-     - 5%룰 (DART) / 10% insider (이미) / NPS 5일 매수 TOP / NPS 5일 매도 TOP
-   - whale-insight assets/js/data.js 분석: NPS_KR 202종목 수동 큐레이션 (실제로 분기 사업보고서+5%룰 정리), NPS_US 3종목 데모
-   - 우리는 SEC EDGAR 13F (NPS CIK)로 미국도 풀 가능
+     - 미국분은 SEC EDGAR 13F (NPS CIK)로 풀 가능 — 더 우선
+   - **MCP 도구는 만들지 않음** — 사용자가 대시보드에서 보고 직접 Claude 분석 요청하기로 결정
 
 2. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
    - **자동 알림 자동 작동**: 미국 애널 다운그레이드 시 차등 헤더 (🚨🚨🚨 Tier S / 🚨🚨 Tier A / ⚠️ 일반)

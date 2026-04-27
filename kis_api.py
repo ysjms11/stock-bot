@@ -7583,3 +7583,404 @@ async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
         "summary": " | ".join(summary_parts) if summary_parts else "데이터 부족",
         "fetched_at": datetime.now(KST).isoformat(),
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NPS 5%룰 보고 (data.go.kr 공공데이터)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 출처: 국민연금공단_국민연금기금 5/10%이상 보유종목
+#        publicDataPk=15106890
+#        https://www.data.go.kr/data/15106890/fileData.do
+# 형식: EUC-KR CSV, 컬럼 = 번호, 발행기관명, 보고서 작성기준일(YYYY-MM-DD), 지분율(퍼센트)
+# 갱신 주기: 분기 (직전 분기 약 2개월 후 데이터 게시)
+# 누적 전략: data.go.kr 측이 같은 atchFileId 덮어쓰기 → 우리 DB는 (report_date, name) 키로 누적
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NPS_DATA_GO_KR_PAGE = "https://www.data.go.kr/data/15106890/fileData.do"
+NPS_FALLBACK_ATCH_FILE_ID = "FILE_000000003618528"  # 2025-12 시점 4Q25 분량
+
+
+# 한글 → 영문약자 변환 (긴 매핑 우선 — startswith 충돌 방지)
+# 예: "에이치디씨"가 "에이치디"보다 먼저 와야 "에이치디씨현대산업개발" → "HDC..."로 정상 변환
+_KO_EN_GROUP_MAP = [
+    # 4글자+
+    ("비지에프", "BGF"),
+    ("아이에스시", "ISC"),
+    ("알에프에이치아이씨", "RFHIC"),
+    ("에이치디현대", "HD현대"),
+    ("에이치디씨", "HDC"),
+    ("에이치엠엠", "HMM"),
+    ("제이와이피", "JYP"),
+    ("케이씨씨", "KCC"),
+    ("케이티앤지", "KT&G"),
+    ("엘아이지", "LIG"),
+    ("오씨아이", "OCI"),
+    # 3글자
+    ("씨제이", "CJ"),
+    ("에이치디", "HD"),
+    ("케이지", "KG"),
+    ("케이티", "KT"),
+    ("엘에스", "LS"),
+    ("엘엑스", "LX"),
+    ("에스케이", "SK"),
+    ("와이지", "YG"),
+    # 2글자
+    ("디비", "DB"),
+    ("디엘", "DL"),
+    ("지에스", "GS"),
+    ("엘지", "LG"),
+    ("에스엠", "SM"),
+]
+
+
+def _normalize_company_name(name: str) -> str:
+    """발행기관명 → stock_master 매칭용 표준화.
+
+    - "(주)" prefix/suffix 제거
+    - 한글표기 그룹명 → 영문약자 (엘지→LG 등)
+    - 공백 제거 + 영문 대문자 통일
+    """
+    if not name:
+        return ""
+    s = name.strip()
+    # 양쪽 (주) 제거
+    s = re.sub(r"^\(주\)\s*", "", s)
+    s = re.sub(r"\s*\(주\)$", "", s)
+    s = s.replace("주식회사", "")
+    # 공백 제거
+    s = re.sub(r"\s+", "", s)
+    # 한글 → 영문약자 prefix 변환
+    for ko, en in _KO_EN_GROUP_MAP:
+        if s.startswith(ko):
+            s = en + s[len(ko):]
+            break
+    # 자주 쓰는 한글 단어 → 영문약자 (어디 위치하든)
+    s = s.replace("엔터테인먼트", "ENT.")
+    return s.upper()
+
+
+def _ensure_nps_holdings_table(db_path: str):
+    """nps_holdings_disclosed 테이블 생성 (idempotent)."""
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS nps_holdings_disclosed (
+            report_date    TEXT NOT NULL,    -- 보고서 작성기준일 (YYYY-MM-DD)
+            company_name   TEXT NOT NULL,    -- 발행기관명 (원본 그대로)
+            symbol         TEXT DEFAULT '',  -- stock_master 매칭 ticker (없으면 빈 문자열)
+            ratio_pct      REAL DEFAULT 0,   -- 지분율(%)
+            quarter        TEXT DEFAULT '',  -- '2025Q4' 등
+            source_file    TEXT DEFAULT '',  -- atchFileId
+            collected_at   TEXT DEFAULT '',
+            PRIMARY KEY (report_date, company_name)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nps_date ON nps_holdings_disclosed(report_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nps_symbol ON nps_holdings_disclosed(symbol)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nps_quarter ON nps_holdings_disclosed(quarter)")
+    conn.commit()
+    conn.close()
+
+
+async def _discover_nps_atch_file_id() -> str:
+    """data.go.kr 메타페이지에서 최신 atchFileId 추출.
+    실패 시 fallback 상수 반환.
+    """
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as s:
+            async with s.get(NPS_DATA_GO_KR_PAGE) as r:
+                if r.status != 200:
+                    return NPS_FALLBACK_ATCH_FILE_ID
+                html = await r.text()
+        m = re.findall(r"atchFileId=(FILE_\d+)", html)
+        # 의미없는 'FILE_null' 같은 패턴 필터, 가장 흔한 ID 채택
+        ids = [x for x in m if x.startswith("FILE_") and x != "FILE_null"]
+        if ids:
+            # 같은 ID가 여러 번 나오면 그게 정답
+            from collections import Counter
+            top = Counter(ids).most_common(1)[0][0]
+            return top
+    except Exception as e:
+        print(f"[nps_5pct] atchFileId 자동 추출 실패: {e}")
+    return NPS_FALLBACK_ATCH_FILE_ID
+
+
+async def _download_nps_5pct_csv(atch_file_id: str = None) -> tuple:
+    """NPS 5%룰 CSV 다운로드 → (rows, atch_file_id) 반환.
+
+    Returns:
+        (rows, atch_file_id) — rows = [{"name": str, "report_date": str, "ratio_pct": float}, ...]
+    """
+    if atch_file_id is None:
+        atch_file_id = await _discover_nps_atch_file_id()
+
+    url = (
+        f"https://www.data.go.kr/cmm/cmm/fileDownload.do"
+        f"?atchFileId={atch_file_id}&fileDetailSn=1&insertDataPrcus=N"
+    )
+    connector = aiohttp.TCPConnector(ssl=False)
+    timeout = aiohttp.ClientTimeout(total=30)
+    raw_bytes = b""
+    try:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as s:
+            async with s.get(url) as r:
+                if r.status != 200:
+                    return ([], atch_file_id)
+                raw_bytes = await r.read()
+    except Exception as e:
+        print(f"[nps_5pct] CSV 다운로드 실패: {e}")
+        return ([], atch_file_id)
+
+    # EUC-KR / CP949 디코딩 시도
+    text = ""
+    for enc in ("euc-kr", "cp949", "utf-8"):
+        try:
+            text = raw_bytes.decode(enc)
+            break
+        except Exception:
+            continue
+    if not text:
+        return ([], atch_file_id)
+
+    rows = []
+    import csv as _csv
+    import io as _io
+    reader = _csv.reader(_io.StringIO(text))
+    header = None
+    for line in reader:
+        if not line or all(not c.strip() for c in line):
+            continue
+        if header is None:
+            header = [c.strip() for c in line]
+            continue
+        if len(line) < 4:
+            continue
+        # 컬럼: 번호, 발행기관명, 보고서 작성기준일, 지분율(퍼센트)
+        try:
+            name = line[1].strip()
+            report_date = line[2].strip()
+            ratio_str = line[3].strip().replace(",", "")
+            if not name or not report_date:
+                continue
+            try:
+                ratio = float(ratio_str)
+            except Exception:
+                ratio = 0.0
+            rows.append({
+                "name": name,
+                "report_date": report_date,
+                "ratio_pct": ratio,
+            })
+        except Exception:
+            continue
+    return (rows, atch_file_id)
+
+
+def _date_to_quarter(date_str: str) -> str:
+    """'2025-10-14' → '2025Q4'."""
+    try:
+        y, mo, _ = date_str.split("-")
+        m = int(mo)
+        q = (m - 1) // 3 + 1
+        return f"{y}Q{q}"
+    except Exception:
+        return ""
+
+
+def _build_name_to_symbol_map(db_path: str) -> tuple:
+    """stock_master 전체에서 (정규화명 → symbol) 매핑 + (정규화명, symbol) 리스트 반환.
+
+    리스트는 substring fallback 매칭용.
+    """
+    import sqlite3 as _s
+    direct = {}
+    name_list = []  # [(normalized_name, symbol)]
+    try:
+        conn = _s.connect(db_path, timeout=30)
+        cur = conn.execute("SELECT symbol, name FROM stock_master WHERE name IS NOT NULL AND name != ''")
+        for sym, nm in cur.fetchall():
+            key = _normalize_company_name(nm)
+            if key and key not in direct:
+                direct[key] = sym
+            if key:
+                name_list.append((key, sym))
+        conn.close()
+    except Exception as e:
+        print(f"[nps_5pct] name→symbol map 빌드 실패: {e}")
+    return (direct, name_list)
+
+
+def _match_company_to_symbol(name_csv: str, direct: dict, name_list: list) -> str:
+    """발행기관명 → symbol 매칭.
+
+    1차: 직접 정규화 비교
+    2차: stock_master 이름이 csv명의 prefix (예: "한국단자" ↔ "한국단자공업")
+    3차: csv명이 stock_master 이름의 prefix (예: "코오롱인더스트리" → "코오롱인더")
+    길이차 ≤ 7 제한 (오매칭 방지)
+    """
+    key = _normalize_company_name(name_csv)
+    if not key:
+        return ""
+    if key in direct:
+        return direct[key]
+    # 2차/3차 fallback
+    best_sym = ""
+    best_diff = 999
+    for nm, sym in name_list:
+        if not nm or len(nm) < 3:
+            continue
+        # case 2: stock_master 이름이 csv 키의 prefix
+        if key.startswith(nm) and len(key) - len(nm) <= 7:
+            diff = len(key) - len(nm)
+            if diff < best_diff:
+                best_diff = diff
+                best_sym = sym
+        # case 3: csv 키가 stock_master 이름의 prefix
+        elif nm.startswith(key) and len(nm) - len(key) <= 7:
+            diff = len(nm) - len(key)
+            if diff < best_diff:
+                best_diff = diff
+                best_sym = sym
+    return best_sym
+
+
+async def collect_nps_5percent_disclosed() -> dict:
+    """NPS 5%룰 CSV 다운로드 + DB 저장 (분기 갱신 시 신규 row만 누적).
+
+    Returns:
+        {"total_csv": int, "matched": int, "unmatched": int,
+         "inserted_new": int, "atch_file_id": str, "quarters": [...]}
+    """
+    rows, atch_id = await _download_nps_5pct_csv()
+    if not rows:
+        return {"error": "CSV 다운로드 실패", "atch_file_id": atch_id}
+
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_holdings_table(db_path)
+    direct_map, name_list = _build_name_to_symbol_map(db_path)
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+
+    matched = 0
+    unmatched_names = []
+    inserted_new = 0
+    quarters = set()
+
+    for r in rows:
+        name = r["name"]
+        report_date = r["report_date"]
+        ratio = r["ratio_pct"]
+        symbol = _match_company_to_symbol(name, direct_map, name_list)
+        if symbol:
+            matched += 1
+        else:
+            unmatched_names.append(name)
+        quarter = _date_to_quarter(report_date)
+        if quarter:
+            quarters.add(quarter)
+
+        try:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO nps_holdings_disclosed
+                   (report_date, company_name, symbol, ratio_pct, quarter, source_file, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (report_date, name, symbol, ratio, quarter, atch_id, now_iso),
+            )
+            if cur.rowcount > 0:
+                inserted_new += 1
+        except Exception as e:
+            print(f"[nps_5pct] insert 실패 {name}: {e}")
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "total_csv": len(rows),
+        "matched": matched,
+        "unmatched": len(unmatched_names),
+        "unmatched_names": unmatched_names[:20],  # 디버그용 샘플
+        "inserted_new": inserted_new,
+        "atch_file_id": atch_id,
+        "quarters": sorted(quarters),
+        "fetched_at": now_iso,
+    }
+
+
+def fetch_nps_holdings(quarter: str = None, days: int = 90, ratio_min: float = 0.0,
+                        held_watch_only: bool = False, limit: int = 100) -> dict:
+    """NPS 5%룰 보유종목 조회.
+
+    Args:
+        quarter: '2025Q4' 등 분기 필터. None이면 days 기간으로.
+        days: report_date 기준 최근 N일 (quarter=None일 때만)
+        ratio_min: 최소 지분율(%) 필터
+        held_watch_only: True면 보유+워치만
+        limit: 최대 반환 건수
+
+    Returns:
+        {"period": str, "total": int, "rows": [{report_date, company_name, symbol, ratio_pct, ...}]}
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_holdings_table(db_path)
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.row_factory = _s.Row
+
+    where = ["ratio_pct >= ?"]
+    params = [ratio_min]
+
+    if quarter:
+        where.append("quarter = ?")
+        params.append(quarter)
+        period_str = quarter
+    else:
+        cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        where.append("report_date >= ?")
+        params.append(cutoff)
+        period_str = f"최근 {days}일"
+
+    sql = f"""
+        SELECT report_date, company_name, symbol, ratio_pct, quarter
+        FROM nps_holdings_disclosed
+        WHERE {' AND '.join(where)}
+        ORDER BY report_date DESC, ratio_pct DESC
+    """
+    rows = []
+    for r in conn.execute(sql, params).fetchall():
+        rows.append({
+            "report_date": r["report_date"],
+            "company_name": r["company_name"],
+            "symbol": r["symbol"] or "",
+            "ratio_pct": float(r["ratio_pct"] or 0),
+            "quarter": r["quarter"] or "",
+        })
+    conn.close()
+
+    # 보유+워치 필터
+    if held_watch_only:
+        held_watch = set()
+        try:
+            portfolio = load_json(PORTFOLIO_FILE, {})
+            for k in portfolio.keys():
+                if k not in ("us_stocks", "cash_krw", "cash_usd") and not _is_us_ticker(k):
+                    held_watch.add(k)
+            for k in load_watchalert().keys():
+                if not _is_us_ticker(k):
+                    held_watch.add(k)
+        except Exception:
+            pass
+        rows = [r for r in rows if r["symbol"] in held_watch]
+
+    return {
+        "period": period_str,
+        "ratio_min": ratio_min,
+        "total": len(rows),
+        "rows": rows[:limit],
+        "fetched_at": datetime.now(KST).isoformat(),
+    }
