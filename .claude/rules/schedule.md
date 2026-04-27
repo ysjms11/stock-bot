@@ -72,6 +72,8 @@
 | 09:00 | 토 | `weekly_sat_port_check` | `weekly_sat_port_check_notify` | SAT_PORT_CHECK 시작 알림 (토요일 포트관리 v2) | 4/27 신규 |
 | 09:00 | 일 | `weekly_sun_discovery` | `weekly_sun_discovery_notify` | SUN_DISCOVERY 시작 알림 (일요일 신규발굴 v2) | 4/27 신규 |
 | 19:30 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 4/27 신규 |
+| 16:30 | 평일 | `pension_collect` | `daily_pension_collect` | 연기금 (NPS) 종목별 매매 수집 → pension_flow_daily DB | 4/27 신규 |
+| 19:00 | 평일 | `pension_alert` | `daily_pension_alert` | 연기금 5일 누적 매매 알림 (시총% 기준, 보유/워치 양방향 + 발굴 매수 TOP) | 4/27 신규 |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
 | 19:15 | 평일 | `collect_sanity_1` | `daily_collect_sanity_check` | 자가진단 — 당일 snapshot 0건이면 collect_daily 재실행 | 4/25 신규 |
 | 19:30 | 평일 | `daily_consensus` | `daily_consensus_check` | 컨센서스 상향 체크 | — |

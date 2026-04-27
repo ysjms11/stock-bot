@@ -7346,6 +7346,103 @@ async def fetch_treasury_curve() -> dict:
     }
 
 
+def _ensure_pension_table(db_path: str):
+    """pension_flow_daily 테이블 생성 (idempotent)."""
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pension_flow_daily (
+            trade_date     TEXT NOT NULL,
+            symbol         TEXT NOT NULL,
+            market         TEXT DEFAULT '',
+            name           TEXT DEFAULT '',
+            net_amount_won INTEGER DEFAULT 0,
+            net_qty        INTEGER DEFAULT 0,
+            buy_amount_won INTEGER DEFAULT 0,
+            sell_amount_won INTEGER DEFAULT 0,
+            collected_at   TEXT DEFAULT '',
+            PRIMARY KEY (trade_date, symbol)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pf_date ON pension_flow_daily(trade_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pf_symbol ON pension_flow_daily(symbol)")
+    conn.commit()
+    conn.close()
+
+
+def collect_pension_flow_daily(date_str: str = None) -> dict:
+    """매일 16:30 KST — 그날 종목별 연기금 매매 수집 → pension_flow_daily DB INSERT.
+
+    Args:
+        date_str: YYYYMMDD 형식. 생략 시 오늘.
+
+    Returns:
+        {"date": str, "kospi_count": int, "kosdaq_count": int, "saved": int}
+    """
+    try:
+        from pykrx import stock as _krx
+    except ImportError:
+        return {"error": "pykrx 미설치"}
+
+    if date_str is None:
+        date_str = datetime.now(KST).strftime("%Y%m%d")
+
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_pension_table(db_path)
+
+    saved = 0
+    counts = {}
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+
+    for m in ["KOSPI", "KOSDAQ"]:
+        try:
+            df = _krx.get_market_net_purchases_of_equities(date_str, date_str, m, "연기금")
+        except Exception as e:
+            print(f"[pension_flow] {m} {date_str} 실패: {e}")
+            counts[m] = 0
+            continue
+        if df is None or len(df) == 0:
+            counts[m] = 0
+            continue
+        cnt = 0
+        for ticker, row in df.iterrows():
+            net_amt = int(row.get("순매수거래대금", 0) or 0)
+            # 매매가 0인 종목은 스킵 (DB 부피 절감)
+            if net_amt == 0:
+                continue
+            net_qty = int(row.get("순매수거래량", 0) or 0)
+            buy_amt = int(row.get("매수거래대금", 0) or 0)
+            sell_amt = int(row.get("매도거래대금", 0) or 0)
+            name = str(row.get("종목명", "") or "")
+            try:
+                conn.execute(
+                    """INSERT OR REPLACE INTO pension_flow_daily
+                       (trade_date, symbol, market, name,
+                        net_amount_won, net_qty, buy_amount_won, sell_amount_won,
+                        collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (date_str, str(ticker), m, name,
+                     net_amt, net_qty, buy_amt, sell_amt, now_iso),
+                )
+                cnt += 1
+            except Exception:
+                pass
+        counts[m] = cnt
+        saved += cnt
+    conn.commit()
+    conn.close()
+
+    return {
+        "date": date_str,
+        "kospi_count": counts.get("KOSPI", 0),
+        "kosdaq_count": counts.get("KOSDAQ", 0),
+        "saved": saved,
+    }
+
+
 def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
                               held_watch_only: bool = False) -> dict:
     """연기금 (NPS 우세) 종목별 누적 매매 — pykrx + KRX 로그인 활용.

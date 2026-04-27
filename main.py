@@ -2698,6 +2698,147 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
         print(f"sunday_30_reminder 오류: {e}")
 
 
+async def daily_pension_collect(context: ContextTypes.DEFAULT_TYPE):
+    """매일 16:30 KST (평일) — 종목별 연기금 매매 수집 → DB 저장."""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    try:
+        from kis_api import collect_pension_flow_daily
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, collect_pension_flow_daily, None)
+        print(f"[pension_collect] {result}")
+    except Exception as e:
+        print(f"[pension_collect] 오류: {e}")
+
+
+async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
+    """매일 19:00 KST (평일) — 5일 누적 연기금 매매 시그널 텔레그램 알림.
+
+    시총 대비 % 기준 정렬. 절대금액 보조 표시.
+    임계값: 0.3%+ 매수/매도 (소형주도 포함, 절대금액 무관).
+    너 포트/워치 종목은 무조건 양방향 표시.
+    """
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return
+    _sent = load_json(MACRO_SENT_FILE, {})
+    _key = f"{now.strftime('%Y-%m-%d')}_pension_alert"
+    if _sent.get("pension_alert") == _key:
+        return
+
+    try:
+        import sqlite3 as _s
+        conn = _s.connect(REPORT_DB_PATH, timeout=10)
+        # 5일 누적 (영업일 기준 추정 — 7일 cal day cutoff)
+        cutoff_dt = (now - timedelta(days=8)).strftime("%Y%m%d")
+
+        # 5일 누적 매매 + 시총 join (daily_snapshot)
+        rows = conn.execute("""
+            SELECT pf.symbol, pf.name,
+                   SUM(pf.net_amount_won) as net_5d,
+                   ds.market_cap, ds.close
+            FROM pension_flow_daily pf
+            LEFT JOIN daily_snapshot ds ON ds.symbol = pf.symbol
+                AND ds.trade_date = (
+                    SELECT MAX(trade_date) FROM daily_snapshot
+                    WHERE symbol = pf.symbol
+                )
+            WHERE pf.trade_date >= ?
+            GROUP BY pf.symbol
+            HAVING ABS(net_5d) > 0
+        """, (cutoff_dt,)).fetchall()
+        conn.close()
+
+        if not rows:
+            print("[pension_alert] 데이터 없음")
+            return
+
+        # 시총 대비 % 계산 (market_cap 단위 = 억원)
+        # net_5d 단위 = 원
+        items = []
+        for symbol, name, net_5d, mcap_eok, close in rows:
+            if not mcap_eok or mcap_eok <= 0:
+                continue
+            mcap_won = mcap_eok * 100_000_000  # 억 → 원
+            pct = (net_5d / mcap_won) * 100
+            items.append({
+                "ticker": symbol, "name": name or symbol,
+                "net_5d": int(net_5d), "mcap_eok": int(mcap_eok),
+                "pct": pct,
+            })
+
+        if not items:
+            print("[pension_alert] 시총 매핑 0")
+            return
+
+        # 보유+워치 set
+        held_watch_set = set()
+        try:
+            pf = load_json(PORTFOLIO_FILE, {})
+            for k in pf.keys():
+                if k not in ("us_stocks", "cash_krw", "cash_usd") and not _is_us_ticker(k):
+                    held_watch_set.add(k)
+            for k in load_watchalert().keys():
+                if not _is_us_ticker(k):
+                    held_watch_set.add(k)
+        except Exception:
+            pass
+
+        # 분류 + 정렬 (% 기준)
+        # 너 포트/워치 외: 매수 시그널만 (매도는 무의미)
+        held_watch_flow = sorted(
+            [x for x in items if x["ticker"] in held_watch_set],
+            key=lambda x: -abs(x["pct"]),
+        )
+        buy_top_external = sorted(
+            [x for x in items if x["pct"] >= 0.3 and x["ticker"] not in held_watch_set],
+            key=lambda x: -x["pct"],
+        )[:10]
+
+        if not (buy_top_external or held_watch_flow):
+            return
+
+        def _fmt_amt(won: int) -> str:
+            eok = won / 100_000_000
+            sign = "+" if won > 0 else ""
+            return f"{sign}{eok:,.0f}억"
+
+        msg = f"📊 *연기금 5일 매매* ({now.strftime('%m/%d')})\n"
+        msg += "_시총 대비 %_\n\n"
+
+        # 1) 너 포트/워치 양방향 (매수+매도 다)
+        if held_watch_flow:
+            msg += "📍 *너 포트/워치 양방향*\n"
+            for x in held_watch_flow[:15]:
+                emoji = "📈" if x["pct"] > 0 else "📉"
+                sign = "+" if x["pct"] > 0 else ""
+                star = ""
+                ap = abs(x["pct"])
+                if ap >= 1.0:
+                    star = emoji + emoji + " "
+                elif ap >= 0.5:
+                    star = emoji + " "
+                msg += f"{emoji} {star}*{x['name']}* {sign}{x['pct']:.2f}% ({_fmt_amt(x['net_5d'])})\n"
+            msg += "\n"
+
+        # 2) 전체 종목 매수 시그널만 (발굴용, 보유/워치 제외)
+        if buy_top_external:
+            msg += "📈 *발굴 매수 TOP 10* (보유/워치 외)\n"
+            for i, x in enumerate(buy_top_external, 1):
+                star = "📈📈📈 " if x["pct"] >= 1.0 else ("📈📈 " if x["pct"] >= 0.5 else "")
+                msg += f"{i}. {star}*{x['name']}* +{x['pct']:.2f}% ({_fmt_amt(x['net_5d'])})\n"
+
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        _sent["pension_alert"] = _key
+        save_json(MACRO_SENT_FILE, _sent)
+    except Exception as e:
+        print(f"daily_pension_alert 오류: {e}")
+
+
 async def daily_event_d1_alert(context: ContextTypes.DEFAULT_TYPE):
     """매일 19:30 KST — 내일 발생할 주요 이벤트(FOMC/어닝) D-1 알림.
 
@@ -4771,6 +4912,9 @@ def main():
     jq.run_daily(weekly_sun_discovery_notify,  time=dtime(9, 0, tzinfo=KST), days=(6,), name="weekly_sun_discovery")
     # D-1 이벤트 알림 (매일 19:30, FOMC/어닝/매크로 지표 감지 시 Polymarket+Treasury 첨부)
     jq.run_daily(daily_event_d1_alert, time=dtime(19, 30, tzinfo=KST), days=(0, 1, 2, 3, 4, 5, 6), name="event_d1")
+    # 연기금 (NPS) 매매 추적 — 16:30 수집 + 19:00 알림 (평일)
+    jq.run_daily(daily_pension_collect, time=dtime(16, 30, tzinfo=KST), days=(0, 1, 2, 3, 4), name="pension_collect")
+    jq.run_daily(daily_pension_alert,   time=dtime(19,  0, tzinfo=KST), days=(0, 1, 2, 3, 4), name="pension_alert")
     # 주간 비종목 리포트 분석 시간 알림 (일요일 19:07 KST — sunday_30 직후)
     jq.run_daily(weekly_report_digest_notify, time=dtime(19, 7, tzinfo=KST), days=(6,), name="weekly_report_digest")
     # 주간 무결성 체크: 매주 일요일 07:05 KST — daily_snapshot 영업일 누락 감시
