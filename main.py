@@ -2791,12 +2791,17 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
             [x for x in items if x["ticker"] in held_watch_set],
             key=lambda x: -abs(x["pct"]),
         )
-        buy_top_external = sorted(
-            [x for x in items if x["pct"] >= 0.3 and x["ticker"] not in held_watch_set],
+        external_buys = [x for x in items if x["ticker"] not in held_watch_set
+                          and x["net_5d"] > 0]
+        # TOP 10 by 시총 대비 % (강도 기준)
+        buy_top_pct = sorted(
+            [x for x in external_buys if x["pct"] >= 0.3],
             key=lambda x: -x["pct"],
         )[:10]
+        # TOP 10 by 절대금액 (시장 임팩트 기준)
+        buy_top_amount = sorted(external_buys, key=lambda x: -x["net_5d"])[:10]
 
-        if not (buy_top_external or held_watch_flow):
+        if not (buy_top_pct or buy_top_amount or held_watch_flow):
             return
 
         def _fmt_amt(won: int) -> str:
@@ -2822,12 +2827,19 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
                 msg += f"{emoji} {star}*{x['name']}* {sign}{x['pct']:.2f}% ({_fmt_amt(x['net_5d'])})\n"
             msg += "\n"
 
-        # 2) 전체 종목 매수 시그널만 (발굴용, 보유/워치 제외)
-        if buy_top_external:
-            msg += "📈 *발굴 매수 TOP 10* (보유/워치 외)\n"
-            for i, x in enumerate(buy_top_external, 1):
+        # 2) 발굴 매수 — 시총% 기준 TOP 10 (강도 시그널)
+        if buy_top_pct:
+            msg += "📈 *발굴 매수 TOP 10* (시총% 기준)\n"
+            for i, x in enumerate(buy_top_pct, 1):
                 star = "📈📈📈 " if x["pct"] >= 1.0 else ("📈📈 " if x["pct"] >= 0.5 else "")
                 msg += f"{i}. {star}*{x['name']}* +{x['pct']:.2f}% ({_fmt_amt(x['net_5d'])})\n"
+            msg += "\n"
+
+        # 3) 발굴 매수 — 절대금액 기준 TOP 10 (시장 임팩트)
+        if buy_top_amount:
+            msg += "💰 *발굴 매수 TOP 10* (절대금액 기준)\n"
+            for i, x in enumerate(buy_top_amount, 1):
+                msg += f"{i}. *{x['name']}* {_fmt_amt(x['net_5d'])} ({x['pct']:+.2f}%)\n"
 
         await context.bot.send_message(
             chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
