@@ -1391,20 +1391,67 @@ async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
             target_pct=5.0, detect_new_cover=False
         )
 
-        if changes:
-            msg = f"📊 *컨센서스 변화 감지* ({len(changes)}건)\n\n"
-            for c in changes[:10]:
+        # 🆕 누적 trend 감지 (점진 상향도 캐치, 단일 일 임계 미달분)
+        trends = []
+        changes_tickers = {c.get("ticker") for c in changes}  # 단일 일 알림 종목 제외
+        try:
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(REPORT_DB_PATH, timeout=10)
+            cutoff = (now - timedelta(days=15)).strftime("%Y%m%d")  # 2주치 점진 상향 캐치
+            for ticker, name in kr_tickers.items():
+                if ticker in changes_tickers:
+                    continue  # 단일 일 changes에 이미 들어감
+                rows = conn.execute(
+                    "SELECT trade_date, target_avg FROM consensus_history "
+                    "WHERE symbol=? AND trade_date >= ? "
+                    "ORDER BY trade_date",
+                    (ticker, cutoff),
+                ).fetchall()
+                if len(rows) < 2:
+                    continue
+                old_target = rows[0][1]
+                new_target = rows[-1][1]
+                if not (old_target and new_target) or old_target <= 0:
+                    continue
+                pct = (new_target - old_target) / old_target * 100
+                # 30%+ 변화는 corporate action (액면분할/합병) 노이즈 → 제외
+                if abs(pct) >= 30.0:
+                    continue
+                # 누적 3%+ 변화 (점진 상향/하향)
+                if abs(pct) >= 3.0:
+                    trends.append({
+                        "ticker": ticker, "name": name,
+                        "old_target": int(old_target), "new_target": int(new_target),
+                        "pct": pct, "days": len(rows),
+                    })
+            conn.close()
+        except Exception as _e:
+            print(f"[daily_consensus] trend 감지 실패: {_e}")
+
+        if changes or trends:
+            msg = f"📊 *컨센서스 변화 감지* ({len(changes) + len(trends)}건)\n\n"
+            # 단일 일 5%+ 변화 (급변)
+            for c in changes[:8]:
                 if c["type"] == "target_up":
                     msg += f"📈 *{c['name']}* — 목표가 상향 {c['detail']}\n"
                 elif c["type"] == "target_down":
                     msg += f"📉 *{c['name']}* — 목표가 하향 {c['detail']}\n"
                 elif c["type"] == "opinion_change":
                     msg += f"🔄 *{c['name']}* — 의견 변경 {c['detail']}\n"
+            # 누적 trend (점진 상향/하향)
+            if trends:
+                if changes:
+                    msg += "\n_누적 추세 (7~10일):_\n"
+                for t in sorted(trends, key=lambda x: -abs(x["pct"]))[:8]:
+                    arrow = "📈" if t["pct"] > 0 else "📉"
+                    sign = "+" if t["pct"] > 0 else ""
+                    msg += (f"{arrow} *{t['name']}* {t['old_target']:,}→{t['new_target']:,} "
+                            f"({sign}{t['pct']:.1f}%, {t['days']}일)\n")
             await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
             _sent["consensus_daily"] = _key
             save_json(MACRO_SENT_FILE, _sent)
 
-        print(f"[daily_consensus] {len(kr_tickers)}종목 수집, {len(changes)}건 변화")
+        print(f"[daily_consensus] {len(kr_tickers)}종목 수집, 단일변화 {len(changes)}건, 누적추세 {len(trends)}건")
     except Exception as e:
         print(f"[daily_consensus] 오류: {e}")
 
