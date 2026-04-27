@@ -7346,6 +7346,109 @@ async def fetch_treasury_curve() -> dict:
     }
 
 
+def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
+                              held_watch_only: bool = False) -> dict:
+    """연기금 (NPS 우세) 종목별 누적 매매 — pykrx + KRX 로그인 활용.
+
+    한국 시장 8개 투자자 분류 중 '연기금' 카테고리 단독.
+    NPS가 한국 연기금 매매의 60~80% 비중이라 사실상 NPS 시그널 근사치.
+
+    Args:
+        days: 누적 일수 (기본 5)
+        market: 'KOSPI' / 'KOSDAQ' / 'ALL' (기본 ALL)
+        top: 매수 TOP / 매도 TOP 각각 N개 (기본 30)
+        held_watch_only: True면 보유+워치만 필터 (포트 점검용)
+
+    Returns:
+        {
+          "period": "YYYY-MM-DD ~ YYYY-MM-DD",
+          "market": str,
+          "buy_top": [{ticker, name, net_amount_won, net_qty}, ...],
+          "sell_top": [...],
+          "held_watch_flow": [...]   # 보유+워치 양방향
+        }
+    """
+    try:
+        from pykrx import stock as _krx
+    except ImportError:
+        return {"error": "pykrx 미설치"}
+
+    today = datetime.now(KST)
+    # 영업일 기준 days 일치 — KRX는 주말/공휴일 자동 스킵
+    end_dd = today.strftime("%Y%m%d")
+    start_dd = (today - timedelta(days=days * 2 + 3)).strftime("%Y%m%d")  # 여유 있게
+
+    markets = ["KOSPI", "KOSDAQ"] if market == "ALL" else [market]
+    all_rows = {}  # ticker → row dict
+
+    for m in markets:
+        try:
+            df = _krx.get_market_net_purchases_of_equities(start_dd, end_dd, m, "연기금")
+        except Exception as e:
+            print(f"[pension_fund] {m} 실패: {e}")
+            continue
+        if df is None or len(df) == 0:
+            continue
+        for ticker, row in df.iterrows():
+            net_amt = int(row.get("순매수거래대금", 0) or 0)
+            net_qty = int(row.get("순매수거래량", 0) or 0)
+            name = str(row.get("종목명", "") or "")
+            all_rows[str(ticker)] = {
+                "ticker": str(ticker),
+                "name": name,
+                "net_amount_won": net_amt,
+                "net_qty": net_qty,
+                "market": m,
+            }
+
+    # 기간 표시
+    period = f"{start_dd[:4]}-{start_dd[4:6]}-{start_dd[6:]} ~ {end_dd[:4]}-{end_dd[4:6]}-{end_dd[6:]}"
+
+    # 보유+워치 필터 (held_watch_only or held_watch_flow 추출용)
+    held_watch_set = set()
+    try:
+        portfolio = load_json(PORTFOLIO_FILE, {})
+        for k in portfolio.keys():
+            if k not in ("us_stocks", "cash_krw", "cash_usd") and not _is_us_ticker(k):
+                held_watch_set.add(k)
+        for k in load_watchalert().keys():
+            if not _is_us_ticker(k):
+                held_watch_set.add(k)
+    except Exception:
+        pass
+
+    # 정렬 분리
+    buy_sorted = sorted(
+        [r for r in all_rows.values() if r["net_amount_won"] > 0],
+        key=lambda x: -x["net_amount_won"],
+    )
+    sell_sorted = sorted(
+        [r for r in all_rows.values() if r["net_amount_won"] < 0],
+        key=lambda x: x["net_amount_won"],
+    )
+
+    if held_watch_only:
+        buy_sorted = [r for r in buy_sorted if r["ticker"] in held_watch_set]
+        sell_sorted = [r for r in sell_sorted if r["ticker"] in held_watch_set]
+
+    # 보유+워치 양방향
+    held_watch_flow = sorted(
+        [r for r in all_rows.values() if r["ticker"] in held_watch_set],
+        key=lambda x: -abs(x["net_amount_won"]),
+    )
+
+    return {
+        "period": period,
+        "market": market,
+        "days": days,
+        "total_tracked": len(all_rows),
+        "buy_top": buy_sorted[:top],
+        "sell_top": sell_sorted[:top],
+        "held_watch_flow": held_watch_flow,
+        "fetched_at": datetime.now(KST).isoformat(),
+    }
+
+
 async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
     """외부 매크로 시그널 통합 — Polymarket + Treasury curve + Fed Polymarket.
 

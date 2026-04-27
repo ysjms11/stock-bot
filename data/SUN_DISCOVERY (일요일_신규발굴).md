@@ -24,6 +24,7 @@
 - [ ] `get_macro(op_growth)` → 매크로 성장 신호
 - [ ] `get_sector` → 섹터 로테이션
 - [ ] `get_supply(foreign_rank)` → KR 외인 sector 흐름 (WI26 대용)
+- [ ] `get_pension_flow` → **연기금 매수 TOP 30** (NPS 시그널, 발굴용 — held_watch_only=false)
 - [ ] `get_macro_external` → **외부 시그널** (Polymarket TOP 10 + Fed + 10Y-2Y)
   - **Mispricing 후보**: 셀사이드 컨센과 Polymarket 차이 큰 시장 = 알파 영역
 - [ ] **웹서치 1**: Yardeni S&P sector EPS revision breadth

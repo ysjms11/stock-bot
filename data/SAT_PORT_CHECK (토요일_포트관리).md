@@ -49,6 +49,7 @@
 - [ ] `get_alpha_metrics(tickers="보유 전체")` (batch) → F-Score 변화
 - [ ] `get_news(tickers="보유 전체")` (batch) → thesis 영향 헤드라인
 - [ ] (KR) `get_supply` → 5일 외인+기관 net, 거래원 외국계 매도
+- [ ] (KR) `get_pension_flow(held_watch_only=true)` → **연기금 양방향** (NPS 60~80% 비중, 너 포트 매수/매도 직격)
 - [ ] (US) `get_us_ratings` → 다운그레이드
 
 **종목별 매트릭스 (각 60~90초):**

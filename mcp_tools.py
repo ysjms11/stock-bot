@@ -36,6 +36,7 @@ from kis_api import (
     fmp_earnings_transcript, fmp_price_target_summary,
     fmp_analyst_estimates, fmp_stock_grades,
     fetch_polymarket, fetch_treasury_curve, fetch_external_macro_signals,
+    fetch_pension_fund_flow,
 )
 
 from db_collector import load_krx_db, scan_stocks, _load_history
@@ -911,6 +912,17 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object",
       "properties": {
         "top_polymarket": {"type": "integer", "default": 8, "description": "Polymarket TOP N 시장 (기본 8)"}
+      },
+      "required": []}},
+
+    {"name": "get_pension_flow",
+     "description": "연기금(NPS 60~80% 비중) 종목별 N일 누적 매수/매도 — pykrx + KRX 인증. NPS 단독 시그널 근사치. 양방향 (매수 TOP + 매도 TOP + 보유/워치 양방향). 연기금/NPS 매매 점검 시, SAT_PORT_CHECK Phase 1·SUN_DISCOVERY Phase 1 시 자동 호출. '연기금', '국민연금', '기관 매수' 키워드 언급 시 자동 호출.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "days": {"type": "integer", "default": 5, "description": "누적 일수 (기본 5)"},
+        "market": {"type": "string", "enum": ["KOSPI", "KOSDAQ", "ALL"], "default": "ALL"},
+        "top": {"type": "integer", "default": 30, "description": "매수/매도 각각 TOP N (기본 30)"},
+        "held_watch_only": {"type": "boolean", "default": False, "description": "True면 보유+워치만 (포트 점검). False면 전체 (발굴)"}
       },
       "required": []}},
 
@@ -4577,6 +4589,19 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
         elif name == "get_macro_external":
             top_poly = int(arguments.get("top_polymarket") or 8)
             result = await fetch_external_macro_signals(top_polymarket=top_poly)
+
+        elif name == "get_pension_flow":
+            days = int(arguments.get("days") or 5)
+            market = (arguments.get("market") or "ALL").upper()
+            top = int(arguments.get("top") or 30)
+            held_only = bool(arguments.get("held_watch_only", False))
+            # pykrx 동기 함수 → executor에서 실행
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: fetch_pension_fund_flow(days=days, market=market,
+                                                 top=top, held_watch_only=held_only),
+            )
 
         elif name == "get_us_buy_candidates":
             from db_collector import find_us_buy_candidates
