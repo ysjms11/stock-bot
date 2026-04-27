@@ -9,21 +9,25 @@
 
 **우선순위 순:**
 
-1. **🆕 NPS 대시보드 Whale Watch — Phase A + D 완료 (4/27 밤)** ✅
-   - **Phase A 완료**: `nps_holdings_disclosed` 테이블 + `collect_nps_5percent_disclosed()` 함수 (kis_api.py)
+1. **🆕 NPS 대시보드 Whale Watch — 5 카드 완료 (4/27 밤)** ✅
+   - **Phase A — KR 5%룰 자동 수집** (kis_api.py / `nps_holdings_disclosed`)
      - data.go.kr CSV 자동 다운로드 (atchFileId 메타페이지 동적 추출 + fallback)
      - 한글→영문약자 매핑 (LG/SK/HD/KCC 등 22개) + suffix prefix substring fallback → **111/111 (100%) 매칭**
-     - 일요일 03:30 KST `weekly_nps_5pct` 잡 등록 (분기 갱신 신규분 자동 누적, 텔레그램 알림)
-     - 4Q25 분량 111건 DB 저장 완료
-   - **Phase D 완료**: `/dash` 🐋 Whale Watch 섹션 추가 (`_build_whale_section_html`)
-     - 카드 1: 🏛 NPS 5%룰 (최신 분기, 지분율↓, 10%↑ 빨강)
+     - 4Q25 분량 111건 DB 저장
+   - **Phase B — US 13F-HR 자동 수집** (kis_api.py / `nps_us_holdings`)
+     - SEC EDGAR submissions JSON → 13F 목록 → holdings XML 파싱
+     - NPS CIK: **0001608046** (이전 메모 0001423053은 잘못)
+     - 13F value 단위: actual dollars (2023 SEC 개정, ×1000 X)
+     - **2025Q1~Q4 백필 완료, 2,187 rows, 4Q25 561종목 총 $135B**
+   - **Phase D — `/dash` 🐋 Whale Watch 5 카드**
+     - 카드 1: 🏛 NPS KR 5%룰 (분기, 지분%, **▲/▼ 전 분기 대비 추가**, 10%↑ 빨강)
      - 카드 2: 🟢 연기금 5일 매수 TOP 20 (시총% 정규화)
      - 카드 3: 🔴 연기금 5일 매도 TOP 20 (시총% 정규화)
-     - 카드 4: 👤 임원·5%↑ 주주 매매 (insider_transactions, 30일, 10%↑ 빨강)
-   - **Phase B (다음, 우선도 낮음)**: NPS 사업보고서 PDF 파싱 (연 1회, 매년 3월)
-     - 풀 포트 200+ 종목 + 비중 (whale-insight `weight` 필드)
-     - 미국분은 SEC EDGAR 13F (NPS CIK)로 풀 가능 — 더 우선
-   - **MCP 도구는 만들지 않음** — 사용자가 대시보드에서 보고 직접 Claude 분석 요청하기로 결정
+     - 카드 4: 👤 임원·5%↑ 주주 매매 (insider_transactions, 30일)
+     - 카드 5: 🇺🇸 **NPS 미국 13F TOP 30 (가치 + 비중 + ▲/▼/🆕 NEW + EXIT details)**
+   - **자동 잡**: 일요일 03:30 KST `weekly_nps` (KR 5%룰 + US 13F 통합, 신규 시 텔레그램)
+   - **MCP 도구는 만들지 않음** — 사용자가 대시보드에서 직접 Claude 분석 요청
+   - **다음 (우선도 낮음)**: NPS KR 풀 포트 (200+종목 비중) — fund.nps.or.kr 분기공시 PDF 파싱 또는 NPS 연차보고서
 
 2. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
    - **자동 알림 자동 작동**: 미국 애널 다운그레이드 시 차등 헤더 (🚨🚨🚨 Tier S / 🚨🚨 Tier A / ⚠️ 일반)

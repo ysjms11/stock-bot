@@ -2712,30 +2712,58 @@ async def daily_pension_collect(context: ContextTypes.DEFAULT_TYPE):
         print(f"[pension_collect] 오류: {e}")
 
 
-async def weekly_nps_5percent_collect(context: ContextTypes.DEFAULT_TYPE):
-    """매주 일요일 03:30 KST — NPS 5%룰 CSV 다운로드 + DB 누적.
+async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
+    """매주 일요일 03:30 KST — NPS 5%룰 (KR) + 13F-HR (US) 통합 수집.
 
-    data.go.kr 측이 분기 단위로 같은 atchFileId 덮어쓰기.
-    매주 다운로드 → INSERT OR IGNORE로 (report_date, name) 중복 차단,
-    분기 전환 시 신규 row만 자동 누적.
+    KR: data.go.kr CSV (분기 갱신 시 신규분 누적)
+    US: SEC EDGAR 13F-HR XML (분기말 +45일 ~ 제출, 4분기 백필)
     """
+    msg_lines = []
+
+    # ── 1) KR 5%룰 ──
     try:
         from kis_api import collect_nps_5percent_disclosed
-        result = await collect_nps_5percent_disclosed()
-        print(f"[nps_5pct] {result}")
-        # 신규 분량이 의미 있을 때만 텔레그램 알림 (기본은 변화 없음)
-        new_inserted = result.get("inserted_new", 0)
-        if new_inserted > 0 and not result.get("error"):
-            quarters = result.get("quarters", [])
+        kr_result = await collect_nps_5percent_disclosed()
+        print(f"[nps_kr_5pct] {kr_result}")
+        new_kr = kr_result.get("inserted_new", 0)
+        if new_kr > 0 and not kr_result.get("error"):
+            quarters = kr_result.get("quarters", [])
             qstr = ", ".join(quarters) if quarters else ""
-            msg = (
-                f"📊 *NPS 5%룰 신규 보고 {new_inserted}건*\n"
-                f"분기: {qstr}\n"
-                f"매칭: {result.get('matched',0)}/{result.get('total_csv',0)}"
+            msg_lines.append(
+                f"📊 *NPS KR 5%룰 신규 {new_kr}건* ({qstr})\n"
+                f"매칭: {kr_result.get('matched',0)}/{kr_result.get('total_csv',0)}"
             )
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     except Exception as e:
-        print(f"[nps_5pct] 오류: {e}")
+        print(f"[nps_kr_5pct] 오류: {e}")
+
+    # ── 2) US 13F-HR ──
+    try:
+        from kis_api import collect_nps_us_13f
+        us_result = await collect_nps_us_13f(max_quarters=2)  # 매주 직전 2분기 점검
+        print(f"[nps_us_13f] {us_result}")
+        new_us = us_result.get("total_rows_inserted", 0)
+        if new_us > 0 and not us_result.get("error"):
+            new_filings = [
+                f for f in us_result.get("filings", [])
+                if f.get("status") == "inserted"
+            ]
+            qs = ", ".join(f"{x['quarter']}({x['rows']})" for x in new_filings)
+            msg_lines.append(
+                f"🇺🇸 *NPS US 13F 신규 {new_us}건* — {qs}"
+            )
+    except Exception as e:
+        print(f"[nps_us_13f] 오류: {e}")
+
+    # 텔레그램 알림 (신규 있을 때만)
+    if msg_lines:
+        try:
+            await context.bot.send_message(
+                chat_id=CHAT_ID,
+                text="\n\n".join(msg_lines),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            print(f"[nps_collect] 텔레그램 발송 오류: {e}")
 
 
 async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
@@ -4949,8 +4977,8 @@ def main():
     jq.run_daily(weekly_us_ratings_universe_scan, time=dtime(3, 0, tzinfo=KST), days=(6,), name="weekly_us_harvest")
     # harvest 33분 + 여유 → 04:00에 마스터 sync (ratings → us_analysts 자동 인구)
     jq.run_daily(weekly_us_analyst_sync,        time=dtime(4, 0, tzinfo=KST), days=(6,), name="weekly_us_analyst_sync")
-    # NPS 5%룰 CSV 주간 수집 — 일요일 03:30 KST (분기 갱신 자동 누적)
-    jq.run_daily(weekly_nps_5percent_collect,   time=dtime(3, 30, tzinfo=KST), days=(6,), name="weekly_nps_5pct")
+    # NPS 통합 주간 수집 — 일요일 03:30 KST (KR 5%룰 + US 13F-HR)
+    jq.run_daily(weekly_nps_collect,            time=dtime(3, 30, tzinfo=KST), days=(6,), name="weekly_nps")
     # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
     jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_noon")
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_close")
@@ -6261,6 +6289,23 @@ def _build_whale_section_html() -> str:
             "ORDER BY quarter DESC LIMIT 1"
         ).fetchone()
         latest_q = latest_q_row["quarter"] if latest_q_row else ""
+        # 직전 분기도 조회해서 비중 변화 ▲/▼ 산정
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
+            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (latest_q,),
+        ).fetchone() if latest_q else None
+        prev_q = prev_q_row["quarter"] if prev_q_row else ""
+        # 직전 분기 데이터: 동일 종목의 max 지분율 (한 분기 내 여러 보고 있을 수 있음)
+        prev_map = {}  # symbol → max ratio_pct
+        if prev_q:
+            for pr in conn.execute(
+                """SELECT symbol, MAX(ratio_pct) AS max_r
+                   FROM nps_holdings_disclosed WHERE quarter = ? AND symbol != ''
+                   GROUP BY symbol""",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
         rows = conn.execute(
             """SELECT report_date, company_name, symbol, ratio_pct
                FROM nps_holdings_disclosed
@@ -6272,21 +6317,40 @@ def _build_whale_section_html() -> str:
         conn.close()
         body = ''
         if rows:
-            body = '<table class="whale-tbl"><tr><th>일자</th><th>종목</th><th>지분%</th></tr>'
+            body = ('<table class="whale-tbl"><tr><th>일자</th><th>종목</th>'
+                    '<th>지분%</th><th>전분기</th></tr>')
             for r in rows:
                 bgs = ''
                 if r["ratio_pct"] >= 10:
                     bgs = ' style="color:#e57373;font-weight:600"'  # 10%룰
+                # 변화 분석
+                cur_r = float(r["ratio_pct"] or 0)
+                prev_r = prev_map.get(r["symbol"]) if r["symbol"] else None
+                if prev_q and r["symbol"]:
+                    if prev_r is None:
+                        chg_html = '<span style="color:#4caf50;font-weight:600">🆕 NEW</span>'
+                    elif cur_r > prev_r + 0.05:
+                        chg_html = (f'<span style="color:#4caf50">▲ '
+                                    f'{cur_r - prev_r:+.2f}p</span>')
+                    elif cur_r < prev_r - 0.05:
+                        chg_html = (f'<span style="color:#e57373">▼ '
+                                    f'{cur_r - prev_r:+.2f}p</span>')
+                    else:
+                        chg_html = '<span style="color:var(--fg2)">—</span>'
+                else:
+                    chg_html = '<span style="color:var(--fg2)">—</span>'
                 body += (f'<tr><td>{_html.escape(r["report_date"])}</td>'
                          f'<td>{_html.escape(r["company_name"])}'
                          f'{(f" ({r["symbol"]})") if r["symbol"] else ""}</td>'
-                         f'<td{bgs}>{r["ratio_pct"]:.2f}</td></tr>')
+                         f'<td{bgs}>{r["ratio_pct"]:.2f}</td>'
+                         f'<td>{chg_html}</td></tr>')
             body += '</table>'
         else:
             body = '<p style="color:var(--fg2)">데이터 없음</p>'
+        prev_note = f' | 비교: {prev_q}' if prev_q else ''
         parts.append(
             f'<div class="whale-card"><h3>🏛 NPS 5%룰 ({latest_q or "-"})</h3>'
-            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">data.go.kr 분기 갱신, 빨강=10%룰</p>'
+            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">data.go.kr 분기 갱신, 빨강=10%룰{prev_note}</p>'
             f'{body}</div>'
         )
     except Exception as e:
@@ -6440,6 +6504,68 @@ def _build_whale_section_html() -> str:
         )
     except Exception as e:
         parts.append(f'<div class="whale-card"><h3>👤 10%룰</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    # ── Card 5: NPS 미국 13F 보유 TOP (가치 + 비중 변화 ▲/▼) ──
+    try:
+        from kis_api import fetch_nps_us_holdings
+        us_data = fetch_nps_us_holdings(top=30, include_changes=True)
+        if us_data.get("error"):
+            parts.append(
+                f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F</h3>'
+                f'<p style="color:var(--fg2)">{_html.escape(us_data["error"])}</p></div>'
+            )
+        else:
+            quarter = us_data.get("quarter", "?")
+            period_end = us_data.get("period_end", "?")
+            total_v = us_data.get("total_value_usd", 0)
+            total_b = total_v / 1e9 if total_v else 0
+            n_total = us_data.get("total_holdings", 0)
+
+            body = ('<table class="whale-tbl"><tr><th>종목</th><th>가치</th>'
+                    '<th>비중</th><th>주식변화</th></tr>')
+            for x in us_data.get("rows", []):
+                name = _html.escape((x.get("name_of_issuer") or "")[:28])
+                val = x.get("value_usd", 0)
+                val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+                weight = x.get("weight_pct", 0)
+                status = x.get("status", "")
+                sc = x.get("share_change_pct")
+                if status == "NEW":
+                    sc_html = '<span style="color:#4caf50;font-weight:600">🆕 NEW</span>'
+                elif status == "UP":
+                    sc_html = f'<span style="color:#4caf50">▲ {sc:+.1f}%</span>' if sc is not None else "▲"
+                elif status == "DOWN":
+                    sc_html = f'<span style="color:#e57373">▼ {sc:+.1f}%</span>' if sc is not None else "▼"
+                else:
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                body += (f'<tr><td>{name}</td>'
+                         f'<td>{val_str}</td>'
+                         f'<td>{weight:.2f}%</td>'
+                         f'<td>{sc_html}</td></tr>')
+            body += '</table>'
+
+            # EXIT 종목 표시
+            exits_html = ''
+            exits = us_data.get("exits_top10", [])
+            if exits:
+                exits_html = '<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--fg2);font-size:0.85em">전 분기 EXIT TOP 10 ▼</summary><table class="whale-tbl" style="margin-top:6px">'
+                exits_html += '<tr><th>종목</th><th>직전 가치</th></tr>'
+                for e in exits:
+                    val = e.get("prev_value_usd", 0)
+                    val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+                    exits_html += (f'<tr><td style="color:#e57373">'
+                                   f'{_html.escape((e.get("name_of_issuer") or "")[:28])}</td>'
+                                   f'<td>{val_str}</td></tr>')
+                exits_html += '</table></details>'
+
+            parts.append(
+                f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F ({quarter})</h3>'
+                f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+                f'분기말 {period_end} | 총 ${total_b:.1f}B | {n_total}종목 | TOP 30, ▲▼=주식수 변화</p>'
+                f'{body}{exits_html}</div>'
+            )
+    except Exception as e:
+        parts.append(f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
 
     return (
         '<style>'

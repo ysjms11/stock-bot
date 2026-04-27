@@ -7984,3 +7984,376 @@ def fetch_nps_holdings(quarter: str = None, days: int = 90, ratio_min: float = 0
         "rows": rows[:limit],
         "fetched_at": datetime.now(KST).isoformat(),
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NPS 미국 보유 — SEC EDGAR Form 13F-HR
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CIK 0001608046 (National Pension Service)
+# 13F-HR: 분기 끝 후 ~45일 내 제출 (예: 4Q25 → 2026-02-10)
+# 컬럼: nameOfIssuer, cusip, value(천달러), sshPrnamt(주식수)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NPS_US_CIK = "0001608046"
+SEC_USER_AGENT = "stock-bot research arcturusnd@gmail.com"
+SEC_BASE = "https://www.sec.gov"
+SEC_DATA_BASE = "https://data.sec.gov"
+
+
+def _ensure_nps_us_table(db_path: str):
+    """nps_us_holdings 테이블 생성 (idempotent)."""
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS nps_us_holdings (
+            accession      TEXT NOT NULL,    -- 13F 파일 ID (예: 0001608046-26-000001)
+            filing_date    TEXT,             -- 파일 제출일 (YYYY-MM-DD)
+            period_end     TEXT,             -- 분기말일 (YYYY-MM-DD)
+            quarter        TEXT,             -- '2025Q4' 등
+            cusip          TEXT NOT NULL,
+            name_of_issuer TEXT,
+            value_usd      INTEGER DEFAULT 0,  -- 13F의 value × 1000 (실제 달러)
+            shares         INTEGER DEFAULT 0,
+            ticker         TEXT DEFAULT '',
+            collected_at   TEXT DEFAULT '',
+            PRIMARY KEY (accession, cusip)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_npsus_quarter ON nps_us_holdings(quarter)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_npsus_period ON nps_us_holdings(period_end)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_npsus_ticker ON nps_us_holdings(ticker)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_npsus_cusip ON nps_us_holdings(cusip)")
+    conn.commit()
+    conn.close()
+
+
+def _period_to_quarter(period_end: str) -> str:
+    """'2025-12-31' → '2025Q4'."""
+    try:
+        y, m, _ = period_end.split("-")
+        mi = int(m)
+        q = (mi - 1) // 3 + 1
+        return f"{y}Q{q}"
+    except Exception:
+        return ""
+
+
+async def _sec_fetch_text(url: str) -> str:
+    """SEC EDGAR/data.sec.gov 호출 — UA 필수, ssl 우회 안전."""
+    connector = aiohttp.TCPConnector(ssl=False)
+    timeout = aiohttp.ClientTimeout(total=30)
+    headers = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as s:
+        async with s.get(url) as r:
+            if r.status != 200:
+                raise RuntimeError(f"SEC HTTP {r.status} {url}")
+            return await r.text()
+
+
+async def _sec_list_nps_13f_filings(max_quarters: int = 8) -> list:
+    """NPS submissions JSON에서 최근 13F-HR 목록 추출.
+
+    Returns:
+        [{"accession", "accession_nodash", "filing_date", "period_end", "quarter"}, ...]
+    """
+    url = f"{SEC_DATA_BASE}/submissions/CIK{NPS_US_CIK}.json"
+    txt = await _sec_fetch_text(url)
+    import json as _json
+    d = _json.loads(txt)
+    recent = d.get("filings", {}).get("recent", {})
+    forms = recent.get("form", [])
+    fdates = recent.get("filingDate", [])
+    rdates = recent.get("reportDate", [])
+    accs = recent.get("accessionNumber", [])
+    out = []
+    for i, f in enumerate(forms):
+        if "13F" not in f:
+            continue
+        acc = accs[i]
+        fd = fdates[i] if i < len(fdates) else ""
+        rd = rdates[i] if i < len(rdates) else ""
+        out.append({
+            "accession": acc,
+            "accession_nodash": acc.replace("-", ""),
+            "filing_date": fd,
+            "period_end": rd,
+            "quarter": _period_to_quarter(rd),
+        })
+        if len(out) >= max_quarters:
+            break
+    return out
+
+
+async def _sec_locate_holdings_xml(accession_nodash: str) -> str:
+    """13F 파일링 폴더에서 holdings xml 파일명 식별.
+
+    /Archives/edgar/data/{cik}/{acc_nodash}/index.json 에 파일 목록 있음.
+    primary_doc.xml 외의 .xml 이 holdings (보통 분기명_v2.xml).
+    """
+    url = (f"{SEC_BASE}/Archives/edgar/data/"
+           f"{int(NPS_US_CIK)}/{accession_nodash}/index.json")
+    txt = await _sec_fetch_text(url)
+    import json as _json
+    d = _json.loads(txt)
+    items = d.get("directory", {}).get("item", [])
+    for it in items:
+        name = it.get("name", "")
+        if name.endswith(".xml") and name != "primary_doc.xml":
+            return name
+    raise RuntimeError(f"holdings xml not found in {accession_nodash}")
+
+
+async def _sec_fetch_holdings(accession_nodash: str, holdings_filename: str) -> list:
+    """holdings xml 다운로드 + 파싱.
+
+    Returns:
+        [{cusip, name_of_issuer, value_usd, shares}, ...]
+    """
+    url = (f"{SEC_BASE}/Archives/edgar/data/"
+           f"{int(NPS_US_CIK)}/{accession_nodash}/{holdings_filename}")
+    txt = await _sec_fetch_text(url)
+    import xml.etree.ElementTree as _ET
+    # ns 무시: tag 끝부분만 비교
+    root = _ET.fromstring(txt)
+    rows = []
+    for info in root.iter():
+        tag = info.tag.split("}")[-1] if "}" in info.tag else info.tag
+        if tag != "infoTable":
+            continue
+        rec = {}
+        for child in info.iter():
+            ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if ctag == "nameOfIssuer":
+                rec["name_of_issuer"] = (child.text or "").strip()
+            elif ctag == "cusip":
+                rec["cusip"] = (child.text or "").strip()
+            elif ctag == "value":
+                # 2023 SEC 개정 후 actual dollars (이전 thousands였음).
+                # NPS 13F는 2025년 분기만 사용 → actual dollars 그대로.
+                try:
+                    rec["value_usd"] = int(float(child.text or 0))
+                except Exception:
+                    rec["value_usd"] = 0
+            elif ctag == "sshPrnamt":
+                try:
+                    rec["shares"] = int(float(child.text or 0))
+                except Exception:
+                    rec["shares"] = 0
+        if rec.get("cusip"):
+            rec.setdefault("name_of_issuer", "")
+            rec.setdefault("value_usd", 0)
+            rec.setdefault("shares", 0)
+            rows.append(rec)
+    return rows
+
+
+async def collect_nps_us_13f(max_quarters: int = 4) -> dict:
+    """NPS 미국 13F-HR 분기 holdings 자동 수집 → DB 누적.
+
+    Args:
+        max_quarters: 직전 N개 분기까지 수집 (기본 4 = 최근 1년)
+
+    Returns:
+        {"quarters_processed": N, "total_rows_inserted": int, "filings": [...]}
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_us_table(db_path)
+
+    try:
+        filings = await _sec_list_nps_13f_filings(max_quarters=max_quarters)
+    except Exception as e:
+        return {"error": f"submissions JSON 실패: {e}"}
+
+    if not filings:
+        return {"error": "13F-HR 파일링 없음"}
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+
+    total_inserted = 0
+    processed = []
+
+    for fl in filings:
+        acc = fl["accession"]
+        acc_nd = fl["accession_nodash"]
+        # 이미 수집된 accession은 스킵 (속도 최적화)
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM nps_us_holdings WHERE accession=?",
+            (acc,),
+        ).fetchone()[0]
+        if existing > 0:
+            processed.append({**fl, "status": "skip-existing", "rows": existing})
+            continue
+
+        try:
+            holdings_fn = await _sec_locate_holdings_xml(acc_nd)
+            # SEC fair-use rate limit (10 req/sec). 보수적으로 0.2초.
+            await asyncio.sleep(0.2)
+            rows = await _sec_fetch_holdings(acc_nd, holdings_fn)
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            processed.append({**fl, "status": "fetch-fail", "error": str(e)})
+            continue
+
+        ins = 0
+        for r in rows:
+            try:
+                cur = conn.execute(
+                    """INSERT OR REPLACE INTO nps_us_holdings
+                       (accession, filing_date, period_end, quarter,
+                        cusip, name_of_issuer, value_usd, shares, ticker, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (acc, fl["filing_date"], fl["period_end"], fl["quarter"],
+                     r["cusip"], r.get("name_of_issuer", ""),
+                     r.get("value_usd", 0), r.get("shares", 0),
+                     "", now_iso),
+                )
+                if cur.rowcount > 0:
+                    ins += 1
+            except Exception:
+                pass
+        total_inserted += ins
+        processed.append({**fl, "status": "inserted", "rows": ins})
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "quarters_processed": len(processed),
+        "total_rows_inserted": total_inserted,
+        "filings": processed,
+        "fetched_at": now_iso,
+    }
+
+
+def fetch_nps_us_holdings(quarter: str = None, top: int = 30,
+                            include_changes: bool = False) -> dict:
+    """NPS 미국 보유 종목 조회 (가치 정렬).
+
+    Args:
+        quarter: '2025Q4' 등. None이면 가장 최신 분기 자동.
+        top: TOP N (기본 30)
+        include_changes: True면 직전 분기 대비 ▲/▼ 정보 포함
+
+    Returns:
+        {"quarter", "period_end", "total_holdings", "total_value_usd",
+         "rows": [{name, cusip, ticker, value_usd, shares, weight_pct,
+                   change_pct (전 분기 대비), status (NEW/UP/DOWN/EXIT/HELD)}]}
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_us_table(db_path)
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.row_factory = _s.Row
+
+    if not quarter:
+        row = conn.execute(
+            "SELECT quarter FROM nps_us_holdings ORDER BY period_end DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"error": "데이터 없음. collect_nps_us_13f 호출 필요"}
+        quarter = row["quarter"]
+
+    cur_rows = conn.execute(
+        """SELECT period_end, cusip, name_of_issuer, value_usd, shares, ticker
+           FROM nps_us_holdings WHERE quarter = ? ORDER BY value_usd DESC""",
+        (quarter,),
+    ).fetchall()
+
+    if not cur_rows:
+        conn.close()
+        return {"error": f"분기 {quarter} 데이터 없음"}
+
+    period_end = cur_rows[0]["period_end"]
+    total_value = sum(r["value_usd"] for r in cur_rows)
+
+    # 직전 분기 비교용 데이터
+    prev_map = {}  # cusip → {value_usd, shares}
+    if include_changes:
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_us_holdings "
+            "WHERE quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (quarter,),
+        ).fetchone()
+        if prev_q_row:
+            prev_q = prev_q_row["quarter"]
+            for pr in conn.execute(
+                """SELECT cusip, value_usd, shares
+                   FROM nps_us_holdings WHERE quarter = ?""",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["cusip"]] = {
+                    "value_usd": pr["value_usd"], "shares": pr["shares"]
+                }
+    conn.close()
+
+    # EXIT 판정용: 현재 분기 *전체* cusip 집합
+    cur_cusips_all = set(r["cusip"] for r in cur_rows)
+
+    rows = []
+    for r in cur_rows[:top]:
+        d = {
+            "cusip": r["cusip"],
+            "name_of_issuer": r["name_of_issuer"],
+            "ticker": r["ticker"] or "",
+            "value_usd": r["value_usd"],
+            "shares": r["shares"],
+            "weight_pct": (r["value_usd"] * 100.0 / total_value) if total_value > 0 else 0,
+        }
+        if include_changes:
+            prev = prev_map.get(r["cusip"])
+            if not prev:
+                d["status"] = "NEW"
+                d["share_change_pct"] = None
+                d["value_change_pct"] = None
+            else:
+                prev_sh = prev["shares"] or 0
+                prev_v = prev["value_usd"] or 0
+                d["share_change_pct"] = ((r["shares"] - prev_sh) * 100.0 / prev_sh) if prev_sh > 0 else None
+                d["value_change_pct"] = ((r["value_usd"] - prev_v) * 100.0 / prev_v) if prev_v > 0 else None
+                if d["share_change_pct"] is None:
+                    d["status"] = "HELD"
+                elif d["share_change_pct"] > 1:
+                    d["status"] = "UP"
+                elif d["share_change_pct"] < -1:
+                    d["status"] = "DOWN"
+                else:
+                    d["status"] = "HELD"
+        rows.append(d)
+
+    # EXIT 종목 (직전 분기에만 있음)
+    exits = []
+    if include_changes and prev_map:
+        for cusip, prev in prev_map.items():
+            if cusip in cur_cusips_all:
+                continue
+            # 이름은 직전 분기에서 가져와야 함
+            conn = _s.connect(db_path, timeout=30)
+            conn.row_factory = _s.Row
+            nm_row = conn.execute(
+                "SELECT name_of_issuer FROM nps_us_holdings WHERE cusip=? LIMIT 1",
+                (cusip,),
+            ).fetchone()
+            conn.close()
+            exits.append({
+                "cusip": cusip,
+                "name_of_issuer": nm_row["name_of_issuer"] if nm_row else "?",
+                "prev_value_usd": prev["value_usd"],
+                "prev_shares": prev["shares"],
+                "status": "EXIT",
+            })
+        exits.sort(key=lambda x: -x.get("prev_value_usd", 0))
+
+    return {
+        "quarter": quarter,
+        "period_end": period_end,
+        "total_holdings": len(cur_rows),
+        "total_value_usd": total_value,
+        "rows": rows,
+        "exits_top10": exits[:10] if include_changes else [],
+        "fetched_at": datetime.now(KST).isoformat(),
+    }
