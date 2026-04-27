@@ -9,7 +9,20 @@
 
 **우선순위 순:**
 
-1. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
+1. **🆕 NPS 대시보드 (whale-insight 미러) — Phase A부터** ⭐ 작업 중 (4/27 저녁)
+   - **Phase A (1시간)**: data.go.kr CSV 자동 다운로드 + DB 저장 (NPS 5%룰 누적)
+     - URL: `https://www.data.go.kr/cmm/cmm/fileDownload.do?atchFileId=FILE_000000003618528&fileDetailSn=1&insertDataPrcus=N`
+     - publicDataPk=15106890, EUC-KR CSV, 컬럼: 번호/발행기관명/보고서 작성기준일/지분율(%)
+     - 4Q25 (10~12월) 분량 = 111 보고
+     - DB 테이블: `nps_holdings_disclosed` (분기 갱신)
+   - **Phase B (2시간)**: NPS 사업보고서 PDF 파싱 (연 1회, 매년 3월)
+     - 풀 포트 200+ 종목 + 비중 (whale-insight `weight` 필드)
+   - **Phase D (3시간)**: `/dash/whale` 4 카드 통합
+     - 5%룰 (DART) / 10% insider (이미) / NPS 5일 매수 TOP / NPS 5일 매도 TOP
+   - whale-insight assets/js/data.js 분석: NPS_KR 202종목 수동 큐레이션 (실제로 분기 사업보고서+5%룰 정리), NPS_US 3종목 데모
+   - 우리는 SEC EDGAR 13F (NPS CIK)로 미국도 풀 가능
+
+2. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
    - **자동 알림 자동 작동**: 미국 애널 다운그레이드 시 차등 헤더 (🚨🚨🚨 Tier S / 🚨🚨 Tier A / ⚠️ 일반)
    - 직후 활용: `get_us_earnings_transcript(ticker="AMD", year=2026, quarter=1)` 본문 호출 + `get_us_analyst_research(ticker="AMD")` 등급 변경 추적
    - 보유 영향: AMD(11.49%) + HD현대일렉(5.13%) = 포트 16.6% 노출
@@ -64,6 +77,36 @@
 - 무료 250 calls/day (보유/워치 충분)
 - `.env FMP_API_KEY` 설정 완료
 
+### ⑧ 외부 시그널 + 연기금 (NPS) 자동 추적 (4/27 저녁) ✅
+- **Polymarket + Treasury Curve** (4/27 오후):
+  - `fetch_polymarket()`: 매크로/지정학/정치 prediction market (24h $500K+ 노이즈 컷)
+  - `fetch_treasury_curve()`: FRED API 10Y/2Y/3M (Estrella-Mishkin 1998 침체 시그널)
+  - `fetch_external_macro_signals()`: 통합
+  - MCP `get_polymarket` + `get_macro_external` 도구
+  - 매크로 대시보드 (06:00, 18:55) `_format_external_signals` 자동 첨부
+  - SAT_PORT_CHECK Phase 1 매크로 8변수 (Fed 인하 확률, 10Y-2Y 추가)
+  - SUN_DISCOVERY Phase 1 mispricing 후보 (컨센 vs Polymarket 차이)
+  - `daily_event_d1_alert` 19:30 평일 (FOMC/어닝/매크로 매칭 시 Polymarket+Treasury 첨부)
+- **연기금 (NPS) 종목별 양방향 매매 추적** (4/27 저녁):
+  - KRX 정보데이터시스템 인증 (KRX_ID/KRX_PW .env 설정 완료)
+  - pykrx auto-login → 연기금 단독 매매 데이터 fetch
+  - `pension_flow_daily` 테이블 (영구), 4/17~4/27 백필 완료
+  - `daily_pension_collect` 16:30 평일 + `daily_pension_alert` 19:00 평일
+  - 알림: 시총 대비 % 기준 정렬, 절대금액 보조 표시
+  - 4 섹션: 보유 양방향 / 워치 양방향 / 발굴 매수 TOP10 (시총%) / 발굴 매수 TOP10 (절대금액)
+  - 너 포트/워치 외 = **매수 시그널만** (매도는 무의미)
+  - MCP `get_pension_flow(days, market, top, held_watch_only)`
+  - SAT_PORT_CHECK / SUN_DISCOVERY Phase 1 명시
+- **컨센 누적 trend 감지 보강** (4/27):
+  - 단일 일 5% 임계 → + 15일 누적 3% 추가 (점진 상향 캐치)
+  - 효성중공업 +3.0%/2주 같은 경우 잡힘 (이전엔 누락)
+  - 30%+ 변화 = corporate action 노이즈 컷
+  - 단일 changes 중복 제거
+- **주말 루틴 v2 텔레그램 알림** (4/27):
+  - SAT_PORT_CHECK / SUN_DISCOVERY 파일 신설 (data/)
+  - 토 09:00 / 일 09:00 알림 (Claude.ai 프롬프트 템플릿)
+- **커밋**: 245d094 / 56867cc / a022d4f / df5ecfb / c43e451 / a9a54e8 / 1b86d93 / 0a0c4b3
+
 ### ⑦ 비종목 리포트 카테고리 풀구축 + 노이즈 필터 (4/26 저녁) ✅
 - **DB 스키마**: `reports.category` 컬럼 + 인덱스. 기존 3,356건 = 'company'
 - **신규 4 카테고리**: industry / market / strategy / economy (네이버+한경 무로그인)
@@ -86,11 +129,14 @@
 - **SK하이닉스 EXIT 1호 실전 적용** (4/24): 3주 +51% 상황에서 3경로 0/3 + O'Neil 8-week hold 강제 발동 → HOLD 전량. 목표가 1,310K→1,700K 상향, Trailing Stop 912K 신설
 - **LS ELECTRIC 케이스 진단**: LLM 4중 편향(Sharma+Laban+Huang+Li) 합성으로 4/17 조기매도 추천 → +47~84% 추가 상승 놓침 사례 학술 진단
 
-### 🎯 MCP 도구 카운트: 39 → **43개**
+### 🎯 MCP 도구 카운트: 39 → **46개**
 - get_youtube_transcript (40, 4/24)
 - get_us_buy_candidates (41, 4/25)
 - get_us_earnings_transcript (42, 4/26)
 - get_us_analyst_research (43, 4/26)
+- get_polymarket (44, 4/27) — Polymarket 매크로/지정학 베팅
+- get_macro_external (45, 4/27) — Polymarket + Treasury 통합
+- get_pension_flow (46, 4/27) — 연기금 종목별 양방향 매매
 
 ---
 
