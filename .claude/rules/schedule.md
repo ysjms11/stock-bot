@@ -29,7 +29,8 @@
 |------|---|---------|-----------|-----------|-----------|
 | 02:00 | 전체 | `dart_incremental` | `daily_dart_incremental` | DART 신규 정기공시 증분 수집 → 알파 재계산 | 4/16 신규 |
 | 03:00 | 일 | `weekly_us_harvest` | `weekly_us_ratings_universe_scan` | S&P 500 ∪ Russell 1000 전체 레이팅 수집 (~1000종목, ~33분) | 4/23 Russell 확장 |
-| 03:30 | 일 | `weekly_nps` | `weekly_nps_collect` | NPS 통합 수집: KR 5%룰 (data.go.kr) + US 13F-HR (SEC EDGAR) + KR 풀포트 200종목 (whale-insight 미러) | 4/27 신규 |
+| 03:30 | 일 | `weekly_nps` | `weekly_nps_collect` | NPS 통합 수집: KR 5%룰 (data.go.kr) + US 13F-HR (SEC EDGAR) + KR 풀포트 200종목 (whale-insight 미러) + DART 5/10%룰 14일 풀백필 | 4/27 신규 |
+| 04:00 | 전체 | `dart_disclosure` | `daily_dart_disclosure_collect` | DART 5%룰 (D001) + 10%룰 (D002) 매일 증분 수집 (2일치, ~10초). 24h 내 1%p+ 큰 변동 시 텔레그램 알림 | 4/28 신규 |
 | 04:00 | 일 | `weekly_us_analyst_sync` | `weekly_us_analyst_sync` | ratings → us_analysts 마스터 자동 동기화 + 별점 4.5+ 콜 5+ 자동 watched=1 | 4/25 신규 |
 | 05:05 | 화~토 | `us_summary_dst` | `us_market_summary` | 미국 장 마감 요약 (DST, 내부 가드로 중복 방지) | — |
 | 06:00 | 전체 | `macro_am` | `macro_dashboard` | 매크로 대시보드 (미국장 마감 후) | — |

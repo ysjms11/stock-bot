@@ -2712,6 +2712,52 @@ async def daily_pension_collect(context: ContextTypes.DEFAULT_TYPE):
         print(f"[pension_collect] 오류: {e}")
 
 
+async def daily_nps_dart_increment(context: ContextTypes.DEFAULT_TYPE):
+    """매일 04:00 KST — NPS 5%룰 DART 증분 수집.
+
+    NPS는 분기 단위 일제 보고 + 분기 사이 변동시 5일 내 보고 의무.
+    매일 D001 검색 → repror=='국민연금공단' 만 nps_holdings_disclosed에 살붙이기.
+    신규 NPS 보고 발생 시 텔레그램 알림.
+    """
+    try:
+        from kis_api import collect_nps_dart_increments
+        r = await collect_nps_dart_increments(days=7)  # 최근 7일 안전 마진
+        print(f"[nps_dart_inc] {r}")
+        new_n = r.get("nps_inserted", 0)
+        if new_n <= 0:
+            return  # 신규 보고 없으면 silent
+        import sqlite3 as _s
+        db_path = f"{_DATA_DIR}/stock.db"
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        cutoff_iso = (datetime.now(KST) - timedelta(hours=24)).isoformat()
+        recent = conn.execute(
+            """SELECT report_date, company_name, ratio_pct, stkqy_irds, report_resn
+               FROM nps_holdings_disclosed
+               WHERE source = 'dart' AND collected_at >= ?
+               ORDER BY ABS(stkqy_irds) DESC LIMIT 10""",
+            (cutoff_iso,),
+        ).fetchall()
+        conn.close()
+        if not recent:
+            return
+        lines = [f"🏛 *NPS 5%룰 DART 신규 보고 {len(recent)}건*"]
+        for x in recent:
+            qty = x["stkqy_irds"] or 0
+            arrow = "▲" if qty > 0 else "▼"
+            lines.append(
+                f"  {arrow} *{x['company_name']}* {qty:+,}주 "
+                f"(지분 {x['ratio_pct']:.2f}%) — {x['report_date']}"
+            )
+        await context.bot.send_message(
+            chat_id=CHAT_ID,
+            text="\n".join(lines),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"[nps_dart_inc] 오류: {e}")
+
+
 async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     """매주 일요일 03:30 KST — NPS 5%룰 (KR) + 13F-HR (US) 통합 수집.
 
@@ -2754,15 +2800,13 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[nps_us_13f] 오류: {e}")
 
-    # ── 2.5) DART 5%룰/10%룰 자체 수집 (D001/D002 직접) ──
+    # ── 2.5) NPS 5%룰 DART 90일 풀 백필 (분기 사이 누적 보고 보완) ──
     try:
-        from kis_api import collect_dart_5pct_changes, collect_dart_10pct_insiders
-        d5 = await collect_dart_5pct_changes(days=14)
-        print(f"[dart_5pct] {d5}")
-        d10 = await collect_dart_10pct_insiders(days=14)
-        print(f"[dart_10pct] {d10}")
+        from kis_api import collect_nps_dart_increments
+        ni = await collect_nps_dart_increments(days=90)
+        print(f"[nps_dart_inc weekly 90d] {ni}")
     except Exception as e:
-        print(f"[dart_changes] 오류: {e}")
+        print(f"[nps_dart_inc weekly] 오류: {e}")
 
     # ── 3) KR 풀 포트 (whale-insight 미러) ──
     # 매주 silent 갱신. 분기 라벨 변경 시에만 알림.
@@ -5020,6 +5064,8 @@ def main():
     jq.run_daily(weekly_us_analyst_sync,        time=dtime(4, 0, tzinfo=KST), days=(6,), name="weekly_us_analyst_sync")
     # NPS 통합 주간 수집 — 일요일 03:30 KST (KR 5%룰 + US 13F-HR)
     jq.run_daily(weekly_nps_collect,            time=dtime(3, 30, tzinfo=KST), days=(6,), name="weekly_nps")
+    # NPS 5%룰 DART 증분 수집 — 매일 04:00 KST (분기 사이 NPS 변동 보고 캡처)
+    jq.run_daily(daily_nps_dart_increment, time=dtime(4, 0, tzinfo=KST), name="nps_dart_inc")
     # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
     jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_noon")
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(0,1,2,3,4), name="us_holdings_close")
@@ -7412,24 +7458,25 @@ def _whale_render_home() -> str:
     import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
 
-    # 5%룰 / 10%룰 카운트 (DART 자체 수집)
+    # NPS 5%룰 / 10%↑ 카운트 (NPS 단독, 최신 분기)
     total_5pct = 0
     total_10pct = 0
     try:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
-        try:
+        latest_q_row = conn.execute(
+            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
+            "ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        if latest_q_row:
+            lq = latest_q_row["quarter"]
             total_5pct = conn.execute(
-                "SELECT COUNT(*) AS n FROM dart_5pct_changes"
+                "SELECT COUNT(*) AS n FROM nps_holdings_disclosed WHERE quarter=?", (lq,)
             ).fetchone()["n"]
-        except Exception:
-            pass
-        try:
             total_10pct = conn.execute(
-                "SELECT COUNT(*) AS n FROM dart_10pct_insiders WHERE stkqy_irds != 0 AND stkrt >= 5"
+                "SELECT COUNT(*) AS n FROM nps_holdings_disclosed "
+                "WHERE quarter=? AND ratio_pct >= 10", (lq,)
             ).fetchone()["n"]
-        except Exception:
-            pass
         conn.close()
     except Exception:
         pass
@@ -7448,9 +7495,9 @@ def _whale_render_home() -> str:
                     <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">지분 5%↑</span>
                     <i data-lucide="arrow-up-right" class="w-4 h-4 text-blue-400"></i>
                 </div>
-                <h5 class="font-extrabold text-slate-900 text-base">대량 보유 변동 알림</h5>
+                <h5 class="font-extrabold text-slate-900 text-base">NPS 5%↑ 보유 종목</h5>
                 <p class="text-[11px] text-slate-500 leading-relaxed mt-1">
-                    <span class="font-bold text-blue-600">{recent_5pct}건</span> · 5%↑ 지분 신규/변동 보고
+                    <span class="font-bold text-blue-600">{recent_5pct}건</span> · 국민연금 5%↑ 지분 보고
                 </p>
             </div>
             <div onclick="location.href='/dash/whale?p=insider'"
@@ -7460,9 +7507,9 @@ def _whale_render_home() -> str:
                     <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">지분 10%↑</span>
                     <i data-lucide="shield-check" class="w-4 h-4 text-indigo-400"></i>
                 </div>
-                <h5 class="font-extrabold text-slate-900 text-base">핵심 주주 거래 보고</h5>
+                <h5 class="font-extrabold text-slate-900 text-base">NPS 10%↑ 핵심 보유</h5>
                 <p class="text-[11px] text-slate-500 leading-relaxed mt-1">
-                    <span class="font-bold text-indigo-600">{recent_10pct}건</span> · 10%↑ 보유자 매매
+                    <span class="font-bold text-indigo-600">{recent_10pct}건</span> · 국민연금 10%↑ 핵심 종목
                 </p>
             </div>
         </div>
@@ -7724,10 +7771,10 @@ def _whale_render_us_13f() -> str:
 
 
 def _whale_render_kr_5pct() -> str:
-    """5%룰 (대량 보유 변동) — DART D001 우리 자체 수집.
+    """NPS 5%룰 — data.go.kr NPS 단독 5%↑ 보유 분기 보고.
 
-    데이터: dart_5pct_changes (DART majorstock.json 직접 수집).
-    Hero summary box + 정렬/필터 + 카드 리스트 (whale-insight 디자인 미러).
+    데이터: nps_holdings_disclosed (data.go.kr 공공데이터, NPS 보고만).
+    전 분기 대비 ▲/▼ 변동 표시.
     """
     import sqlite3 as _s
     import json as _json
@@ -7735,12 +7782,31 @@ def _whale_render_kr_5pct() -> str:
     try:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
+        latest_q_row = conn.execute(
+            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
+            "ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        latest_q = latest_q_row["quarter"] if latest_q_row else ""
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
+            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (latest_q,),
+        ).fetchone() if latest_q else None
+        prev_q = prev_q_row["quarter"] if prev_q_row else ""
+        prev_map = {}
+        if prev_q:
+            for pr in conn.execute(
+                "SELECT symbol, MAX(ratio_pct) AS max_r FROM nps_holdings_disclosed "
+                "WHERE quarter = ? AND symbol != '' GROUP BY symbol",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
         raw = conn.execute(
-            """SELECT rcept_dt, company, symbol, repror, stkqy, stkqy_irds,
-                      stkrt, stkrt_irds, report_resn
-               FROM dart_5pct_changes
-               ORDER BY rcept_dt DESC, ABS(stkrt_irds) DESC"""
-        ).fetchall()
+            """SELECT report_date, company_name, symbol, ratio_pct
+               FROM nps_holdings_disclosed
+               WHERE quarter = ?""",
+            (latest_q,),
+        ).fetchall() if latest_q else []
         conn.close()
     except Exception as e:
         return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
@@ -7748,31 +7814,30 @@ def _whale_render_kr_5pct() -> str:
     items = []
     buy_cnt = 0
     sell_cnt = 0
+    new_cnt = 0
     for r in raw:
-        change = float(r["stkrt_irds"] or 0)
+        cur = float(r["ratio_pct"] or 0)
+        prev = prev_map.get(r["symbol"]) if r["symbol"] else None
+        is_new = (prev is None and prev_q != "")
+        change = (cur - prev) if prev is not None else cur
         items.append({
-            "company": r["company"],
+            "company": r["company_name"],
             "symbol": r["symbol"] or "",
-            "date": r["rcept_dt"],
-            "repror": r["repror"] or "",
-            "ratio": float(r["stkrt"] or 0),
-            "stkqy": int(r["stkqy"] or 0),
-            "stkqy_irds": int(r["stkqy_irds"] or 0),
+            "date": r["report_date"],
+            "ratio": cur,
+            "prev_ratio": prev or 0,
             "change": round(change, 2),
-            "report_resn": (r["report_resn"] or "단순변동")[:80],
+            "is_new": is_new,
         })
         if change > 0:
             buy_cnt += 1
         elif change < 0:
             sell_cnt += 1
+        if is_new:
+            new_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)
-    # 기간 라벨 (가장 이른 ~ 가장 늦은 보고일)
-    if items:
-        dates = [x["date"] for x in items]
-        period_label = f"{min(dates)} ~ {max(dates)}"
-    else:
-        period_label = "-"
+    period_label = f"{latest_q} 분기" + (f" · 비교: {prev_q}" if prev_q else "")
 
     return f'''
     <div class="bg-slate-900 text-white -mx-4 -mt-4 px-6 py-6 rounded-b-3xl shadow-inner mb-4">
@@ -8031,10 +8096,10 @@ def _whale_render_pension_flow() -> str:
 
 
 def _whale_render_insider() -> str:
-    """임원·5%↑ 주주 매매 — DART D002 우리 자체 수집.
+    """NPS 핵심 보유 (지분 10%↑) — nps_holdings_disclosed에서 NPS 10%↑ 종목만.
 
-    데이터: dart_10pct_insiders (DART elestock.json 직접 수집).
-    의미있는 변동만: |stkqy_irds| > 0 AND stkrt >= 5 (5%↑ 보유자)
+    NPS는 임원·주요주주 보고 안 함 (기관투자자라 D002 적용 X).
+    "핵심 주주 거래" 의미를 NPS 10% 이상 보유 종목으로 재정의.
     """
     import sqlite3 as _s
     import json as _json
@@ -8042,13 +8107,36 @@ def _whale_render_insider() -> str:
     try:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
+        latest_q_row = conn.execute(
+            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
+            "ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        latest_q = latest_q_row["quarter"] if latest_q_row else ""
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
+            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (latest_q,),
+        ).fetchone() if latest_q else None
+        prev_q = prev_q_row["quarter"] if prev_q_row else ""
+        prev_map = {}
+        if prev_q:
+            for pr in conn.execute(
+                "SELECT symbol, MAX(ratio_pct) AS max_r FROM nps_holdings_disclosed "
+                "WHERE quarter = ? AND symbol != '' GROUP BY symbol",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
+        # 10%↑ 만 필터 (NPS 핵심 보유)
         raw = conn.execute(
-            """SELECT rcept_dt, company, symbol, repror, shrholdr_role,
-                      stkqy, stkqy_irds, stkrt, stkrt_irds
-               FROM dart_10pct_insiders
-               WHERE stkqy_irds != 0 AND stkrt >= 5
-               ORDER BY rcept_dt DESC, ABS(stkrt_irds) DESC"""
-        ).fetchall()
+            """SELECT report_date, company_name, symbol, ratio_pct,
+                      COALESCE(stkqy, 0) AS stkqy,
+                      COALESCE(stkqy_irds, 0) AS stkqy_irds,
+                      COALESCE(report_resn, '') AS report_resn,
+                      COALESCE(source, 'data.go.kr') AS source
+               FROM nps_holdings_disclosed
+               WHERE quarter = ? AND ratio_pct >= 10""",
+            (latest_q,),
+        ).fetchall() if latest_q else []
         conn.close()
     except Exception as e:
         return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
@@ -8057,22 +8145,24 @@ def _whale_render_insider() -> str:
     buy_cnt = 0
     sell_cnt = 0
     for r in raw:
-        rate_chg = float(r["stkrt_irds"] or 0)
+        cur = float(r["ratio_pct"] or 0)
+        prev = prev_map.get(r["symbol"]) if r["symbol"] else None
+        rate_chg = (cur - prev) if prev is not None else cur
         qty_chg = int(r["stkqy_irds"] or 0)
         items.append({
-            "company": r["company"],
+            "company": r["company_name"],
             "symbol": r["symbol"] or "",
-            "date": r["rcept_dt"],
-            "reporter": r["repror"] or "",
-            "role": r["shrholdr_role"] or "",
+            "date": r["report_date"],
+            "reporter": "국민연금공단",
+            "role": "10%이상주주",
             "qty": qty_chg,
             "stkqy": int(r["stkqy"] or 0),
-            "rate": float(r["stkrt"] or 0),
-            "rate_chg": rate_chg,
+            "rate": cur,
+            "rate_chg": round(rate_chg, 2),
         })
-        if qty_chg > 0:
+        if rate_chg > 0:
             buy_cnt += 1
-        elif qty_chg < 0:
+        elif rate_chg < 0:
             sell_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)

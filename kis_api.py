@@ -8749,6 +8749,112 @@ async def _dart_list_disclosures(detail_ty: str, days: int = 14) -> list:
     return out
 
 
+async def collect_nps_dart_increments(days: int = 7) -> dict:
+    """NPS 5%룰 DART 증분 수집 — 분기 베이스라인에 살붙이기.
+
+    전략:
+      1) D001 list.json 최근 N일 검색 (corp_code 없으면 3개월 한도, days≤90)
+      2) 각 종목 majorstock.json → repror == '국민연금공단' 필터
+      3) nps_holdings_disclosed 테이블에 INSERT OR REPLACE
+         (data.go.kr 분기 보고와 같은 테이블 — source 컬럼으로 구분)
+
+    NPS 분기 보고 사이의 일별 변동을 누적.
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_holdings_table(db_path)
+    # 컬럼 보강 (idempotent)
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    for col, ddl in [
+        ("stkqy", "INTEGER DEFAULT 0"),
+        ("stkqy_irds", "INTEGER DEFAULT 0"),
+        ("report_resn", "TEXT DEFAULT ''"),
+        ("source", "TEXT DEFAULT 'data.go.kr'"),
+        ("rcept_no", "TEXT DEFAULT ''"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE nps_holdings_disclosed ADD COLUMN {col} {ddl}")
+        except Exception:
+            pass  # 이미 존재
+    conn.commit()
+    conn.close()
+
+    days = max(1, min(days, 90))
+    direct_map, name_list = _build_name_to_symbol_map(db_path)
+
+    disc = await _dart_list_disclosures("D001", days)
+    if not disc:
+        return {"error": "D001 검색 결과 없음"}
+
+    period_rcepts = {it.get("rcept_no") for it in disc if it.get("rcept_no")}
+    corp_codes = {}
+    for it in disc:
+        cc = it.get("corp_code")
+        if cc:
+            corp_codes[cc] = it.get("corp_name", "")
+
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+    nps_inserted = 0
+    nps_seen = 0
+    fetched_corps = 0
+
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as s:
+        for cc, cname in corp_codes.items():
+            d = await _dart_get(s, "majorstock.json", {"corp_code": cc})
+            await asyncio.sleep(0.1)
+            if d.get("status") != "000":
+                continue
+            fetched_corps += 1
+            for rec in d.get("list", []) or []:
+                rep = rec.get("repror", "") or ""
+                # NPS 매칭 — 한글/영문/한자 모두
+                if "국민연금" not in rep and "National Pension" not in rep:
+                    continue
+                rcept_no = rec.get("rcept_no", "")
+                # 우리 검색 기간 외 보고는 건너뜀
+                if rcept_no and rcept_no not in period_rcepts:
+                    continue
+                nps_seen += 1
+                sym = _match_company_to_symbol(cname, direct_map, name_list)
+                rcept_dt = rec.get("rcept_dt", "")  # YYYY-MM-DD (DART)
+                # data.go.kr 분기 보고 PK = (report_date, company_name)
+                # 같은 NPS 보고가 한 분기에 한 종목에 중복될 수 있어 (작성기준일 다름)
+                # → DART의 rcept_dt를 report_date로 사용
+                quarter = _date_to_quarter(rcept_dt)
+                try:
+                    cur = conn.execute(
+                        """INSERT OR REPLACE INTO nps_holdings_disclosed
+                           (report_date, company_name, symbol, ratio_pct, quarter,
+                            source_file, collected_at,
+                            stkqy, stkqy_irds, report_resn, source, rcept_no)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (rcept_dt, cname, sym,
+                         _parse_float_with_sign(rec.get("stkrt")),
+                         quarter, "", now_iso,
+                         _parse_int_with_sign(rec.get("stkqy")),
+                         _parse_int_with_sign(rec.get("stkqy_irds")),
+                         (rec.get("report_resn") or "").replace("\n", " ")[:200],
+                         "dart",
+                         rcept_no),
+                    )
+                    if cur.rowcount > 0:
+                        nps_inserted += 1
+                except Exception:
+                    pass
+    conn.commit()
+    conn.close()
+
+    return {
+        "disclosures_searched": len(disc),
+        "corps_fetched": fetched_corps,
+        "nps_reports_found": nps_seen,
+        "nps_inserted": nps_inserted,
+        "fetched_at": now_iso,
+    }
+
+
 async def collect_dart_5pct_changes(days: int = 14) -> dict:
     """DART 5%룰 (D001) 최근 N일 수집.
 
