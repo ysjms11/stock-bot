@@ -26,7 +26,7 @@
 | `/data/dart_reports/*.txt` | DART 사업보고서 본문 txt 파일 | — |
 | `/data/krx_db/YYYYMMDD.json` | KRX 전종목 일별 DB (시세+수급+비율, 보관 무제한) | — |
 | `/data/std_sector_map.json` | 표준산업분류코드 캐시 `{ticker: {std_code, std_name}}` (1회 수집) | `{}` |
-| `/data/stock.db` | SQLite DB (stock_master + daily_snapshot + financial_snapshot + pension_flow_daily + nps_holdings_disclosed + nps_us_holdings + 뷰, ~320MB) | — |
+| `/data/stock.db` | SQLite DB (stock_master + daily_snapshot + financial_snapshot + pension_flow_daily + nps_holdings_disclosed + nps_us_holdings + nps_kr_full_holdings + 뷰, ~320MB) | — |
 | `/data/db_schema.sql` | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) | — |
 
 > 맥미니 로컬 `data/` 디렉토리 사용 (`DATA_DIR` 환경변수).

@@ -2754,6 +2754,37 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[nps_us_13f] 오류: {e}")
 
+    # ── 3) KR 풀 포트 (whale-insight 미러) ──
+    # 매주 silent 갱신. 분기 라벨 변경 시에만 알림.
+    try:
+        from kis_api import collect_nps_kr_full_from_whale_insight
+        # 직전 snapshot의 quarter_label
+        import sqlite3 as _s
+        prev_label = ""
+        try:
+            _conn = _s.connect(f"{_DATA_DIR}/stock.db", timeout=10)
+            row = _conn.execute(
+                "SELECT quarter_label FROM nps_kr_full_holdings "
+                "ORDER BY snapshot_date DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                prev_label = row[0] or ""
+            _conn.close()
+        except Exception:
+            pass
+        kr_result = await collect_nps_kr_full_from_whale_insight()
+        print(f"[nps_kr_full] {kr_result}")
+        if not kr_result.get("error"):
+            new_label = kr_result.get("quarter_label", "")
+            if new_label and new_label != prev_label:
+                msg_lines.append(
+                    f"🇰🇷 *NPS KR 풀포트 갱신* — {prev_label or '신규'} → {new_label}\n"
+                    f"{kr_result.get('total_rows', 0)}종목, "
+                    f"매칭 {kr_result.get('matched', 0)}/{kr_result.get('total_rows', 0)}"
+                )
+    except Exception as e:
+        print(f"[nps_kr_full] 오류: {e}")
+
     # 텔레그램 알림 (신규 있을 때만)
     if msg_lines:
         try:
@@ -6566,6 +6597,60 @@ def _build_whale_section_html() -> str:
             )
     except Exception as e:
         parts.append(f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    # ── Card 6: NPS 한국 풀 포트 TOP 30 (whale-insight 미러, 200종목) ──
+    try:
+        from kis_api import fetch_nps_kr_full_holdings
+        kr_full = fetch_nps_kr_full_holdings(top=30)
+        if kr_full.get("error"):
+            parts.append(
+                f'<div class="whale-card"><h3>🇰🇷 NPS 한국 풀 포트</h3>'
+                f'<p style="color:var(--fg2)">{_html.escape(kr_full["error"])}</p></div>'
+            )
+        else:
+            quarter_lbl = kr_full.get("quarter_label", "?")
+            snap = kr_full.get("snapshot_date", "?")
+            n_tot = kr_full.get("total_holdings", 0)
+            tot_eok = kr_full.get("total_valuation_eok", 0)
+            body = ('<table class="whale-tbl"><tr><th>종목</th><th>비중</th>'
+                    '<th>평가액</th><th>지분%</th><th>전년대비</th></tr>')
+            for x in kr_full.get("rows", []):
+                name = _html.escape((x.get("name") or "")[:18])
+                sym = x.get("symbol") or ""
+                sym_html = (f' <span style="color:var(--fg2);font-size:0.78em">{sym}</span>'
+                            if sym else '')
+                w = x.get("weight_pct", 0)
+                eok = x.get("valuation_eok", 0)
+                cur_share = x.get("share_curr_pct", 0)
+                # 10%룰 빨강
+                share_style = ' style="color:#e57373;font-weight:600"' if cur_share >= 10 else ''
+                sc_p = x.get("share_change_p")
+                if x.get("data_missing"):
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                elif sc_p is None:
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                elif sc_p > 0.05:
+                    sc_html = f'<span style="color:#4caf50">▲ {sc_p:+.2f}p</span>'
+                elif sc_p < -0.05:
+                    sc_html = f'<span style="color:#e57373">▼ {sc_p:+.2f}p</span>'
+                else:
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                body += (f'<tr><td>{name}{sym_html}</td>'
+                         f'<td>{w:.2f}%</td>'
+                         f'<td>{eok:,}억</td>'
+                         f'<td{share_style}>{cur_share:.2f}%</td>'
+                         f'<td>{sc_html}</td></tr>')
+            body += '</table>'
+            parts.append(
+                f'<div class="whale-card"><h3>🇰🇷 NPS 한국 풀 포트 ({quarter_lbl})</h3>'
+                f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+                f'스냅샷 {snap} | 총 {tot_eok:,}억 | {n_tot}종목 | TOP 30, ▲▼=지분율 전년 대비, '
+                f'출처: <a href="https://whale-insight.com" target="_blank" '
+                f'style="color:var(--accent)">whale-insight.com</a></p>'
+                f'{body}</div>'
+            )
+    except Exception as e:
+        parts.append(f'<div class="whale-card"><h3>🇰🇷 NPS 한국 풀 포트</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
 
     return (
         '<style>'

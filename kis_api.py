@@ -7656,6 +7656,11 @@ def _normalize_company_name(name: str) -> str:
             break
     # 자주 쓰는 한글 단어 → 영문약자 (어디 위치하든)
     s = s.replace("엔터테인먼트", "ENT.")
+    s = s.replace("에프엔에프", "F&F")
+    s = s.replace("일렉트릭", "ELECTRIC")
+    # 잘 알려진 동의어 prefix 후처리
+    if s.startswith("현대자동차") and len(s) <= 6:
+        s = "현대차" + s[5:]
     return s.upper()
 
 
@@ -8355,5 +8360,225 @@ def fetch_nps_us_holdings(quarter: str = None, top: int = 30,
         "total_value_usd": total_value,
         "rows": rows,
         "exits_top10": exits[:10] if include_changes else [],
+        "fetched_at": datetime.now(KST).isoformat(),
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NPS 한국 풀 포트 200종목 — whale-insight.com 데이터
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# data.js의 NPS_KR.krTimeline (200종목, 분기 갱신)
+# 5%룰 보고 + NPS 사업보고서를 수동 큐레이션한 데이터.
+# 컬럼: name, weight%, valuation(억), change%, share24%, share25Q4%
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHALE_INSIGHT_DATA_JS = "https://whale-insight.com/assets/js/data.js"
+
+
+def _ensure_nps_kr_full_table(db_path: str):
+    """nps_kr_full_holdings 테이블 — whale-insight 분기 풀포트 미러."""
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS nps_kr_full_holdings (
+            snapshot_date  TEXT NOT NULL,    -- 우리 수집 시점 (YYYY-MM-DD)
+            quarter_label  TEXT,             -- '2025Q4' (data.js의 share25Q4 참조)
+            name           TEXT NOT NULL,    -- whale-insight 원본 종목명
+            symbol         TEXT DEFAULT '',  -- stock_master 매칭 ticker
+            weight_pct     REAL DEFAULT 0,   -- 포트 비중%
+            valuation_eok  INTEGER DEFAULT 0, -- 평가액 억원
+            change_pct     REAL DEFAULT 0,   -- 전 분기 대비 (whale-insight 원본)
+            share_prev_pct REAL DEFAULT 0,   -- share24 (전 연도 지분율)
+            share_curr_pct REAL DEFAULT 0,   -- share25Q4 (현 분기 지분율)
+            data_missing   INTEGER DEFAULT 0,
+            source_version TEXT,             -- data.js v 쿼리값
+            collected_at   TEXT,
+            PRIMARY KEY (snapshot_date, name)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_npskr_full_date ON nps_kr_full_holdings(snapshot_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_npskr_full_symbol ON nps_kr_full_holdings(symbol)")
+    conn.commit()
+    conn.close()
+
+
+def _parse_pct(s) -> tuple:
+    """'+0.5%' / '-1.2%' / '데이터 부족' → (float, missing_flag)."""
+    if s is None:
+        return (0.0, 1)
+    txt = str(s).strip()
+    if "부족" in txt or not txt or txt == "—":
+        return (0.0, 1)
+    try:
+        return (float(txt.replace("%", "").replace("+", "").strip()), 0)
+    except Exception:
+        return (0.0, 1)
+
+
+def _parse_eok(s) -> int:
+    """'230,421억' → 230421 (억원)."""
+    if not s:
+        return 0
+    try:
+        v = str(s).replace(",", "").replace("억", "").strip()
+        return int(v)
+    except Exception:
+        return 0
+
+
+async def collect_nps_kr_full_from_whale_insight() -> dict:
+    """whale-insight.com data.js 다운로드 → NPS_KR.krTimeline 추출 → DB 저장.
+
+    출처 표기 의무: 카드에 '출처: whale-insight.com' 명시.
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_kr_full_table(db_path)
+
+    connector = aiohttp.TCPConnector(ssl=False)
+    timeout = aiohttp.ClientTimeout(total=30)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as s:
+            async with s.get(WHALE_INSIGHT_DATA_JS) as r:
+                if r.status != 200:
+                    return {"error": f"HTTP {r.status}"}
+                txt = await r.text()
+    except Exception as e:
+        return {"error": f"download failed: {e}"}
+
+    # 버전 추출 (URL에 ?v=20260427_0 형태로 노출되는 게 있다면 변경 시점 식별)
+    src_version = ""
+    vm = re.search(r"data\.js\?v=([^\"'>\s]+)", txt)
+    if vm:
+        src_version = vm.group(1)
+
+    # NPS_KR.krTimeline 블록만 추출
+    # id: 'NPS_KR' ... krTimeline: [ ... ] 다음 } 닫힘 전까지
+    block_match = re.search(
+        r"id:\s*['\"]NPS_KR['\"].*?krTimeline:\s*\[(.*?)\]",
+        txt, re.DOTALL,
+    )
+    if not block_match:
+        return {"error": "NPS_KR.krTimeline 블록 못 찾음"}
+    block = block_match.group(1)
+
+    # 각 row: { name: '...', weight: '...%', valuation: '...억', change: '...', share24: '...%', share25Q4: '...%' },
+    row_pattern = re.compile(
+        r"\{\s*"
+        r"name:\s*['\"]([^'\"]+)['\"],\s*"
+        r"weight:\s*['\"]([^'\"]+)['\"],\s*"
+        r"valuation:\s*['\"]([^'\"]+)['\"],\s*"
+        r"change:\s*['\"]([^'\"]+)['\"],\s*"
+        r"share24:\s*['\"]([^'\"]+)['\"],\s*"
+        r"share25Q4:\s*['\"]([^'\"]+)['\"]\s*"
+        r"\}"
+    )
+    matches = row_pattern.findall(block)
+    if not matches:
+        return {"error": "row 파싱 실패"}
+
+    # 추출한 quarter 라벨 (share25Q4 → 2025Q4)
+    quarter_label = "2025Q4"  # 데이터 컬럼명에서 추정. 차후 분기 바뀌면 갱신 필요.
+    snap_date = datetime.now(KST).strftime("%Y-%m-%d")
+
+    direct_map, name_list = _build_name_to_symbol_map(db_path)
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+
+    inserted = 0
+    matched = 0
+    unmatched_names = []
+    for (name, weight, valuation, change, share24, share25q4) in matches:
+        symbol = _match_company_to_symbol(name, direct_map, name_list)
+        if symbol:
+            matched += 1
+        else:
+            unmatched_names.append(name)
+        weight_v, weight_miss = _parse_pct(weight)
+        chg_v, chg_miss = _parse_pct(change)
+        s_prev, sp_miss = _parse_pct(share24)
+        s_curr, sc_miss = _parse_pct(share25q4)
+        eok = _parse_eok(valuation)
+        miss = 1 if (weight_miss or chg_miss or sp_miss or sc_miss) else 0
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO nps_kr_full_holdings
+                   (snapshot_date, quarter_label, name, symbol,
+                    weight_pct, valuation_eok, change_pct,
+                    share_prev_pct, share_curr_pct,
+                    data_missing, source_version, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (snap_date, quarter_label, name, symbol,
+                 weight_v, eok, chg_v, s_prev, s_curr,
+                 miss, src_version, now_iso),
+            )
+            inserted += 1
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+
+    return {
+        "snapshot_date": snap_date,
+        "quarter_label": quarter_label,
+        "total_rows": len(matches),
+        "inserted": inserted,
+        "matched": matched,
+        "unmatched": len(unmatched_names),
+        "unmatched_sample": unmatched_names[:10],
+        "source_version": src_version,
+        "fetched_at": now_iso,
+    }
+
+
+def fetch_nps_kr_full_holdings(top: int = 30) -> dict:
+    """NPS KR 풀 포트 조회 (가장 최근 snapshot, 비중 내림차순)."""
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_nps_kr_full_table(db_path)
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.row_factory = _s.Row
+    snap_row = conn.execute(
+        "SELECT snapshot_date FROM nps_kr_full_holdings ORDER BY snapshot_date DESC LIMIT 1"
+    ).fetchone()
+    if not snap_row:
+        conn.close()
+        return {"error": "데이터 없음. collect_nps_kr_full_from_whale_insight() 호출 필요"}
+    snap = snap_row["snapshot_date"]
+    rows = conn.execute(
+        """SELECT name, symbol, weight_pct, valuation_eok, change_pct,
+                  share_prev_pct, share_curr_pct, data_missing, quarter_label
+           FROM nps_kr_full_holdings
+           WHERE snapshot_date = ?
+           ORDER BY weight_pct DESC""",
+        (snap,),
+    ).fetchall()
+    total_eok = sum(r["valuation_eok"] for r in rows)
+    conn.close()
+    out = []
+    for r in rows[:top]:
+        out.append({
+            "name": r["name"],
+            "symbol": r["symbol"] or "",
+            "weight_pct": float(r["weight_pct"] or 0),
+            "valuation_eok": int(r["valuation_eok"] or 0),
+            "change_pct": float(r["change_pct"] or 0),
+            "share_prev_pct": float(r["share_prev_pct"] or 0),
+            "share_curr_pct": float(r["share_curr_pct"] or 0),
+            "data_missing": bool(r["data_missing"]),
+            "share_change_p": (
+                float(r["share_curr_pct"]) - float(r["share_prev_pct"])
+                if not r["data_missing"] else None
+            ),
+        })
+    return {
+        "snapshot_date": snap,
+        "quarter_label": rows[0]["quarter_label"] if rows else "",
+        "total_holdings": len(rows),
+        "total_valuation_eok": total_eok,
+        "rows": out,
         "fetched_at": datetime.now(KST).isoformat(),
     }

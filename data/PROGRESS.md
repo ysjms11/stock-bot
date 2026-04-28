@@ -9,7 +9,7 @@
 
 **우선순위 순:**
 
-1. **🆕 NPS 대시보드 Whale Watch — 5 카드 완료 (4/27 밤)** ✅
+1. **🆕 NPS 대시보드 Whale Watch — 6 카드 완료 (4/27~28)** ✅
    - **Phase A — KR 5%룰 자동 수집** (kis_api.py / `nps_holdings_disclosed`)
      - data.go.kr CSV 자동 다운로드 (atchFileId 메타페이지 동적 추출 + fallback)
      - 한글→영문약자 매핑 (LG/SK/HD/KCC 등 22개) + suffix prefix substring fallback → **111/111 (100%) 매칭**
@@ -25,9 +25,14 @@
      - 카드 3: 🔴 연기금 5일 매도 TOP 20 (시총% 정규화)
      - 카드 4: 👤 임원·5%↑ 주주 매매 (insider_transactions, 30일)
      - 카드 5: 🇺🇸 **NPS 미국 13F TOP 30 (가치 + 비중 + ▲/▼/🆕 NEW + EXIT details)**
-   - **자동 잡**: 일요일 03:30 KST `weekly_nps` (KR 5%룰 + US 13F 통합, 신규 시 텔레그램)
+     - 카드 6: 🇰🇷 **NPS 한국 풀 포트 200종목 TOP 30** (whale-insight.com 미러)
+       - whale-insight `assets/js/data.js` → NPS_KR.krTimeline 자동 파싱
+       - 종목명 + 비중 + 평가액(억) + 지분율 + 전년 대비 ▲/▼ (지분율%p)
+       - **200/200 (100%) 종목 매칭** (현대자동차/엘에스일렉트릭/F&F 매핑 보강)
+       - 출처: whale-insight.com 카드 footer 표기
+   - **자동 잡**: 일요일 03:30 KST `weekly_nps` 통합 — KR 5%룰 + US 13F + KR 풀포트
+     - KR 5%룰 신규/US 13F 신규/KR 풀 분기 라벨 변경 시 텔레그램 알림
    - **MCP 도구는 만들지 않음** — 사용자가 대시보드에서 직접 Claude 분석 요청
-   - **다음 (우선도 낮음)**: NPS KR 풀 포트 (200+종목 비중) — fund.nps.or.kr 분기공시 PDF 파싱 또는 NPS 연차보고서
 
 2. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
    - **자동 알림 자동 작동**: 미국 애널 다운그레이드 시 차등 헤더 (🚨🚨🚨 Tier S / 🚨🚨 Tier A / ⚠️ 일반)
