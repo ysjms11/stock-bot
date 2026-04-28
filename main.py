@@ -6297,6 +6297,180 @@ def _build_docs_v2_html() -> str:
     return html
 
 
+def _build_whale_summary_html() -> str:
+    """메인 대시보드 — Whale 섹션 요약 박스 (TOP 3씩 + 전용 페이지 링크)."""
+    import sqlite3 as _s
+    db_path = f"{_DATA_DIR}/stock.db"
+    summary_cards = []
+
+    # 1) NPS KR 풀포트 TOP 3
+    try:
+        from kis_api import fetch_nps_kr_full_holdings
+        kr = fetch_nps_kr_full_holdings(top=3)
+        rows = kr.get("rows", []) if not kr.get("error") else []
+        body = ''
+        for x in rows:
+            sc = x.get("share_change_p")
+            if x.get("data_missing") or sc is None:
+                arrow = ''
+            elif sc > 0.05:
+                arrow = f' <span style="color:#4caf50">▲{sc:+.2f}p</span>'
+            elif sc < -0.05:
+                arrow = f' <span style="color:#e57373">▼{sc:+.2f}p</span>'
+            else:
+                arrow = ''
+            body += (f'<div style="display:flex;justify-content:space-between;'
+                     f'padding:3px 0;font-size:0.88em">'
+                     f'<span>{_html.escape(x.get("name",""))}</span>'
+                     f'<span style="color:var(--fg2)">{x.get("weight_pct",0):.2f}%{arrow}</span>'
+                     f'</div>')
+        if not body:
+            body = '<p style="color:var(--fg2);font-size:0.85em">데이터 없음</p>'
+        summary_cards.append((
+            f'🇰🇷 NPS KR 풀포트',
+            f'{kr.get("quarter_label","-")} | {kr.get("total_holdings",0)}종목',
+            body,
+        ))
+    except Exception:
+        summary_cards.append(('🇰🇷 NPS KR 풀포트', '?', '<p>로드 실패</p>'))
+
+    # 2) NPS US 13F TOP 3
+    try:
+        from kis_api import fetch_nps_us_holdings
+        us = fetch_nps_us_holdings(top=3, include_changes=True)
+        rows = us.get("rows", []) if not us.get("error") else []
+        body = ''
+        for x in rows:
+            sc = x.get("share_change_pct")
+            status = x.get("status", "")
+            if status == "NEW":
+                arrow = ' <span style="color:#4caf50">🆕</span>'
+            elif status == "UP" and sc is not None:
+                arrow = f' <span style="color:#4caf50">▲{sc:+.1f}%</span>'
+            elif status == "DOWN" and sc is not None:
+                arrow = f' <span style="color:#e57373">▼{sc:+.1f}%</span>'
+            else:
+                arrow = ''
+            val = x.get("value_usd", 0)
+            val_str = f'${val/1e9:.1f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+            body += (f'<div style="display:flex;justify-content:space-between;'
+                     f'padding:3px 0;font-size:0.88em">'
+                     f'<span>{_html.escape((x.get("name_of_issuer","") or "")[:22])}</span>'
+                     f'<span style="color:var(--fg2)">{val_str}{arrow}</span>'
+                     f'</div>')
+        if not body:
+            body = '<p style="color:var(--fg2);font-size:0.85em">데이터 없음</p>'
+        summary_cards.append((
+            f'🇺🇸 NPS US 13F',
+            f'{us.get("quarter","-")} | {us.get("total_holdings",0)}종목',
+            body,
+        ))
+    except Exception:
+        summary_cards.append(('🇺🇸 NPS US 13F', '?', '<p>로드 실패</p>'))
+
+    # 3) 연기금 5일 매수 TOP 3 (시총%)
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        dates = [r["trade_date"] for r in conn.execute(
+            "SELECT DISTINCT trade_date FROM pension_flow_daily ORDER BY trade_date DESC LIMIT 5"
+        ).fetchall()]
+        body = ''
+        if dates:
+            ph = ",".join("?" for _ in dates)
+            agg = conn.execute(
+                f"""SELECT pf.symbol, pf.name,
+                          SUM(pf.net_amount_won) AS net_total
+                   FROM pension_flow_daily pf
+                   WHERE pf.trade_date IN ({ph})
+                   GROUP BY pf.symbol HAVING net_total > 0""", dates
+            ).fetchall()
+            symbols = [r["symbol"] for r in agg]
+            cap_map = {}
+            if symbols:
+                cph = ",".join("?" for _ in symbols)
+                for cr in conn.execute(
+                    f"""SELECT symbol, MAX(trade_date) AS d FROM daily_snapshot
+                        WHERE symbol IN ({cph}) GROUP BY symbol""", symbols
+                ).fetchall():
+                    cap = conn.execute(
+                        "SELECT market_cap FROM daily_snapshot WHERE symbol=? AND trade_date=?",
+                        (cr["symbol"], cr["d"])
+                    ).fetchone()
+                    if cap and cap["market_cap"]:
+                        cap_map[cr["symbol"]] = int(cap["market_cap"]) * 100_000_000
+            enriched = []
+            for r in agg:
+                cap = cap_map.get(r["symbol"], 0)
+                pct = (r["net_total"] * 100.0 / cap) if cap > 0 else 0
+                enriched.append({"name": r["name"], "net": r["net_total"], "pct": pct, "cap": cap})
+            top3 = sorted(enriched, key=lambda x: (-x["pct"] if x["cap"] else 0, -x["net"]))[:3]
+            for e in top3:
+                body += (f'<div style="display:flex;justify-content:space-between;'
+                         f'padding:3px 0;font-size:0.88em">'
+                         f'<span>🟢 {_html.escape(e["name"] or "")}</span>'
+                         f'<span style="color:#4caf50">{e["net"]/1e8:+,.0f}억 '
+                         f'({e["pct"]:+.2f}%)</span>'
+                         f'</div>')
+        conn.close()
+        if not body:
+            body = '<p style="color:var(--fg2);font-size:0.85em">데이터 없음</p>'
+        summary_cards.append(('📊 연기금 5일 매수', '시총% 정렬', body))
+    except Exception:
+        summary_cards.append(('📊 연기금 5일', '?', '<p>로드 실패</p>'))
+
+    # 4) 임원·5%↑ 최근 매매 TOP 3
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        cutoff = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT it.rcept_dt, sm.name, it.repror,
+                      it.stock_irds_cnt, it.stock_rate
+               FROM insider_transactions it
+               LEFT JOIN stock_master sm ON sm.symbol = it.symbol
+               WHERE it.rcept_dt >= ? AND it.stock_irds_cnt != 0 AND it.stock_rate >= 5
+               ORDER BY it.rcept_dt DESC, ABS(it.stock_irds_rate) DESC LIMIT 3""",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+        body = ''
+        for r in rows:
+            irds = r["stock_irds_cnt"] or 0
+            sign = '🟢' if irds > 0 else '🔴'
+            color = '#4caf50' if irds > 0 else '#e57373'
+            body += (f'<div style="display:flex;justify-content:space-between;'
+                     f'padding:3px 0;font-size:0.88em">'
+                     f'<span>{sign} {_html.escape(r["name"] or "")}</span>'
+                     f'<span style="color:{color}">{irds:+,} ({(r["stock_rate"] or 0):.1f}%)</span>'
+                     f'</div>')
+        if not body:
+            body = '<p style="color:var(--fg2);font-size:0.85em">최근 30일 없음</p>'
+        summary_cards.append(('👤 임원·5%↑ 매매', '30일', body))
+    except Exception:
+        summary_cards.append(('👤 임원 매매', '?', '<p>로드 실패</p>'))
+
+    # 헤더 + 4개 요약 박스 + 전용 페이지 링크
+    cards_html = ''
+    for title, sub, body in summary_cards:
+        cards_html += (
+            f'<div style="background:var(--bg2);border:1px solid var(--border);'
+            f'border-radius:8px;padding:12px">'
+            f'<div style="font-weight:600;margin-bottom:2px">{title}</div>'
+            f'<div style="color:var(--fg2);font-size:0.78em;margin-bottom:8px">{sub}</div>'
+            f'{body}</div>'
+        )
+    return (
+        f'<h2 style="margin-bottom:6px">🐋 Whale Watch</h2>'
+        f'<p style="color:var(--fg2);font-size:0.9em;margin:0 0 12px">'
+        f'NPS·연기금·5%↑ 보유자 매매 통합 추적 — '
+        f'<a href="/dash/whale" target="_blank" rel="noopener" '
+        f'style="color:var(--accent);font-weight:600">전체 보기 ↗</a></p>'
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">'
+        f'{cards_html}</div>'
+    )
+
+
 def _build_whale_section_html() -> str:
     """🐋 Whale Watch 섹션 — NPS 5%룰 + 연기금 5일 + 10%룰 (insider 大주주).
 
@@ -6680,7 +6854,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
              '<a href="#portfolio" class="active">💰 포트폴리오</a>'
              '<a href="#events">📅 이벤트</a>'
              '<a href="#watch">👀 감시종목</a>'
-             '<a href="#whale">🐋 Whale</a>'
+             '<a href="/dash/whale" target="_blank" rel="noopener">🐋 Whale ↗</a>'
              '<a href="#decision">📝 투자판단</a>'
              '<a href="#trade">💼 매매</a>'
              '<a href="#invest">📈 투자</a>'
@@ -6707,9 +6881,9 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     except Exception:
         html += '<div class="section" id="watch"><h2>👀 감시종목</h2><p>로드 실패</p></div>'
 
-    # 3.5 Whale Watch — NPS 5%룰 + 연기금 5일 + 10%룰 (4 카드)
+    # 3.5 Whale Watch — 요약 박스 (전용 페이지 링크)
     try:
-        html += f'<div class="section" id="whale"><h2>🐋 Whale Watch</h2>{_build_whale_section_html()}</div>'
+        html += f'<div class="section" id="whale">{_build_whale_summary_html()}</div>'
     except Exception as _e:
         html += f'<div class="section" id="whale"><h2>🐋 Whale Watch</h2><p>로드 실패: {_html.escape(str(_e))}</p></div>'
 
@@ -7151,6 +7325,395 @@ def _build_trade_card(t: dict, is_open: bool = False) -> str:
             f'</div></details>')
 
 
+async def _handle_dash_whale(request: web.Request) -> web.Response:
+    """GET /dash/whale — 🐋 Whale Watch 풀 전용 페이지 (새 창에서 열기)."""
+    html = (
+        f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+        f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>🐋 Whale Watch — Stock Bot</title>'
+        f'{_DASH_V2_CSS}'
+        f'<style>'
+        f'.whale-page-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:18px;margin-top:14px}}'
+        f'.whale-card{{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px}}'
+        f'.whale-card h3{{margin:0 0 6px;font-size:1.1em}}'
+        f'.whale-tbl{{width:100%;border-collapse:collapse;font-size:0.9em}}'
+        f'.whale-tbl th{{text-align:left;color:var(--fg2);font-weight:500;border-bottom:1px solid var(--border);padding:5px 8px;position:sticky;top:0;background:var(--bg2)}}'
+        f'.whale-tbl td{{padding:5px 8px;border-bottom:1px solid var(--border)}}'
+        f'.whale-tbl tr:hover td{{background:rgba(255,255,255,0.03)}}'
+        f'.whale-tbl tr:last-child td{{border-bottom:none}}'
+        f'.whale-card .scroll-tbl{{max-height:600px;overflow-y:auto}}'
+        f'.whale-hero{{background:linear-gradient(135deg,rgba(80,160,255,0.08),rgba(80,160,255,0));border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:18px}}'
+        f'.whale-hero h1{{margin:0 0 6px;font-size:1.5em}}'
+        f'.whale-hero p{{margin:0;color:var(--fg2)}}'
+        f'.whale-anchor{{display:inline-block;padding:4px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--accent);text-decoration:none;font-size:0.85em;margin-right:6px;margin-bottom:6px}}'
+        f'.whale-anchor:hover{{background:var(--border)}}'
+        f'</style></head><body>'
+        f'<div style="margin-bottom:14px">'
+        f'<a href="/dash" style="color:var(--accent);text-decoration:none">← 대시보드</a>'
+        f'</div>'
+        f'<div class="whale-hero">'
+        f'<h1>🐋 Whale Watch</h1>'
+        f'<p>NPS(국민연금)·연기금·5%↑ 보유자 매매 통합 추적. 한국·미국 분기 보유 현황 + 단기 매매 흐름 + 임원 매매.</p>'
+        f'<div style="margin-top:10px">'
+        f'<a href="#nps-kr-full" class="whale-anchor">🇰🇷 KR 풀포트</a>'
+        f'<a href="#nps-us-13f" class="whale-anchor">🇺🇸 US 13F</a>'
+        f'<a href="#nps-kr-5pct" class="whale-anchor">🏛 KR 5%룰</a>'
+        f'<a href="#pension-flow" class="whale-anchor">📊 연기금 흐름</a>'
+        f'<a href="#insider" class="whale-anchor">👤 임원 매매</a>'
+        f'</div></div>'
+    )
+    try:
+        html += _build_whale_full_html()
+    except Exception as e:
+        html += f'<p style="color:red">로드 실패: {_html.escape(str(e))}</p>'
+    html += "</body></html>"
+    return web.Response(text=html, content_type="text/html")
+
+
+def _build_whale_full_html() -> str:
+    """Whale 전용 페이지 — 카드별 풀 데이터 (TOP 30 → 100), anchor 추가."""
+    import sqlite3 as _s
+    db_path = f"{_DATA_DIR}/stock.db"
+    parts = []
+
+    # ── 1) NPS KR 풀 포트 (200종목 모두 표시 — 스크롤) ──
+    try:
+        from kis_api import fetch_nps_kr_full_holdings
+        kr_full = fetch_nps_kr_full_holdings(top=200)
+        if kr_full.get("error"):
+            parts.append(
+                f'<div class="whale-card" id="nps-kr-full"><h3>🇰🇷 NPS 한국 풀 포트</h3>'
+                f'<p style="color:var(--fg2)">{_html.escape(kr_full["error"])}</p></div>'
+            )
+        else:
+            quarter_lbl = kr_full.get("quarter_label", "?")
+            snap = kr_full.get("snapshot_date", "?")
+            n_tot = kr_full.get("total_holdings", 0)
+            tot_eok = kr_full.get("total_valuation_eok", 0)
+            body = ('<div class="scroll-tbl"><table class="whale-tbl">'
+                    '<tr><th>#</th><th>종목</th><th>비중</th>'
+                    '<th>평가액</th><th>지분%</th><th>전년대비</th></tr>')
+            for idx, x in enumerate(kr_full.get("rows", []), start=1):
+                name = _html.escape((x.get("name") or "")[:24])
+                sym = x.get("symbol") or ""
+                sym_html = (f' <span style="color:var(--fg2);font-size:0.8em">{sym}</span>'
+                            if sym else '')
+                w = x.get("weight_pct", 0)
+                eok = x.get("valuation_eok", 0)
+                cur_share = x.get("share_curr_pct", 0)
+                share_style = ' style="color:#e57373;font-weight:600"' if cur_share >= 10 else ''
+                sc_p = x.get("share_change_p")
+                if x.get("data_missing") or sc_p is None:
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                elif sc_p > 0.05:
+                    sc_html = f'<span style="color:#4caf50">▲ {sc_p:+.2f}p</span>'
+                elif sc_p < -0.05:
+                    sc_html = f'<span style="color:#e57373">▼ {sc_p:+.2f}p</span>'
+                else:
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                body += (f'<tr><td style="color:var(--fg2)">{idx}</td>'
+                         f'<td>{name}{sym_html}</td>'
+                         f'<td>{w:.2f}%</td>'
+                         f'<td>{eok:,}억</td>'
+                         f'<td{share_style}>{cur_share:.2f}%</td>'
+                         f'<td>{sc_html}</td></tr>')
+            body += '</table></div>'
+            parts.append(
+                f'<div class="whale-card" id="nps-kr-full">'
+                f'<h3>🇰🇷 NPS 한국 풀 포트 ({quarter_lbl}) — {n_tot}종목</h3>'
+                f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+                f'스냅샷 {snap} | 총 평가액 {tot_eok:,}억 | 지분 10%↑ 빨강 | '
+                f'출처: <a href="https://whale-insight.com" target="_blank" '
+                f'style="color:var(--accent)">whale-insight.com</a></p>'
+                f'{body}</div>'
+            )
+    except Exception as e:
+        parts.append(f'<div class="whale-card" id="nps-kr-full"><h3>🇰🇷 NPS 한국 풀 포트</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    # ── 2) NPS US 13F 풀 (TOP 100) ──
+    try:
+        from kis_api import fetch_nps_us_holdings
+        us_data = fetch_nps_us_holdings(top=100, include_changes=True)
+        if us_data.get("error"):
+            parts.append(
+                f'<div class="whale-card" id="nps-us-13f"><h3>🇺🇸 NPS 미국 13F</h3>'
+                f'<p style="color:var(--fg2)">{_html.escape(us_data["error"])}</p></div>'
+            )
+        else:
+            quarter = us_data.get("quarter", "?")
+            period_end = us_data.get("period_end", "?")
+            total_v = us_data.get("total_value_usd", 0)
+            total_b = total_v / 1e9 if total_v else 0
+            n_total = us_data.get("total_holdings", 0)
+            body = ('<div class="scroll-tbl"><table class="whale-tbl">'
+                    '<tr><th>#</th><th>종목</th><th>가치</th>'
+                    '<th>비중</th><th>주식변화</th></tr>')
+            for idx, x in enumerate(us_data.get("rows", []), start=1):
+                name = _html.escape((x.get("name_of_issuer") or "")[:32])
+                val = x.get("value_usd", 0)
+                val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+                weight = x.get("weight_pct", 0)
+                status = x.get("status", "")
+                sc = x.get("share_change_pct")
+                if status == "NEW":
+                    sc_html = '<span style="color:#4caf50;font-weight:600">🆕 NEW</span>'
+                elif status == "UP" and sc is not None:
+                    sc_html = f'<span style="color:#4caf50">▲ {sc:+.1f}%</span>'
+                elif status == "DOWN" and sc is not None:
+                    sc_html = f'<span style="color:#e57373">▼ {sc:+.1f}%</span>'
+                else:
+                    sc_html = '<span style="color:var(--fg2)">—</span>'
+                body += (f'<tr><td style="color:var(--fg2)">{idx}</td>'
+                         f'<td>{name}</td>'
+                         f'<td>{val_str}</td>'
+                         f'<td>{weight:.2f}%</td>'
+                         f'<td>{sc_html}</td></tr>')
+            body += '</table></div>'
+
+            exits_html = ''
+            exits = us_data.get("exits_top10", [])
+            if exits:
+                exits_html = ('<details style="margin-top:10px"><summary '
+                              'style="cursor:pointer;color:var(--fg2)">전 분기 EXIT TOP 10 ▼</summary>'
+                              '<table class="whale-tbl" style="margin-top:6px">'
+                              '<tr><th>종목</th><th>직전 가치</th></tr>')
+                for e in exits:
+                    val = e.get("prev_value_usd", 0)
+                    val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+                    exits_html += (f'<tr><td style="color:#e57373">'
+                                   f'{_html.escape((e.get("name_of_issuer") or "")[:32])}</td>'
+                                   f'<td>{val_str}</td></tr>')
+                exits_html += '</table></details>'
+
+            parts.append(
+                f'<div class="whale-card" id="nps-us-13f">'
+                f'<h3>🇺🇸 NPS 미국 13F ({quarter}) — TOP 100 / {n_total}종목</h3>'
+                f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+                f'분기말 {period_end} | 총 ${total_b:.1f}B | 출처: '
+                f'<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001608046&type=13F" '
+                f'target="_blank" style="color:var(--accent)">SEC EDGAR</a></p>'
+                f'{body}{exits_html}</div>'
+            )
+    except Exception as e:
+        parts.append(f'<div class="whale-card" id="nps-us-13f"><h3>🇺🇸 NPS 미국 13F</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    # ── 3) NPS KR 5%룰 (현 분기 전체) ──
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        latest_q_row = conn.execute(
+            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
+            "ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        latest_q = latest_q_row["quarter"] if latest_q_row else ""
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
+            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (latest_q,),
+        ).fetchone() if latest_q else None
+        prev_q = prev_q_row["quarter"] if prev_q_row else ""
+        prev_map = {}
+        if prev_q:
+            for pr in conn.execute(
+                "SELECT symbol, MAX(ratio_pct) AS max_r FROM nps_holdings_disclosed "
+                "WHERE quarter = ? AND symbol != '' GROUP BY symbol",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
+        rows = conn.execute(
+            """SELECT report_date, company_name, symbol, ratio_pct
+               FROM nps_holdings_disclosed WHERE quarter = ?
+               ORDER BY ratio_pct DESC, report_date DESC""",
+            (latest_q,),
+        ).fetchall() if latest_q else []
+        conn.close()
+
+        body = ''
+        if rows:
+            body = ('<div class="scroll-tbl"><table class="whale-tbl">'
+                    '<tr><th>#</th><th>일자</th><th>종목</th>'
+                    '<th>지분%</th><th>전분기</th></tr>')
+            for idx, r in enumerate(rows, start=1):
+                bgs = ''
+                if r["ratio_pct"] >= 10:
+                    bgs = ' style="color:#e57373;font-weight:600"'
+                cur_r = float(r["ratio_pct"] or 0)
+                prev_r = prev_map.get(r["symbol"]) if r["symbol"] else None
+                if prev_q and r["symbol"]:
+                    if prev_r is None:
+                        chg_html = '<span style="color:#4caf50;font-weight:600">🆕 NEW</span>'
+                    elif cur_r > prev_r + 0.05:
+                        chg_html = f'<span style="color:#4caf50">▲ {cur_r-prev_r:+.2f}p</span>'
+                    elif cur_r < prev_r - 0.05:
+                        chg_html = f'<span style="color:#e57373">▼ {cur_r-prev_r:+.2f}p</span>'
+                    else:
+                        chg_html = '<span style="color:var(--fg2)">—</span>'
+                else:
+                    chg_html = '<span style="color:var(--fg2)">—</span>'
+                body += (f'<tr><td style="color:var(--fg2)">{idx}</td>'
+                         f'<td>{_html.escape(r["report_date"])}</td>'
+                         f'<td>{_html.escape(r["company_name"])}'
+                         f'{(f" ({r["symbol"]})") if r["symbol"] else ""}</td>'
+                         f'<td{bgs}>{r["ratio_pct"]:.2f}</td>'
+                         f'<td>{chg_html}</td></tr>')
+            body += '</table></div>'
+        else:
+            body = '<p style="color:var(--fg2)">데이터 없음</p>'
+        prev_note = f' | 비교: {prev_q}' if prev_q else ''
+        parts.append(
+            f'<div class="whale-card" id="nps-kr-5pct">'
+            f'<h3>🏛 NPS 한국 5%룰 ({latest_q or "-"}) — {len(rows)}건</h3>'
+            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+            f'5%↑ 지분 신규/변동 보고 | 10%↑ 빨강{prev_note} | 출처: '
+            f'<a href="https://www.data.go.kr/data/15106890/fileData.do" target="_blank" '
+            f'style="color:var(--accent)">data.go.kr</a></p>'
+            f'{body}</div>'
+        )
+    except Exception as e:
+        parts.append(f'<div class="whale-card" id="nps-kr-5pct"><h3>🏛 NPS 한국 5%룰</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    # ── 4) 연기금 5일 매수+매도 (한 카드 통합) ──
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        dates = [r["trade_date"] for r in conn.execute(
+            "SELECT DISTINCT trade_date FROM pension_flow_daily "
+            "ORDER BY trade_date DESC LIMIT 5"
+        ).fetchall()]
+        if dates:
+            placeholders = ",".join("?" for _ in dates)
+            agg_rows = conn.execute(
+                f"""SELECT pf.symbol, pf.name, pf.market,
+                          SUM(pf.net_amount_won) AS net_total
+                   FROM pension_flow_daily pf
+                   WHERE pf.trade_date IN ({placeholders})
+                   GROUP BY pf.symbol HAVING net_total != 0""",
+                dates,
+            ).fetchall()
+            symbols = [r["symbol"] for r in agg_rows]
+            cap_map = {}
+            if symbols:
+                ph = ",".join("?" for _ in symbols)
+                cap_rows = conn.execute(
+                    f"""SELECT symbol, MAX(trade_date) AS d FROM daily_snapshot
+                        WHERE symbol IN ({ph}) GROUP BY symbol""", symbols
+                ).fetchall()
+                for cr in cap_rows:
+                    cap = conn.execute(
+                        "SELECT market_cap FROM daily_snapshot WHERE symbol=? AND trade_date=?",
+                        (cr["symbol"], cr["d"])
+                    ).fetchone()
+                    if cap and cap["market_cap"]:
+                        cap_map[cr["symbol"]] = int(cap["market_cap"]) * 100_000_000
+        else:
+            agg_rows = []
+            cap_map = {}
+        conn.close()
+
+        enriched = []
+        for r in agg_rows:
+            cap = cap_map.get(r["symbol"], 0)
+            pct = (r["net_total"] * 100.0 / cap) if cap > 0 else 0
+            enriched.append({
+                "symbol": r["symbol"], "name": r["name"], "market": r["market"],
+                "net_won": r["net_total"], "cap_won": cap, "pct": pct,
+            })
+
+        def _row(e, idx):
+            sign = '🟢' if e["net_won"] > 0 else '🔴'
+            net_eok = e["net_won"] / 100_000_000
+            pct_str = f'{e["pct"]:+.2f}%' if e["cap_won"] else '—'
+            color = '#4caf50' if e["net_won"] > 0 else '#e57373'
+            return (f'<tr><td style="color:var(--fg2)">{idx}</td>'
+                    f'<td>{sign} {_html.escape(e["name"])} '
+                    f'<span style="color:var(--fg2);font-size:0.8em">{e["symbol"]}</span></td>'
+                    f'<td style="color:{color}">{net_eok:+,.0f}억</td>'
+                    f'<td style="color:{color};font-weight:600">{pct_str}</td></tr>')
+
+        buy_top = sorted(
+            [e for e in enriched if e["net_won"] > 0],
+            key=lambda x: (-x["pct"] if x["cap_won"] else 0, -x["net_won"]),
+        )[:50]
+        sell_top = sorted(
+            [e for e in enriched if e["net_won"] < 0],
+            key=lambda x: (x["pct"] if x["cap_won"] else 0, x["net_won"]),
+        )[:50]
+
+        period = (f"{dates[-1][:4]}-{dates[-1][4:6]}-{dates[-1][6:]} ~ "
+                  f"{dates[0][:4]}-{dates[0][4:6]}-{dates[0][6:]}") if dates else "-"
+        buy_body = ('<h4 style="margin:8px 0 4px;color:#4caf50">🟢 매수 TOP 50</h4>'
+                    '<div class="scroll-tbl"><table class="whale-tbl">'
+                    '<tr><th>#</th><th>종목</th><th>순매수</th><th>시총%</th></tr>')
+        for i, e in enumerate(buy_top, start=1):
+            buy_body += _row(e, i)
+        buy_body += '</table></div>' if buy_top else '<p style="color:var(--fg2)">매수 없음</p>'
+        sell_body = ('<h4 style="margin:14px 0 4px;color:#e57373">🔴 매도 TOP 50</h4>'
+                     '<div class="scroll-tbl"><table class="whale-tbl">'
+                     '<tr><th>#</th><th>종목</th><th>순매도</th><th>시총%</th></tr>')
+        for i, e in enumerate(sell_top, start=1):
+            sell_body += _row(e, i)
+        sell_body += '</table></div>' if sell_top else '<p style="color:var(--fg2)">매도 없음</p>'
+        parts.append(
+            f'<div class="whale-card" id="pension-flow">'
+            f'<h3>📊 연기금 5일 흐름 — 매수/매도 양방향</h3>'
+            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+            f'기간: {period} | 시총% 정규화 | 출처: pykrx 연기금 단독 수급</p>'
+            f'{buy_body}{sell_body}</div>'
+        )
+    except Exception as e:
+        parts.append(f'<div class="whale-card" id="pension-flow"><h3>📊 연기금 5일</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    # ── 5) 임원·5%↑ 주주 매매 (전체, 90일) ──
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        cutoff = (datetime.now(KST) - timedelta(days=90)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT it.rcept_dt, it.symbol, sm.name,
+                      it.repror, it.ofcps, it.main_shrholdr,
+                      it.stock_irds_cnt, it.stock_rate, it.stock_irds_rate
+               FROM insider_transactions it
+               LEFT JOIN stock_master sm ON sm.symbol = it.symbol
+               WHERE it.rcept_dt >= ? AND it.stock_irds_cnt != 0 AND it.stock_rate >= 5
+               ORDER BY it.rcept_dt DESC, ABS(it.stock_irds_rate) DESC""",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+        body = ''
+        if rows:
+            body = ('<div class="scroll-tbl"><table class="whale-tbl">'
+                    '<tr><th>#</th><th>일자</th><th>종목</th>'
+                    '<th>보고자</th><th>증감</th><th>지분%</th></tr>')
+            for idx, r in enumerate(rows, start=1):
+                irds = r["stock_irds_cnt"] or 0
+                sign = '🟢' if irds > 0 else '🔴'
+                color = '#4caf50' if irds > 0 else '#e57373'
+                rate10 = ' style="color:#e57373;font-weight:600"' if (r["stock_rate"] or 0) >= 10 else ''
+                role = (r["main_shrholdr"] or '') or (r["ofcps"] or '')
+                body += (f'<tr><td style="color:var(--fg2)">{idx}</td>'
+                         f'<td>{_html.escape(r["rcept_dt"])}</td>'
+                         f'<td>{_html.escape(r["name"] or "")}'
+                         f' <span style="color:var(--fg2);font-size:0.8em">{r["symbol"]}</span></td>'
+                         f'<td>{_html.escape(r["repror"] or "")}'
+                         f' <span style="color:var(--fg2);font-size:0.78em">{_html.escape(role)}</span></td>'
+                         f'<td style="color:{color}">{sign} {irds:+,}</td>'
+                         f'<td{rate10}>{(r["stock_rate"] or 0):.2f}%</td></tr>')
+            body += '</table></div>'
+        else:
+            body = '<p style="color:var(--fg2)">최근 90일 5%↑ 보유자 매매 없음</p>'
+        parts.append(
+            f'<div class="whale-card" id="insider">'
+            f'<h3>👤 임원·5%↑ 주주 매매 ({len(rows)}건)</h3>'
+            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
+            f'최근 90일 | 10%↑ 빨강 | 출처: DART 임원·주요주주 보고</p>'
+            f'{body}</div>'
+        )
+    except Exception as e:
+        parts.append(f'<div class="whale-card" id="insider"><h3>👤 임원 매매</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
+
+    return f'<div class="whale-page-grid">{"".join(parts)}</div>'
+
+
 async def _handle_dash_trades(request: web.Request) -> web.Response:
     """GET /dash/trades — 매매 기록 전체."""
     html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -7548,6 +8111,7 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/dash-v2", _handle_dash_v2)
     mcp_app.router.add_get("/dash/decisions", _handle_dash_decisions)
     mcp_app.router.add_get("/dash/trades", _handle_dash_trades)
+    mcp_app.router.add_get("/dash/whale", _handle_dash_whale)
     mcp_app.router.add_get("/dash/file/research/{filename:.+}", _handle_dash_research_file)
     mcp_app.router.add_get("/dash/file/thesis/{filename:.+}", _handle_dash_research_file)
     mcp_app.router.add_get("/dash/reports/{ticker}", _handle_dash_reports)
