@@ -2754,6 +2754,14 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[nps_us_13f] 오류: {e}")
 
+    # ── 2.5) whale-insight 5%/10% 변동 미러 (매일 갱신 가능) ──
+    try:
+        from kis_api import collect_wi_changes
+        wi = await collect_wi_changes()
+        print(f"[wi_changes] {wi}")
+    except Exception as e:
+        print(f"[wi_changes] 오류: {e}")
+
     # ── 3) KR 풀 포트 (whale-insight 미러) ──
     # 매주 silent 갱신. 분기 라벨 변경 시에만 알림.
     try:
@@ -7402,26 +7410,29 @@ def _whale_render_home() -> str:
     import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
 
-    # 최근 5%룰 카운트 (배지용)
-    recent_5pct = 0
-    recent_10pct = 0
+    # 최근 5%룰 / 10%룰 카운트 (whale-insight 미러 데이터 우선)
+    total_5pct = 0
+    total_10pct = 0
     try:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
-        cutoff = (datetime.now(KST) - timedelta(days=14)).strftime("%Y-%m-%d")
-        recent_5pct = conn.execute(
-            "SELECT COUNT(*) AS n FROM nps_holdings_disclosed WHERE report_date >= ?",
-            (cutoff,),
-        ).fetchone()["n"]
-        cutoff30 = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
-        recent_10pct = conn.execute(
-            "SELECT COUNT(*) AS n FROM insider_transactions "
-            "WHERE rcept_dt >= ? AND stock_irds_cnt != 0 AND stock_rate >= 10",
-            (cutoff30,),
-        ).fetchone()["n"]
+        try:
+            total_5pct = conn.execute(
+                "SELECT COUNT(*) AS n FROM wi_5pct_changes"
+            ).fetchone()["n"]
+        except Exception:
+            pass
+        try:
+            total_10pct = conn.execute(
+                "SELECT COUNT(*) AS n FROM wi_10pct_insiders"
+            ).fetchone()["n"]
+        except Exception:
+            pass
         conn.close()
     except Exception:
         pass
+    recent_5pct = total_5pct
+    recent_10pct = total_10pct
 
     return f'''
     <section class="space-y-3">
@@ -7437,7 +7448,7 @@ def _whale_render_home() -> str:
                 </div>
                 <h5 class="font-extrabold text-slate-900 text-base">대량 보유 변동 알림</h5>
                 <p class="text-[11px] text-slate-500 leading-relaxed mt-1">
-                    최근 14일 <span class="font-bold text-blue-600">{recent_5pct}건</span> · 5%↑ 지분 신규/변동 보고
+                    <span class="font-bold text-blue-600">{recent_5pct}건</span> · 5%↑ 지분 신규/변동 보고
                 </p>
             </div>
             <div onclick="location.href='/dash/whale?p=insider'"
@@ -7449,7 +7460,7 @@ def _whale_render_home() -> str:
                 </div>
                 <h5 class="font-extrabold text-slate-900 text-base">핵심 주주 거래 보고</h5>
                 <p class="text-[11px] text-slate-500 leading-relaxed mt-1">
-                    최근 30일 <span class="font-bold text-indigo-600">{recent_10pct}건</span> · 10%↑ 보유자 매매
+                    <span class="font-bold text-indigo-600">{recent_10pct}건</span> · 10%↑ 보유자 매매
                 </p>
             </div>
         </div>
@@ -7713,8 +7724,8 @@ def _whale_render_us_13f() -> str:
 def _whale_render_kr_5pct() -> str:
     """NPS 한국 5%룰 — whale-insight major_stock.html 카드 디자인 미러.
 
-    Hero summary box (검정) + 정렬/필터 sticky bar + 종목 카드 리스트.
-    클라이언트 JS로 정렬/필터 (증감율순/최신순, 매수/매도).
+    데이터: wi_5pct_changes (whale-insight major_stock 미러).
+    Hero summary box + 정렬/필터 sticky bar + 종목 카드 리스트.
     """
     import sqlite3 as _s
     import json as _json
@@ -7722,69 +7733,43 @@ def _whale_render_kr_5pct() -> str:
     try:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
-        latest_q_row = conn.execute(
-            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
-            "ORDER BY quarter DESC LIMIT 1"
-        ).fetchone()
-        latest_q = latest_q_row["quarter"] if latest_q_row else ""
-        prev_q_row = conn.execute(
-            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
-            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
-            (latest_q,),
-        ).fetchone() if latest_q else None
-        prev_q = prev_q_row["quarter"] if prev_q_row else ""
-        prev_map = {}
-        if prev_q:
-            for pr in conn.execute(
-                "SELECT symbol, MAX(ratio_pct) AS max_r FROM nps_holdings_disclosed "
-                "WHERE quarter = ? AND symbol != '' GROUP BY symbol",
-                (prev_q,),
-            ).fetchall():
-                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
         raw = conn.execute(
-            """SELECT report_date, company_name, symbol, ratio_pct
-               FROM nps_holdings_disclosed WHERE quarter = ?""",
-            (latest_q,),
-        ).fetchall() if latest_q else []
+            """SELECT report_date, company, symbol, stkqy, stkqy_irds,
+                      stkrt, stkrt_irds, report_resn
+               FROM wi_5pct_changes
+               ORDER BY report_date DESC, ABS(stkrt_irds) DESC"""
+        ).fetchall()
         conn.close()
     except Exception as e:
         return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
 
-    # JS 데이터 빌드
     items = []
     buy_cnt = 0
     sell_cnt = 0
-    new_cnt = 0
     for r in raw:
-        cur = float(r["ratio_pct"] or 0)
-        prev = prev_map.get(r["symbol"]) if r["symbol"] else None
-        if prev is None:
-            change = cur  # NEW = 현재 지분 만큼 증가
-            is_new = True
-        else:
-            change = cur - prev
-            is_new = False
+        change = float(r["stkrt_irds"] or 0)
         items.append({
-            "company": r["company_name"],
+            "company": r["company"],
             "symbol": r["symbol"] or "",
             "date": r["report_date"],
-            "ratio": cur,
-            "prev_ratio": prev or 0,
+            "ratio": float(r["stkrt"] or 0),
+            "stkqy": int(r["stkqy"] or 0),
+            "stkqy_irds": int(r["stkqy_irds"] or 0),
             "change": round(change, 2),
-            "is_new": is_new,
+            "report_resn": r["report_resn"] or "단순변동",
         })
         if change > 0:
             buy_cnt += 1
         elif change < 0:
             sell_cnt += 1
-        if is_new:
-            new_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)
-
-    # 평균 증감
-    avg_change = (sum(x["change"] for x in items) / len(items)) if items else 0
-    period_label = f"{latest_q} 분기" + (f" · 비교: {prev_q}" if prev_q else "")
+    # 기간 라벨 (가장 이른 ~ 가장 늦은 보고일)
+    if items:
+        dates = [x["date"] for x in items]
+        period_label = f"{min(dates)} ~ {max(dates)}"
+    else:
+        period_label = "-"
 
     return f'''
     <div class="bg-slate-900 text-white -mx-4 -mt-4 px-6 py-6 rounded-b-3xl shadow-inner mb-4">
@@ -7867,33 +7852,36 @@ def _whale_render_kr_5pct() -> str:
                 const badgeCls = isBuy
                     ? 'text-red-600 bg-red-50 border-red-100'
                     : 'text-blue-600 bg-blue-50 border-blue-100';
-                const badgeTxt = x.is_new ? '🆕 신규' : (isBuy ? '비중 확대' : '비중 축소');
+                const badgeTxt = isBuy ? '비중 확대' : '비중 축소';
                 const rateCls = isBuy ? 'text-red-600' : 'text-blue-600';
-                const arrow = x.is_new ? '🆕' : (isBuy ? '▲' : '▼');
+                const arrow = isBuy ? '▲' : '▼';
                 const ratio10 = x.ratio >= 10 ? 'text-red-600' : 'text-slate-700';
                 const symHtml = x.symbol ? `<span class="text-[10px] text-slate-400 font-bold ml-1">${{x.symbol}}</span>` : '';
+                const qty = Math.abs(x.stkqy).toLocaleString();
+                const qtyIrds = (x.stkqy_irds >= 0 ? '+' : '-') + Math.abs(x.stkqy_irds).toLocaleString();
                 return `<div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
                     <div class="flex justify-between items-start mb-3">
-                        <div>
+                        <div class="flex-1 min-w-0 pr-2">
                             <div class="flex items-center gap-2 mb-1.5">
                                 <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${{badgeCls}}">${{badgeTxt}}</span>
-                                <span class="text-[10px] text-slate-400 font-bold">${{x.date}}</span>
+                                <span class="text-[10px] text-slate-400 font-bold">제출일 ${{x.date}}</span>
                             </div>
                             <h3 class="text-lg font-extrabold text-slate-900">${{x.company}}${{symHtml}}</h3>
                         </div>
-                        <div class="text-right">
-                            <span class="${{rateCls}} text-lg font-black"><span class="text-xs">${{arrow}}</span> ${{Math.abs(x.change).toFixed(2)}}p</span>
+                        <div class="text-right flex-shrink-0">
+                            <span class="${{rateCls}} text-lg font-black"><span class="text-xs">${{arrow}}</span> ${{Math.abs(x.change).toFixed(2)}}%p</span>
                             <p class="text-[10px] text-slate-400 font-bold mt-0.5">최종지분 <span class="${{ratio10}} font-black">${{x.ratio.toFixed(2)}}%</span></p>
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-50">
                         <div class="bg-slate-50 p-2 rounded-xl">
-                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">전 분기 지분</p>
-                            <p class="text-xs font-bold text-slate-700">${{x.prev_ratio > 0 ? x.prev_ratio.toFixed(2) + '%' : '신규'}}</p>
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">보유주식수</p>
+                            <p class="text-xs font-bold text-slate-700">${{qty}}주</p>
+                            <p class="text-[10px] ${{rateCls}} font-bold">${{qtyIrds}}</p>
                         </div>
                         <div class="bg-slate-50 p-2 rounded-xl">
-                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">현재 지분</p>
-                            <p class="text-xs font-bold ${{ratio10}}">${{x.ratio.toFixed(2)}}%</p>
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">변동사유</p>
+                            <p class="text-xs font-bold text-slate-700 line-clamp-2">${{x.report_resn}}</p>
                         </div>
                     </div>
                 </div>`;
@@ -8036,9 +8024,9 @@ def _whale_render_pension_flow() -> str:
 
 
 def _whale_render_insider() -> str:
-    """임원·5%↑ 주주 매매 (90일) — whale-insight elestock.html 카드 디자인 미러.
+    """10%↑ 핵심 주주 거래 — whale-insight elestock.html 카드 디자인 미러.
 
-    Hero summary box (인디고) + 정렬/필터 바 + 카드 리스트.
+    데이터: wi_10pct_insiders (whale-insight elestock 미러).
     """
     import sqlite3 as _s
     import json as _json
@@ -8046,15 +8034,11 @@ def _whale_render_insider() -> str:
     try:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
-        cutoff = (datetime.now(KST) - timedelta(days=90)).strftime("%Y-%m-%d")
         raw = conn.execute(
-            """SELECT it.rcept_dt, it.symbol, sm.name,
-                      it.repror, it.ofcps, it.main_shrholdr,
-                      it.stock_irds_cnt, it.stock_rate, it.stock_irds_rate
-               FROM insider_transactions it
-               LEFT JOIN stock_master sm ON sm.symbol = it.symbol
-               WHERE it.rcept_dt >= ? AND it.stock_irds_cnt != 0 AND it.stock_rate >= 5""",
-            (cutoff,),
+            """SELECT report_date, company, symbol, stkqy, stkqy_irds,
+                      stkrt, stkrt_irds, shrholdr_role
+               FROM wi_10pct_insiders
+               ORDER BY report_date DESC, ABS(stkrt_irds) DESC"""
         ).fetchall()
         conn.close()
     except Exception as e:
@@ -8064,23 +8048,21 @@ def _whale_render_insider() -> str:
     buy_cnt = 0
     sell_cnt = 0
     for r in raw:
-        irds = r["stock_irds_cnt"] or 0
-        rate = r["stock_rate"] or 0
-        rate_chg = r["stock_irds_rate"] or 0
-        role = (r["main_shrholdr"] or '') or (r["ofcps"] or '')
+        rate_chg = float(r["stkrt_irds"] or 0)
         items.append({
-            "company": r["name"] or "",
+            "company": r["company"],
             "symbol": r["symbol"] or "",
-            "date": r["rcept_dt"],
-            "reporter": r["repror"] or "",
-            "role": role,
-            "qty": irds,
-            "rate": rate,
+            "date": r["report_date"],
+            "reporter": r["shrholdr_role"] or "10%이상주주",
+            "role": "",
+            "qty": int(r["stkqy_irds"] or 0),
+            "stkqy": int(r["stkqy"] or 0),
+            "rate": float(r["stkrt"] or 0),
             "rate_chg": rate_chg,
         })
-        if irds > 0:
+        if rate_chg > 0:
             buy_cnt += 1
-        else:
+        elif rate_chg < 0:
             sell_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)
@@ -8188,13 +8170,13 @@ def _whale_render_insider() -> str:
                     </div>
                     <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-50">
                         <div class="bg-slate-50 p-2 rounded-xl">
-                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">보고자</p>
-                            <p class="text-xs font-bold text-slate-700">${{x.reporter}}</p>
-                            <p class="text-[10px] text-slate-400">${{x.role}}</p>
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">보유주식수</p>
+                            <p class="text-xs font-bold text-slate-700">${{x.stkqy.toLocaleString()}}주</p>
+                            <p class="text-[10px] ${{rateCls}} font-bold">${{sign}}${{qtyAbs}}</p>
                         </div>
                         <div class="bg-slate-50 p-2 rounded-xl">
-                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">변동수량</p>
-                            <p class="text-xs font-bold ${{rateCls}}">${{sign}}${{qtyAbs}}주</p>
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">보고자</p>
+                            <p class="text-xs font-bold text-slate-700">${{x.reporter}}</p>
                         </div>
                     </div>
                 </div>`;

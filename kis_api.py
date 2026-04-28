@@ -8534,6 +8534,194 @@ async def collect_nps_kr_full_from_whale_insight() -> dict:
     }
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# whale-insight 5%룰/10%룰 변동 데이터 미러
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# major_stock.js (5%↑ 변동) + elestock.js (10%↑ 보유자 매매)
+# 우리 자체 수집보다 더 풍부한 데이터 (DART 직파싱 추정)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WI_MAJOR_JS = "https://whale-insight.com/assets/js/nps_major_stock.js"
+WI_ELE_JS = "https://whale-insight.com/assets/js/nps_elestock.js"
+
+
+def _ensure_wi_change_tables(db_path: str):
+    """whale-insight 변동 데이터 테이블."""
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS wi_5pct_changes (
+            report_date    TEXT NOT NULL,
+            company        TEXT NOT NULL,
+            symbol         TEXT DEFAULT '',
+            stkqy          INTEGER DEFAULT 0,
+            stkqy_irds     INTEGER DEFAULT 0,
+            stkrt          REAL DEFAULT 0,
+            stkrt_irds     REAL DEFAULT 0,
+            report_resn    TEXT DEFAULT '',
+            source_version TEXT DEFAULT '',
+            collected_at   TEXT DEFAULT '',
+            PRIMARY KEY (report_date, company, stkrt_irds)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wi5_date ON wi_5pct_changes(report_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wi5_symbol ON wi_5pct_changes(symbol)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS wi_10pct_insiders (
+            report_date    TEXT NOT NULL,
+            company        TEXT NOT NULL,
+            symbol         TEXT DEFAULT '',
+            stkqy          INTEGER DEFAULT 0,
+            stkqy_irds     INTEGER DEFAULT 0,
+            stkrt          REAL DEFAULT 0,
+            stkrt_irds     REAL DEFAULT 0,
+            shrholdr_role  TEXT DEFAULT '',
+            source_version TEXT DEFAULT '',
+            collected_at   TEXT DEFAULT '',
+            PRIMARY KEY (report_date, company, stkrt_irds)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wi10_date ON wi_10pct_insiders(report_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wi10_symbol ON wi_10pct_insiders(symbol)")
+    conn.commit()
+    conn.close()
+
+
+def _parse_int_with_sign(s) -> int:
+    """'+193731' / '-25,733,062' / '0' → int."""
+    if s is None:
+        return 0
+    txt = str(s).replace(",", "").strip()
+    try:
+        return int(float(txt))
+    except Exception:
+        return 0
+
+
+def _parse_float_with_sign(s) -> float:
+    """'-13.63' / '+0.60' / '0' → float."""
+    if s is None:
+        return 0.0
+    txt = str(s).replace(",", "").replace("%", "").strip()
+    try:
+        return float(txt)
+    except Exception:
+        return 0.0
+
+
+async def _fetch_wi_js_array(url: str, var_name: str) -> list:
+    """whale-insight JS 파일 다운로드 → const VAR_NAME = [...] 배열 추출."""
+    connector = aiohttp.TCPConnector(ssl=False)
+    timeout = aiohttp.ClientTimeout(total=30)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as s:
+            async with s.get(url) as r:
+                if r.status != 200:
+                    return []
+                txt = await r.text()
+    except Exception as e:
+        print(f"[wi_fetch] {url} 실패: {e}")
+        return []
+
+    # const VAR_NAME = [ ... ];
+    m = re.search(rf"{var_name}\s*=\s*\[(.*?)\];", txt, re.DOTALL)
+    if not m:
+        return []
+    block = m.group(1)
+    # 객체 단위로 파싱 — { key: 'value', ... }
+    obj_pattern = re.compile(r"\{([^}]+)\}", re.DOTALL)
+    field_pattern = re.compile(r"(\w+):\s*'([^']*)'")
+    out = []
+    for obj_match in obj_pattern.finditer(block):
+        body = obj_match.group(1)
+        rec = {}
+        for fm in field_pattern.finditer(body):
+            rec[fm.group(1)] = fm.group(2)
+        if rec:
+            out.append(rec)
+    return out
+
+
+async def collect_wi_changes() -> dict:
+    """whale-insight 5%룰 변동 + 10%↑ 보유자 매매 데이터 미러링."""
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_wi_change_tables(db_path)
+
+    direct_map, name_list = _build_name_to_symbol_map(db_path)
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+
+    # ── 5%룰 변동 (major_stock) ──
+    major = await _fetch_wi_js_array(WI_MAJOR_JS, "MAJOR_DATA")
+    major_inserted = 0
+    for rec in major:
+        try:
+            sym = _match_company_to_symbol(rec.get("company", ""), direct_map, name_list)
+            cur = conn.execute(
+                """INSERT OR REPLACE INTO wi_5pct_changes
+                   (report_date, company, symbol, stkqy, stkqy_irds,
+                    stkrt, stkrt_irds, report_resn, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    rec.get("date", ""),
+                    rec.get("company", ""),
+                    sym,
+                    _parse_int_with_sign(rec.get("stkqy")),
+                    _parse_int_with_sign(rec.get("stkqy_irds")),
+                    _parse_float_with_sign(rec.get("stkrt")),
+                    _parse_float_with_sign(rec.get("stkrt_irds")),
+                    rec.get("report_resn", ""),
+                    now_iso,
+                ),
+            )
+            if cur.rowcount > 0:
+                major_inserted += 1
+        except Exception:
+            pass
+
+    # ── 10%↑ 보유자 매매 (elestock) ──
+    ele = await _fetch_wi_js_array(WI_ELE_JS, "ELESTOCK_DATA")
+    ele_inserted = 0
+    for rec in ele:
+        try:
+            sym = _match_company_to_symbol(rec.get("company", ""), direct_map, name_list)
+            cur = conn.execute(
+                """INSERT OR REPLACE INTO wi_10pct_insiders
+                   (report_date, company, symbol, stkqy, stkqy_irds,
+                    stkrt, stkrt_irds, shrholdr_role, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    rec.get("date", ""),
+                    rec.get("company", ""),
+                    sym,
+                    _parse_int_with_sign(rec.get("stkqy")),
+                    _parse_int_with_sign(rec.get("stkqy_irds")),
+                    _parse_float_with_sign(rec.get("stkrt")),
+                    _parse_float_with_sign(rec.get("stkrt_irds")),
+                    rec.get("isu_main_shrholdr", ""),
+                    now_iso,
+                ),
+            )
+            if cur.rowcount > 0:
+                ele_inserted += 1
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+
+    return {
+        "major_total": len(major),
+        "major_inserted": major_inserted,
+        "ele_total": len(ele),
+        "ele_inserted": ele_inserted,
+        "fetched_at": now_iso,
+    }
+
+
 def fetch_nps_kr_full_holdings(top: int = 30) -> dict:
     """NPS KR 풀 포트 조회 (가장 최근 snapshot, 비중 내림차순)."""
     db_path = f"{_DATA_DIR}/stock.db"
