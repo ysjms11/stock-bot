@@ -8644,8 +8644,260 @@ async def _fetch_wi_js_array(url: str, var_name: str) -> list:
     return out
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DART 5%룰 (D001) + 임원·10%↑ (D002) 직접 수집
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+def _ensure_dart_change_tables(db_path: str):
+    """DART 5%룰/10%룰 테이블 — rcept_no PK로 중복 차단."""
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dart_5pct_changes (
+            rcept_no       TEXT PRIMARY KEY,
+            rcept_dt       TEXT NOT NULL,
+            corp_code      TEXT,
+            company        TEXT NOT NULL,
+            symbol         TEXT DEFAULT '',
+            repror         TEXT DEFAULT '',
+            stkqy          INTEGER DEFAULT 0,
+            stkqy_irds     INTEGER DEFAULT 0,
+            stkrt          REAL DEFAULT 0,
+            stkrt_irds     REAL DEFAULT 0,
+            report_resn    TEXT DEFAULT '',
+            collected_at   TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_d5_dt ON dart_5pct_changes(rcept_dt)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_d5_sym ON dart_5pct_changes(symbol)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dart_10pct_insiders (
+            rcept_no       TEXT NOT NULL,
+            seq            INTEGER NOT NULL,    -- elestock는 한 보고에 여러 row
+            rcept_dt       TEXT NOT NULL,
+            corp_code      TEXT,
+            company        TEXT NOT NULL,
+            symbol         TEXT DEFAULT '',
+            repror         TEXT DEFAULT '',
+            shrholdr_role  TEXT DEFAULT '',
+            stkqy          INTEGER DEFAULT 0,
+            stkqy_irds     INTEGER DEFAULT 0,
+            stkrt          REAL DEFAULT 0,
+            stkrt_irds     REAL DEFAULT 0,
+            collected_at   TEXT DEFAULT '',
+            PRIMARY KEY (rcept_no, seq)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_d10_dt ON dart_10pct_insiders(rcept_dt)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_d10_sym ON dart_10pct_insiders(symbol)")
+    conn.commit()
+    conn.close()
+
+
+async def _dart_get(session: aiohttp.ClientSession, path: str, params: dict) -> dict:
+    """DART API GET — JSON 반환."""
+    key = os.environ.get("DART_API_KEY", "").strip()
+    if not key:
+        return {"status": "ERR", "message": "DART_API_KEY 없음"}
+    p = {**params, "crtfc_key": key}
+    url = f"https://opendart.fss.or.kr/api/{path}"
+    try:
+        async with session.get(url, params=p, timeout=aiohttp.ClientTimeout(total=20)) as r:
+            if r.status != 200:
+                return {"status": "HTTP", "code": r.status}
+            return await r.json(content_type=None)
+    except Exception as e:
+        return {"status": "EXC", "message": str(e)}
+
+
+async def _dart_list_disclosures(detail_ty: str, days: int = 14) -> list:
+    """DART list.json 페이징 검색 → 모든 페이지 합쳐 반환.
+
+    Returns: [{corp_code, corp_name, rcept_no, rcept_dt, report_nm}, ...]
+    """
+    end = datetime.now(KST)
+    start = end - timedelta(days=days)
+    bgn = start.strftime("%Y%m%d")
+    fin = end.strftime("%Y%m%d")
+    out = []
+    page = 1
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as s:
+        while True:
+            d = await _dart_get(s, "list.json", {
+                "pblntf_detail_ty": detail_ty,
+                "bgn_de": bgn,
+                "end_de": fin,
+                "page_count": "100",
+                "page_no": str(page),
+            })
+            if d.get("status") != "000":
+                if d.get("status") == "013":
+                    break  # 데이터 없음
+                print(f"[dart_list {detail_ty}] page {page} status={d.get('status')}: {d.get('message')}")
+                break
+            items = d.get("list", []) or []
+            out.extend(items)
+            total = d.get("total_count", 0)
+            seen = page * 100
+            if seen >= total or not items:
+                break
+            page += 1
+            await asyncio.sleep(0.05)
+    return out
+
+
+async def collect_dart_5pct_changes(days: int = 14) -> dict:
+    """DART 5%룰 (D001) 최근 N일 수집.
+
+    list.json → unique corp_code → majorstock.json → DB.
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_dart_change_tables(db_path)
+    direct_map, name_list = _build_name_to_symbol_map(db_path)
+
+    # 1) D001 list 검색 → unique corp_code + 우리 기간 내 rcept_no 집합
+    disc = await _dart_list_disclosures("D001", days)
+    if not disc:
+        return {"error": "D001 검색 결과 없음"}
+
+    period_rcepts = {it.get("rcept_no") for it in disc if it.get("rcept_no")}
+    corp_codes = {}  # corp_code → corp_name
+    for it in disc:
+        cc = it.get("corp_code")
+        if cc:
+            corp_codes[cc] = it.get("corp_name", "")
+
+    # 2) 각 corp_code에 majorstock.json 호출 → period 내 보고만 저장
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+    inserted = 0
+    fetched_corps = 0
+
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as s:
+        for cc, cname in corp_codes.items():
+            d = await _dart_get(s, "majorstock.json", {"corp_code": cc})
+            await asyncio.sleep(0.1)  # rate limit
+            if d.get("status") != "000":
+                continue
+            fetched_corps += 1
+            for rec in d.get("list", []) or []:
+                rcept_no = rec.get("rcept_no", "")
+                if not rcept_no or rcept_no not in period_rcepts:
+                    continue  # 우리 기간 내 보고만
+                sym = _match_company_to_symbol(cname, direct_map, name_list)
+                try:
+                    cur = conn.execute(
+                        """INSERT OR REPLACE INTO dart_5pct_changes
+                           (rcept_no, rcept_dt, corp_code, company, symbol,
+                            repror, stkqy, stkqy_irds, stkrt, stkrt_irds,
+                            report_resn, collected_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (rcept_no, rec.get("rcept_dt", ""), cc, cname, sym,
+                         rec.get("repror", ""),
+                         _parse_int_with_sign(rec.get("stkqy")),
+                         _parse_int_with_sign(rec.get("stkqy_irds")),
+                         _parse_float_with_sign(rec.get("stkrt")),
+                         _parse_float_with_sign(rec.get("stkrt_irds")),
+                         (rec.get("report_resn") or "").replace("\n", " ")[:200],
+                         now_iso),
+                    )
+                    if cur.rowcount > 0:
+                        inserted += 1
+                except Exception:
+                    pass
+    conn.commit()
+    conn.close()
+
+    return {
+        "disclosures_found": len(disc),
+        "corps_fetched": fetched_corps,
+        "rows_inserted": inserted,
+        "fetched_at": now_iso,
+    }
+
+
+async def collect_dart_10pct_insiders(days: int = 14) -> dict:
+    """DART 임원·10%↑ (D002) 최근 N일 수집.
+
+    list.json → unique corp_code → elestock.json → DB.
+    elestock는 보고서당 여러 row (보고자별 + 일자별) → seq로 구분.
+    """
+    db_path = f"{_DATA_DIR}/stock.db"
+    _ensure_dart_change_tables(db_path)
+    direct_map, name_list = _build_name_to_symbol_map(db_path)
+
+    disc = await _dart_list_disclosures("D002", days)
+    if not disc:
+        return {"error": "D002 검색 결과 없음"}
+
+    period_rcepts = {it.get("rcept_no") for it in disc if it.get("rcept_no")}
+    corp_codes = {}
+    for it in disc:
+        cc = it.get("corp_code")
+        if cc:
+            corp_codes[cc] = it.get("corp_name", "")
+
+    import sqlite3 as _s
+    conn = _s.connect(db_path, timeout=30)
+    now_iso = datetime.now(KST).isoformat()
+    inserted = 0
+    fetched_corps = 0
+
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as s:
+        for cc, cname in corp_codes.items():
+            d = await _dart_get(s, "elestock.json", {"corp_code": cc})
+            await asyncio.sleep(0.1)
+            if d.get("status") != "000":
+                continue
+            fetched_corps += 1
+            # 같은 rcept_no 내 row를 seq 부여
+            seq_counter = {}
+            for rec in d.get("list", []) or []:
+                rcept_no = rec.get("rcept_no", "")
+                if not rcept_no or rcept_no not in period_rcepts:
+                    continue
+                seq = seq_counter.get(rcept_no, 0)
+                seq_counter[rcept_no] = seq + 1
+                sym = _match_company_to_symbol(cname, direct_map, name_list)
+                try:
+                    cur = conn.execute(
+                        """INSERT OR REPLACE INTO dart_10pct_insiders
+                           (rcept_no, seq, rcept_dt, corp_code, company, symbol,
+                            repror, shrholdr_role, stkqy, stkqy_irds, stkrt, stkrt_irds,
+                            collected_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (rcept_no, seq, rec.get("rcept_dt", ""), cc, cname, sym,
+                         rec.get("repror", ""),
+                         rec.get("isu_main_shrholdr", "") or "임원",
+                         _parse_int_with_sign(rec.get("sp_stock_lmp_cnt")),
+                         _parse_int_with_sign(rec.get("sp_stock_lmp_irds_cnt")),
+                         _parse_float_with_sign(rec.get("sp_stock_lmp_rate")),
+                         _parse_float_with_sign(rec.get("sp_stock_lmp_irds_rate")),
+                         now_iso),
+                    )
+                    if cur.rowcount > 0:
+                        inserted += 1
+                except Exception:
+                    pass
+    conn.commit()
+    conn.close()
+
+    return {
+        "disclosures_found": len(disc),
+        "corps_fetched": fetched_corps,
+        "rows_inserted": inserted,
+        "fetched_at": now_iso,
+    }
+
+
 async def collect_wi_changes() -> dict:
-    """whale-insight 5%룰 변동 + 10%↑ 보유자 매매 데이터 미러링."""
+    """whale-insight 5%룰 변동 + 10%↑ 보유자 매매 데이터 미러링 (fallback)."""
     db_path = f"{_DATA_DIR}/stock.db"
     _ensure_wi_change_tables(db_path)
 

@@ -2754,13 +2754,15 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[nps_us_13f] 오류: {e}")
 
-    # ── 2.5) whale-insight 5%/10% 변동 미러 (매일 갱신 가능) ──
+    # ── 2.5) DART 5%룰/10%룰 자체 수집 (D001/D002 직접) ──
     try:
-        from kis_api import collect_wi_changes
-        wi = await collect_wi_changes()
-        print(f"[wi_changes] {wi}")
+        from kis_api import collect_dart_5pct_changes, collect_dart_10pct_insiders
+        d5 = await collect_dart_5pct_changes(days=14)
+        print(f"[dart_5pct] {d5}")
+        d10 = await collect_dart_10pct_insiders(days=14)
+        print(f"[dart_10pct] {d10}")
     except Exception as e:
-        print(f"[wi_changes] 오류: {e}")
+        print(f"[dart_changes] 오류: {e}")
 
     # ── 3) KR 풀 포트 (whale-insight 미러) ──
     # 매주 silent 갱신. 분기 라벨 변경 시에만 알림.
@@ -7410,7 +7412,7 @@ def _whale_render_home() -> str:
     import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
 
-    # 최근 5%룰 / 10%룰 카운트 (whale-insight 미러 데이터 우선)
+    # 5%룰 / 10%룰 카운트 (DART 자체 수집)
     total_5pct = 0
     total_10pct = 0
     try:
@@ -7418,13 +7420,13 @@ def _whale_render_home() -> str:
         conn.row_factory = _s.Row
         try:
             total_5pct = conn.execute(
-                "SELECT COUNT(*) AS n FROM wi_5pct_changes"
+                "SELECT COUNT(*) AS n FROM dart_5pct_changes"
             ).fetchone()["n"]
         except Exception:
             pass
         try:
             total_10pct = conn.execute(
-                "SELECT COUNT(*) AS n FROM wi_10pct_insiders"
+                "SELECT COUNT(*) AS n FROM dart_10pct_insiders WHERE stkqy_irds != 0 AND stkrt >= 5"
             ).fetchone()["n"]
         except Exception:
             pass
@@ -7722,10 +7724,10 @@ def _whale_render_us_13f() -> str:
 
 
 def _whale_render_kr_5pct() -> str:
-    """NPS 한국 5%룰 — whale-insight major_stock.html 카드 디자인 미러.
+    """5%룰 (대량 보유 변동) — DART D001 우리 자체 수집.
 
-    데이터: wi_5pct_changes (whale-insight major_stock 미러).
-    Hero summary box + 정렬/필터 sticky bar + 종목 카드 리스트.
+    데이터: dart_5pct_changes (DART majorstock.json 직접 수집).
+    Hero summary box + 정렬/필터 + 카드 리스트 (whale-insight 디자인 미러).
     """
     import sqlite3 as _s
     import json as _json
@@ -7734,10 +7736,10 @@ def _whale_render_kr_5pct() -> str:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
         raw = conn.execute(
-            """SELECT report_date, company, symbol, stkqy, stkqy_irds,
+            """SELECT rcept_dt, company, symbol, repror, stkqy, stkqy_irds,
                       stkrt, stkrt_irds, report_resn
-               FROM wi_5pct_changes
-               ORDER BY report_date DESC, ABS(stkrt_irds) DESC"""
+               FROM dart_5pct_changes
+               ORDER BY rcept_dt DESC, ABS(stkrt_irds) DESC"""
         ).fetchall()
         conn.close()
     except Exception as e:
@@ -7751,12 +7753,13 @@ def _whale_render_kr_5pct() -> str:
         items.append({
             "company": r["company"],
             "symbol": r["symbol"] or "",
-            "date": r["report_date"],
+            "date": r["rcept_dt"],
+            "repror": r["repror"] or "",
             "ratio": float(r["stkrt"] or 0),
             "stkqy": int(r["stkqy"] or 0),
             "stkqy_irds": int(r["stkqy_irds"] or 0),
             "change": round(change, 2),
-            "report_resn": r["report_resn"] or "단순변동",
+            "report_resn": (r["report_resn"] or "단순변동")[:80],
         })
         if change > 0:
             buy_cnt += 1
@@ -7872,6 +7875,10 @@ def _whale_render_kr_5pct() -> str:
                             <span class="${{rateCls}} text-lg font-black"><span class="text-xs">${{arrow}}</span> ${{Math.abs(x.change).toFixed(2)}}%p</span>
                             <p class="text-[10px] text-slate-400 font-bold mt-0.5">최종지분 <span class="${{ratio10}} font-black">${{x.ratio.toFixed(2)}}%</span></p>
                         </div>
+                    </div>
+                    <div class="bg-slate-50 p-2 rounded-xl mb-2">
+                        <p class="text-[9px] text-slate-400 font-bold mb-0.5">보고자</p>
+                        <p class="text-xs font-bold text-slate-700">${{x.repror}}</p>
                     </div>
                     <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-50">
                         <div class="bg-slate-50 p-2 rounded-xl">
@@ -8024,9 +8031,10 @@ def _whale_render_pension_flow() -> str:
 
 
 def _whale_render_insider() -> str:
-    """10%↑ 핵심 주주 거래 — whale-insight elestock.html 카드 디자인 미러.
+    """임원·5%↑ 주주 매매 — DART D002 우리 자체 수집.
 
-    데이터: wi_10pct_insiders (whale-insight elestock 미러).
+    데이터: dart_10pct_insiders (DART elestock.json 직접 수집).
+    의미있는 변동만: |stkqy_irds| > 0 AND stkrt >= 5 (5%↑ 보유자)
     """
     import sqlite3 as _s
     import json as _json
@@ -8035,10 +8043,11 @@ def _whale_render_insider() -> str:
         conn = _s.connect(db_path, timeout=10)
         conn.row_factory = _s.Row
         raw = conn.execute(
-            """SELECT report_date, company, symbol, stkqy, stkqy_irds,
-                      stkrt, stkrt_irds, shrholdr_role
-               FROM wi_10pct_insiders
-               ORDER BY report_date DESC, ABS(stkrt_irds) DESC"""
+            """SELECT rcept_dt, company, symbol, repror, shrholdr_role,
+                      stkqy, stkqy_irds, stkrt, stkrt_irds
+               FROM dart_10pct_insiders
+               WHERE stkqy_irds != 0 AND stkrt >= 5
+               ORDER BY rcept_dt DESC, ABS(stkrt_irds) DESC"""
         ).fetchall()
         conn.close()
     except Exception as e:
@@ -8049,20 +8058,21 @@ def _whale_render_insider() -> str:
     sell_cnt = 0
     for r in raw:
         rate_chg = float(r["stkrt_irds"] or 0)
+        qty_chg = int(r["stkqy_irds"] or 0)
         items.append({
             "company": r["company"],
             "symbol": r["symbol"] or "",
-            "date": r["report_date"],
-            "reporter": r["shrholdr_role"] or "10%이상주주",
-            "role": "",
-            "qty": int(r["stkqy_irds"] or 0),
+            "date": r["rcept_dt"],
+            "reporter": r["repror"] or "",
+            "role": r["shrholdr_role"] or "",
+            "qty": qty_chg,
             "stkqy": int(r["stkqy"] or 0),
             "rate": float(r["stkrt"] or 0),
             "rate_chg": rate_chg,
         })
-        if rate_chg > 0:
+        if qty_chg > 0:
             buy_cnt += 1
-        elif rate_chg < 0:
+        elif qty_chg < 0:
             sell_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)
