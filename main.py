@@ -7326,48 +7326,894 @@ def _build_trade_card(t: dict, is_open: bool = False) -> str:
 
 
 async def _handle_dash_whale(request: web.Request) -> web.Response:
-    """GET /dash/whale — 🐋 Whale Watch 풀 전용 페이지 (새 창에서 열기)."""
-    html = (
-        f'<!DOCTYPE html><html><head><meta charset="utf-8">'
-        f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f'<title>🐋 Whale Watch — Stock Bot</title>'
-        f'{_DASH_V2_CSS}'
-        f'<style>'
-        f'.whale-page-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:18px;margin-top:14px}}'
-        f'.whale-card{{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px}}'
-        f'.whale-card h3{{margin:0 0 6px;font-size:1.1em}}'
-        f'.whale-tbl{{width:100%;border-collapse:collapse;font-size:0.9em}}'
-        f'.whale-tbl th{{text-align:left;color:var(--fg2);font-weight:500;border-bottom:1px solid var(--border);padding:5px 8px;position:sticky;top:0;background:var(--bg2)}}'
-        f'.whale-tbl td{{padding:5px 8px;border-bottom:1px solid var(--border)}}'
-        f'.whale-tbl tr:hover td{{background:rgba(255,255,255,0.03)}}'
-        f'.whale-tbl tr:last-child td{{border-bottom:none}}'
-        f'.whale-card .scroll-tbl{{max-height:600px;overflow-y:auto}}'
-        f'.whale-hero{{background:linear-gradient(135deg,rgba(80,160,255,0.08),rgba(80,160,255,0));border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:18px}}'
-        f'.whale-hero h1{{margin:0 0 6px;font-size:1.5em}}'
-        f'.whale-hero p{{margin:0;color:var(--fg2)}}'
-        f'.whale-anchor{{display:inline-block;padding:4px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--accent);text-decoration:none;font-size:0.85em;margin-right:6px;margin-bottom:6px}}'
-        f'.whale-anchor:hover{{background:var(--border)}}'
-        f'</style></head><body>'
-        f'<div style="margin-bottom:14px">'
-        f'<a href="/dash" style="color:var(--accent);text-decoration:none">← 대시보드</a>'
-        f'</div>'
-        f'<div class="whale-hero">'
-        f'<h1>🐋 Whale Watch</h1>'
-        f'<p>NPS(국민연금)·연기금·5%↑ 보유자 매매 통합 추적. 한국·미국 분기 보유 현황 + 단기 매매 흐름 + 임원 매매.</p>'
-        f'<div style="margin-top:10px">'
-        f'<a href="#nps-kr-full" class="whale-anchor">🇰🇷 KR 풀포트</a>'
-        f'<a href="#nps-us-13f" class="whale-anchor">🇺🇸 US 13F</a>'
-        f'<a href="#nps-kr-5pct" class="whale-anchor">🏛 KR 5%룰</a>'
-        f'<a href="#pension-flow" class="whale-anchor">📊 연기금 흐름</a>'
-        f'<a href="#insider" class="whale-anchor">👤 임원 매매</a>'
-        f'</div></div>'
-    )
-    try:
-        html += _build_whale_full_html()
-    except Exception as e:
-        html += f'<p style="color:red">로드 실패: {_html.escape(str(e))}</p>'
-    html += "</body></html>"
+    """GET /dash/whale — 🐋 Whale Watch (whale-insight 디자인 미러).
+
+    Tailwind CDN + Pretendard + Lucide icons, 라이트 모드, 모바일 우선.
+    """
+    page = (page_name := request.query.get("p", "home"))
+    if page == "kr_full":
+        body = _whale_render_kr_full()
+        title = "NPS 한국 풀 포트"
+    elif page == "us_13f":
+        body = _whale_render_us_13f()
+        title = "NPS 미국 13F"
+    elif page == "kr_5pct":
+        body = _whale_render_kr_5pct()
+        title = "NPS 한국 5%룰"
+    elif page == "pension":
+        body = _whale_render_pension_flow()
+        title = "연기금 5일 흐름"
+    elif page == "insider":
+        body = _whale_render_insider()
+        title = "임원·5%↑ 매매"
+    else:
+        body = _whale_render_home()
+        title = "Whale Watch"
+
+    html = f'''<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>🐋 {_html.escape(title)} | Whale Watch</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap');
+body{{font-family:'Pretendard',sans-serif;background-color:#f8fafc;}}
+.whale-card{{transition:all 0.2s ease;border:1px solid #f1f5f9;background-color:#ffffff;}}
+.whale-card:hover{{transform:translateY(-3px);border-color:#3b82f6;box-shadow:0 10px 15px -3px rgba(0,0,0,0.05);}}
+.trade-card{{background:#ffffff;border-left:4px solid #3b82f6;transition:transform 0.1s;}}
+.trade-card:active{{transform:scale(0.98);}}
+.hide-scrollbar::-webkit-scrollbar{{display:none;}}
+.hide-scrollbar{{-ms-overflow-style:none;scrollbar-width:none;}}
+.tabular-nums{{font-variant-numeric:tabular-nums;}}
+.sticky-name{{position:sticky;left:0;z-index:20;background-color:#fff !important;box-shadow:4px 0 8px -4px rgba(0,0,0,0.1);white-space:normal;word-break:break-all;max-width:120px;}}
+thead th.sticky-name{{background-color:#f8fafc !important;z-index:30;}}
+section{{scroll-margin-top:80px;}}
+</style>
+</head>
+<body class="text-slate-900 pb-10">
+
+<header class="h-14 bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50 px-4 flex items-center justify-between">
+    <button onclick="location.href='/dash/whale'" class="flex items-center gap-1 text-slate-500 font-bold text-sm">
+        <i data-lucide="chevron-left" class="w-5 h-5"></i> {("Whale" if page != "home" else "")}
+    </button>
+    <h2 class="text-base font-extrabold text-slate-800">🐋 {_html.escape(title)}</h2>
+    <a href="/dash" class="text-[11px] font-bold text-slate-400 hover:text-blue-600">메인 ↗</a>
+</header>
+
+<main class="max-w-screen-md mx-auto p-4 space-y-6">
+{body}
+
+<div class="mt-8 text-center">
+    <p class="text-[10px] text-slate-400 font-medium tracking-tight uppercase">
+        Stock Bot Whale Watch • Mirror of <a href="https://whale-insight.com" target="_blank" class="text-blue-500 hover:underline">whale-insight.com</a>
+    </p>
+</div>
+</main>
+
+<script>lucide.createIcons();</script>
+</body></html>'''
     return web.Response(text=html, content_type="text/html")
+
+
+def _whale_render_home() -> str:
+    """Whale 홈 — whale-insight 메인 페이지 미러 (NPS 카드 2개 + 최근 알림 2개 + 5%룰)."""
+    import sqlite3 as _s
+    db_path = f"{_DATA_DIR}/stock.db"
+
+    # 최근 5%룰 카운트 (배지용)
+    recent_5pct = 0
+    recent_10pct = 0
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        cutoff = (datetime.now(KST) - timedelta(days=14)).strftime("%Y-%m-%d")
+        recent_5pct = conn.execute(
+            "SELECT COUNT(*) AS n FROM nps_holdings_disclosed WHERE report_date >= ?",
+            (cutoff,),
+        ).fetchone()["n"]
+        cutoff30 = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
+        recent_10pct = conn.execute(
+            "SELECT COUNT(*) AS n FROM insider_transactions "
+            "WHERE rcept_dt >= ? AND stock_irds_cnt != 0 AND stock_rate >= 10",
+            (cutoff30,),
+        ).fetchone()["n"]
+        conn.close()
+    except Exception:
+        pass
+
+    return f'''
+    <section class="space-y-3">
+        <div class="px-1">
+            <h4 class="text-xl font-black text-slate-900 tracking-tight">지금 국민연금은 무엇을 사고 있을까?</h4>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div onclick="location.href='/dash/whale?p=kr_5pct'"
+                 class="trade-card p-5 rounded-2xl shadow-sm cursor-pointer hover:bg-blue-50/50 transition-all border border-slate-100">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">지분 5%↑</span>
+                    <i data-lucide="arrow-up-right" class="w-4 h-4 text-blue-400"></i>
+                </div>
+                <h5 class="font-extrabold text-slate-900 text-base">대량 보유 변동 알림</h5>
+                <p class="text-[11px] text-slate-500 leading-relaxed mt-1">
+                    최근 14일 <span class="font-bold text-blue-600">{recent_5pct}건</span> · 5%↑ 지분 신규/변동 보고
+                </p>
+            </div>
+            <div onclick="location.href='/dash/whale?p=insider'"
+                 class="trade-card p-5 rounded-2xl shadow-sm cursor-pointer hover:bg-indigo-50/50 transition-all border border-slate-100"
+                 style="border-left-color: #6366f1;">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">지분 10%↑</span>
+                    <i data-lucide="shield-check" class="w-4 h-4 text-indigo-400"></i>
+                </div>
+                <h5 class="font-extrabold text-slate-900 text-base">핵심 주주 거래 보고</h5>
+                <p class="text-[11px] text-slate-500 leading-relaxed mt-1">
+                    최근 30일 <span class="font-bold text-indigo-600">{recent_10pct}건</span> · 10%↑ 보유자 매매
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <section class="space-y-3">
+        <div class="px-1">
+            <h4 class="text-lg font-black text-slate-800">국민연금 포트폴리오</h4>
+            <p class="text-slate-500 text-[11px] font-medium">자산 규모 1,000조, 거대 자본이 선택한 핵심 우량주</p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+            <div onclick="location.href='/dash/whale?p=kr_full'"
+                 class="bg-slate-900 p-6 rounded-3xl cursor-pointer text-white shadow-xl relative overflow-hidden group">
+                <span class="text-[9px] bg-white/10 px-2 py-0.5 rounded-full font-bold mb-3 inline-block border border-white/10">KOSPI &amp; KOSDAQ</span>
+                <h3 class="text-lg font-black mb-0.5">국내 포트폴리오</h3>
+                <span class="text-[10px] text-slate-400 font-bold opacity-80 leading-none">상위 200개 종목 (분기별)</span>
+                <i data-lucide="trending-up" class="absolute -bottom-2 -right-2 w-16 h-16 text-white/5 transition-transform group-hover:scale-110"></i>
+            </div>
+            <div onclick="location.href='/dash/whale?p=us_13f'"
+                 class="bg-blue-700 p-6 rounded-3xl cursor-pointer text-white shadow-xl relative overflow-hidden group">
+                <span class="text-[9px] bg-white/10 px-2 py-0.5 rounded-full font-bold mb-3 inline-block border border-white/10">NASDAQ &amp; NYSE</span>
+                <h3 class="text-lg font-black mb-0.5">해외 포트폴리오</h3>
+                <span class="text-[10px] text-slate-300 font-bold opacity-80 leading-none">SEC 13F-HR 풀 561종목</span>
+                <i data-lucide="globe" class="absolute -bottom-2 -right-2 w-16 h-16 text-white/5 transition-transform group-hover:rotate-12"></i>
+            </div>
+        </div>
+    </section>
+
+    <section class="space-y-3">
+        <div class="px-1">
+            <h4 class="text-lg font-black text-slate-800">단기 매매 흐름</h4>
+            <p class="text-slate-500 text-[11px] font-medium">5일 누적 시총% 기준 매수/매도 시그널</p>
+        </div>
+        <div onclick="location.href='/dash/whale?p=pension'"
+             class="whale-card p-5 rounded-2xl shadow-sm cursor-pointer flex items-center justify-between">
+            <div class="flex flex-col">
+                <span class="text-[9px] font-black text-emerald-600 mb-0.5 bg-emerald-50 px-2 py-0.5 rounded-full w-fit border border-emerald-100">pykrx</span>
+                <h5 class="text-base font-black text-slate-900">연기금 5일 매수/매도</h5>
+                <p class="text-[11px] text-slate-500 mt-0.5">매일 16:30 자동 수집 · 시총% 정렬</p>
+            </div>
+            <div class="bg-slate-50 p-2.5 rounded-xl text-slate-300"><i data-lucide="chevron-right" class="w-4 h-4"></i></div>
+        </div>
+    </section>
+    '''
+
+
+def _whale_render_kr_full() -> str:
+    """NPS 한국 풀 포트 200종목 — whale-insight nps_kr.html 완전 미러."""
+    try:
+        from kis_api import fetch_nps_kr_full_holdings
+        data = fetch_nps_kr_full_holdings(top=200)
+    except Exception as e:
+        return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
+    if data.get("error"):
+        return f'<div class="p-4 bg-amber-50 text-amber-700 rounded-xl">{_html.escape(data["error"])}</div>'
+
+    rows_html = ''
+    for idx, x in enumerate(data.get("rows", []), start=1):
+        name = _html.escape((x.get("name") or "")[:24])
+        sym = x.get("symbol") or ""
+        weight = x.get("weight_pct", 0)
+        share_curr = x.get("share_curr_pct", 0)
+        share_prev = x.get("share_prev_pct", 0)
+        sc_p = x.get("share_change_p")
+        # whale-insight: ▲ 빨강(red-600), ▼ 파랑(blue-600). 한국 관습.
+        if x.get("data_missing") or sc_p is None:
+            arrow_html = '<span class="text-slate-300">—</span>'
+        elif sc_p > 0.05:
+            arrow_html = f'<span class="text-red-600 font-black"><span class="text-[10px] mr-0.5">▲</span>{abs(sc_p):.2f}%p</span>'
+        elif sc_p < -0.05:
+            arrow_html = f'<span class="text-blue-600 font-black"><span class="text-[10px] mr-0.5">▼</span>{abs(sc_p):.2f}%p</span>'
+        else:
+            arrow_html = '<span class="text-slate-400">—</span>'
+
+        sym_lbl = (f' <span class="text-[10px] text-slate-400">{sym}</span>'
+                   if sym else '')
+        rows_html += f'''
+        <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+            <td class="py-4 px-3 text-slate-300 text-center font-bold text-[10px]">{str(idx).zfill(2)}</td>
+            <td class="py-4 px-3 font-bold text-slate-800 text-left sticky-name">{name}{sym_lbl}</td>
+            <td class="py-4 px-2 text-center text-slate-500 tabular-nums text-[11px]">{weight:.2f}%</td>
+            <td class="py-4 px-2 text-center tabular-nums bg-blue-50/10">
+                <div class="text-[12px] font-black text-slate-900">{share_curr:.2f}%</div>
+                <div class="text-[9px] text-slate-400 font-medium">전년: {share_prev:.2f}%</div>
+            </td>
+            <td class="py-4 px-4 text-center tabular-nums">{arrow_html}</td>
+        </tr>'''
+
+    quarter = data.get("quarter_label", "?")
+    snap = data.get("snapshot_date", "?")
+    n_tot = data.get("total_holdings", 0)
+    tot_eok = data.get("total_valuation_eok", 0)
+
+    return f'''
+    <div class="px-4 py-3 bg-blue-50/50 border border-blue-100 rounded-2xl">
+        <p class="text-[11px] text-blue-700 leading-relaxed font-medium">
+            <i data-lucide="alert-circle" class="w-3 h-3 inline-block mr-1 -mt-0.5"></i>
+            사업보고서 + 5%룰 기반 지분율. 자동화 과정에서 일부 오차 가능. <br>
+            데이터 출처: <a href="https://whale-insight.com" target="_blank" class="font-bold underline">whale-insight.com</a> · 스냅샷 {snap}
+        </p>
+    </div>
+
+    <div class="grid grid-cols-3 gap-2">
+        <div class="bg-white rounded-xl border border-slate-100 p-3 text-center">
+            <div class="text-[10px] text-slate-400 font-bold">분기</div>
+            <div class="text-base font-black text-slate-900">{quarter}</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-3 text-center">
+            <div class="text-[10px] text-slate-400 font-bold">종목</div>
+            <div class="text-base font-black text-slate-900">{n_tot}</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-3 text-center">
+            <div class="text-[10px] text-slate-400 font-bold">총 평가액</div>
+            <div class="text-base font-black text-slate-900">{tot_eok:,}억</div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto hide-scrollbar">
+            <table class="w-full text-left border-collapse min-w-full">
+                <thead>
+                    <tr class="bg-slate-50 border-b border-slate-200 text-slate-500">
+                        <th class="py-3 px-3 font-bold text-[10px] text-center w-10">#</th>
+                        <th class="py-3 px-3 font-bold text-[10px] text-left sticky-name">종목명</th>
+                        <th class="py-3 px-2 font-bold text-[10px] text-center">
+                            <div class="flex flex-col items-center justify-center"><span>비중</span><span class="text-[9px] font-medium opacity-80">({quarter})</span></div>
+                        </th>
+                        <th class="py-2 px-2 font-bold text-[10px] text-center bg-blue-50/50 text-blue-600">
+                            <div class="flex flex-col items-center justify-center"><span>지분율</span><span class="text-[9px] font-medium opacity-80">({quarter})</span></div>
+                        </th>
+                        <th class="py-3 px-4 font-bold text-[10px] text-center">변동</th>
+                    </tr>
+                </thead>
+                <tbody class="text-[11px]">{rows_html}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="p-4 bg-slate-100 rounded-2xl border border-slate-200">
+        <div class="flex items-center gap-2 mb-2">
+            <i data-lucide="info" class="w-4 h-4 text-slate-500"></i>
+            <h4 class="font-bold text-xs text-slate-700">투자 지표</h4>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-[10px]">
+            <p class="flex items-center gap-1.5 text-slate-600"><span class="w-2 h-2 bg-red-500 rounded-full"></span> <b>비중 확대</b> (▲)</p>
+            <p class="flex items-center gap-1.5 text-slate-600"><span class="w-2 h-2 bg-blue-500 rounded-full"></span> <b>비중 축소</b> (▼)</p>
+        </div>
+    </div>
+    '''
+
+
+def _whale_render_us_13f() -> str:
+    """NPS 미국 13F TOP 100 — whale-insight 스타일."""
+    try:
+        from kis_api import fetch_nps_us_holdings
+        data = fetch_nps_us_holdings(top=100, include_changes=True)
+    except Exception as e:
+        return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
+    if data.get("error"):
+        return f'<div class="p-4 bg-amber-50 text-amber-700 rounded-xl">{_html.escape(data["error"])}</div>'
+
+    rows_html = ''
+    for idx, x in enumerate(data.get("rows", []), start=1):
+        name = _html.escape((x.get("name_of_issuer") or "")[:32])
+        val = x.get("value_usd", 0)
+        val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+        weight = x.get("weight_pct", 0)
+        status = x.get("status", "")
+        sc = x.get("share_change_pct")
+        if status == "NEW":
+            arrow_html = '<span class="text-emerald-600 font-black text-[11px]">🆕 NEW</span>'
+        elif status == "UP" and sc is not None:
+            arrow_html = f'<span class="text-red-600 font-black"><span class="text-[10px] mr-0.5">▲</span>{abs(sc):.1f}%</span>'
+        elif status == "DOWN" and sc is not None:
+            arrow_html = f'<span class="text-blue-600 font-black"><span class="text-[10px] mr-0.5">▼</span>{abs(sc):.1f}%</span>'
+        else:
+            arrow_html = '<span class="text-slate-400">—</span>'
+        rows_html += f'''
+        <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+            <td class="py-4 px-3 text-slate-300 text-center font-bold text-[10px]">{str(idx).zfill(3)}</td>
+            <td class="py-4 px-3 font-bold text-slate-800 text-left sticky-name">{name}</td>
+            <td class="py-4 px-2 text-center font-black text-slate-900 tabular-nums text-[11px]">{val_str}</td>
+            <td class="py-4 px-2 text-center text-slate-500 tabular-nums text-[11px]">{weight:.2f}%</td>
+            <td class="py-4 px-4 text-center tabular-nums">{arrow_html}</td>
+        </tr>'''
+
+    quarter = data.get("quarter", "?")
+    period_end = data.get("period_end", "?")
+    n_total = data.get("total_holdings", 0)
+    total_b = data.get("total_value_usd", 0) / 1e9
+
+    # EXIT 종목 카드
+    exits_html = ''
+    exits = data.get("exits_top10", [])
+    if exits:
+        exit_rows = ''
+        for e in exits:
+            val = e.get("prev_value_usd", 0)
+            val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
+            exit_rows += f'''
+            <div class="flex justify-between items-center py-2 border-b border-slate-50 last:border-0">
+                <span class="text-[12px] text-slate-700 font-bold">{_html.escape((e.get("name_of_issuer") or "")[:32])}</span>
+                <span class="text-[11px] text-blue-600 font-black tabular-nums">{val_str}</span>
+            </div>'''
+        exits_html = f'''
+        <details class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <summary class="px-4 py-3 cursor-pointer flex items-center justify-between bg-slate-50 hover:bg-slate-100">
+                <span class="font-bold text-sm text-slate-700">전 분기 EXIT TOP 10</span>
+                <i data-lucide="chevron-down" class="w-4 h-4 text-slate-400"></i>
+            </summary>
+            <div class="px-4 py-2">{exit_rows}</div>
+        </details>'''
+
+    return f'''
+    <div class="px-4 py-3 bg-blue-50/50 border border-blue-100 rounded-2xl">
+        <p class="text-[11px] text-blue-700 leading-relaxed font-medium">
+            <i data-lucide="alert-circle" class="w-3 h-3 inline-block mr-1 -mt-0.5"></i>
+            SEC EDGAR Form 13F-HR 자동 수집. 분기말 +45일 후 제출. <br>
+            데이터 출처: <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001608046&type=13F" target="_blank" class="font-bold underline">SEC EDGAR (CIK 0001608046)</a>
+        </p>
+    </div>
+
+    <div class="grid grid-cols-3 gap-2">
+        <div class="bg-white rounded-xl border border-slate-100 p-3 text-center">
+            <div class="text-[10px] text-slate-400 font-bold">분기</div>
+            <div class="text-base font-black text-slate-900">{quarter}</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-3 text-center">
+            <div class="text-[10px] text-slate-400 font-bold">종목</div>
+            <div class="text-base font-black text-slate-900">{n_total}</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-100 p-3 text-center">
+            <div class="text-[10px] text-slate-400 font-bold">총 가치</div>
+            <div class="text-base font-black text-slate-900">${total_b:.1f}B</div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto hide-scrollbar">
+            <table class="w-full text-left border-collapse min-w-full">
+                <thead>
+                    <tr class="bg-slate-50 border-b border-slate-200 text-slate-500">
+                        <th class="py-3 px-3 font-bold text-[10px] text-center w-12">#</th>
+                        <th class="py-3 px-3 font-bold text-[10px] text-left sticky-name">종목명</th>
+                        <th class="py-3 px-2 font-bold text-[10px] text-center">평가액</th>
+                        <th class="py-3 px-2 font-bold text-[10px] text-center">비중</th>
+                        <th class="py-3 px-4 font-bold text-[10px] text-center">주식변화</th>
+                    </tr>
+                </thead>
+                <tbody class="text-[11px]">{rows_html}</tbody>
+            </table>
+        </div>
+    </div>
+
+    {exits_html}
+
+    <p class="text-[10px] text-slate-400 text-center">분기말 {period_end} · TOP 100 표시 (전체 {n_total}종목)</p>
+    '''
+
+
+def _whale_render_kr_5pct() -> str:
+    """NPS 한국 5%룰 — whale-insight major_stock.html 카드 디자인 미러.
+
+    Hero summary box (검정) + 정렬/필터 sticky bar + 종목 카드 리스트.
+    클라이언트 JS로 정렬/필터 (증감율순/최신순, 매수/매도).
+    """
+    import sqlite3 as _s
+    import json as _json
+    db_path = f"{_DATA_DIR}/stock.db"
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        latest_q_row = conn.execute(
+            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
+            "ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        latest_q = latest_q_row["quarter"] if latest_q_row else ""
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
+            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (latest_q,),
+        ).fetchone() if latest_q else None
+        prev_q = prev_q_row["quarter"] if prev_q_row else ""
+        prev_map = {}
+        if prev_q:
+            for pr in conn.execute(
+                "SELECT symbol, MAX(ratio_pct) AS max_r FROM nps_holdings_disclosed "
+                "WHERE quarter = ? AND symbol != '' GROUP BY symbol",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
+        raw = conn.execute(
+            """SELECT report_date, company_name, symbol, ratio_pct
+               FROM nps_holdings_disclosed WHERE quarter = ?""",
+            (latest_q,),
+        ).fetchall() if latest_q else []
+        conn.close()
+    except Exception as e:
+        return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
+
+    # JS 데이터 빌드
+    items = []
+    buy_cnt = 0
+    sell_cnt = 0
+    new_cnt = 0
+    for r in raw:
+        cur = float(r["ratio_pct"] or 0)
+        prev = prev_map.get(r["symbol"]) if r["symbol"] else None
+        if prev is None:
+            change = cur  # NEW = 현재 지분 만큼 증가
+            is_new = True
+        else:
+            change = cur - prev
+            is_new = False
+        items.append({
+            "company": r["company_name"],
+            "symbol": r["symbol"] or "",
+            "date": r["report_date"],
+            "ratio": cur,
+            "prev_ratio": prev or 0,
+            "change": round(change, 2),
+            "is_new": is_new,
+        })
+        if change > 0:
+            buy_cnt += 1
+        elif change < 0:
+            sell_cnt += 1
+        if is_new:
+            new_cnt += 1
+
+    items_json = _json.dumps(items, ensure_ascii=False)
+
+    # 평균 증감
+    avg_change = (sum(x["change"] for x in items) / len(items)) if items else 0
+    period_label = f"{latest_q} 분기" + (f" · 비교: {prev_q}" if prev_q else "")
+
+    return f'''
+    <div class="bg-slate-900 text-white -mx-4 -mt-4 px-6 py-6 rounded-b-3xl shadow-inner mb-4">
+        <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] font-bold text-blue-300 bg-blue-900/40 px-2 py-0.5 rounded-full border border-blue-800">지분 5%↑</span>
+            <span class="text-[10px] text-slate-400 font-medium">{period_label}</span>
+        </div>
+        <h2 class="text-2xl font-black tracking-tight mb-2">대량 보유 변동</h2>
+        <div class="grid grid-cols-3 gap-2 mt-4">
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10">
+                <div class="text-[10px] text-slate-400 font-bold">총 보고</div>
+                <div class="text-xl font-black tabular-nums">{len(items)}</div>
+            </div>
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10">
+                <div class="text-[10px] text-red-300 font-bold">비중 확대 ▲</div>
+                <div class="text-xl font-black text-red-400 tabular-nums">{buy_cnt}</div>
+            </div>
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10">
+                <div class="text-[10px] text-blue-300 font-bold">비중 축소 ▼</div>
+                <div class="text-xl font-black text-blue-400 tabular-nums">{sell_cnt}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="px-4 py-3 bg-blue-50/50 border border-blue-100 rounded-2xl">
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+            직전 분기 대비 지분율 증감을 추적합니다. <br>
+            데이터 출처: <a href="https://www.data.go.kr/data/15106890/fileData.do" target="_blank" class="text-indigo-600 font-bold underline">data.go.kr 공공데이터</a>
+        </p>
+    </div>
+
+    <div class="sticky top-14 z-40 bg-slate-50 border-y border-slate-200 -mx-4 px-4 py-3 flex gap-2 overflow-x-auto hide-scrollbar items-center">
+        <button onclick="changeSort('rate')" id="btn-rate"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">증감율순</button>
+        <button onclick="changeSort('date')" id="btn-date"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">최신순</button>
+        <div class="w-[1px] h-4 bg-slate-200 mx-1 flex-shrink-0"></div>
+        <button onclick="filterType('buy')" id="btn-buy"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">비중 확대</button>
+        <button onclick="filterType('sell')" id="btn-sell"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">비중 축소</button>
+    </div>
+
+    <div id="stock-list" class="space-y-3"></div>
+
+    <div class="p-4 bg-white rounded-2xl border border-dashed border-slate-300">
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+            <span class="font-bold text-slate-800">⚠️ 주의사항:</span> <br>
+            본 데이터는 data.go.kr 공공데이터를 기반으로 자동 수집됩니다. <br>
+            5% 미만 보유 종목은 공시 의무가 없어 표시되지 않습니다.
+        </p>
+    </div>
+
+    <script>
+    const KR5PCT_DATA = {items_json};
+    let curSort = 'rate';
+    let curFilter = 'all';
+
+    function changeSort(s) {{ curSort = s; render(); }}
+    function filterType(f) {{ curFilter = (curFilter === f) ? 'all' : f; render(); }}
+
+    function render() {{
+        let data = [...KR5PCT_DATA];
+        if (curSort === 'rate') {{
+            data.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+        }} else {{
+            data.sort((a, b) => new Date(b.date) - new Date(a.date));
+        }}
+        const filtered = data.filter(x => {{
+            if (curFilter === 'buy') return x.change >= 0;
+            if (curFilter === 'sell') return x.change < 0;
+            return true;
+        }});
+        const list = document.getElementById('stock-list');
+        if (filtered.length === 0) {{
+            list.innerHTML = '<div class="py-20 text-center text-slate-400 font-medium">데이터 없음</div>';
+        }} else {{
+            list.innerHTML = filtered.map(x => {{
+                const isBuy = x.change >= 0;
+                const badgeCls = isBuy
+                    ? 'text-red-600 bg-red-50 border-red-100'
+                    : 'text-blue-600 bg-blue-50 border-blue-100';
+                const badgeTxt = x.is_new ? '🆕 신규' : (isBuy ? '비중 확대' : '비중 축소');
+                const rateCls = isBuy ? 'text-red-600' : 'text-blue-600';
+                const arrow = x.is_new ? '🆕' : (isBuy ? '▲' : '▼');
+                const ratio10 = x.ratio >= 10 ? 'text-red-600' : 'text-slate-700';
+                const symHtml = x.symbol ? `<span class="text-[10px] text-slate-400 font-bold ml-1">${{x.symbol}}</span>` : '';
+                return `<div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <div class="flex items-center gap-2 mb-1.5">
+                                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${{badgeCls}}">${{badgeTxt}}</span>
+                                <span class="text-[10px] text-slate-400 font-bold">${{x.date}}</span>
+                            </div>
+                            <h3 class="text-lg font-extrabold text-slate-900">${{x.company}}${{symHtml}}</h3>
+                        </div>
+                        <div class="text-right">
+                            <span class="${{rateCls}} text-lg font-black"><span class="text-xs">${{arrow}}</span> ${{Math.abs(x.change).toFixed(2)}}p</span>
+                            <p class="text-[10px] text-slate-400 font-bold mt-0.5">최종지분 <span class="${{ratio10}} font-black">${{x.ratio.toFixed(2)}}%</span></p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-50">
+                        <div class="bg-slate-50 p-2 rounded-xl">
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">전 분기 지분</p>
+                            <p class="text-xs font-bold text-slate-700">${{x.prev_ratio > 0 ? x.prev_ratio.toFixed(2) + '%' : '신규'}}</p>
+                        </div>
+                        <div class="bg-slate-50 p-2 rounded-xl">
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">현재 지분</p>
+                            <p class="text-xs font-bold ${{ratio10}}">${{x.ratio.toFixed(2)}}%</p>
+                        </div>
+                    </div>
+                </div>`;
+            }}).join('');
+        }}
+        // active button style
+        document.querySelectorAll('.filter-btn').forEach(b => {{
+            b.className = 'filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all';
+        }});
+        const sb = document.getElementById('btn-' + curSort);
+        if (sb) {{ sb.classList.remove('bg-white','text-slate-500','border-slate-200'); sb.classList.add('bg-slate-900','text-white','border-slate-900'); }}
+        if (curFilter !== 'all') {{
+            const fb = document.getElementById('btn-' + curFilter);
+            const cls = (curFilter === 'buy') ? ['bg-red-500','text-white','border-red-500'] : ['bg-blue-500','text-white','border-blue-500'];
+            if (fb) {{ fb.classList.remove('bg-white','text-slate-500','border-slate-200'); fb.classList.add(...cls); }}
+        }}
+    }}
+    render();
+    </script>
+    '''
+
+
+def _whale_render_pension_flow() -> str:
+    """연기금 5일 매수/매도 — 매수 + 매도 통합."""
+    import sqlite3 as _s
+    db_path = f"{_DATA_DIR}/stock.db"
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        dates = [r["trade_date"] for r in conn.execute(
+            "SELECT DISTINCT trade_date FROM pension_flow_daily ORDER BY trade_date DESC LIMIT 5"
+        ).fetchall()]
+        if dates:
+            ph = ",".join("?" for _ in dates)
+            agg_rows = conn.execute(
+                f"""SELECT pf.symbol, pf.name, pf.market,
+                          SUM(pf.net_amount_won) AS net_total
+                   FROM pension_flow_daily pf
+                   WHERE pf.trade_date IN ({ph})
+                   GROUP BY pf.symbol HAVING net_total != 0""", dates
+            ).fetchall()
+            symbols = [r["symbol"] for r in agg_rows]
+            cap_map = {}
+            if symbols:
+                cph = ",".join("?" for _ in symbols)
+                for cr in conn.execute(
+                    f"SELECT symbol, MAX(trade_date) AS d FROM daily_snapshot WHERE symbol IN ({cph}) GROUP BY symbol",
+                    symbols,
+                ).fetchall():
+                    cap = conn.execute(
+                        "SELECT market_cap FROM daily_snapshot WHERE symbol=? AND trade_date=?",
+                        (cr["symbol"], cr["d"]),
+                    ).fetchone()
+                    if cap and cap["market_cap"]:
+                        cap_map[cr["symbol"]] = int(cap["market_cap"]) * 100_000_000
+        else:
+            agg_rows = []
+            cap_map = {}
+        conn.close()
+    except Exception as e:
+        return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
+
+    enriched = []
+    for r in agg_rows:
+        cap = cap_map.get(r["symbol"], 0)
+        pct = (r["net_total"] * 100.0 / cap) if cap > 0 else 0
+        enriched.append({
+            "symbol": r["symbol"], "name": r["name"], "market": r["market"],
+            "net_won": r["net_total"], "cap_won": cap, "pct": pct,
+        })
+    buy_top = sorted(
+        [e for e in enriched if e["net_won"] > 0],
+        key=lambda x: (-x["pct"] if x["cap_won"] else 0, -x["net_won"]),
+    )[:50]
+    sell_top = sorted(
+        [e for e in enriched if e["net_won"] < 0],
+        key=lambda x: (x["pct"] if x["cap_won"] else 0, x["net_won"]),
+    )[:50]
+    period = (f"{dates[-1][:4]}-{dates[-1][4:6]}-{dates[-1][6:]} ~ "
+              f"{dates[0][:4]}-{dates[0][4:6]}-{dates[0][6:]}") if dates else "-"
+
+    def _row(e, idx, is_buy=True):
+        net_eok = e["net_won"] / 100_000_000
+        pct_str = f'{e["pct"]:+.2f}%' if e["cap_won"] else '—'
+        color_cls = 'text-red-600' if is_buy else 'text-blue-600'  # 한국식 (매수=빨강)
+        sign = '▲' if is_buy else '▼'
+        return f'''
+        <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+            <td class="py-3 px-3 text-slate-300 text-center font-bold text-[10px]">{str(idx).zfill(2)}</td>
+            <td class="py-3 px-3 font-bold text-slate-800 text-left sticky-name">{_html.escape(e["name"] or "")} <span class="text-[10px] text-slate-400">{e["symbol"]}</span></td>
+            <td class="py-3 px-2 text-right {color_cls} font-black tabular-nums text-[11px]">{net_eok:+,.0f}억</td>
+            <td class="py-3 px-3 text-right {color_cls} font-black tabular-nums text-[12px]"><span class="text-[10px] mr-0.5">{sign}</span>{abs(e["pct"]):.2f}%</td>
+        </tr>'''
+
+    buy_rows = ''.join(_row(e, i, True) for i, e in enumerate(buy_top, start=1))
+    sell_rows = ''.join(_row(e, i, False) for i, e in enumerate(sell_top, start=1))
+
+    def _make_table(title, color_cls, rows, label_pct):
+        if not rows:
+            return f'<div class="p-4 bg-slate-50 text-slate-400 rounded-2xl text-center text-[12px]">{title} 데이터 없음</div>'
+        return f'''
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-{color_cls}-50/30">
+                <h4 class="font-extrabold text-sm text-{color_cls}-600">{title}</h4>
+                <span class="text-[10px] text-slate-400 font-bold">시총% 정렬</span>
+            </div>
+            <div class="overflow-x-auto hide-scrollbar">
+                <table class="w-full text-left border-collapse min-w-full">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 text-slate-500">
+                            <th class="py-2 px-3 font-bold text-[10px] text-center w-10">#</th>
+                            <th class="py-2 px-3 font-bold text-[10px] text-left sticky-name">종목</th>
+                            <th class="py-2 px-2 font-bold text-[10px] text-right">{label_pct}</th>
+                            <th class="py-2 px-3 font-bold text-[10px] text-right">시총%</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-[11px]">{rows}</tbody>
+                </table>
+            </div>
+        </div>'''
+
+    return f'''
+    <div class="px-4 py-3 bg-emerald-50/50 border border-emerald-100 rounded-2xl">
+        <p class="text-[11px] text-emerald-700 leading-relaxed font-medium">
+            <i data-lucide="alert-circle" class="w-3 h-3 inline-block mr-1 -mt-0.5"></i>
+            연기금 단독 매매 (KRX 8개 투자자 분류 중 '연기금'). NPS가 60~80% 비중. <br>
+            기간: <b>{period}</b> · 매일 16:30 자동 수집 (pykrx)
+        </p>
+    </div>
+
+    {_make_table('🟢 매수 TOP 50', 'red', buy_rows, '순매수')}
+    {_make_table('🔴 매도 TOP 50', 'blue', sell_rows, '순매도')}
+
+    <div class="p-4 bg-slate-100 rounded-2xl border border-slate-200">
+        <p class="text-[10px] text-slate-500 leading-relaxed">
+            * 시총% = 5일 누적 순매수(매도) ÷ 시가총액. 작은 회사에서 큰 % 변화는 강한 시그널.
+        </p>
+    </div>
+    '''
+
+
+def _whale_render_insider() -> str:
+    """임원·5%↑ 주주 매매 (90일) — whale-insight elestock.html 카드 디자인 미러.
+
+    Hero summary box (인디고) + 정렬/필터 바 + 카드 리스트.
+    """
+    import sqlite3 as _s
+    import json as _json
+    db_path = f"{_DATA_DIR}/stock.db"
+    try:
+        conn = _s.connect(db_path, timeout=10)
+        conn.row_factory = _s.Row
+        cutoff = (datetime.now(KST) - timedelta(days=90)).strftime("%Y-%m-%d")
+        raw = conn.execute(
+            """SELECT it.rcept_dt, it.symbol, sm.name,
+                      it.repror, it.ofcps, it.main_shrholdr,
+                      it.stock_irds_cnt, it.stock_rate, it.stock_irds_rate
+               FROM insider_transactions it
+               LEFT JOIN stock_master sm ON sm.symbol = it.symbol
+               WHERE it.rcept_dt >= ? AND it.stock_irds_cnt != 0 AND it.stock_rate >= 5""",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        return f'<div class="p-4 bg-red-50 text-red-600 rounded-xl">로드 실패: {_html.escape(str(e))}</div>'
+
+    items = []
+    buy_cnt = 0
+    sell_cnt = 0
+    for r in raw:
+        irds = r["stock_irds_cnt"] or 0
+        rate = r["stock_rate"] or 0
+        rate_chg = r["stock_irds_rate"] or 0
+        role = (r["main_shrholdr"] or '') or (r["ofcps"] or '')
+        items.append({
+            "company": r["name"] or "",
+            "symbol": r["symbol"] or "",
+            "date": r["rcept_dt"],
+            "reporter": r["repror"] or "",
+            "role": role,
+            "qty": irds,
+            "rate": rate,
+            "rate_chg": rate_chg,
+        })
+        if irds > 0:
+            buy_cnt += 1
+        else:
+            sell_cnt += 1
+
+    items_json = _json.dumps(items, ensure_ascii=False)
+
+    return f'''
+    <div class="bg-indigo-950 text-white -mx-4 -mt-4 px-6 py-6 rounded-b-3xl shadow-inner mb-4">
+        <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] font-bold text-indigo-200 bg-indigo-900/60 px-2 py-0.5 rounded-full border border-indigo-800">지분 10%↑</span>
+            <span class="text-[10px] text-slate-400 font-medium">최근 90일</span>
+        </div>
+        <h2 class="text-2xl font-black tracking-tight mb-2">핵심 주주 거래 보고</h2>
+        <div class="grid grid-cols-3 gap-2 mt-4">
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10">
+                <div class="text-[10px] text-slate-400 font-bold">총 보고</div>
+                <div class="text-xl font-black tabular-nums">{len(items)}</div>
+            </div>
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10">
+                <div class="text-[10px] text-red-300 font-bold">매수 ▲</div>
+                <div class="text-xl font-black text-red-400 tabular-nums">{buy_cnt}</div>
+            </div>
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10">
+                <div class="text-[10px] text-blue-300 font-bold">매도 ▼</div>
+                <div class="text-xl font-black text-blue-400 tabular-nums">{sell_cnt}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="px-4 py-3 bg-indigo-50/50 border border-indigo-100 rounded-2xl">
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+            상장법인 주요주주 소유주식 변동 보고. 10%↑ 보유자 매매는 강한 시그널. <br>
+            데이터 출처: <a href="https://opendart.fss.or.kr" target="_blank" class="text-indigo-600 font-bold underline">DART 임원·주요주주 보고</a> · 5분마다 자동 수집
+        </p>
+    </div>
+
+    <div class="sticky top-14 z-40 bg-slate-50 border-y border-slate-200 -mx-4 px-4 py-3 flex gap-2 overflow-x-auto hide-scrollbar items-center">
+        <button onclick="changeSort('rate')" id="btn-rate"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">증감율순</button>
+        <button onclick="changeSort('date')" id="btn-date"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">최신순</button>
+        <div class="w-[1px] h-4 bg-slate-200 mx-1 flex-shrink-0"></div>
+        <button onclick="filterType('buy')" id="btn-buy"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">매수만</button>
+        <button onclick="filterType('sell')" id="btn-sell"
+                class="filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all">매도만</button>
+    </div>
+
+    <div id="stock-list" class="space-y-3"></div>
+
+    <div class="p-4 bg-white rounded-2xl border border-dashed border-slate-300">
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+            <span class="font-bold text-slate-800">⚠️ 주의사항:</span> <br>
+            보고일은 DART 접수일 기준. 실제 매매 시점과 차이 가능. 5%↑ 보유자만 표시.
+        </p>
+    </div>
+
+    <script>
+    const INSIDER_DATA = {items_json};
+    let curSort = 'date';
+    let curFilter = 'all';
+
+    function changeSort(s) {{ curSort = s; render(); }}
+    function filterType(f) {{ curFilter = (curFilter === f) ? 'all' : f; render(); }}
+
+    function render() {{
+        let data = [...INSIDER_DATA];
+        if (curSort === 'rate') {{
+            data.sort((a, b) => Math.abs(b.rate_chg) - Math.abs(a.rate_chg));
+        }} else {{
+            data.sort((a, b) => (b.date > a.date) ? 1 : -1);
+        }}
+        const filtered = data.filter(x => {{
+            if (curFilter === 'buy') return x.qty > 0;
+            if (curFilter === 'sell') return x.qty < 0;
+            return true;
+        }});
+        const list = document.getElementById('stock-list');
+        if (filtered.length === 0) {{
+            list.innerHTML = '<div class="py-20 text-center text-slate-400 font-medium">데이터 없음</div>';
+        }} else {{
+            list.innerHTML = filtered.map(x => {{
+                const isBuy = x.qty > 0;
+                const badgeCls = isBuy
+                    ? 'text-red-600 bg-red-50 border-red-100'
+                    : 'text-blue-600 bg-blue-50 border-blue-100';
+                const badgeTxt = isBuy ? '매수' : '매도';
+                const rateCls = isBuy ? 'text-red-600' : 'text-blue-600';
+                const arrow = isBuy ? '▲' : '▼';
+                const rate10 = x.rate >= 10 ? 'text-red-600' : 'text-slate-700';
+                const symHtml = x.symbol ? `<span class="text-[10px] text-slate-400 font-bold ml-1">${{x.symbol}}</span>` : '';
+                const qtyAbs = Math.abs(x.qty).toLocaleString();
+                const sign = isBuy ? '+' : '-';
+                return `<div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <div class="flex items-center gap-2 mb-1.5">
+                                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${{badgeCls}}">${{badgeTxt}}</span>
+                                <span class="text-[10px] text-slate-400 font-bold">${{x.date}}</span>
+                            </div>
+                            <h3 class="text-lg font-extrabold text-slate-900">${{x.company}}${{symHtml}}</h3>
+                        </div>
+                        <div class="text-right">
+                            <span class="${{rateCls}} text-lg font-black"><span class="text-xs">${{arrow}}</span> ${{x.rate_chg.toFixed(2)}}%p</span>
+                            <p class="text-[10px] text-slate-400 font-bold mt-0.5">최종지분 <span class="${{rate10}} font-black">${{x.rate.toFixed(2)}}%</span></p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-50">
+                        <div class="bg-slate-50 p-2 rounded-xl">
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">보고자</p>
+                            <p class="text-xs font-bold text-slate-700">${{x.reporter}}</p>
+                            <p class="text-[10px] text-slate-400">${{x.role}}</p>
+                        </div>
+                        <div class="bg-slate-50 p-2 rounded-xl">
+                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">변동수량</p>
+                            <p class="text-xs font-bold ${{rateCls}}">${{sign}}${{qtyAbs}}주</p>
+                        </div>
+                    </div>
+                </div>`;
+            }}).join('');
+        }}
+        document.querySelectorAll('.filter-btn').forEach(b => {{
+            b.className = 'filter-btn px-4 py-1.5 bg-white border border-slate-200 text-slate-500 text-xs font-bold rounded-full whitespace-nowrap transition-all';
+        }});
+        const sb = document.getElementById('btn-' + curSort);
+        if (sb) {{ sb.classList.remove('bg-white','text-slate-500','border-slate-200'); sb.classList.add('bg-slate-900','text-white','border-slate-900'); }}
+        if (curFilter !== 'all') {{
+            const fb = document.getElementById('btn-' + curFilter);
+            const cls = (curFilter === 'buy') ? ['bg-red-500','text-white','border-red-500'] : ['bg-blue-500','text-white','border-blue-500'];
+            if (fb) {{ fb.classList.remove('bg-white','text-slate-500','border-slate-200'); fb.classList.add(...cls); }}
+        }}
+    }}
+    render();
+    </script>
+    '''
 
 
 def _build_whale_full_html() -> str:
