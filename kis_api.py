@@ -6817,22 +6817,25 @@ async def cmd_regime(mode: str = "current", days: int = 5,
     prev_regime = cur.get("current", "neutral")
     debounce_count = int(cur.get("debounce_count", 0) or 0)
     days_in_regime = int(cur.get("days_in_regime", 0) or 0)
+    last_updated = cur.get("last_updated", "")
+    same_day_call = (last_updated == today)
 
-    # 디바운스 로직
+    # 디바운스 로직 — 같은 날 중복 호출 시 카운트 누적 안 함 (버그 수정)
     confirmed_regime = prev_regime
     if new_regime == prev_regime:
-        # 같은 레짐 유지
-        debounce_count += 1
-        days_in_regime += 1
+        # 같은 레짐 유지 — 다른 날 호출일 때만 +1
+        if not same_day_call:
+            debounce_count += 1
+            days_in_regime += 1
         confirmed_regime = prev_regime
     else:
-        # 다른 레짐 감지 → 디바운스 카운트 시작/증가
+        # 다른 레짐 감지 → 디바운스 카운트 (다른 날 호출일 때만 증가)
         if cur.get("pending_regime") == new_regime:
-            debounce_count += 1
+            if not same_day_call:
+                debounce_count += 1
         else:
             debounce_count = 1
 
-        # 진입 조건
         threshold = 5 if new_regime == "offensive" else (3 if new_regime == "crisis" else 1)
 
         # 🟢→🟡, 🔴→🟡 즉시 가능 (Crisis exit는 별도 조건)
@@ -6842,14 +6845,13 @@ async def cmd_regime(mode: str = "current", days: int = 5,
                 debounce_count = 1
                 days_in_regime = 1
             elif prev_regime == "crisis":
-                # VIX < 25 OR S&P가 200MA -3% 이내
                 sp_dist = indicators["sp500_vs_200ma"].get("distance_pct")
                 if (vix_val is not None and vix_val < 25) or (sp_dist is not None and sp_dist > -3):
                     confirmed_regime = "neutral"
                     debounce_count = 1
                     days_in_regime = 1
                 else:
-                    confirmed_regime = prev_regime  # 유지
+                    confirmed_regime = prev_regime
         elif debounce_count >= threshold:
             confirmed_regime = new_regime
             days_in_regime = 1
@@ -6874,15 +6876,14 @@ async def cmd_regime(mode: str = "current", days: int = 5,
     state["current"] = new_state_cur
     state["prev_regime"] = prev_regime  # 텔레그램 알림용
 
-    # history 기록
+    # history 기록 — 어떤 위치든 같은 날짜 entry는 단일 row 보장
     h_entry = {"date": today, "regime": confirmed_regime,
                "sp_distance_pct": indicators["sp500_vs_200ma"].get("distance_pct"),
                "vix": vix_val}
     hist = state.get("history", [])
-    if hist and hist[-1].get("date") == today:
-        hist[-1] = h_entry
-    else:
-        hist.append(h_entry)
+    hist = [h for h in hist if h.get("date") != today]
+    hist.append(h_entry)
+    hist.sort(key=lambda h: h.get("date", ""))
     state["history"] = hist[-90:]
     save_json(REGIME_STATE_FILE, state)
 
