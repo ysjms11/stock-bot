@@ -9,30 +9,37 @@
 
 **우선순위 순:**
 
-1. **🆕 NPS 대시보드 Whale Watch — 6 카드 완료 (4/27~28)** ✅
-   - **Phase A — KR 5%룰 자동 수집** (kis_api.py / `nps_holdings_disclosed`)
-     - data.go.kr CSV 자동 다운로드 (atchFileId 메타페이지 동적 추출 + fallback)
-     - 한글→영문약자 매핑 (LG/SK/HD/KCC 등 22개) + suffix prefix substring fallback → **111/111 (100%) 매칭**
-     - 4Q25 분량 111건 DB 저장
-   - **Phase B — US 13F-HR 자동 수집** (kis_api.py / `nps_us_holdings`)
-     - SEC EDGAR submissions JSON → 13F 목록 → holdings XML 파싱
-     - NPS CIK: **0001608046** (이전 메모 0001423053은 잘못)
-     - 13F value 단위: actual dollars (2023 SEC 개정, ×1000 X)
-     - **2025Q1~Q4 백필 완료, 2,187 rows, 4Q25 561종목 총 $135B**
-   - **Phase D — `/dash` 🐋 Whale Watch 5 카드**
-     - 카드 1: 🏛 NPS KR 5%룰 (분기, 지분%, **▲/▼ 전 분기 대비 추가**, 10%↑ 빨강)
-     - 카드 2: 🟢 연기금 5일 매수 TOP 20 (시총% 정규화)
-     - 카드 3: 🔴 연기금 5일 매도 TOP 20 (시총% 정규화)
-     - 카드 4: 👤 임원·5%↑ 주주 매매 (insider_transactions, 30일)
-     - 카드 5: 🇺🇸 **NPS 미국 13F TOP 30 (가치 + 비중 + ▲/▼/🆕 NEW + EXIT details)**
-     - 카드 6: 🇰🇷 **NPS 한국 풀 포트 200종목 TOP 30** (whale-insight.com 미러)
-       - whale-insight `assets/js/data.js` → NPS_KR.krTimeline 자동 파싱
-       - 종목명 + 비중 + 평가액(억) + 지분율 + 전년 대비 ▲/▼ (지분율%p)
-       - **200/200 (100%) 종목 매칭** (현대자동차/엘에스일렉트릭/F&F 매핑 보강)
-       - 출처: whale-insight.com 카드 footer 표기
-   - **자동 잡**: 일요일 03:30 KST `weekly_nps` 통합 — KR 5%룰 + US 13F + KR 풀포트
-     - KR 5%룰 신규/US 13F 신규/KR 풀 분기 라벨 변경 시 텔레그램 알림
-   - **MCP 도구는 만들지 않음** — 사용자가 대시보드에서 직접 Claude 분석 요청
+1. **🆕 Whale Watch — 전용 페이지 + NPS 단독 데이터 (4/27~5/2 완료)** ✅
+   - **`/dash/whale`** 전용 페이지 — whale-insight.com 디자인 풀 미러
+     - Tailwind CDN + Pretendard + Lucide 아이콘, 라이트모드, 모바일 우선 max-w-screen-md
+     - 라우팅: `?p=home|kr_full|us_13f|kr_5pct|insider|pension`
+     - 5%룰/10%룰 카드 디자인 + 정렬/필터 sticky bar (증감율순/최신순/매수/매도) + JS 동적 렌더
+     - 한국식 ▲ 빨강 / ▼ 파랑
+     - 메인 `/dash`는 요약 박스 4개 (각 TOP 3) + "전체 보기 ↗" 새 창 링크
+   - **데이터 소스 (NPS 단독, 사용자 의도 반영)**
+     - `nps_holdings_disclosed` (data.go.kr 분기 + DART 매일 살붙이기) = **260건** (data.go.kr 111 + DART 149)
+       - 분기별: 2025Q4 (111) + 2026Q1 (15) + 2026Q2 (134)
+       - 한글→영문약자 매핑 22개 (LG/SK/HD/KCC 등) + suffix substring fallback
+     - `nps_us_holdings` (SEC EDGAR 13F-HR) = **2,187건 (4분기 백필)**, 4Q25 561종목 총 $135B
+       - NPS CIK **0001608046** (이전 메모 0001423053은 잘못)
+       - value 단위: actual dollars (2023 SEC 개정 적용)
+     - `nps_kr_full_holdings` (whale-insight 미러) = **200종목 100% 매칭**
+     - `pension_flow_daily` (pykrx) = 매일 16:30 KST 연기금 수급
+   - **자동 잡**:
+     - 매일 04:00 KST `nps_dart_inc` — D001 7일치 → repror=국민연금공단 필터 → 살붙이기 (~15초). 신규 시 텔레그램 알림
+     - 일요일 03:30 KST `weekly_nps` — KR 5%룰 + US 13F + KR 풀포트 + 90일 NPS DART 풀 백필
+     - 매일 16:30 KST `pension_collect` (pykrx)
+     - 평일 19:00 KST `pension_alert` (5일 누적 시총% 기준 텔레그램)
+   - **dart_5pct_changes / dart_10pct_insiders** (NPS 외 데이터, 페이지 사용 X) 보존만 — 향후 "전체 시장" 페이지 활용 가능
+   - **MCP 도구는 만들지 않음** — 사용자가 대시보드에서 보고 Claude 분석 요청
+
+2. **🐛 (5/1) 레짐 days_in_regime 멱등성 버그 수정** ✅
+   - 원인: `cmd_regime` 호출 시마다 `days_in_regime += 1`, `debounce_count += 1` 누적
+   - 시간당 잡(`regime_transition` 60분) + MCP 호출이 매번 카운트해 4/15 offensive 전환 후 17일이 **54일**로 잘못 표시
+   - 수정: `last_updated == today` 체크 추가 (멱등성), history dedup 어떤 위치든
+   - state 정정: 54 → 17일차, 28 → 26 entries
+   - 전수조사 결과: 다른 곳은 모두 dedup 가드 있음 (DB INSERT는 모두 OR REPLACE/IGNORE/ON CONFLICT, *_sent.json은 day-key dedup)
+   - 향후 방어: JSON state 변경 함수에 멱등성 단위 테스트 강제 (현재는 test 인프라 약함)
 
 2. **🔥 4/28 (월) 트리플 이벤트** — AMD Q1 + HD현대일렉 Q1 + FOMC 동시 발표
    - **자동 알림 자동 작동**: 미국 애널 다운그레이드 시 차등 헤더 (🚨🚨🚨 Tier S / 🚨🚨 Tier A / ⚠️ 일반)
