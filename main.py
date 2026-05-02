@@ -4358,8 +4358,10 @@ async def weekly_us_analyst_sync(context):
         msg = (
             "🔄 US 애널 마스터 동기화 완료\n"
             f"• 신규 애널: {result['inserted']}명\n"
-            f"• 자동 watched=1: {result['auto_watched']}명 (별점≥{result['min_stars']} 콜≥{result['min_calls']})\n"
-            f"• 마스터 총: {result['total_master']}명 / watched: {result['total_watched']}명"
+            f"• 자동 watched=1 (Tier A): {result['auto_watched_a']}명\n"
+            f"• Tier S 엘리트: {result['tier_s_count']}명\n"
+            f"• 마스터 총: {result['total_master']}명 / watched: {result['total_watched']}명\n"
+            f"• 기준: {result['criteria']}"
         )
         print(f"[us_analyst_sync] {result}")
         await context.bot.send_message(chat_id=CHAT_ID, text=msg)
