@@ -1963,17 +1963,39 @@ async def daily_collect_sanity_check(context):
 
 
 async def weekly_financial_job(context):
-    """주 1회 재무 수집 (일요일 07:15 KST)."""
+    """주 1회 재무 수집 (일요일 07:15 KST).
+
+    스코프: 2,861종목 × 3 Phase (KIS IS + KIS BS + DART CF 4분기) ≈ 25분 + 오버헤드.
+    타임아웃 60분 (30분 → 60분, 5/2 첫 타임아웃 사고 후 보강).
+    """
     if not _HAS_DB_COLLECTOR:
         return
     try:
-        await asyncio.wait_for(collect_financial_weekly(), timeout=1800)  # 30분
-        await context.bot.send_message(chat_id=CHAT_ID, text="📊 주간 재무 수집 완료")
+        result = await asyncio.wait_for(collect_financial_weekly(), timeout=3600)  # 60분
+        if isinstance(result, dict):
+            t = result.get("tickers", 0)
+            ist = result.get("income_statement", 0)
+            bst = result.get("balance_sheet", 0)
+            dft = result.get("dart_full", 0)
+            msg = (
+                "📊 주간 재무 수집 완료\n"
+                f"• 종목: {t}\n"
+                f"• 손익계산서: {ist}/{t}\n"
+                f"• 대차대조표: {bst}/{t}\n"
+                f"• DART CF (4분기): {dft}"
+            )
+        else:
+            msg = "📊 주간 재무 수집 완료"
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
     except asyncio.TimeoutError:
-        print("[weekly_financial] 30분 타임아웃")
-        await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ 주간 재무 수집 30분 초과 타임아웃")
+        print("[weekly_financial] 60분 타임아웃")
+        await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ 주간 재무 수집 60분 초과 타임아웃")
     except Exception as e:
         print(f"[weekly_financial] 오류: {e}")
+        try:
+            await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ 주간 재무 수집 오류: {type(e).__name__}: {e}")
+        except Exception:
+            pass
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4204,23 +4226,58 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 주간 무결성 체크 (일 07:05 KST)
 # 최근 영업일 5일 daily_snapshot 누락 시 텔레그램 경고
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# KRX 공휴일 (휴장일) — 매년 1월 갱신
+# 출처: https://open.krx.co.kr/contents/MKD/01/0110/01100305/MKD01100305.jsp
+_KRX_HOLIDAYS = frozenset({
+    # 2026년
+    "20260101",                                      # 신정
+    "20260216", "20260217", "20260218",              # 설 연휴
+    "20260302",                                      # 3.1절 대체 (3/1 일)
+    "20260501",                                      # 근로자의 날
+    "20260505",                                      # 어린이날
+    "20260525",                                      # 부처님오신날 대체 (5/24 일)
+    "20260603",                                      # 제21대 대통령 선거
+    "20260817",                                      # 광복절 대체 (8/15 토)
+    "20260924", "20260925",                          # 추석 (9/26 토)
+    "20261009",                                      # 한글날
+    "20261225",                                      # 성탄절
+    # 2027년 — 다음 해 1월 PROGRESS 알림 추가 시 보강
+    "20270101",
+})
+
+
+def _is_krx_business_day(d) -> bool:
+    """KRX 영업일 판정. d: datetime.date 또는 datetime."""
+    if hasattr(d, "date"):
+        d = d.date()
+    if d.weekday() >= 5:  # 토(5)/일(6)
+        return False
+    return d.strftime("%Y%m%d") not in _KRX_HOLIDAYS
+
+
 async def weekly_sanity_check(context):
-    """매주 일요일 07:05: 최근 영업일 5일 daily_snapshot 존재 확인"""
+    """매주 일요일 07:05: 최근 영업일 5일 daily_snapshot 존재 확인.
+    KRX 공휴일(근로자의 날·신정·설·추석·임시공휴일 등)은 영업일에서 제외.
+    """
     try:
         from db_collector import _get_db
         conn = _get_db()
         cur = conn.execute(
             "SELECT trade_date, COUNT(*) FROM daily_snapshot "
             "WHERE trade_date >= ? GROUP BY trade_date ORDER BY trade_date DESC",
-            ((datetime.now(KST) - timedelta(days=9)).strftime("%Y%m%d"),)
+            ((datetime.now(KST) - timedelta(days=14)).strftime("%Y%m%d"),)
         )
         rows = cur.fetchall()
         conn.close()
-        # 지난 5 영업일(월-금) 역산
+        # 지난 5 영업일 역산 — KRX 공휴일 제외
         bizdays = []
         d = datetime.now(KST).date() - timedelta(days=1)
-        while len(bizdays) < 5:
-            if d.weekday() < 5:
+        # 안전 상한: 14일 뒤로까지 (장기 연휴 대비)
+        for _ in range(14):
+            if len(bizdays) >= 5:
+                break
+            if _is_krx_business_day(d):
                 bizdays.append(d.strftime("%Y%m%d"))
             d -= timedelta(days=1)
         have = {r[0] for r in rows if r[1] > 1500}
