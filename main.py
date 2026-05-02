@@ -4259,6 +4259,7 @@ def _is_krx_business_day(d) -> bool:
 async def weekly_sanity_check(context):
     """매주 일요일 07:05: 최근 영업일 5일 daily_snapshot 존재 확인.
     KRX 공휴일(근로자의 날·신정·설·추석·임시공휴일 등)은 영업일에서 제외.
+    당해 _KRX_HOLIDAYS 등록 카운트 부족 시 갱신 알림 (매주 발송 → 잊지 않게).
     """
     try:
         from db_collector import _get_db
@@ -4285,6 +4286,19 @@ async def weekly_sanity_check(context):
         if missing:
             msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+
+        # KRX 공휴일 list 연 1회 갱신 알림
+        # 정상 한 해 13~16건. 8건 미만이면 list 미갱신/누락으로 간주
+        this_year_str = str(datetime.now(KST).year)
+        krx_cnt = sum(1 for d in _KRX_HOLIDAYS if d.startswith(this_year_str))
+        if krx_cnt < 8:
+            await context.bot.send_message(
+                chat_id=CHAT_ID,
+                text=(f"📅 KRX 공휴일 list 갱신 필요\n"
+                      f"{this_year_str}년 등록: {krx_cnt}건 (정상 13~16건)\n"
+                      f"main.py `_KRX_HOLIDAYS` frozenset 갱신\n"
+                      f"https://open.krx.co.kr/contents/MKD/01/0110/01100305/MKD01100305.jsp")
+            )
     except Exception as e:
         print(f"[weekly_sanity] 실패: {e}")
 
