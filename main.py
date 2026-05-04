@@ -916,17 +916,19 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                         watch_sent[ticker] = today_w
                         save_json(WATCH_SENT_FILE, watch_sent)
                         memo = info.get("memo", "")
+                        # gap = (buy_price - cur) / buy_price * 100, 음수=이하 진입
+                        gap_pct = (cur - buy_price) / buy_price * 100 if buy_price > 0 else 0
                         if _is_us_ticker(ticker):
                             buy_alerts.append(
                                 f"🟢🇺🇸 *{info['name']}* ({ticker})\n"
-                                f"  현재가: ${cur:,.2f} ← 매수희망가 ${buy_price:,.2f} 도달!\n"
+                                f"  현재가: ${cur:,.2f} ≤ 매수희망가 ${buy_price:,.2f} ({gap_pct:+.1f}%)\n"
                                 + (f"  📝 {memo}\n" if memo else "")
                                 + "  → *매수 검토!*"
                             )
                         else:
                             buy_alerts.append(
                                 f"🟢🇰🇷 *{info['name']}* ({ticker})\n"
-                                f"  현재가: {cur:,}원 ← 매수희망가 {buy_price:,.0f}원 도달!\n"
+                                f"  현재가: {cur:,}원 ≤ 매수희망가 {buy_price:,.0f}원 ({gap_pct:+.1f}%)\n"
                                 + (f"  📝 {memo}\n" if memo else "")
                                 + "  → *매수 검토!*"
                             )
@@ -947,7 +949,7 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                 if today_ev:
                     extra += f"\n⚠️ 이벤트: {today_ev}"
 
-                msg = "🟢🟢🟢 *매수 감시가 도달!* 🟢🟢🟢\n\n" + "\n\n".join(buy_alerts) + "\n" + extra + "\n\n→ 채팅에서 매수 검토"
+                msg = "🟢🟢🟢 *매수 감시가 진입!* 🟢🟢🟢\n_(현재가가 매수희망가 이하로 진입)_\n\n" + "\n\n".join(buy_alerts) + "\n" + extra + "\n\n→ 채팅에서 매수 검토"
                 try:
                     await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
                 except Exception as e:
