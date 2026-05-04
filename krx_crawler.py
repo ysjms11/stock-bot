@@ -1472,3 +1472,16 @@ def _summarize_filters(filters: dict) -> dict:
         if v is not None:
             summary[k] = v
     return summary
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 모듈 export 가드 — db_collector 있으면 SQLite 버전으로 강제
+# load_krx_db는 위 _USE_SQLITE 가드로 처리 완료.
+# _load_history / scan_stocks는 _compute_technicals 내부 의존이라 def는 유지,
+# 외부 export 시점에만 SQLite 버전으로 덮어쓰기 (prod 영향 X, 잠재 trap 제거).
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if _USE_SQLITE:
+    from db_collector import (
+        _load_history as _load_history,
+        scan_stocks as scan_stocks,
+    )
