@@ -1605,13 +1605,21 @@ async def collect_financial_weekly(date: str = None) -> dict:
     success_dart = 0
 
     session = _get_session()
+    # Per-ticker timeout 10초 (5/5 사고 후) — 한 종목 hang으로 전체 60분 타임아웃 방지
+    _PER_TICKER_TIMEOUT = 10.0
+    _timeout_count = {"is": 0, "bs": 0}
+    # 진행 로그 50건마다 (이전 200 → 50, buffering 가시성 ↑)
+    _PROGRESS_EVERY = 50
+
     # Phase A: 손익계산서
-    print(f"[Finance] Phase A — 손익계산서 {len(tickers)}종목")
+    print(f"[Finance] Phase A — 손익계산서 {len(tickers)}종목 시작", flush=True)
+    _phase_start = asyncio.get_event_loop().time()
     for i, ticker in enumerate(tickers):
         try:
             from kis_api import kis_income_statement
-            rows_is = await _rate_limited(
-                kis_income_statement(ticker, token, session=session)
+            rows_is = await asyncio.wait_for(
+                _rate_limited(kis_income_statement(ticker, token, session=session)),
+                timeout=_PER_TICKER_TIMEOUT
             )
             for r in (rows_is or []):
                 rp = r.get("report_period", "")
@@ -1628,21 +1636,28 @@ async def collect_financial_weekly(date: str = None) -> dict:
                     r.get("operating_profit"), r.get("op_profit"), r.get("net_income"),
                 ))
             success_is += 1
+        except asyncio.TimeoutError:
+            _timeout_count["is"] += 1
         except Exception:
             pass
-        if (i + 1) % 200 == 0:
-            print(f"[Finance] 손익계산서: {i+1}/{len(tickers)}")
+        if (i + 1) % _PROGRESS_EVERY == 0:
+            elapsed = asyncio.get_event_loop().time() - _phase_start
+            print(f"[Finance] 손익: {i+1}/{len(tickers)} (성공 {success_is}, 타임아웃 {_timeout_count['is']}, {elapsed:.0f}s)", flush=True)
             conn.commit()
 
     conn.commit()
+    elapsed_a = asyncio.get_event_loop().time() - _phase_start
+    print(f"[Finance] Phase A 완료 — 성공 {success_is}/{len(tickers)}, 타임아웃 {_timeout_count['is']}, {elapsed_a:.0f}s", flush=True)
 
     # Phase B: 대차대조표
-    print(f"[Finance] Phase B — 대차대조표 {len(tickers)}종목")
+    print(f"[Finance] Phase B — 대차대조표 {len(tickers)}종목 시작", flush=True)
+    _phase_start = asyncio.get_event_loop().time()
     for i, ticker in enumerate(tickers):
         try:
             from kis_api import kis_balance_sheet
-            rows_bs = await _rate_limited(
-                kis_balance_sheet(ticker, token, session=session)
+            rows_bs = await asyncio.wait_for(
+                _rate_limited(kis_balance_sheet(ticker, token, session=session)),
+                timeout=_PER_TICKER_TIMEOUT
             )
             for r in (rows_bs or []):
                 rp = r.get("report_period", "")
@@ -1662,13 +1677,18 @@ async def collect_financial_weekly(date: str = None) -> dict:
                     ticker, rp,
                 ))
             success_bs += 1
+        except asyncio.TimeoutError:
+            _timeout_count["bs"] += 1
         except Exception:
             pass
-        if (i + 1) % 200 == 0:
-            print(f"[Finance] 대차대조표: {i+1}/{len(tickers)}")
+        if (i + 1) % _PROGRESS_EVERY == 0:
+            elapsed = asyncio.get_event_loop().time() - _phase_start
+            print(f"[Finance] 대차: {i+1}/{len(tickers)} (성공 {success_bs}, 타임아웃 {_timeout_count['bs']}, {elapsed:.0f}s)", flush=True)
             conn.commit()
 
     conn.commit()
+    elapsed_b = asyncio.get_event_loop().time() - _phase_start
+    print(f"[Finance] Phase B 완료 — 성공 {success_bs}/{len(tickers)}, 타임아웃 {_timeout_count['bs']}, {elapsed_b:.0f}s", flush=True)
 
     # Phase C: DART 현금흐름표 + 지배귀속 + 판관비/매출채권/재고 (최신 4분기)
     # F/M/FCF Phase1 — dart_quarterly_full 1콜로 PL/BS/CF 전체

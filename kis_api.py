@@ -3135,7 +3135,9 @@ async def fetch_universe_from_krx(token: str) -> dict:
                         if len(collected) >= max_count:
                             break
 
-                if resp_tr_cont != "M":
+                # KIS 페이지네이션: F 또는 M = 다음 페이지 / D, E, "" = 마지막
+                # (이전 코드 `!= "M"`은 응답값이 F로 변경되면서 4/13부터 첫 페이지 30종목만 받고 break)
+                if resp_tr_cont not in ("F", "M"):
                     break
                 tr_cont = "N"
                 await asyncio.sleep(0.15)
