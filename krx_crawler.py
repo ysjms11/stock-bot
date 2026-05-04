@@ -508,22 +508,26 @@ def _load_name_map() -> dict:
         return {}
 
 
-def load_krx_db(date: str = None) -> dict | None:
-    """DB 파일 로드. date=None이면 최신 파일."""
-    if not os.path.exists(KRX_DB_DIR):
-        return None
-    if date:
-        fp = os.path.join(KRX_DB_DIR, f"{date}.json")
-        if not os.path.exists(fp):
+if not _USE_SQLITE:
+    # ⚠️ 레거시 JSON 폴백 — db_collector 없는 독립 환경 전용.
+    # db_collector가 있으면 L17의 SQLite 버전이 우선되므로 이 def는 정의되지 않음.
+    # (이전 버그: 이 def가 무조건 정의돼서 L17 SQLite import를 덮어쓰던 문제 — 5/5 stale 데이터 사고)
+    def load_krx_db(date: str = None) -> dict | None:  # type: ignore[no-redef]
+        """[Legacy fallback] JSON DB 파일 로드. date=None이면 최신 파일."""
+        if not os.path.exists(KRX_DB_DIR):
             return None
-        with open(fp, encoding="utf-8") as f:
-            return json.load(f)
+        if date:
+            fp = os.path.join(KRX_DB_DIR, f"{date}.json")
+            if not os.path.exists(fp):
+                return None
+            with open(fp, encoding="utf-8") as f:
+                return json.load(f)
 
-    files = sorted([f for f in os.listdir(KRX_DB_DIR) if f.endswith(".json")], reverse=True)
-    if not files:
-        return None
-    with open(os.path.join(KRX_DB_DIR, files[0]), encoding="utf-8") as f:
-        return json.load(f)
+        files = sorted([f for f in os.listdir(KRX_DB_DIR) if f.endswith(".json")], reverse=True)
+        if not files:
+            return None
+        with open(os.path.join(KRX_DB_DIR, files[0]), encoding="utf-8") as f:
+            return json.load(f)
 
 
 def _cleanup_old_db(keep_days: int = 30):
