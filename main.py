@@ -2516,19 +2516,19 @@ async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
                 continue
             name = s.get("name", ticker)
 
-            # 감시가 근접 5%
+            # 감시가 근접 2% (5% → 2%, 5/5 노이즈 컷)
             if ticker in wa:
                 buy_p = float(wa[ticker].get("buy_price", 0) or 0)
                 cur = s.get("close", 0)
                 if buy_p > 0 and cur > 0:
                     gap = (cur - buy_p) / buy_p * 100
-                    if 0 <= gap <= 5:
+                    if 0 <= gap <= 2:
                         alerts.append(f"👀 {name}: 감시가 {buy_p:,.0f}원 근접 ({gap:.1f}%)")
 
-            # 외인 매수 전환 (foreign_trend_5d >= 0.6)
+            # 외인 매수 전환 (5d>=70% / 20d<40%, 5/5 4일+ 매수일로 강화)
             ft5 = s.get("foreign_trend_5d")
             ft20 = s.get("foreign_trend_20d")
-            if ft5 is not None and ft5 >= 0.6 and ft20 is not None and ft20 < 0.4:
+            if ft5 is not None and ft5 >= 0.7 and ft20 is not None and ft20 < 0.4:
                 alerts.append(f"🔥 {name}: 외인 매수 전환 (5d {ft5:.0%} vs 20d {ft20:.0%})")
 
             # 공매도 비중 과열
@@ -2541,10 +2541,13 @@ async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
             if sc5 is not None and sc5 <= -20:
                 alerts.append(f"📊 {name}: 숏커버 진행 ({sc5:+.1f}%)")
 
-            # 이평선 수렴
+            # 이평선 수렴 (abs<1.5% AND 수렴 중, 5/5 노이즈 컷)
+            # ma_spread_change_10d < 0 = 10일 전보다 spread 좁아짐(=수렴 중)
             spread = s.get("ma_spread")
-            if spread is not None and abs(spread) < 3:
-                alerts.append(f"📊 {name}: 이평선 수렴 ({spread:+.1f}%)")
+            spread_chg = s.get("ma_spread_change_10d")
+            if (spread is not None and abs(spread) < 1.5
+                and spread_chg is not None and spread_chg < 0):
+                alerts.append(f"📊 {name}: 이평선 수렴 ({spread:+.1f}%, 10d {spread_chg:+.1f})")
 
             # RSI 과매도
             rsi = s.get("rsi14")
