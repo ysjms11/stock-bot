@@ -1,25 +1,74 @@
-# 봇 개발 TODO — 2026-04-26
+# 봇 개발 TODO — 2026-05-05
 > 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
 
 ---
 
-## 🔴 확인 (매일/주간)
-- [ ] 전종목 수집 결과 — 18:30 자동 실행 (자가진단 4종 백업: 19:15/20:15/21:15/22:15)
-- [ ] 감시종목 US 현재가
-- [ ] DART 공시 알림
-- [ ] 4/27 (일) 04:00 `weekly_us_analyst_sync` 첫 자동 실행 검증
-- [ ] 4/27 (일) 19:07 `weekly_report_digest` 첫 자동 알림 검증 (비종목 리포트 분석 시간)
+## 🔴 확인 (매일/주간 운영)
+
+**자동 가동 중 — 알림 도착만 확인:**
+- [ ] 평일 18:30 `daily_collect` (자가진단 4종 백업: 19:15/20:15/21:15/22:15)
+- [ ] 감시종목 US 현재가 (장중)
+- [ ] DART 공시 알림 (워치+포트, 5분 주기)
+
+**5/5 fix 후 검증 대기:**
+- [ ] **5/6 (수) 19:00** `watch_change_detect` — 임계값 강화 (29%→6%) + load_krx_db SQLite 5/5 데이터 정확성 확인. 알림 18개 → 5~7개 압축 검증.
+- [ ] **5/10 (일) 04:00** `weekly_us_analyst_sync` — 4/27 첫 자동 KeyError 후 5/5 fix. 텔레그램 메시지 도착 확인.
+- [ ] **5/10 (일) 07:15** `weekly_financial` — 30→60분 + per-ticker wait_for(10s) + Phase별 elapsed 로그. 정상 완료 + dict 알림 도착.
+- [ ] **5/11 (월) 07:00** `weekly_universe_update` — KIS 페이지네이션 헤더 (M → F or M) fix. KOSPI 250 + KOSDAQ 350 회복 (60종목 → ~600).
 
 ---
 
-## 🟢 P1 — 이번 세션 완료 (4/24~4/26)
+## 🟠 사용자 결정 펜딩
 
-- [x] **MCP 도구 39 → 43개 확장** — youtube_transcript / get_us_buy_candidates / get_us_earnings_transcript / get_us_analyst_research
+- [ ] **한국 리포트 PDF 입수 경로 확장 (종목분석)** — 와이즈리포트 미수집 1,990건 (KB 182 / 한투 164 / 삼성 149 / 신한 138 / NH 134 / 다올 122 / 메리츠 90 ...). 메리츠 가입 막힘 (공동인증서 + 보안프로그램). 3옵션:
+  - A 무료 영구: 키움/유안타 쿠키 + 무로그인 소형 → 회수율 50~60%
+  - B 무료 월10분: A + 한투/KB/삼성 쿠키 (인증서 2~4주 만료) → 회수율 80~90%
+  - C 유료 와이즈리포트 (월 20~30만) → 100%
+  - SMB Z 드라이브 셋업 완료 (`\\192.168.0.36\kreuzer`), 쿠키 전송 통로 확보. 진행 시점에 broker 결정.
+- [ ] **🆕 weekly_financial redundancy 결정** (5/5 펜딩) — daily_dart_incremental (매일 02:00 KST) 이 이미 분기 데이터 처리 중. weekly는 KIS IS/BS 보조용. 옵션:
+  - A 분기 피크일만 (5/15, 8/14, 11/14, 2/14) 다음 일요일에만 실행
+  - B 폐기 (daily DART로 충분)
+  - C 현재 유지 (per-ticker timeout으로 60분 안에 완료 가능 검증 후 결정)
+
+---
+
+## 🟡 P1 — 신규 (5/5 학습 기반)
+
+- [ ] **🆕 Silent failure visible escalation** (학습 #27) — 가드/타임아웃이 silent skip하면 알림 인플레이션으로 시그널 묻힘. 5/5 발견 사고 패턴:
+  - **universe 3주 stale**: "60 < 100 → 기존 유지" 가드 정상 작동, 그러나 알림 0
+  - **weekly_financial 반복 60분 타임아웃**: 매주 같은 메시지 반복 → 둔감화
+  - 방어 디자인:
+    - 같은 silent-skip 메시지 N회 (3회?) 반복 시 텔레그램 escalate 알림
+    - stale 일수/카운트 별도 추적 (`_silent_skip_log.json`)
+    - 매주 일요일 weekly_sanity_check 안에 silent skip 추적 통합 (KRX 공휴일 갱신 알림처럼)
+  - 우선순위: 중장기 (당장 발동할 사고 없음, 학습 보강용)
+
+---
+
+## 🟢 P1 — 5/5 완료
+
+- [x] **load_krx_db shadow 버그 수정 (5165971)** — krx_crawler.py L17 try-import + L511 def 재정의 → main.py 3곳이 4/7 JSON 보던 사고. `if not _USE_SQLITE:` 가드.
+- [x] **weekly_us_analyst_sync KeyError fix (5c88061)** — `auto_watched` → `auto_watched_a` 키 정정 + Tier S 카운트/criteria 노출.
+- [x] **weekly_sanity 휴장일 처리 + weekly_financial 60분 (309dbd9)** — `_KRX_HOLIDAYS` frozenset 13개 + `_is_krx_business_day()` + 30→60분 + 결과 dict 알림.
+- [x] **KRX 공휴일 list 갱신 알림 자동화 (5f009b8)** — 매주 일요일 당해 등록 < 8건 시 텔레그램. 2027/1 자동 발동.
+- [x] **watch_change_detect 임계값 강화 (99016ba)** — 감시가 5→2%, 이평선 abs<3 → abs<1.5 AND 수렴중, 외인 5d≥60→70%. 전종목 29%→6% 통과.
+- [x] **AMD watchalert 제거 + wording (ea5d8b7)** — 매도 후 잔존 노이즈 제거 + thesis/AMD.md 보존. "도달!" → "≤ ${buy_price} ({gap:+.1f}%)" + "진입!" 헤더.
+- [x] **shadow 가드 (_load_history/scan_stocks) (c9b6004)** — 모듈 끝 export alias `if _USE_SQLITE: from db_collector import ...`. 잠재 trap 제거.
+- [x] **Silent failure 전수조사 + 2건 fix (c8b71c1)** — universe 페이지네이션 헤더 (M → F or M) + weekly_financial per-ticker `wait_for(10s)` + 진행 로그 50건마다 + flush=True.
+- [x] **레거시 정리** — `data/krx_db/` 232 JSON 1GB + `reports.json` 1.5MB + `sector_sample_350.json` 80KB + `krx_cookies.json` 68B = **합 1.0GB + 1.6MB 회수**.
+
+---
+
+## 🟢 P1 — 4/24~4/26 완료
+
+- [x] **MCP 도구 39 → 46개 확장** — youtube_transcript / get_us_buy_candidates / get_us_earnings_transcript / get_us_analyst_research / get_polymarket / get_macro_external / get_pension_flow
 - [x] **daily_collect 자가진단 4종** — 18:30 정규 실패 시 19:15/20:15/21:15/22:15 자동 복구
 - [x] **US 애널 마스터 자동 sync** — 1,902명 ratings → us_analysts (Tier A 254명, Tier S 31명)
 - [x] **3-Tier 시스템** — Tier S 3 경로 OR (활발/잠수형/고수익), 알림 차등 헤더
 - [x] **get_us_buy_candidates** — "살만한 미국주 리스트" 1줄 답
 - [x] **FMP 통합** — earnings transcript + price target + estimates + grades 4종 함수
+- [x] **Whale Watch /dash/whale (4/27~5/2)** — whale-insight.com 디자인 풀 미러. NPS KR 5%룰 (data.go.kr + DART 매일) + US 13F (SEC EDGAR) + KR 풀포트 200종목 (whale-insight) + 연기금 수급 (pykrx).
+- [x] **레짐 days_in_regime 멱등성 버그 (5/1)** — 호출마다 +1 누적 → `last_updated == today` 가드. state 54 → 17일 정정.
 
 ---
 
