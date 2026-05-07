@@ -1013,9 +1013,13 @@ _NO_TOKEN_TOOLS = frozenset({
 })
 
 
-async def _exec_us_ratings(ticker: str, mode: str = "events",
+async def _exec_us_ratings(ticker: str = "", mode: str = "events",
                             days: int = 90, months: int = 6,
                             min_stars: float = 0.0, **_) -> dict:
+    # 5/8 fix: ticker 누락 시 traceback 대신 friendly error
+    if not ticker:
+        return {"error": "ticker는 필수입니다. 예: get_us_ratings(ticker='AMD', mode='consensus')",
+                "modes": ["events", "trend", "consensus"]}
     from db_collector import _get_db
     ticker = ticker.upper()
     conn = _get_db()
