@@ -93,6 +93,38 @@ def _read_regime() -> tuple[str, str]:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 안전한 텔레그램 송신 (5/8 매크로 대시보드 발송 실패 fix)
+# Markdown 파싱 실패 시 plain text fallback.
+# Telegram entity parse 오류는 메시지 내 동적 데이터에 *, _, [ 등 포함될 때 발생.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def _safe_send(context, text: str, parse_mode: str = "Markdown", **kwargs) -> bool:
+    """텔레그램 메시지 안전 발송.
+    - 1차: parse_mode 시도
+    - 2차: parse 실패 시 plain text fallback (parse_mode=None)
+    - 둘 다 실패 시 print + False 반환
+
+    Returns: 발송 성공 시 True
+    """
+    try:
+        await context.bot.send_message(chat_id=CHAT_ID, text=text,
+                                        parse_mode=parse_mode, **kwargs)
+        return True
+    except Exception as e:
+        emsg = str(e).lower()
+        if "parse entities" in emsg or "can't find end of the entity" in emsg or "can't parse entities" in emsg:
+            try:
+                await context.bot.send_message(chat_id=CHAT_ID, text=text, **kwargs)
+                print(f"[telegram] Markdown 파싱 실패 → plain text 발송 (offset 추적: {str(e)[:80]})")
+                return True
+            except Exception as e2:
+                print(f"[telegram] plain text fallback 실패: {e2}")
+                return False
+        else:
+            print(f"[telegram] 발송 실패: {e}")
+            return False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Silent failure escalation (학습 #27, 5/8 첫 적용)
 # silent skip이 N회 연속 발생 시 텔레그램 알림 + 24h cooldown
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1004,10 +1036,8 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
                     extra += f"\n⚠️ 이벤트: {today_ev}"
 
                 msg = "🟢🟢🟢 *매수 감시가 진입!* 🟢🟢🟢\n_(현재가가 매수희망가 이하로 진입)_\n\n" + "\n\n".join(buy_alerts) + "\n" + extra + "\n\n→ 채팅에서 매수 검토"
-                try:
-                    await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-                except Exception as e:
-                    print(f"매수감시 알림 전송 오류: {e}")
+                # 5/8 fix: Markdown 파싱 실패 시 plain text fallback
+                await _safe_send(context, msg, parse_mode="Markdown")
     except Exception as e:
         print(f"매수감시 체크 오류: {e}")
 
@@ -2343,7 +2373,10 @@ async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
             if overtime_section:
                 msg += overtime_section
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        # 5/8 fix: parse 실패 시 plain text fallback
+        ok = await _safe_send(context, msg, parse_mode="Markdown")
+        if not ok:
+            return  # 발송 실패 시 sent_data 갱신 안 함 (다음 호출 재시도)
 
         # 발송 성공 후 기록 (기존 키 보존)
         sent_data["last"] = slot_key
@@ -3161,10 +3194,11 @@ async def daily_event_d1_alert(context: ContextTypes.DEFAULT_TYPE):
 
         msg += "\n\n_헤지 vs 풀 노출 결정 시간._"
 
-        await context.bot.send_message(
-            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        # 5/8 fix: Markdown 파싱 실패 시 plain text fallback
+        ok = await _safe_send(context, msg, parse_mode="Markdown",
+                                disable_web_page_preview=True)
+        if not ok:
+            return
         _sent["event_d1"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
