@@ -2074,6 +2074,14 @@ async def collect_financial_on_disclosure(days: int = 2,
             continue
 
         # 4a. fnlttSinglAcntAll
+        # 5/8 fix: stock_master에 없는 종목은 FK constraint 위반 → skip
+        # (DART 등록되었으나 KIS 미커버 또는 stock_master 미갱신 케이스)
+        master_exists = conn.execute(
+            "SELECT 1 FROM stock_master WHERE symbol = ? LIMIT 1", (ticker,)
+        ).fetchone()
+        if not master_exists:
+            print(f"[DART-Incr] skip {ticker}({corp_code}) — stock_master 미등록")
+            continue
         try:
             r = await dart_quarterly_full(corp_code, year, quarter, session=sess)
             result["fnltt_calls"] += 1

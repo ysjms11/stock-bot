@@ -338,11 +338,12 @@ def crawl_wisereport_meta(ticker: str, name: str, existing_urls: set) -> list:
         summary = _re.sub(r"<[^>]+>", " ", comment2).replace("&nbsp;", " ")
         summary = _re.sub(r"\s+", " ", summary).strip()
 
-        title = item.get("RPT_TITLE", "").strip()
-        broker = item.get("BRK_NM_KOR", "").strip()
-        analyst = item.get("ANL_NM_KOR", "").strip()
-        target_prc = item.get("TARGET_PRC", "").strip()
-        recomm = (item.get("RECOMM") or "").strip() if item.get("RECOMM") else ""
+        # 5/8 fix: API가 null 반환 시 NoneType.strip() 에러 (인텔리안테크 등 매일 실패)
+        title = (item.get("RPT_TITLE") or "").strip()
+        broker = (item.get("BRK_NM_KOR") or "").strip()
+        analyst = (item.get("ANL_NM_KOR") or "").strip()
+        target_prc = (item.get("TARGET_PRC") or "").strip()
+        recomm = (item.get("RECOMM") or "").strip()
 
         reports.append({
             "date": date_str,
