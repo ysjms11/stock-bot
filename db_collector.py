@@ -745,8 +745,23 @@ async def collect_daily(date: str = None) -> dict:
     except Exception as e:
         print(f"[collect_daily] 기술지표 계산 실패: {e}")
 
-    # 6. FnGuide 컨센서스 UPDATE (Part 2에서 구현)
-    # _update_consensus(conn, date, tickers)
+    # 6. FnGuide 컨센서스 UPDATE — daily_snapshot.consensus_target/count/gap
+    # 5/8 fix: 미구현 상태였음 (학습 #13 "수집 성공 but 0값 함정" 재현)
+    try:
+        c_res = _update_consensus_in_snapshot(conn, date)
+        report["consensus"] = c_res
+    except Exception as e:
+        print(f"[collect_daily] 컨센서스 갱신 실패: {e}")
+        report["consensus"] = {"error": str(e)}
+
+    # 6b. 외인/기관 수급 UPDATE (pykrx 종목별 매매)
+    # 5/8 fix: KIS FHPTJ04160001는 종목별 금액 0 → pykrx 사용 (PROGRESS 4/15 한계 해소)
+    try:
+        s_res = _update_supply_in_snapshot(conn, date)
+        report["supply"] = s_res
+    except Exception as e:
+        print(f"[collect_daily] 수급 갱신 실패: {e}")
+        report["supply"] = {"error": str(e)}
 
     conn.close()
 
@@ -2144,6 +2159,138 @@ async def collect_financial_on_disclosure(days: int = 2,
     return result
 
 
+def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
+    """pykrx 종목별 외인/기관 매매 → daily_snapshot.foreign_net_qty/amt + inst_net_qty/amt UPDATE.
+
+    5/8 신규 (PROGRESS 4/15 메모 "KOSDAQ 수급 제거 — KIS API 0 응답" 해소).
+    KIS FHPTJ04160001 히스토리 API는 종목별 금액 미제공 → pykrx 사용.
+
+    Returns: {tickers, updated, foreign_count, inst_count, errors}
+    """
+    if not date:
+        return {"error": "date 누락"}
+
+    try:
+        from pykrx import stock
+    except ImportError:
+        return {"error": "pykrx 미설치"}
+
+    foreign_n = 0
+    inst_n = 0
+    errors = []
+
+    # 외국인 (foreign_net_qty/amt) + 기관합계 (inst_net_qty/amt)
+    for inv_name, col_qty, col_amt in [
+        ("외국인", "foreign_net_qty", "foreign_net_amt"),
+        ("기관합계", "inst_net_qty", "inst_net_amt"),
+    ]:
+        for mkt in ("KOSPI", "KOSDAQ"):
+            try:
+                df = stock.get_market_net_purchases_of_equities(date, date, mkt, inv_name)
+                for ticker, row in df.iterrows():
+                    try:
+                        qty = int(row.get("순매수거래량", 0) or 0)
+                        amt = int(row.get("순매수거래대금", 0) or 0)
+                        if qty == 0 and amt == 0:
+                            continue
+                        cur = conn.execute(
+                            f"UPDATE daily_snapshot SET {col_qty}=?, {col_amt}=? "
+                            f"WHERE trade_date=? AND symbol=?",
+                            (qty, amt, date, ticker)
+                        )
+                        if cur.rowcount > 0:
+                            if inv_name == "외국인":
+                                foreign_n += 1
+                            else:
+                                inst_n += 1
+                    except Exception:
+                        continue
+            except Exception as e:
+                errors.append(f"{mkt} {inv_name}: {type(e).__name__}: {str(e)[:80]}")
+
+    conn.commit()
+    print(f"[Supply] daily_snapshot UPDATE 완료: 외인 {foreign_n}, 기관 {inst_n}, 에러 {len(errors)}")
+    if errors:
+        for e in errors:
+            print(f"  - {e}")
+    return {
+        "tickers": foreign_n + inst_n,
+        "foreign_count": foreign_n,
+        "inst_count": inst_n,
+        "errors": errors,
+    }
+
+
+def _update_consensus_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
+    """consensus_history 최신 → daily_snapshot.consensus_target/count/gap UPDATE.
+
+    5/8 신규 (학습 #13 "수집 성공 but 0값 함정" 재현 사고 fix).
+    이전: db_collector.py:749 주석 처리 → daily_snapshot 컨센 컬럼 영구 0.
+
+    consensus_history 스키마: trade_date, symbol, target_avg/high/low, buy/hold/sell_count
+    daily_snapshot 채울 컬럼: consensus_target (avg), consensus_count (buy+hold+sell), consensus_gap (%)
+
+    Returns: {tickers, updated, latest_consensus_date}
+    """
+    if not date:
+        return {"error": "date 누락"}
+
+    # 종목별 가용 최신 컨센 (snapshot_date <= 현재 trade_date)
+    # consensus_history는 매주 일요일 collect라 최근 7일 이내 데이터 사용
+    rows = conn.execute("""
+        SELECT ch.symbol, ch.target_avg, ch.buy_count, ch.hold_count, ch.sell_count, ch.trade_date
+        FROM consensus_history ch
+        INNER JOIN (
+            SELECT symbol, MAX(trade_date) AS latest
+            FROM consensus_history
+            WHERE trade_date <= ?
+            GROUP BY symbol
+        ) latest ON ch.symbol = latest.symbol AND ch.trade_date = latest.latest
+        WHERE ch.target_avg > 0
+    """, (date,)).fetchall()
+
+    if not rows:
+        return {"error": "consensus_history 데이터 없음", "tickers": 0, "updated": 0}
+
+    updated = 0
+    latest_dates = set()
+    for r in rows:
+        sym = r["symbol"]
+        target = r["target_avg"] or 0
+        b = r["buy_count"] or 0
+        h = r["hold_count"] or 0
+        s = r["sell_count"] or 0
+        n_brk = b + h + s
+        latest_dates.add(r["trade_date"])
+
+        # 현재가 + gap 계산
+        cur_row = conn.execute(
+            "SELECT close FROM daily_snapshot WHERE trade_date=? AND symbol=?",
+            (date, sym)
+        ).fetchone()
+        if not cur_row or not cur_row["close"]:
+            continue
+        close = cur_row["close"]
+        gap = round((target - close) / close * 100, 2) if close > 0 else None
+
+        cur = conn.execute(
+            "UPDATE daily_snapshot SET consensus_target=?, consensus_count=?, consensus_gap=? "
+            "WHERE trade_date=? AND symbol=?",
+            (int(target), n_brk, gap, date, sym)
+        )
+        if cur.rowcount > 0:
+            updated += 1
+    conn.commit()
+
+    print(f"[Consensus] daily_snapshot UPDATE 완료: {updated}/{len(rows)}종목 "
+          f"(latest={sorted(latest_dates)[-1] if latest_dates else None})")
+    return {
+        "tickers": len(rows),
+        "updated": updated,
+        "latest_consensus_date": sorted(latest_dates)[-1] if latest_dates else None,
+    }
+
+
 def _update_financial_derived(conn: sqlite3.Connection, date: str = None):
     """financial_quarterly 최신 분기 → daily_snapshot 재무 파생 컬럼 UPDATE."""
     if date is None:
@@ -3126,25 +3273,20 @@ def update_all_alpha_metrics(end_period: str | None = None,
     try:
         _ensure_alpha_columns(conn)
 
-        # end_period 자동 결정
-        # 단순 MAX(report_period) 는 극소수 선행공시 분기(1~10건)를 골라버림 →
-        # "커버리지가 충분한 최신 분기" 를 선택: count>=500 중 최신.
-        # (기준치 500은 유니버스 2400종목의 ~20% 이상 — 신뢰할 수준)
+        # end_period 자동 결정 (5/8 fix — 분기 피크 시즌 분산 대응):
+        # 이전: count>=500 단일 분기. 1Q26 공시 시즌엔 202512(485) + 202603(19) 분산 → 둘 다 미통과 → MAX(202603, 19종목)만 채움
+        # 변경: end_period=None 이면 종목별 가용 최신 분기 자동 선택 (per-ticker mode)
+        # end_period 명시 호출은 기존 동작 그대로 (단일 분기 모드).
+        per_ticker_mode = (end_period is None)
         if end_period is None:
+            # per-ticker: 일단 stub. 실제 분기는 SELECT 쿼리에서 각 ticker별 MAX 사용
+            # 기존 코드 호환을 위해 표시용으로 fs_source 있는 분기 중 가장 종목 많은 것 반영
             row = conn.execute(
-                "SELECT report_period FROM financial_quarterly "
+                "SELECT report_period, COUNT(*) c FROM financial_quarterly "
                 "WHERE fs_source IS NOT NULL "
-                "GROUP BY report_period HAVING COUNT(*) >= 500 "
-                "ORDER BY report_period DESC LIMIT 1"
+                "GROUP BY report_period ORDER BY c DESC LIMIT 1"
             ).fetchone()
             end_period = row["report_period"] if row else None
-            # fallback: 아무리 적어도 최신 분기 하나 사용
-            if end_period is None:
-                row = conn.execute(
-                    "SELECT MAX(report_period) AS p FROM financial_quarterly "
-                    "WHERE fs_source IS NOT NULL"
-                ).fetchone()
-                end_period = row["p"] if row and row["p"] else None
         if not end_period:
             conn.close()
             return {"error": "end_period 확보 실패 (financial_quarterly 비어있음)",
@@ -3162,14 +3304,32 @@ def update_all_alpha_metrics(end_period: str | None = None,
                     "tickers": 0, "success": 0}
 
         # 대상 종목: fs_source 있는 재무 + 해당 trade_date에 daily_snapshot row 존재
-        rows = conn.execute(
-            "SELECT fq.symbol AS ticker, ds.market_cap AS market_cap "
-            "FROM financial_quarterly fq "
-            "JOIN daily_snapshot ds ON ds.symbol=fq.symbol "
-            "WHERE fq.report_period=? AND fq.fs_source IS NOT NULL "
-            "AND ds.trade_date=?",
-            (end_period, trade_date),
-        ).fetchall()
+        # 5/8 fix: per_ticker_mode=True 면 종목별 가용 최신 분기 사용 (분기 피크 시즌 분산 대응)
+        if per_ticker_mode:
+            rows = conn.execute(
+                "SELECT fq.symbol AS ticker, fq.report_period AS period, "
+                "       ds.market_cap AS market_cap "
+                "FROM financial_quarterly fq "
+                "JOIN daily_snapshot ds ON ds.symbol=fq.symbol "
+                "INNER JOIN ("
+                "  SELECT symbol, MAX(report_period) AS max_p "
+                "  FROM financial_quarterly WHERE fs_source IS NOT NULL "
+                "  GROUP BY symbol"
+                ") latest ON fq.symbol=latest.symbol AND fq.report_period=latest.max_p "
+                "WHERE fq.fs_source IS NOT NULL AND ds.trade_date=?",
+                (trade_date,),
+            ).fetchall()
+        else:
+            # 명시 분기 호출 (기존 동작 그대로)
+            rows = conn.execute(
+                "SELECT fq.symbol AS ticker, fq.report_period AS period, "
+                "       ds.market_cap AS market_cap "
+                "FROM financial_quarterly fq "
+                "JOIN daily_snapshot ds ON ds.symbol=fq.symbol "
+                "WHERE fq.report_period=? AND fq.fs_source IS NOT NULL "
+                "AND ds.trade_date=?",
+                (end_period, trade_date),
+            ).fetchall()
 
         tickers_total = len(rows)
         success = 0
@@ -3184,12 +3344,14 @@ def update_all_alpha_metrics(end_period: str | None = None,
         for r in rows:
             ticker = r["ticker"]
             mcap = r["market_cap"] if r["market_cap"] else None
+            # 5/8 fix: per_ticker_mode 면 종목별 최신 분기 사용
+            ticker_period = r["period"] if per_ticker_mode else end_period
             # database is locked 대비 최대 3회 재시도 (0.5s 간격)
             attempt = 0
             while True:
                 try:
                     ok = _update_alpha_metrics(
-                        conn, ticker, end_period,
+                        conn, ticker, ticker_period,
                         market_cap=mcap, trade_date=trade_date,
                     )
                     if ok:
