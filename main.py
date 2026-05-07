@@ -92,6 +92,57 @@ def _read_regime() -> tuple[str, str]:
     return regime_en, _REGIME_EMOJI.get(regime_en, "⚪")
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Silent failure escalation (학습 #27, 5/8 첫 적용)
+# silent skip이 N회 연속 발생 시 텔레그램 알림 + 24h cooldown
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _track_silent_failure(key: str, threshold: int = 3) -> int:
+    """silent failure 카운트 추적. threshold 도달하고 오늘 알림 미발송이면 카운트 반환.
+
+    Args:
+        key: 사고 식별자 (예: "pension_collect_zero")
+        threshold: 알림 트리거 카운트 (기본 3회 연속)
+
+    Returns:
+        threshold 도달 + 오늘 미알림이면 누적 카운트, 아니면 0
+    """
+    log = load_json(SILENT_FAILURE_LOG, {})
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    entry = log.get(key, {"count": 0, "first_failure": today, "last_alerted": None})
+    entry["count"] = int(entry.get("count", 0)) + 1
+    entry["last_failure"] = today
+    log[key] = entry
+    save_json(SILENT_FAILURE_LOG, log)
+    if entry["count"] >= threshold and entry.get("last_alerted") != today:
+        return entry["count"]
+    return 0
+
+
+def _reset_silent_failure(key: str) -> None:
+    """잡 성공 시 카운트 리셋."""
+    log = load_json(SILENT_FAILURE_LOG, {})
+    if key in log:
+        del log[key]
+        save_json(SILENT_FAILURE_LOG, log)
+
+
+async def _alert_silent_failure(context, key: str, count: int, message: str) -> None:
+    """텔레그램 알림 + last_alerted 갱신 (24h cooldown)."""
+    log = load_json(SILENT_FAILURE_LOG, {})
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    if key in log:
+        log[key]["last_alerted"] = today
+        save_json(SILENT_FAILURE_LOG, log)
+    try:
+        await context.bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🚨 *Silent failure 감지*\n\n{message}\n\n_{count}일/회 연속 누적_",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"[silent_failure] 알림 전송 실패: {e}")
+
+
 def _extract_grade(entry: dict, ticker: str, name: str) -> str | None:
     """decision_log entry에서 종목의 확신등급 추출"""
     grades = entry.get("grades", {})
@@ -2729,7 +2780,11 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def daily_pension_collect(context: ContextTypes.DEFAULT_TYPE):
-    """매일 16:30 KST (평일) — 종목별 연기금 매매 수집 → DB 저장."""
+    """매일 16:30 KST (평일) — 종목별 연기금 매매 수집 → DB 저장.
+
+    학습 #27 적용 (5/8): saved=0 (수집 0건) 평일 3일 연속 시 텔레그램 escalate.
+    pykrx KRX_ID/KRX_PW 만료 의심 알림 — 침묵 fallback 방지.
+    """
     now = datetime.now(KST)
     if now.weekday() >= 5:
         return
@@ -2738,6 +2793,21 @@ async def daily_pension_collect(context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, collect_pension_flow_daily, None)
         print(f"[pension_collect] {result}")
+
+        # silent failure 추적: 평일에 saved=0이면 카운트, 정상이면 리셋
+        saved = int(result.get("saved", 0)) if isinstance(result, dict) else 0
+        if saved == 0:
+            cnt = _track_silent_failure("pension_collect_zero", threshold=3)
+            if cnt:
+                await _alert_silent_failure(
+                    context, "pension_collect_zero", cnt,
+                    "*연기금 수급 데이터 0건 (평일)*\n"
+                    "→ pykrx 자동로그인 실패 의심.\n"
+                    "확인: `.env` 의 KRX_ID / KRX_PW 만료 여부 (KRX 정보데이터시스템 비번 갱신 주기 90일).\n"
+                    "복구 후엔 다음 평일 16:30 자동 재수집."
+                )
+        else:
+            _reset_silent_failure("pension_collect_zero")
     except Exception as e:
         print(f"[pension_collect] 오류: {e}")
 

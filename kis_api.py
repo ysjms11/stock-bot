@@ -78,6 +78,7 @@ SUPPLY_HISTORY_FILE       = f"{_DATA_DIR}/supply_history.json"
 REPORTS_FILE              = f"{_DATA_DIR}/reports.json"
 REGIME_STATE_FILE         = f"{_DATA_DIR}/regime_state.json"
 MACRO_SENT_FILE           = f"{_DATA_DIR}/macro_sent.json"
+SILENT_FAILURE_LOG        = f"{_DATA_DIR}/silent_failure_log.json"
 
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 _BACKUP_GIST_ENV  = "BACKUP_GIST_ID"
