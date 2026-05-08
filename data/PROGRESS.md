@@ -9,13 +9,15 @@
 
 **우선순위 순:**
 
-1. **🟢 5/8 (오늘 16:30) `pension_collect` pykrx 1.2.8 정상 수집 검증** — 5/8 fix 후 첫 자동 실행. 평일 0건 사고 종료.
+1. **🚨 5/9 PTB v20+ days= 매핑 36개 일괄 fix 직후 — 첫 정상 토요일 발사 확인** — 09:00 KST `weekly_sat_port_check` 정상. 5/8 (금)에 잘못 발사된 같은 알림 더 이상 안 옴.
 
-2. **🟢 5/8 (오늘 18:30) `daily_collect` 끝 derived 컬럼 자동 갱신 검증** — fscore 14→507, consensus 0→509, foreign/inst_net_amt 0→2,800+ 영구 결손 fix 후 첫 자동 실행. 매일 자동 갱신 동작 확인.
+2. **🟡 5/11 (월) 18:30 `daily_collect` 첫 정상 평일 실행 검증** — 5/8 (금) 누락 (PTB days 버그) 이후 첫 자동 평일. 매주 금요일 데이터 손실 종료.
 
-3. **🟢 5/10 (일) 04:00 / 07:15 검증**: `weekly_us_analyst_sync` (KeyError fix) + `weekly_financial` (60분 + per-ticker timeout)
+3. **5/8 daily_snapshot 백필** — 토요일 KIS API 500 (가설: 휴일 일부 엔드포인트 제한 + 토큰 동시 사용 충돌). 월요일 5/11 06:00 이전 KIS API 안정화 후 `collect_daily(date='20260508')` 수동 실행.
 
-4. **🟢 5/11 (월) 07:00 `weekly_universe_update`**: 페이지네이션 fix → ~600종목 회복
+4. **🟢 5/10 (일) 03:00 / 03:30 / 04:00 / 07:15 / 19:00 일요일 잡 5종 검증**: `weekly_us_harvest` / `weekly_nps` / `weekly_us_analyst_sync` / `weekly_financial` / `sunday_30_reminder` 등 — 모두 매핑 (6,)→(0,) 변경 후 첫 일요일 발사.
+
+5. **🟢 5/11 (월) 07:00 `weekly_universe_update`**: (0,)→(1,) 매핑 변경. 페이지네이션 fix 와 함께 ~600종목 회복.
 
 5. **🟢 KR 풀 딥서치 진행 (Claude.ai Project 권장)** — Tier 1 우선:
    - ✅ **064400 LG씨엔에스** thesis 완료 (5/8, 65K 감시가 RR 3.71, AX/RX/CBDC, 사용자 보강)
@@ -34,6 +36,59 @@
 8. **펜딩 결정**:
    - weekly_financial redundancy (daily_dart_incremental 와 겹침, 분기 피크일만 축소?)
    - 한국 리포트 PDF 확장 3옵션 (메리츠 가입 막힘)
+
+---
+
+## 📜 5/9 세션 — PTB v20+ days= 매핑 시스템 버그 일괄 fix
+
+### 🚨 사용자 신고 + 즉시 진단
+
+사용자: 텔레그램 SAT_PORT_CHECK 알림 사진 + "이거 금요일에 자꾸 날아오는데"
+
+**근본원인 (5분 진단)**:
+- `python-telegram-bot >= 20.0` 부터 `JobQueue.run_daily(days=...)` 매핑이 변경됨:
+  - **이전 (v19 이하)**: `0=mon, 1=tue, ..., 6=sun`
+  - **이후 (v20+)**: `0=sun, 1=mon, ..., 5=fri, 6=sat`
+- 검증: `JobQueue._CRON_MAPPING == ('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')`
+- 코드는 v19 매핑으로 작성. v21.10 사용 중 → **모든 잡이 1일 일찍 발사**.
+
+**증거 데이터**:
+1. SAT_PORT_CHECK = `days=(5,)` → v20에서 'fri' = 금요일 발사 (사용자 사진)
+2. `daily_collect_job = days=(0,1,2,3,4)` → 'sun-thu' = **금요일 데이터 누락**. `daily_snapshot` 5/8 (Fri) 0건 / 4/24 (Fri) 일부.
+3. `weekly_us_harvest = days=(6,)` → 'sat' = 토 03:00 (의도: 일 03:00) — 1일 빠름.
+4. 36개 `run_daily` 잡 중 33개 영향 (3개는 `days=` 없음 또는 전체일).
+
+### 일괄 fix (commit 미정)
+
+`main.py` 5216~5276 영역 6단계 replace_all (충돌 회피 순서):
+
+| Step | Before | After | Count | 의도 |
+|------|--------|-------|-------|------|
+| 1 | `(1,2,3,4,5)` | `(2,3,4,5,6)` | 2 | 화-토 (us_summary) |
+| 2 | `(0,1,2,3,4)` | `(1,2,3,4,5)` | 19 | 평일 |
+| 3 | `(0, 1, 2, 3, 4)` | `(1, 2, 3, 4, 5)` | 2 | 평일 (pension) |
+| 4 | `(0,)` | `(1,)` | 1 | 월 (universe_update) |
+| 5 | `(6,)` | `(0,)` | 10 | 일 (weekly 잡 9종 + sunday_30) |
+| 6 | `(5,)` | `(6,)` | 2 | 토 (weekly_review, sat_port_check) |
+
+미변경: `(0,1,2,3,4,5,6)` 2건 (us_ratings + event_d1, "전체" 의도).
+
+**검증**:
+- `python3 ast.parse` ✅
+- verifier 독립 검증: APPROVE / Confidence high / Blockers 0
+- venv PTB v21.10 + `_CRON_MAPPING` 매핑 직접 확인
+- 봇 재시작 (launchctl kickstart -k) → 새 PID 정상 boot, /health OK
+
+**5/8 백필**: 토요일 KIS API `inquire-price` 500 무한 retry → 보류. 월요일 정상화 후 재시도.
+
+### 학습 #31 — 의존성 메이저 버전 업그레이드 시 break-change 매핑 검증 필수
+
+PTB 19→21 메이저 업그레이드 시 `days=` 매핑 컨벤션 변경. requirements.txt `>=21.10` 만 보고는 모름. 핵심 시그니처가 바뀌면:
+- 라이브러리 release notes 정독 (특히 `versionchanged` 마커)
+- `_CRON_MAPPING` 같은 내부 상수 직접 import 후 sanity 검증
+- 실데이터로 1일치라도 비교 (`daily_snapshot` 영업일 누락 = 시스템적 day-shift 신호)
+
+학습 #28 (잡 실행 카운트 ≠ 데이터 품질)의 변형: **잡이 매일 실행되는 것처럼 보여도 매핑이 1일 밀리면 영구 결함**. 사용자 알림 이상 (사진 첨부) 같은 외부 신호가 가장 먼저 감지함 — 코드 검증보다 빠름.
 
 ---
 
