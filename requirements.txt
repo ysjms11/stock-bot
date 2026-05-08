@@ -1,4 +1,4 @@
-python-telegram-bot[job-queue]>=21.10
+python-telegram-bot[job-queue]>=21.10,<22.0  # 5/9 PTB v20+ days= 매핑 변경 사고 후 메이저 핀 (학습 #31)
 aiohttp>=3.10.0
 tzdata
 beautifulsoup4

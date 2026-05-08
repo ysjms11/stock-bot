@@ -5207,6 +5207,18 @@ def main():
     ))
 
     # 자동 알림 스케줄
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # PTB days= 매핑 가드 (학습 #31)
+    # PTB v19→v20 에서 JobQueue.run_daily(days=...) 매핑이 (0=mon~6=sun)에서
+    # (0=sun~6=sat)로 변경됨. 향후 v22 등 메이저 업그레이드 시 재발 방지를
+    # 위해 startup 에 assert. 매핑이 바뀌면 즉시 크래시 → 즉시 발견.
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    from telegram.ext import JobQueue as _JQ_AssertGuard
+    _PTB_EXPECTED = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+    assert _JQ_AssertGuard._CRON_MAPPING == _PTB_EXPECTED, (
+        f"[CRITICAL] PTB days= 매핑 변경 감지. 기대: {_PTB_EXPECTED}, "
+        f"실제: {_JQ_AssertGuard._CRON_MAPPING}. main.py 5216~5276 days= 튜플 전체 audit 필요."
+    )
     jq = app.job_queue
     jq.run_repeating(check_stoploss, interval=600, first=60, name="stoploss")
     jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
