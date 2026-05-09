@@ -551,7 +551,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
             print(f"이벤트 섹션 오류: {e}")
 
         msg += "\n→ Claude에서 점검하세요"
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
 
         # 발송 기록
         _kr_sent["kr_summary"] = _kr_key
@@ -680,7 +680,7 @@ async def daily_us_summary(context: ContextTypes.DEFAULT_TYPE, force: bool = Fal
         if action_lines:
             msg += "\n📌 *내일 할 일*\n" + "\n".join(action_lines) + "\n"
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
     except Exception as e:
         print(f"미국 요약 오류: {e}")
 
@@ -818,7 +818,7 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
             pass
 
         msg += "\n→ Claude에서 점검하세요"
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
         _us_sent["us_summary"] = _us_key
         save_json(MACRO_SENT_FILE, _us_sent)
     except Exception as e:
@@ -939,7 +939,7 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
         lines = [text for _, text in full_alerts]
         msg = "🔴🔴🔴 *손절선 도달!* 🔴🔴🔴\n\n" + "\n\n".join(lines) + "\n\n⚠️ Thesis 붕괴 시 가격 무관 즉시 매도"
         try:
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
             for ticker, _ in full_alerts:
                 _increment_stoploss_sent(sent, ticker, today)
         except Exception as e:
@@ -949,7 +949,7 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
         lines = [text for _, text in remind_alerts]
         msg = "🔔 *손절선 리마인더*\n\n" + "\n".join(lines)
         try:
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
             for ticker, _ in remind_alerts:
                 _increment_stoploss_sent(sent, ticker, today)
         except Exception as e:
@@ -1129,7 +1129,7 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
         if alerts:
             msg = f"🔔 *복합 신호* ({now.strftime('%H:%M')})\n\n"
             msg += "\n\n".join(alerts)
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
     except Exception as e:
         print(f"이상 신호 오류: {e}")
 
@@ -1184,7 +1184,7 @@ async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
             msg = ("⚠️ *수급이탈 경고* — 외인 3일 연속 순매도\n\n"
                    + "\n\n".join(alerts)
                    + "\n\n→ 매도 검토 또는 포지션 점검")
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
     except Exception as e:
         print(f"check_supply_drain 오류: {e}")
 
@@ -1235,7 +1235,7 @@ async def momentum_exit_check(context: ContextTypes.DEFAULT_TYPE):
             msg = ("⚠️ *모멘텀 종료 경고* (16:30)\n\n"
                    + "\n\n".join(alerts)
                    + "\n\n→ 등급 재평가 필요")
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
     except Exception as e:
         print(f"momentum_exit_check 오류: {e}")
 
@@ -1320,7 +1320,7 @@ async def weekly_review(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     try:
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
     except Exception as e:
         print(f"주간 리뷰 오류: {e}")
 
@@ -1426,11 +1426,16 @@ async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
                     msg += f"🔄 *{c['name']}* — 의견 변경 {c['detail']}\n"
                 elif c["type"] == "new_cover":
                     msg += f"🆕 *{c['name']}* — 신규 커버리지 {c['detail']}\n"
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
             _sent["consensus_weekly"] = _key
             save_json(MACRO_SENT_FILE, _sent)
+        _reset_silent_failure("consensus_update_error")
     except Exception as e:
         print(f"[consensus_update] 오류: {e}")
+        cnt = _track_silent_failure("consensus_update_error", threshold=2)
+        if cnt:
+            await _alert_silent_failure(context, "consensus_update_error", cnt,
+                f"weekly_consensus_update 연속 {cnt}회 실패\n오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1533,7 +1538,7 @@ async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
                     sign = "+" if t["pct"] > 0 else ""
                     msg += (f"{arrow} *{t['name']}* {t['old_target']:,}→{t['new_target']:,} "
                             f"({sign}{t['pct']:.1f}%, {t['days']}일)\n")
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
             _sent["consensus_daily"] = _key
             save_json(MACRO_SENT_FILE, _sent)
 
@@ -1614,7 +1619,12 @@ async def daily_change_scan_alert(context: ContextTypes.DEFAULT_TYPE):
         total_hits = sum(len(items) for _, _, items in sections)
         if total_hits == 0:
             print("[change_scan] 결과 0건 — 발송 스킵")
+            cnt = _track_silent_failure("change_scan_zero", threshold=3)
+            if cnt:
+                await _alert_silent_failure(context, "change_scan_zero", cnt,
+                    f"발굴 0건 연속 {cnt}일 — daily_change_scan 점검 필요")
             return
+        _reset_silent_failure("change_scan_zero")
 
         msg = "🔔 *오늘의 발굴* (워치/보유 제외)\n"
         for preset_name, label, items in sections:
@@ -1640,7 +1650,7 @@ async def daily_change_scan_alert(context: ContextTypes.DEFAULT_TYPE):
                     msg += f" • `{tk}` {nm}\n"
 
         try:
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
         except Exception as e:
             print(f"[change_scan] 텔레그램 발송 실패: {e}")
             return
@@ -1731,7 +1741,7 @@ async def weekly_universe_update(context: ContextTypes.DEFAULT_TYPE):
             names = [old.get(t, t) for t in removed]
             msg += f"\n❌ 삭제 {len(removed)}종목: {', '.join(names)}"
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
         _sent["universe"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -1809,7 +1819,7 @@ async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
         if ev_alerts:
             msg = "📅 *어닝/이벤트 D-3 알림*\n\n" + "\n".join(ev_alerts)
             try:
-                await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                await _safe_send(context, msg)
             except Exception as e:
                 print(f"[earnings D-3] 전송 오류: {e}")
     except Exception as e:
@@ -1856,7 +1866,7 @@ async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
 
         if alerts:
             msg = "📅 *실적 캘린더 알림*\n\n" + "\n\n".join(alerts)
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
     except Exception as e:
         print(f"[earnings_calendar] 오류: {e}")
 
@@ -1891,7 +1901,7 @@ async def check_us_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
             msg = "📅 *미국 실적 발표 예정*\n\n"
             for e in upcoming:
                 msg += f"• {e['name']}({e['ticker']}) — {e['earnings_date']} ({e['days_until']}일 후)\n"
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
             _sent["us_earnings_cal"] = _key
             save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -1955,7 +1965,7 @@ async def check_dividend_calendar(context: ContextTypes.DEFAULT_TYPE):
 
         if alerts:
             msg = "📅 *배당 캘린더 알림*\n\n" + "\n\n".join(alerts)
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
             _sent["dividend_cal"] = _key
             save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -1984,9 +1994,17 @@ async def daily_collect_job(context):
         report = await asyncio.wait_for(collect_daily(), timeout=2400)  # 40분
     except asyncio.TimeoutError:
         await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ DB 수집 40분 초과 타임아웃")
+        cnt = _track_silent_failure("daily_collect_error", threshold=2)
+        if cnt:
+            await _alert_silent_failure(context, "daily_collect_error", cnt,
+                f"daily_collect_job 연속 {cnt}회 타임아웃")
         return
     except Exception as e:
         print(f"[daily_collect] 오류: {e}")
+        cnt = _track_silent_failure("daily_collect_error", threshold=2)
+        if cnt:
+            await _alert_silent_failure(context, "daily_collect_error", cnt,
+                f"daily_collect_job 연속 {cnt}회 실패\n오류: {e}")
         return
 
     if report.get("skipped"):
@@ -2001,6 +2019,7 @@ async def daily_collect_job(context):
             name = _PHASE_KR.get(phase, phase)
             msg += f"\n  {name}: {pr['success']}✓ {pr['failed']}✗"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        _reset_silent_failure("daily_collect_error")
         try:
             from db_collector import backup_to_icloud
             backup_to_icloud()
@@ -2008,6 +2027,10 @@ async def daily_collect_job(context):
             print(f"[backup] iCloud 백업 실패: {e}")
     else:
         await context.bot.send_message(chat_id=CHAT_ID, text=f"⚠️ DB 수집 실패: {report['error']}")
+        cnt = _track_silent_failure("daily_collect_error", threshold=2)
+        if cnt:
+            await _alert_silent_failure(context, "daily_collect_error", cnt,
+                f"daily_collect_job 연속 {cnt}회 실패\n오류: {report['error']}")
 
 
 async def daily_collect_sanity_check(context):
@@ -2128,8 +2151,13 @@ async def daily_dart_incremental(context):
         # 조용히 스킵 (신규 공시 없음 — 대다수 평일이 그럼)
         print(f"[dart_incr] 신규 공시 없음 — 공시 {report.get('disclosures_found',0)}건, "
               f"중복 {report.get('already_in_db',0)}")
+        cnt = _track_silent_failure("dart_incr_zero", threshold=3)
+        if cnt:
+            await _alert_silent_failure(context, "dart_incr_zero", cnt,
+                f"DART 증분 0건 연속 {cnt}일 — 공시 발견 {report.get('disclosures_found',0)}건")
         return
 
+    _reset_silent_failure("dart_incr_zero")
     alpha = report.get("alpha_recalc") or {}
     alpha_line = ""
     if isinstance(alpha, dict) and "success" in alpha:
@@ -2243,13 +2271,18 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
                                          for c, n in cat_count.most_common())
                 msg += f"\n\n*비종목 ({len(market_reports)}건)*: {cat_summary}"
 
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
 
             # 발송 기록
             _rpt_sent["report"] = _rpt_key
             save_json(MACRO_SENT_FILE, _rpt_sent)
+        _reset_silent_failure("report_daily_error")
     except Exception as e:
         print(f"[report_daily] 오류: {e}")
+        cnt = _track_silent_failure("report_daily_error", threshold=3)
+        if cnt:
+            await _alert_silent_failure(context, "report_daily_error", cnt,
+                f"collect_reports_daily 연속 {cnt}회 실패\n오류: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2486,7 +2519,7 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
         seen_list = list(seen_ids)[-500:]
         save_json(DART_SEEN_FILE, {"ids": seen_list})
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
+        await _safe_send(context, msg, disable_web_page_preview=True)
 
     except Exception as e:
         print(f"DART 체크 오류: {e}")
@@ -2570,7 +2603,7 @@ async def check_insider_cluster(context: ContextTypes.DEFAULT_TYPE):
             sent[sym] = today
 
         save_json(INSIDER_SENT_FILE, sent)
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
     except Exception as e:
         print(f"[insider] 체크 오류: {e}")
 
@@ -2659,7 +2692,7 @@ async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):
 
         if alerts:
             msg = f"📡 *워치 변화 감지* ({now.strftime('%m/%d')})\n\n" + "\n".join(alerts)
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            await _safe_send(context, msg)
 
         save_json(change_sent_file, {"date": today, "sent": True})
         _sent["watch_change"] = _key
@@ -2717,7 +2750,7 @@ async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
         if near_a:
             msg += "\n\n👀 A등급 감시 종목:\n" + "\n".join(near_a[:5])
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
         save_json(trans_file, {"transition": key, "date": datetime.now(KST).strftime("%Y-%m-%d")})
     except Exception as e:
         print(f"regime_transition_alert 오류: {e}")
@@ -2819,7 +2852,7 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
             " □ 결론: 늘릴것/줄일것/유지"
         )
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await _safe_send(context, msg)
         _sent["sunday_30"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -4474,7 +4507,7 @@ async def daily_us_rating_scan(context):
                 urgent_sent_tickers=urgent_sent_tickers,
             )
             if msg:
-                await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                await _safe_send(context, msg)
         except Exception as e:
             print(f"[us_ratings] 텔레그램 요약 전송 실패: {e}")
 
@@ -4677,7 +4710,7 @@ async def hourly_us_holdings_check(context):
                 # 조건 충족 → 긴급 알림
                 msg = _format_urgent_downgrade_alert(ticker, events, downgrades)
                 try:
-                    await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                    await _safe_send(context, msg)
                     sent[sent_key] = {
                         "sent_at": datetime.now().isoformat(),
                         "events_count": len(events),
@@ -4799,7 +4832,7 @@ async def weekly_us_analyst_report(context):
                 msg = msg[:3900] + "\n\n_... 4000자 제한으로 일부 생략_"
 
             try:
-                await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                await _safe_send(context, msg)
                 print(f"[weekly_us_report] 발송 완료 ({len(msg)}자)")
             except Exception as e:
                 print(f"[weekly_us_report] 텔레그램 발송 실패: {e}")
