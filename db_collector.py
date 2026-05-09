@@ -525,6 +525,14 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
             if close == 0:
                 close = krx.get("close", 0)
 
+            # market_cap fallback: KIS hts_avls 가 우선주/SPAC 등에 빈 응답 → listing_shares × close 로 계산
+            # 단위: 억원 (KIS hts_avls 기준)
+            mcap = int(basic.get("hts_avls", 0) or 0)
+            if mcap == 0 and close > 0:
+                listing = int(basic.get("lstn_stcn", 0) or 0)
+                if listing > 0:
+                    mcap = listing * close // 100000000  # 억원
+
             conn.execute("""
                 INSERT OR REPLACE INTO daily_snapshot (
                     trade_date, symbol,
@@ -560,7 +568,7 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                 float(basic.get("prdy_ctrt", 0) or 0) or krx.get("chg_pct", 0),
                 int(basic.get("acml_vol", 0) or 0) or krx.get("volume", 0),
                 int(basic.get("acml_tr_pbmn", 0) or 0) or krx.get("trade_value", 0),
-                int(basic.get("hts_avls", 0) or 0),  # 억원
+                mcap,  # 억원 (hts_avls → listing_shares × close fallback)
                 float(basic.get("per", 0) or 0),
                 float(basic.get("pbr", 0) or 0),
                 float(basic.get("eps", 0) or 0),
