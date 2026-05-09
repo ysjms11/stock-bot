@@ -55,7 +55,72 @@
 
 ---
 
-## 📜 5/10 세션 (오전) — Wave 1+2+3 추가 진단 + yfinance fix
+## 📜 5/10 세션 (새벽) — Wave A+B 빡센 audit + 4 신규 fix
+
+사용자 "다해" — 15개 항목 audit.
+
+### Wave A: 인프라 + 운영 메타 (1시간)
+
+| # | 작업 | 결과 |
+|---|---|---|
+| #1 universe 진짜 root cause | `FHPST01740000` API 응답당 30건 하드 상한, 페이지네이션 자체 없음 (5/5 c8b71c1 fix 무효) | DB JOIN 으로 재작성 (54줄), **600종목 회복** |
+| #3 graceful shutdown | SIGTERM 시 강제 종료 → reuse_address 의존 | signal handler + stop_event + runner.cleanup(8s) (16줄) |
+| #4 DB 최적화 | VACUUM + ANALYZE | 370→364MB, 인덱스 31개 정상 |
+| #9 launchd plist | KeepAlive/RunAtLoad/ThrottleInterval | ✅ 정상 |
+| #10 Cloudflare Tunnel | https://bot.arcbot-server.org/health | ✅ ok |
+| #11 KIS 토큰 캐시 | `.kis_token_cache.json` 미존재 | 메모리 캐시 모드 (정상) |
+| #12 디스크 사용량 | /tmp 81G/240G, log 43MB, data/ 3.6G | ✅ 충분 |
+
+### Wave B: audit 도메인 (1시간)
+
+| # | 영역 | 결과 |
+|---|---|---|
+| #5 fscore 분포 | 0~8 합리적 (SK하이닉스=8, 삼성전자=6) | ✅ 정상 |
+| #5 mscore | 100% NULL | 🔴 별도 task (DART 컬럼 결손, partial 식 효과 0) |
+| #5 fcf_yield | 분포 정상 (negative 293/< 5%: 263) | ✅ 정상 |
+| #6 9 change_scan preset | 8/9 정상, **sector_leader 0건** | 🔴 → fix |
+| #6 sector_leader | `chg_pct` 컬럼명 mismatch (실제 `change_pct`) | fix 적용: 3 site fallback. **0 → 147 후보** |
+| #6 finance_rank | fscore/fcf_yield/per_low 정상, mscore_safe 0건 | ✅ 정상 |
+| #7 7 MCP 도구 | get_stock_detail/supply/consensus/alerts/portfolio/macro 정상 | ✅ |
+| #7 get_dart report_list | **ticker 필터 무시** — 005930 요청해도 다른 종목 파일 반환 | 🔴 → fix |
+| #15 매수감시 알림 | `<=` 조건 정확, 당일 쿨다운 작동, _safe_send 적용 | ✅ |
+
+### 4 commits (5/10 새벽)
+
+| commit | 내용 |
+|---|---|
+| `0f1ec38` | yfinance threads=False (SQLite cache lock 회피) |
+| `d94eee2` | PROGRESS Wave 1+2+3 진단 결과 + 학습 #36 |
+| `b2b77cb` | universe DB-based fetch + graceful shutdown handler |
+| `90105cd` | sector_leader chg_pct fix + get_dart ticker 필터 |
+
+### 학습 #13 6번째 재현 패턴
+
+| # | 시점 | 패턴 |
+|---|---|---|
+| 1 | 5/8 dart_5pct/10pct | 함수 작성 ↔ 스케줄 등록 누락 |
+| 2 | 5/8 dart_disclosure 별개 | 같은 패턴 |
+| 3 | 5/9 wi_5pct | collect_wi_changes 호출 누락 |
+| 4 | 5/10 universe pagination | KIS API 한계 미인지 + 4주 결손 |
+| 5 | 5/10 sector_leader | 컬럼명 mismatch 영구 0건 |
+| 6 | 5/10 get_dart ticker 필터 | arguments 무시 |
+
+→ **학습 #13 핵심 변형**: "함수 작성됐다 = 작동한다" 가정 전체에 위험. 호출/응답/필터 모두 dry-run 검증 필요.
+
+### 학습 #37 — debugger 가 git log 만 의존하면 fail
+
+5/10 universe debugger 1차 진단: `c8b71c1` (5/5) 가 fix 라 결론. 실제 수동 trigger 시 여전히 60종목. 2차 진단 시 KIS 공식 샘플 + 실제 API 응답 직접 호출하여 진짜 root cause 발견 (페이지네이션 자체 없음).
+
+→ **debugger 는 코드 + 실데이터 둘 다 검증**. git log 는 보조 수단.
+
+### 봇 재시작
+- 새 PID 39899, /health OK
+- universe 600 종목 유지
+- graceful shutdown handler 적용 (다음 재시작 시 SIGTERM 깔끔 종료)
+
+---
+
+## 📜 5/10 세션 (오전 진단) — Wave 1+2+3 추가 진단 + yfinance fix
 
 5/9 옵션 C 4 commits 후 Wave 1~3 추가 진단 + 알려진 펜딩 fix 시도.
 
@@ -217,6 +282,7 @@ verifier 가 APPROVE 했으나 reviewer/critic 가 3 blocker 발견:
 | #34 | verifier ≠ system-level reviewer | 5/10 옵션 C 사례 — verifier APPROVE 후 reviewer/critic 가 3 blocker 발견 (log inode POSIX FD + CI 테스트 false PASS + mscore 영구 false alarm). verifier 는 "선언 충족" 만 보고 시스템 시맨틱 / false sense of security / 운영 영향은 reviewer/critic 영역 |
 | #35 | Adversarial audit 결과 false alarm 비율 = 시스템 성숙 지표 | 5/10 5 audits 중 4건 false alarm — 학습 #13~#33 누적 효과로 시스템 견고. 다음 audit 사이클 ROI 체감 예상 |
 | #36 | PROGRESS.md "펜딩" 항목 직접 검증 필수 | 5/10 Wave 3 시도 — iCloud 펜딩 (이미 wired) / universe 페이지네이션 펜딩 (5/5 c8b71c1 라고 git log 에 적혔으나 실제 수동 트리거 시 여전히 60종목) — PROGRESS 자체 stale 가능. 추측 금지 + 직접 grep/sqlite/실행 검증 |
+| #37 | debugger git log 신뢰 X — 실데이터 검증 | 5/10 universe debugger 1차: c8b71c1 fix 결론. 실제: KIS API 30건 한계 + 페이지네이션 자체 없음. 2차: 공식 샘플 + 실제 API 호출로 진짜 root cause 발견 |
 
 ---
 
