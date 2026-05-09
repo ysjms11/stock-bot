@@ -9,9 +9,11 @@
 
 **우선순위 순:**
 
-1. **✅ 5/9 PTB days= fix + 4 bug 일괄 fix 검증 완료** — SAT 알림 정상 발사 (09:00 KST), 봇 재시작 후 새 PID 97408 정상 부팅, port 8080 충돌 0건.
+1. **✅ 5/9 PTB days= fix + 5/10 옵션 C 4 commits 모두 검증 완료** — 봇 PID 29071 정상, port 충돌 0, PTB assert 통과.
 
-2. **🟢 5/10 (일) 04:05 KST `dart_disclosure` 첫 발사 검증** (학습 #13 재현 fix). 다음날 5/11 `sqlite3 data/stock.db "SELECT MAX(rcept_dt) FROM dart_5pct_changes"` 가 5/10 또는 5/11 이면 정상.
+2. **🟢 5/10 (오늘) 03:00~07:15 일요일 잡 5종 첫 발사 검증** — `weekly_us_harvest` (03:00) / `weekly_nps` (03:30) / `weekly_us_analyst_sync` (04:00) / `dart_disclosure` (04:05 신규) / `weekly_consensus_update` + `weekly_sanity` (07:05, 새 sanity 확장 첫 실행 — fscore 20% 경고 예상) / `weekly_financial` (07:15)
+
+3. **🟢 5/10 (오늘) 23:30 KST `weekly_log_rotate` 첫 발사** — log size > 100MB 시 트림. 현재 43MB 라 트림 안 함. 다음 주에야 트림 발생 가능.
 
 3. **🟡 5/11 (월) 18:30 `daily_collect` 첫 정상 평일 실행 검증** — 5/8 (금) 누락 (PTB days 버그) 이후 첫 자동 평일. 매주 금요일 데이터 손실 종료.
 
@@ -47,6 +49,65 @@
 8. **펜딩 결정**:
    - weekly_financial redundancy (daily_dart_incremental 와 겹침, 분기 피크일만 축소?)
    - 한국 리포트 PDF 확장 3옵션 (메리츠 가입 막힘)
+
+---
+
+## 📜 5/10 세션 (00:00 KST 너머) — 옵션 C 빡센 audit + 4 commits
+
+### 사용자 요청 "전체적으로 빡세게 점검"
+
+5 병렬 audits 발견 8 critical (5 신규 + 4 알려진 재확인). 옵션 C (모두 진행) 채택.
+
+### 5 adversarial audits 결과 (대부분 false alarm — 시스템 견고)
+
+| # | 영역 | 결과 |
+|---|---|---|
+| 1 | 백테스트 NULL 알파 영향 | 🟢 모든 preset 가격/수급 기반, 영향 없음 |
+| 2 | dashboard.py _safe_send | 🟢 텔레그램 발사 path 0건 |
+| 3 | KRX 2026 공휴일 | 🟢 11 entries 정상 (10/1 임시공휴일 고시 시 수동 추가) |
+| 4 | MCP path traversal | 🟢 2단계 방어 안전, minor `os.sep` hardening |
+| 5 | US buy candidates 4주 stale | 🟡 5/10 (오늘 일) 03:00 자연 회복 예정 |
+
+### 4 commits (옵션 A + B + minor adversarial)
+
+| commit | 내용 |
+|---|---|
+| `fb32aaf` | wi_5pct 호출 wire (학습 #13 #3 재현 fix) + mscore partial 7-var 계산 (Beneish TATA 결손 700종목 회복) |
+| `ca3a6ea` | weekly_log_rotate 잡 (일 23:30 KST, /tmp/stock-bot.log 100MB 초과 트림) |
+| `b5400d3` | test_schedule_registration.py CI 테스트 + weekly_sanity 확장 + MCP os.sep |
+| `364a976` | reviewer/critic blocker fix (log inode 보존 + schedule.md 3건 + mscore 임계 비율) |
+
+### 룰대로 진행 흔적
+
+1. **5 parallel adversarial audits** (debugger Sonnet 3 + general-purpose 2)
+2. **python-developer (Sonnet)** — 3 commits 생성
+3. **code-reviewer (Opus)** — 🔴 3 blockers 발견 (log inode + schedule.md docs + mscore threshold)
+4. **critic (Opus)** — BLOCK 진단 (CI 테스트 false sense + mscore 영구 false alarm)
+5. **verifier (Opus)** — APPROVE (acceptance criteria 만 봄, 시스템 시맨틱 못 봄) — 학습 #32 재증명
+6. **python-developer follow-up** — 3 blocker fix 단일 commit `364a976`
+7. **재검증** code-reviewer + verifier 둘 다 APPROVE
+8. **봇 재시작** PID 29071 정상 부팅 (PTB assert 통과 + reuse_address)
+
+### 학습 #34 — verifier ≠ system-level reviewer
+
+verifier 가 APPROVE 했으나 reviewer/critic 가 3 blocker 발견:
+- **log_rotation `mv tmp file`** — POSIX FD semantics 위반. verifier 는 "함수 정의됨, ast OK" 만 봄. reviewer 가 launchd O_APPEND FD lifecycle 이해해서 발견.
+- **CI 테스트 false PASS** — schedule.md 자체 데이터 누락 3건. verifier 는 "테스트 PASS" 만 봄. critic 이 "PASS 메시지 자체가 false sense of security" 라며 흑돌 판단.
+- **mscore < 100 임계 영구 false alarm** — verifier 는 "if 분기 정상 작동" 만 봄. critic 가 "현재 0건 → 매주 영구 발동 → 알림 피로 → 인프라 의도 정반대" 라며 운영 영향 분석.
+
+**원칙**:
+- verifier = "선언한 acceptance criteria 충족" (mechanical)
+- code-reviewer = "선언 안 된 갭 + 시스템 시맨틱 위반"
+- critic = "false sense of security + 운영 영향 + 미래 회복성"
+
+학습 #32 의 직접 증거 — verifier 통과 후에도 reviewer/critic 가 잡는 갭이 진짜 운영 위험.
+
+### 학습 #35 — adversarial 결과 대부분 false alarm = 시스템 견고
+
+5 audits 중 4건 false alarm. 나머지 1건도 자연 회복. 의미:
+- 과거 6주 동안의 fix 들 (5/8 derived 컬럼 + 5/9 fix들) 이 실제로 시스템을 견고하게 만들었음
+- 학습 #13/#27/#28/#29/#30/#31/#32/#33 누적 효과
+- 다음 audit 사이클은 더 줄어들 것 (ROI 체감)
 
 ---
 
@@ -111,6 +172,8 @@
 | #31 | 의존성 메이저 업그레이드 시 break-change 매핑 검증 | PTB v19→v20 days= 매핑 사고 (5/9 오전) |
 | #32 | 팀 구조 비대체성 (verifier ≠ reviewer ≠ critic) | 5/9 오후 사고 — reviewer 가 7곳 미치환 잡음 |
 | #33 | Advisor Pattern: critic/reviewer/verifier = Opus, 나머지 sub-agent = Sonnet | 다수 의견 (wshobson 135 agents, MindStudio advisor strategy) — "After Sonnet session, run Opus over output. It catches things cheaper models miss". 호출 빈도 反 비례로 비용 효율 OK |
+| #34 | verifier ≠ system-level reviewer | 5/10 옵션 C 사례 — verifier APPROVE 후 reviewer/critic 가 3 blocker 발견 (log inode POSIX FD + CI 테스트 false PASS + mscore 영구 false alarm). verifier 는 "선언 충족" 만 보고 시스템 시맨틱 / false sense of security / 운영 영향은 reviewer/critic 영역 |
+| #35 | Adversarial audit 결과 false alarm 비율 = 시스템 성숙 지표 | 5/10 5 audits 중 4건 false alarm — 학습 #13~#33 누적 효과로 시스템 견고. 다음 audit 사이클 ROI 체감 예상 |
 
 ---
 
