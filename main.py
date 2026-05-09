@@ -4481,15 +4481,17 @@ async def weekly_sanity_check(context):
                     sanity_warnings.append(
                         f"⚠️ mscore 신선도 낮음: {m}/{total} (30% 임계 미달)"
                     )
-                # fscore non-null count — 비율 기반 (50% 임계)
+                # fscore non-null count — 비율 기반 (20% 임계)
+                # 자연 한계: DART 재무제표 있는 종목만 27% (마이크로/우선주/SPAC 제외)
+                # 5/10 사용자 알림 후 50% → 20% 조정 (false alarm 방지)
                 f = conn.execute(
                     "SELECT COUNT(*) FROM daily_snapshot "
                     "WHERE trade_date=(SELECT MAX(trade_date) FROM daily_snapshot) "
                     "AND fscore IS NOT NULL"
                 ).fetchone()[0]
-                if total > 0 and 0 < f < total * 0.5:
+                if total > 0 and 0 < f < total * 0.2:
                     sanity_warnings.append(
-                        f"⚠️ fscore 신선도 낮음: {f}/{total} (50% 임계 미달)"
+                        f"⚠️ fscore 신선도 낮음: {f}/{total} (20% 임계 미달)"
                     )
                 # wi_5pct_changes 14일 이내 (분기 보고이므로 여유)
                 wi = conn.execute(
