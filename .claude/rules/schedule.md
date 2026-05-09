@@ -84,6 +84,7 @@
 | 21:15 | 평일 | `collect_sanity_3` | `daily_collect_sanity_check` | 자가진단 3차 | 4/25 신규 |
 | 22:00 | 전체 | `auto_backup` | `auto_backup` | `/data/` Gist 백업 | — |
 | 22:15 | 평일 | `collect_sanity_4` | `daily_collect_sanity_check` | 자가진단 4차 (최종 방어) | 4/25 신규 |
+| 23:30 | 일 | `weekly_log_rotate` | `weekly_log_rotate` | /tmp/stock-bot.log 100MB 초과 시 마지막 10MB로 트림 (mac /tmp APFS RAM-backed) | 5/9 신규 |
 
 ---
 

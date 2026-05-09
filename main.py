@@ -4459,6 +4459,31 @@ async def weekly_sanity_check(context):
         print(f"[weekly_sanity] 실패: {e}")
 
 
+async def weekly_log_rotate(context):
+    """매주 일요일 23:30 KST - /tmp/stock-bot.log 트림 (100MB 초과 시 마지막 10MB).
+
+    학습 #?? (5/9): mac /tmp 는 RAM-backed (APFS), 무한 성장 시 launchd
+    stdout 드롭 + working set eviction. launchd plist StandardOutPath
+    직접 쏟음 → 자동 트림 필요.
+    """
+    import os as _os
+    import subprocess as _sp
+    log_path = "/tmp/stock-bot.log"
+    try:
+        size = _os.path.getsize(log_path)
+        if size > 100 * 1024 * 1024:
+            _sp.run(
+                f"tail -c 10485760 {log_path} > {log_path}.tmp && mv {log_path}.tmp {log_path}",
+                shell=True, check=True
+            )
+            print(f"[log_rotate] {size/1e6:.1f}MB -> 10MB 트림", flush=True)
+    except FileNotFoundError:
+        # 로그 파일 부재 (개발/테스트 환경)
+        pass
+    except Exception as e:
+        print(f"[log_rotate] 오류: {e}", flush=True)
+
+
 async def daily_us_rating_scan(context):
     """매일 KST 07:30 (UTC 22:30) — 감시+보유 미국 종목 애널 레이팅 수집 + 텔레그램 요약.
     60종목 × 2초 ≈ 2분 예상.
@@ -5332,6 +5357,8 @@ def main():
     jq.run_daily(weekly_report_digest_notify, time=dtime(19, 7, tzinfo=KST), days=(0,), name="weekly_report_digest")
     # 주간 무결성 체크: 매주 일요일 07:05 KST — daily_snapshot 영업일 누락 감시
     jq.run_daily(weekly_sanity_check,     time=dtime(7,  5, tzinfo=KST), days=(0,), name="weekly_sanity")
+    # 주간 로그 트림: 매주 일요일 23:30 KST — /tmp/stock-bot.log 100MB 초과 시 트림 (5/9 신규)
+    jq.run_daily(weekly_log_rotate,       time=dtime(23, 30, tzinfo=KST), days=(0,), name="weekly_log_rotate")
     jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
 
     port = int(os.environ.get("PORT", 8080))
