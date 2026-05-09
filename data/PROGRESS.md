@@ -25,12 +25,15 @@
 
 7. **🟢 5/11 (월) 07:00 `weekly_universe_update`**: (0,)→(1,) 매핑 변경. 페이지네이션 fix 와 함께 ~600종목 회복.
 
-8. **🟡 잠재 위험 (general-purpose audit 5/9)** — 5/9 fix 미반영, 별도 commit 필요:
-   - wi_5pct_changes 38일 정체 (4/1~) — 별도 path 깨짐 진단
-   - KIS API 500 RETRY 35,056건 — 성공률 분석 필요
-   - yfinance OperationalError "unable to open database file" — 캐시 락
-   - NPS US 13F stale (2/10 마지막) — 5/15 deadline 후 확인
-   - graceful shutdown signal handler — TCPSite reuse_address 의 근본 fix 별도 critic gate
+8. **🔴 universe 페이지네이션 진짜 root cause 진단** — 5/10 수동 트리거 시 여전히 60종목 (KOSPI=30+KOSDAQ=30). 5/5 c8b71c1 git log 상 fix 됐다 했으나 실제 효과 없음. `kis_api.py:fetch_universe_from_krx` + `:3141` 부근 페이지네이션 로직 깊은 진단 필요. 5/11 07:00 자연 발사 결과 후 재판정.
+
+9. **🔴 mscore Phase 4 데이터 백필** — 5/9 partial fix (TATA 제외) 코드는 OK 인데 DSRI/DEPI/SGAI 가 receivables(22.8%)/depreciation(5.9%)/sga(20.7%) 의존 → DART/KIS 수집 파서 업그레이드 필요. 큰 작업 (DART quota 영향).
+
+10. **🟡 잠재 위험 (5/9~5/10 audit 누적)**:
+    - dart_incremental 정기보고서 silent_failure 모니터링 (5/11 02:00 후 결정)
+    - KIS API 500 RETRY 35,056건 성공률 분석
+    - NPS US 13F stale (5/15 deadline 후 자동 해소)
+    - graceful shutdown signal handler — TCPSite reuse_address 의 근본 fix 별도 critic gate
 
 5. **🟢 KR 풀 딥서치 진행 (Claude.ai Project 권장)** — Tier 1 우선:
    - ✅ **064400 LG씨엔에스** thesis 완료 (5/8, 65K 감시가 RR 3.71, AX/RX/CBDC, 사용자 보강)
@@ -49,6 +52,45 @@
 8. **펜딩 결정**:
    - weekly_financial redundancy (daily_dart_incremental 와 겹침, 분기 피크일만 축소?)
    - 한국 리포트 PDF 확장 3옵션 (메리츠 가입 막힘)
+
+---
+
+## 📜 5/10 세션 (오전) — Wave 1+2+3 추가 진단 + yfinance fix
+
+5/9 옵션 C 4 commits 후 Wave 1~3 추가 진단 + 알려진 펜딩 fix 시도.
+
+### Wave 1 진단 결과 (15분, 4 sqlite 검증)
+
+| # | 발견 | 결론 |
+|---|---|---|
+| 1 | `pension_flow_daily` 4,251 rows MAX=4/27 | PTB days 버그로 4/28~ 정지, 5/11 평일 자연 회복 |
+| 2 | `dart_5pct/10pct` MAX=4/28, 11일 정체 | dart_disclosure 잡 5/9 까지 미등록 → 5/10 04:05 첫 발사로 자연 회복 |
+| 3 | `silent_failure_log.json` `dart_incr_zero count=1` | silent_failure 헬퍼 정상 작동 확인 (5/8 학습 #27 정착) |
+| 4 | sanity_check 7:05 dry-run | mscore 0건 silent skip ✅ / fscore 20% 진짜 경고 발사 / dart_5pct 11일 stale 진짜 경고 |
+
+### Wave 2 진단 — 5/9 mscore partial fix 미작동 확정
+
+5/9 commit `fb32aaf` 의 mscore partial fix 가 **데이터 부족으로 효과 없음** 확정:
+- `update_all_alpha_metrics(trade_date='20260507')` 실행 → fscore=772, mscore=**0**, fcf=690
+- root cause: core 7-vars 중 DSRI/DEPI/SGAI 가 receivables(22.8%)/depreciation(5.9%)/sga(20.7%) 의존 — financial_quarterly DB 컬럼 자체 결손
+- TATA 면제만으로는 부족. **DART/KIS 수집 파서 업그레이드 + 백필** 이 진짜 fix
+- 결정: partial fix 코드 유지 (미래 데이터 채워지면 자동 작동), Phase 4 백필은 별도 task
+
+5/8 daily_snapshot 백필: 일요일도 KIS API 500 + KRX "LOGOUT" → **한국 KIS 시스템 휴일 정비 확정**. 5/11 평일 정상화 후만 가능.
+
+### Wave 3 알려진 펜딩 — 2/3 stale, 1/3 적용
+
+| # | 결과 | 비고 |
+|---|---|---|
+| 8 universe | 페이지네이션 진짜 root cause 미확정 (debugger 가 5/5 c8b71c1 fix 라 했으나 실제 수동 트리거 시 여전히 60종목) | 별도 깊은 진단 필요. 5/11 07:00 자연 발사 결과로 재판정 |
+| 9 iCloud | 이미 wired (`main.py:2022`, iCloud mtime 5/7 confirmed) | 추가 작업 불필요 |
+| 10 yfinance threads | `0f1ec38` 1자 변경 commit | code-reviewer APPROVE / push 완료 |
+
+### 학습 #36 — PROGRESS.md stale 검증 필수
+
+PROGRESS.md 의 "iCloud 백업 호출 추가 펜딩" / "universe 페이지네이션 fix 펜딩" 둘 다 **이미 fix 됐거나 별도 root cause**. PROGRESS 자체가 stale. python-developer 가 추측 금지 룰 따라 직접 검증 후 발견.
+
+→ 다음 세션: PROGRESS.md "펜딩 항목" 들 직접 검증부터. 추측 금지 룰 (학습 #?) + 검증 우선 (학습 #28 변형).
 
 ---
 
@@ -174,6 +216,7 @@ verifier 가 APPROVE 했으나 reviewer/critic 가 3 blocker 발견:
 | #33 | Advisor Pattern: critic/reviewer/verifier = Opus, 나머지 sub-agent = Sonnet | 다수 의견 (wshobson 135 agents, MindStudio advisor strategy) — "After Sonnet session, run Opus over output. It catches things cheaper models miss". 호출 빈도 反 비례로 비용 효율 OK |
 | #34 | verifier ≠ system-level reviewer | 5/10 옵션 C 사례 — verifier APPROVE 후 reviewer/critic 가 3 blocker 발견 (log inode POSIX FD + CI 테스트 false PASS + mscore 영구 false alarm). verifier 는 "선언 충족" 만 보고 시스템 시맨틱 / false sense of security / 운영 영향은 reviewer/critic 영역 |
 | #35 | Adversarial audit 결과 false alarm 비율 = 시스템 성숙 지표 | 5/10 5 audits 중 4건 false alarm — 학습 #13~#33 누적 효과로 시스템 견고. 다음 audit 사이클 ROI 체감 예상 |
+| #36 | PROGRESS.md "펜딩" 항목 직접 검증 필수 | 5/10 Wave 3 시도 — iCloud 펜딩 (이미 wired) / universe 페이지네이션 펜딩 (5/5 c8b71c1 라고 git log 에 적혔으나 실제 수동 트리거 시 여전히 60종목) — PROGRESS 자체 stale 가능. 추측 금지 + 직접 grep/sqlite/실행 검증 |
 
 ---
 
