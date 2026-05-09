@@ -2332,17 +2332,49 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             stops = load_stoploss()
             kr_stops = {k: v for k, v in stops.items() if k != "us_stocks"}
             us_stops = stops.get("us_stocks", {})
+            wa = load_watchalert()
+
+            # ── 병렬 현재가 조회 ──
+            async def _fetch_kr(ticker):
+                try:
+                    d = await kis_stock_price(ticker, token)
+                    return int(d.get("stck_prpr", 0) or 0)
+                except Exception:
+                    return 0
+
+            async def _fetch_us_yahoo(sym):
+                try:
+                    d = await get_yahoo_quote(sym)
+                    return float(d.get("price", 0) or 0) if d else 0.0
+                except Exception:
+                    return 0.0
+
+            async def _fetch_wa(wa_ticker):
+                try:
+                    if _is_us_ticker(wa_ticker):
+                        d = await kis_us_stock_price(wa_ticker, token)
+                        return float(d.get("last", 0) or 0)
+                    else:
+                        d = await kis_stock_price(wa_ticker, token)
+                        return int(d.get("stck_prpr", 0) or 0)
+                except Exception:
+                    return 0.0
+
+            kr_tickers = list(kr_stops.keys())
+            us_syms = list(us_stops.keys())
+            wa_tickers = list(wa.keys())
+
+            kr_prices, us_prices, wa_prices = await asyncio.gather(
+                asyncio.gather(*[_fetch_kr(t) for t in kr_tickers]),
+                asyncio.gather(*[_fetch_us_yahoo(s) for s in us_syms]),
+                asyncio.gather(*[_fetch_wa(t) for t in wa_tickers]),
+            )
+
             alerts = []
-            for ticker, info in kr_stops.items():
+            for ticker, info, cur in zip(kr_tickers, list(kr_stops.values()), kr_prices):
                 stop   = info.get("stop_price", 0)
                 entry  = info.get("entry_price", 0)
                 target = info.get("target_price", 0)
-                cur = 0
-                try:
-                    d = await kis_stock_price(ticker, token)
-                    cur = int(d.get("stck_prpr", 0) or 0)
-                except Exception:
-                    pass
                 gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
                 item = {
                     "ticker": ticker, "name": info.get("name", ticker),
@@ -2353,15 +2385,9 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                     item["target"] = target
                     item["target_pct"] = round((target - cur) / cur * 100, 2) if cur else None
                 alerts.append(item)
-            for sym, info in us_stops.items():
+            for sym, info, cur in zip(us_syms, list(us_stops.values()), us_prices):
                 stop   = info.get("stop_price", 0)
                 target = info.get("target_price", 0)
-                cur = 0.0
-                try:
-                    d = await get_yahoo_quote(sym)
-                    cur = float(d.get("price", 0) or 0) if d else 0.0
-                except Exception:
-                    pass
                 gap_pct = round((stop - cur) / cur * 100, 2) if cur else None
                 item = {
                     "ticker": sym, "name": info.get("name", sym),
@@ -2374,20 +2400,9 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 alerts.append(item)
 
             # ── 매수감시 목록 통합 ──
-            wa = load_watchalert()
             watch_alerts = []
-            for wa_ticker, wa_info in wa.items():
+            for wa_ticker, wa_info, cur in zip(wa_tickers, list(wa.values()), wa_prices):
                 buy_price = wa_info.get("buy_price", 0)
-                cur = 0.0
-                try:
-                    if _is_us_ticker(wa_ticker):
-                        d = await kis_us_stock_price(wa_ticker, token)
-                        cur = float(d.get("last", 0) or 0)
-                    else:
-                        d = await kis_stock_price(wa_ticker, token)
-                        cur = int(d.get("stck_prpr", 0) or 0)
-                except Exception:
-                    pass
                 gap_pct = round((cur - buy_price) / buy_price * 100, 2) if buy_price else None
                 # grade: 저장된 값 우선, 없으면 memo에서 파싱
                 grade = wa_info.get("grade", "")
