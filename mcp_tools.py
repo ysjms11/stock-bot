@@ -1769,7 +1769,12 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             dart_mode = arguments.get("mode", "").strip().lower()
 
             if dart_mode == "report_list":
-                result = list_dart_reports()
+                _filter_ticker = (arguments.get("ticker") or "").strip()
+                raw = list_dart_reports()
+                if _filter_ticker:
+                    raw["files"] = [f for f in raw.get("files", []) if f.get("ticker") == _filter_ticker]
+                    raw["total"] = len(raw["files"])
+                result = raw
 
             elif dart_mode == "read":
                 target_ticker = (arguments.get("ticker") or "").strip()

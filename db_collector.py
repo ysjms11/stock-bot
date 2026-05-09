@@ -1020,7 +1020,7 @@ def _compute_technicals_sqlite(date: str, stocks: dict, history: dict, dates: li
     for s in stocks.values():
         sec = s.get("sector_name", "")
         if sec:
-            sector_chg.setdefault(sec, []).append(s.get("chg_pct", 0) or 0)
+            sector_chg.setdefault(sec, []).append(s.get("chg_pct") or s.get("change_pct", 0) or 0)
     sector_avg = {sec: round(float(np.mean(vals)), 4) for sec, vals in sector_chg.items() if vals}
 
     for ticker, s in stocks.items():
@@ -1075,7 +1075,7 @@ def _compute_technicals_sqlite(date: str, stocks: dict, history: dict, dates: li
 
         # ── 섹터 상대강도 ──
         sec = s.get("sector_name", "")
-        chg_pct = s.get("chg_pct", 0) or 0
+        chg_pct = s.get("chg_pct") or s.get("change_pct", 0) or 0
         s["sector_rel_strength"] = round(chg_pct - sector_avg[sec], 2) if sec and sec in sector_avg else None
 
         # ── 추세: volume_ratio 5d/10d/20d ──
@@ -1162,7 +1162,7 @@ def _compute_technicals_sqlite(date: str, stocks: dict, history: dict, dates: li
     for ticker, s in stocks.items():
         sec = s.get("sector_name", "")
         if sec:
-            sector_stocks.setdefault(sec, []).append((ticker, s.get("chg_pct", 0) or 0))
+            sector_stocks.setdefault(sec, []).append((ticker, s.get("chg_pct") or s.get("change_pct", 0) or 0))
     for sec, members in sector_stocks.items():
         members.sort(key=lambda x: x[1], reverse=True)
         for rank, (ticker, _) in enumerate(members, 1):
