@@ -1361,9 +1361,7 @@ async def snapshot_and_drawdown(context: ContextTypes.DEFAULT_TYPE):
         for a in alerts:
             lvl = "🚨" if a["level"] == "CRITICAL" else "⚠️"
             lines.append(f"{lvl} {a['message']}")
-        await context.bot.send_message(
-            chat_id=CHAT_ID, text="\n".join(lines), parse_mode="Markdown"
-        )
+        await _safe_send(context, "\n".join(lines))
     except Exception as e:
         print(f"[drawdown] 드로다운 체크 오류: {e}")
 
@@ -2186,7 +2184,7 @@ async def daily_dart_incremental(context):
 async def daily_dart_disclosure_collect(context):
     """매일 04:05 KST — DART 5%룰(D001) + 10%룰(D002) 매일 증분 수집.
 
-    schedule.md 기록: '04:00 dart_disclosure 매일 (~10초)'.
+    schedule.md 기록: '04:05 dart_disclosure 매일 (~10초)'.
     4/28 신규 추가 후 jq.run_daily 등록 누락 사고 (학습 #13). 5/9 fix.
     """
     try:
@@ -2929,11 +2927,7 @@ async def daily_nps_dart_increment(context: ContextTypes.DEFAULT_TYPE):
                 f"  {arrow} *{x['company_name']}* {qty:+,}주 "
                 f"(지분 {x['ratio_pct']:.2f}%) — {x['report_date']}"
             )
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text="\n".join(lines),
-            parse_mode="Markdown",
-        )
+        await _safe_send(context, "\n".join(lines))
     except Exception as e:
         print(f"[nps_dart_inc] 오류: {e}")
 
@@ -3022,11 +3016,7 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     # 텔레그램 알림 (신규 있을 때만)
     if msg_lines:
         try:
-            await context.bot.send_message(
-                chat_id=CHAT_ID,
-                text="\n\n".join(msg_lines),
-                parse_mode="Markdown",
-            )
+            await _safe_send(context, "\n\n".join(msg_lines))
         except Exception as e:
             print(f"[nps_collect] 텔레그램 발송 오류: {e}")
 
@@ -3175,10 +3165,7 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
             for i, x in enumerate(buy_top_amount, 1):
                 msg += f"{i}. *{x['name']}* {_fmt_amt(x['net_5d'])} ({x['pct']:+.2f}%)\n"
 
-        await context.bot.send_message(
-            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        await _safe_send(context, msg, disable_web_page_preview=True)
         _sent["pension_alert"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -3268,10 +3255,7 @@ async def weekly_sat_port_check_notify(context: ContextTypes.DEFAULT_TYPE):
             "data/SAT_PORT_CHECK (토요일_포트관리).md 보고 진행해\n"
             "```"
         )
-        await context.bot.send_message(
-            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        await _safe_send(context, msg, disable_web_page_preview=True)
         _sent["sat_port_check"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -3294,10 +3278,7 @@ async def weekly_sun_discovery_notify(context: ContextTypes.DEFAULT_TYPE):
             "data/SUN_DISCOVERY (일요일_신규발굴).md 보고 진행해\n"
             "```"
         )
-        await context.bot.send_message(
-            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        await _safe_send(context, msg, disable_web_page_preview=True)
         _sent["sun_discovery"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
@@ -3353,10 +3334,7 @@ async def weekly_report_digest_notify(context: ContextTypes.DEFAULT_TYPE):
             f"📱 https://claude.ai"
         )
 
-        await context.bot.send_message(
-            chat_id=CHAT_ID, text=msg, parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        await _safe_send(context, msg, disable_web_page_preview=True)
         _sent["weekly_report_digest"] = _key
         save_json(MACRO_SENT_FILE, _sent)
     except Exception as e:
