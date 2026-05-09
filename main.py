@@ -2155,6 +2155,20 @@ async def daily_dart_incremental(context):
         print(f"[dart_incr] 텔레그램 전송 실패: {e}")
 
 
+async def daily_dart_disclosure_collect(context):
+    """매일 04:05 KST — DART 5%룰(D001) + 10%룰(D002) 매일 증분 수집.
+
+    schedule.md 기록: '04:00 dart_disclosure 매일 (~10초)'.
+    4/28 신규 추가 후 jq.run_daily 등록 누락 사고 (학습 #13). 5/9 fix.
+    """
+    try:
+        r5 = await collect_dart_5pct_changes(days=2)
+        r10 = await collect_dart_10pct_insiders(days=2)
+        print(f"[dart_disclosure] 5pct={r5} / 10pct={r10}", flush=True)
+    except Exception as e:
+        print(f"[dart_disclosure] 오류: {e}", flush=True)
+
+
 async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
     """매일 08:30 KST — 보유+감시 종목 증권사 리포트 수집"""
     if not _REPORT_AVAILABLE:
@@ -5263,6 +5277,8 @@ def main():
     jq.run_daily(weekly_nps_collect,            time=dtime(3, 30, tzinfo=KST), days=(0,), name="weekly_nps")
     # NPS 5%룰 DART 증분 수집 — 매일 04:00 KST (분기 사이 NPS 변동 보고 캡처)
     jq.run_daily(daily_nps_dart_increment, time=dtime(4, 0, tzinfo=KST), name="nps_dart_inc")
+    # DART 5%/10%룰 일별 증분 수집 — 매일 04:05 KST (4/28 도입 후 등록 누락 사고 학습 #13)
+    jq.run_daily(daily_dart_disclosure_collect, time=dtime(4, 5, tzinfo=KST), days=(0,1,2,3,4,5,6), name="dart_disclosure")
     # 미국 보유 종목 실시간 감시 (ET 12:00 / 16:30 — DST 자동, 평일만. ET는 kis_api에서 import)
     jq.run_daily(hourly_us_holdings_check, time=dtime(12, 0, tzinfo=ET), days=(1,2,3,4,5), name="us_holdings_noon")
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(1,2,3,4,5), name="us_holdings_close")

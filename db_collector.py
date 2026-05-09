@@ -1764,6 +1764,11 @@ def _upsert_dart_full_row(conn: sqlite3.Connection, ticker: str, r: dict):
     기존 KIS IS/BS 데이터를 덮어쓰지 않기 위해 COALESCE 패턴 사용.
     10개 신규 컬럼 + (없을 때) revenue/operating_profit/net_income/… 보강.
     """
+    # FK guard 내재화 (학습 #29): stock_master 미등록 ticker 는 silent skip
+    # 5/8 d662b69 fix 가 호출 site 한 곳만 커버 → 헬퍼 안으로 push (방어 위치 통일)
+    if not conn.execute("SELECT 1 FROM stock_master WHERE symbol=? LIMIT 1", (ticker,)).fetchone():
+        return False
+
     rp = r.get("report_period", "")
     if not rp:
         return False
