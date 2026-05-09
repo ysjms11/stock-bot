@@ -4094,7 +4094,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 else:
                     _base = os.path.dirname(os.path.realpath(__file__))
                     _fpath = os.path.realpath(os.path.join(_base, rel))
-                    if not _fpath.startswith(_base):
+                    # 5/9 hardening: prefix collision 차단 (os.sep 경계 검사)
+                    if _fpath != _base and not _fpath.startswith(_base + os.sep):
                         result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
                     elif not os.path.isfile(_fpath):
                         result = {"error": f"파일 없음: {rel}"}
@@ -4134,7 +4135,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                 else:
                     _base = os.path.dirname(os.path.realpath(__file__))
                     _fpath = os.path.realpath(os.path.join(_base, rel))
-                    if not _fpath.startswith(_base):
+                    # 5/9 hardening: prefix collision 차단 (os.sep 경계 검사)
+                    if _fpath != _base and not _fpath.startswith(_base + os.sep):
                         result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
                     else:
                         os.makedirs(os.path.dirname(_fpath), exist_ok=True)
@@ -4149,7 +4151,8 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
             else:
                 _base = os.path.dirname(os.path.realpath(__file__))
                 _dpath = os.path.realpath(os.path.join(_base, rel))
-                if not _dpath.startswith(_base):
+                # 5/9 hardening: prefix collision 차단 (os.sep 경계 검사)
+                if _dpath != _base and not _dpath.startswith(_base + os.sep):
                     result = {"error": "stock-bot 디렉토리 밖 접근 불가"}
                 elif not os.path.isdir(_dpath):
                     result = {"error": f"디렉토리 없음: {rel}"}

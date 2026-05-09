@@ -4455,6 +4455,57 @@ async def weekly_sanity_check(context):
                       f"main.py `_KRX_HOLIDAYS` frozenset 갱신\n"
                       f"https://open.krx.co.kr/contents/MKD/01/0110/01100305/MKD01100305.jsp")
             )
+
+        # 5/9 추가: derived 컬럼 / 별도 테이블 stale 감지 (학습 #28 후속)
+        # daily_snapshot row count 만으로는 컬럼/테이블 침묵 영구 0 미감지
+        sanity_warnings = []
+        try:
+            import sqlite3 as _s
+            db_path = f"{_DATA_DIR}/stock.db"
+            with _s.connect(db_path, timeout=10) as conn:
+                # mscore non-null count (Phase 4 alpha)
+                m = conn.execute(
+                    "SELECT COUNT(*) FROM daily_snapshot "
+                    "WHERE trade_date=(SELECT MAX(trade_date) FROM daily_snapshot) "
+                    "AND mscore IS NOT NULL"
+                ).fetchone()[0]
+                if m < 100:
+                    sanity_warnings.append(f"⚠️ mscore 신선도 낮음: {m}건 (기대 500+)")
+                # fscore non-null count
+                f = conn.execute(
+                    "SELECT COUNT(*) FROM daily_snapshot "
+                    "WHERE trade_date=(SELECT MAX(trade_date) FROM daily_snapshot) "
+                    "AND fscore IS NOT NULL"
+                ).fetchone()[0]
+                if f < 400:
+                    sanity_warnings.append(f"⚠️ fscore 신선도 낮음: {f}건 (기대 600+)")
+                # wi_5pct_changes 14일 이내 (분기 보고이므로 여유)
+                wi = conn.execute(
+                    "SELECT julianday('now') - julianday(MAX(report_date)) "
+                    "FROM wi_5pct_changes"
+                ).fetchone()[0]
+                if wi and wi > 14:
+                    sanity_warnings.append(f"⚠️ wi_5pct_changes {wi:.0f}일 stale (기대 <14일)")
+                # pension_flow_daily 7일 이내 (평일 매일 갱신)
+                pf = conn.execute(
+                    "SELECT julianday('now') - julianday(MAX(trade_date)) "
+                    "FROM pension_flow_daily"
+                ).fetchone()[0]
+                if pf and pf > 7:
+                    sanity_warnings.append(f"⚠️ pension_flow_daily {pf:.0f}일 stale (기대 <7일)")
+                # dart_5pct_changes 7일 이내 (정상이면 매일 갱신)
+                dart5 = conn.execute(
+                    "SELECT julianday('now') - julianday(MAX(rcept_dt)) "
+                    "FROM dart_5pct_changes WHERE rcept_dt IS NOT NULL"
+                ).fetchone()[0]
+                if dart5 and dart5 > 7:
+                    sanity_warnings.append(f"⚠️ dart_5pct_changes {dart5:.0f}일 stale")
+        except Exception as e:
+            sanity_warnings.append(f"sanity 확장 검증 오류: {e}")
+
+        if sanity_warnings:
+            warn_msg = "🔍 *데이터 품질 경고*\n\n" + "\n".join(sanity_warnings)
+            await _safe_send(context, warn_msg)
     except Exception as e:
         print(f"[weekly_sanity] 실패: {e}")
 
