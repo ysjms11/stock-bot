@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import re
+import signal
 import socket
 import asyncio
 import hashlib
@@ -5520,15 +5521,32 @@ async def _run_all(app, port):
     print(f"[WS] 실시간 매니저 시작 (KR {len(ws_manager._subscribed)}개 + US {len(ws_manager._subscribed_us)}개)")
 
     # 텔레그램 봇 비동기 실행
+    stop_event = asyncio.Event()
+
+    def _signal_handler():
+        print("[Shutdown] SIGTERM/SIGINT 수신 — graceful 종료 시작", flush=True)
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _signal_handler)
+
     try:
         async with app:
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
-            await asyncio.Event().wait()  # 무한 대기
+            await stop_event.wait()  # SIGTERM/SIGINT 까지 대기
+            print("[Shutdown] 봇 updater 종료 중...", flush=True)
+            await app.updater.stop()
     finally:
+        try:
+            await asyncio.wait_for(runner.cleanup(), timeout=8.0)
+            print("[Shutdown] aiohttp runner cleanup 완료 (포트 release)", flush=True)
+        except asyncio.TimeoutError:
+            print("[Shutdown] runner.cleanup() 8초 timeout — 강제 진행", flush=True)
         await close_session()
-        print("[Shutdown] aiohttp 공유 세션 정리 완료")
+        print("[Shutdown] aiohttp 공유 세션 정리 완료", flush=True)
 
 
 if __name__ == "__main__":

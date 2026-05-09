@@ -3088,69 +3088,80 @@ def get_stock_universe() -> dict:
 
 
 async def fetch_universe_from_krx(token: str) -> dict:
-    """KIS 시가총액 상위 API로 유니버스 자동 조회.
+    """시가총액 기준 유니버스 조회.
 
-    - KOSPI200 구성종목 전체 (fid_input_iscd="2001")
-    - KOSDAQ 시총 상위 150종목 (fid_input_iscd="1001")
-    페이지네이션: 응답 헤더 tr_cont="M" 이면 다음 페이지 요청.
+    1차: stock.db daily_snapshot 최신 날짜 기준 시총 상위 (KOSPI 250 + KOSDAQ 350)
+    2차 fallback: FHPST01740000 API (응답 상한 30건/시장 — 주말·DB 미수집 대비)
 
     Returns: {ticker: name}
     """
+    import sqlite3 as _sqlite3
+
+    # ── 1차: DB 기반 시총 상위 ─────────────────────────────────────────
+    try:
+        conn = _sqlite3.connect(_DB_PATH, timeout=10)
+        cur = conn.cursor()
+        cur.execute("SELECT MAX(trade_date) FROM daily_snapshot")
+        row = cur.fetchone()
+        latest_date = row[0] if row else None
+        if latest_date:
+            result: dict = {}
+            for market, limit in (("kospi", 250), ("kosdaq", 350)):
+                cur.execute(
+                    """SELECT sm.symbol, sm.name
+                       FROM stock_master sm
+                       JOIN daily_snapshot ds ON ds.symbol = sm.symbol
+                                              AND ds.trade_date = ?
+                       WHERE sm.market = ? AND ds.market_cap > 0
+                       ORDER BY ds.market_cap DESC
+                       LIMIT ?""",
+                    (latest_date, market, limit),
+                )
+                rows = cur.fetchall()
+                for sym, name in rows:
+                    result[sym] = name
+            conn.close()
+            print(f"[fetch_universe] DB({latest_date}) 합계={len(result)}")
+            if len(result) >= 100:
+                return result
+        conn.close()
+    except Exception as e:
+        print(f"[fetch_universe] DB 조회 실패: {e} — KIS API fallback")
+
+    # ── 2차 fallback: KIS API (FHPST01740000, 최대 30건/시장) ──────────
+    # 주의: 이 API는 페이지네이션 없이 30건이 상한임 (tr_cont 항상 '' 반환)
     BASE_PATH = "/uapi/domestic-stock/v1/ranking/market-cap"
     TR_ID     = "FHPST01740000"
-
-    async def _fetch_market(iscd: str, max_count: int) -> dict:
-        collected: dict = {}
-        tr_cont = ""
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
-            while len(collected) < max_count:
-                hdrs = {**_kis_headers(token, TR_ID), "tr_cont": tr_cont}
-                params = {
-                    "fid_input_price_2":       "",
-                    "fid_cond_mrkt_div_code":  "J",
-                    "fid_cond_scr_div_code":   "20174",
-                    "fid_div_cls_code":        "1",   # 보통주만 (우선주·ETF 제외)
-                    "fid_input_iscd":          iscd,
-                    "fid_trgt_cls_code":       "0",
-                    "fid_trgt_exls_cls_code":  "0",
-                    "fid_input_price_1":       "",
-                    "fid_vol_cnt":             "",
-                }
-                try:
-                    async with s.get(f"{KIS_BASE_URL}{BASE_PATH}",
-                                     headers=hdrs, params=params) as r:
-                        data           = await r.json(content_type=None)
-                        resp_tr_cont   = r.headers.get("tr_cont", "D")
-                except Exception as e:
-                    print(f"[fetch_universe] iscd={iscd} 요청 오류: {e}")
-                    break
-
-                items = data.get("output", [])
-                if not items:
-                    break
-                for item in items:
-                    ticker = (item.get("mksc_shrn_iscd") or "").strip()
-                    name   = (item.get("hts_kor_isnm")   or "").strip()
-                    if ticker and name:
-                        collected[ticker] = name
-                        if len(collected) >= max_count:
-                            break
-
-                # KIS 페이지네이션: F 또는 M = 다음 페이지 / D, E, "" = 마지막
-                # (이전 코드 `!= "M"`은 응답값이 F로 변경되면서 4/13부터 첫 페이지 30종목만 받고 break)
-                if resp_tr_cont not in ("F", "M"):
-                    break
-                tr_cont = "N"
-                await asyncio.sleep(0.15)
-
-        return collected
-
-    kospi  = await _fetch_market("2001", 250)  # KOSPI 시총 상위 250
-    await asyncio.sleep(0.3)
-    kosdaq = await _fetch_market("1001", 350)  # KOSDAQ 시총 상위 350
-    universe  = {**kospi, **kosdaq}
-    print(f"[fetch_universe] KOSPI={len(kospi)}, KOSDAQ={len(kosdaq)}, 합계={len(universe)}")
-    return universe
+    fallback: dict = {}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+        for iscd, label in (("0001", "KOSPI"), ("1001", "KOSDAQ")):
+            hdrs = {**_kis_headers(token, TR_ID), "tr_cont": ""}
+            params = {
+                "fid_input_price_2":      "",
+                "fid_cond_mrkt_div_code": "J",
+                "fid_cond_scr_div_code":  "20174",
+                "fid_div_cls_code":       "1",
+                "fid_input_iscd":         iscd,
+                "fid_trgt_cls_code":      "0",
+                "fid_trgt_exls_cls_code": "0",
+                "fid_input_price_1":      "",
+                "fid_vol_cnt":            "",
+            }
+            try:
+                async with s.get(f"{KIS_BASE_URL}{BASE_PATH}",
+                                 headers=hdrs, params=params) as r:
+                    data = await r.json(content_type=None)
+            except Exception as e:
+                print(f"[fetch_universe] fallback {label} 오류: {e}")
+                continue
+            for item in data.get("output", []):
+                ticker = (item.get("mksc_shrn_iscd") or "").strip()
+                name   = (item.get("hts_kor_isnm")   or "").strip()
+                if ticker and name:
+                    fallback[ticker] = name
+            await asyncio.sleep(0.3)
+    print(f"[fetch_universe] fallback(KIS API) 합계={len(fallback)}")
+    return fallback
 
 
 async def kis_daily_closes(ticker: str, token: str, n: int = 65) -> list:
