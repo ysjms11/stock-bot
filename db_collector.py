@@ -3658,7 +3658,7 @@ def find_us_buy_candidates(
         prices = {}
         try:
             data = yf.download(tickers=tickers_list, period="1d",
-                                progress=False, auto_adjust=True, threads=True)
+                                progress=False, auto_adjust=True, threads=False)
             if not data.empty:
                 close = data["Close"]
                 if hasattr(close, "iloc"):
