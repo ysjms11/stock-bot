@@ -5375,7 +5375,7 @@ async def _run_all(app, port):
     dashboard.register_routes(mcp_app)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, "0.0.0.0", port, reuse_address=True)
     await site.start()
     print(f"MCP SSE 서버 시작: 0.0.0.0:{port}/mcp")
 
