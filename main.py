@@ -3013,6 +3013,25 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[nps_kr_full] 오류: {e}")
 
+    # ── 4) 와이즈리포트 5%룰 변동 수집 (학습 #13 3번째 재현 fix - 5/9) ──
+    # 함수 정의만 있고 호출 site 0건 - 4/1 이후 38일 정체
+    try:
+        from kis_api import collect_wi_changes
+        r5pct = await collect_wi_changes()
+        print(f"[wi_5pct] {r5pct}", flush=True)
+        wi_inserted = r5pct.get("major_inserted", 0) + r5pct.get("ele_inserted", 0)
+        if wi_inserted == 0:
+            cnt = _track_silent_failure("wi_5pct_zero", threshold=2)
+            if cnt:
+                await _alert_silent_failure(
+                    context, "wi_5pct_zero", cnt,
+                    f"weekly_nps step4 (wi_5pct) {cnt}주 연속 0건"
+                )
+        else:
+            _reset_silent_failure("wi_5pct_zero")
+    except Exception as e:
+        print(f"[wi_5pct] 오류: {e}", flush=True)
+
     # 텔레그램 알림 (신규 있을 때만)
     if msg_lines:
         try:

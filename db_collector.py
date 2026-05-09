@@ -3094,19 +3094,34 @@ def _compute_mscore(conn: sqlite3.Connection, ticker: str, end_period: str) -> d
         variables["TATA"] = (op_c - cfo_c) / ta_c
 
     # 최종 M-Score
-    if all(variables[k] is not None for k in
-           ("DSRI", "GMI", "AQI", "SGI", "DEPI", "SGAI", "LVGI", "TATA")):
-        m = (-4.84
-             + 0.92 * variables["DSRI"]
-             + 0.528 * variables["GMI"]
-             + 0.404 * variables["AQI"]
-             + 0.892 * variables["SGI"]
-             + 0.115 * variables["DEPI"]
-             - 0.172 * variables["SGAI"]
-             + 4.679 * variables["TATA"]
-             - 0.327 * variables["LVGI"])
+    # 5/9 fix: TATA 만 None 허용 partial 7-variable 계산 (CFS 결손 종목 660+)
+    # 학습 #28 후속 — Phase 4 launch 이후 mscore 100% NULL 원인
+    core_keys = ("DSRI", "GMI", "AQI", "SGI", "DEPI", "SGAI", "LVGI")
+    if all(variables[k] is not None for k in core_keys):
+        if variables["TATA"] is not None:
+            m = (-4.84
+                 + 0.92 * variables["DSRI"]
+                 + 0.528 * variables["GMI"]
+                 + 0.404 * variables["AQI"]
+                 + 0.892 * variables["SGI"]
+                 + 0.115 * variables["DEPI"]
+                 - 0.172 * variables["SGAI"]
+                 + 4.679 * variables["TATA"]
+                 - 0.327 * variables["LVGI"])
+            result["is_complete"] = True
+        else:
+            # TATA 결손 partial 계산 - 4.679*TATA term 제외 (정확도 약간 낮으나 sufficient signal)
+            m = (-4.84
+                 + 0.92 * variables["DSRI"]
+                 + 0.528 * variables["GMI"]
+                 + 0.404 * variables["AQI"]
+                 + 0.892 * variables["SGI"]
+                 + 0.115 * variables["DEPI"]
+                 - 0.172 * variables["SGAI"]
+                 - 0.327 * variables["LVGI"])
+            result["is_complete"] = False
+            result["partial_reason"] = "TATA_missing"
         result["mscore"] = m
-        result["is_complete"] = True
         if m > -1.78:
             result["manipulation_risk"] = "high"
         elif m > -2.22:
