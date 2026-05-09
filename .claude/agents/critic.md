@@ -1,7 +1,7 @@
 ---
 name: critic
 description: Final quality gate for plans and code — read-only reviewer using multi-perspective gap analysis. Use AFTER code-reviewer for high-risk changes or critical architectural decisions.
-model: sonnet
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 

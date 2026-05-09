@@ -110,6 +110,7 @@
 | #30 | 발굴 도구가 데이터 품질 검사기 | 사용자 발굴 시도 = 데이터 검사 발굴 (5/8 derived) |
 | #31 | 의존성 메이저 업그레이드 시 break-change 매핑 검증 | PTB v19→v20 days= 매핑 사고 (5/9 오전) |
 | #32 | 팀 구조 비대체성 (verifier ≠ reviewer ≠ critic) | 5/9 오후 사고 — reviewer 가 7곳 미치환 잡음 |
+| #33 | Advisor Pattern: critic/reviewer/verifier = Opus, 나머지 sub-agent = Sonnet | 다수 의견 (wshobson 135 agents, MindStudio advisor strategy) — "After Sonnet session, run Opus over output. It catches things cheaper models miss". 호출 빈도 反 비례로 비용 효율 OK |
 
 ---
 

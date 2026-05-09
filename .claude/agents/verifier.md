@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: Evidence-based completion verification — runs tests, syntax checks, smoke tests independently. Use AFTER implementation to prove something actually works. NEVER self-approves work from same context.
-model: sonnet
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 

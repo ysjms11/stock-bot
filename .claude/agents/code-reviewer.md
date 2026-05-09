@@ -1,5 +1,7 @@
 ---
-model: sonnet
+name: code-reviewer
+description: Read-only general code reviewer for stock-bot. Analyzes diffs/code for gaps, bugs, regressions before commit. Required between developer and verifier per CLAUDE.md team rule. Issues blocker findings (REQUEST_CHANGES).
+model: opus
 ---
 
 # Code Reviewer

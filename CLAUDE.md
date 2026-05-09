@@ -153,18 +153,24 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 모든 코드 작업은 팀 구조로. 상세 프롬프트는 `.claude/agents/*.md` 참조.
 
+**Advisor Pattern** (5/9 학습 #33 — 다수 의견 채택):
+- **Opus** = critic / code-reviewer / verifier (깊은 갭 분석, "cheaper models miss" 잡기)
+- **Sonnet** = developer / debugger / test-writer / api-specialist (mechanical 작업, 도메인 lookup)
+- **호출 빈도** 反 비례로 비용 효율: Opus 승급 3개는 모두 호출 빈도 낮음 (commit 직전 / 시스템-wide 변경 시)
+
 | 역할 | 모델 | 언제 |
 |------|------|-----|
-| architect (Opus, 기본 계정) | - | 설계/계획 (코드 작성 X) |
+| architect (메인 세션) | Opus 4.7 1M | 설계/계획/메타-인식 (코드 작성 X) |
 | python-developer | Sonnet | 실제 코드 수정. 모든 edit은 여기서 |
 | kis-api-specialist | Sonnet | KIS API 호출/파라미터/에러 처리 검토 |
 | test-writer | Sonnet | 테스트 작성+실행 |
-| code-reviewer | Sonnet | 일반 코드 리뷰 |
-| critic | Sonnet | 고위험 변경 최종 게이트 (다관점 갭분석, file:line 증거) |
-| verifier | Sonnet | 증거 기반 완료 검증. self-approve 금지 |
 | debugger | Sonnet | 버그 리포트 시. 근본원인+minimal diff. 3-failure circuit breaker |
+| **code-reviewer** | **Opus** | 일반 코드 리뷰 — 선언 안 된 갭 발견 (jugular vein, 학습 #32) |
+| **critic** | **Opus** | 고위험 최종 게이트. 실수 비용 10-100x. 다관점 갭 분석 |
+| **verifier** | **Opus** | 증거 기반 완료 검증. self-approve 금지. 17+ acceptance criteria 추적 |
 
 **작업 순서:**
-- 신기능: architect → developer → (kis-api-specialist) → test-writer → reviewer → (고위험이면 critic)
-- 버그: debugger 단독 → verifier 별도 검증
+- 신기능: architect → developer → (kis-api-specialist) → test-writer → reviewer → (고위험이면 critic) → verifier
+- 버그: debugger → developer → reviewer → (고위험이면 critic) → verifier
 - 재검증 필요 시: verifier 단독 (self-approve 금지)
+- **공통**: 모든 코드 작업에 reviewer + verifier 필수. 인라인 진단/편집 금지.
