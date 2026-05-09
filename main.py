@@ -4463,22 +4463,33 @@ async def weekly_sanity_check(context):
             import sqlite3 as _s
             db_path = f"{_DATA_DIR}/stock.db"
             with _s.connect(db_path, timeout=10) as conn:
+                # 최신 영업일 종목 총카운트 (mscore/fscore 비율 기준)
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM daily_snapshot "
+                    "WHERE trade_date=(SELECT MAX(trade_date) FROM daily_snapshot)"
+                ).fetchone()[0]
                 # mscore non-null count (Phase 4 alpha)
+                # 비율 기반: 데이터 미수집 (m=0) 시 silent skip,
+                # 부분 채워진 (0 < m < 30%) 경우만 경고. critic 5/10 권장.
                 m = conn.execute(
                     "SELECT COUNT(*) FROM daily_snapshot "
                     "WHERE trade_date=(SELECT MAX(trade_date) FROM daily_snapshot) "
                     "AND mscore IS NOT NULL"
                 ).fetchone()[0]
-                if m < 100:
-                    sanity_warnings.append(f"⚠️ mscore 신선도 낮음: {m}건 (기대 500+)")
-                # fscore non-null count
+                if total > 0 and 0 < m < total * 0.3:
+                    sanity_warnings.append(
+                        f"⚠️ mscore 신선도 낮음: {m}/{total} (30% 임계 미달)"
+                    )
+                # fscore non-null count — 비율 기반 (50% 임계)
                 f = conn.execute(
                     "SELECT COUNT(*) FROM daily_snapshot "
                     "WHERE trade_date=(SELECT MAX(trade_date) FROM daily_snapshot) "
                     "AND fscore IS NOT NULL"
                 ).fetchone()[0]
-                if f < 400:
-                    sanity_warnings.append(f"⚠️ fscore 신선도 낮음: {f}건 (기대 600+)")
+                if total > 0 and 0 < f < total * 0.5:
+                    sanity_warnings.append(
+                        f"⚠️ fscore 신선도 낮음: {f}/{total} (50% 임계 미달)"
+                    )
                 # wi_5pct_changes 14일 이내 (분기 보고이므로 여유)
                 wi = conn.execute(
                     "SELECT julianday('now') - julianday(MAX(report_date)) "
@@ -4516,6 +4527,13 @@ async def weekly_log_rotate(context):
     학습 #?? (5/9): mac /tmp 는 RAM-backed (APFS), 무한 성장 시 launchd
     stdout 드롭 + working set eviction. launchd plist StandardOutPath
     직접 쏟음 → 자동 트림 필요.
+
+    inode 보존 (POSIX append FD 호환): launchd 가 시작 시 O_APPEND 로 연
+    FD 를 보유함. `mv tmp file` 패턴은 path 가 새 inode 를 가리키게 만들지만
+    launchd 의 기존 FD 는 unlinked old inode 에 계속 write → 트림 효과 무효화.
+    `cat tmp > file` 은 file 의 기존 내용을 truncate 후 새 내용 write 하여
+    inode 를 유지함 → launchd FD valid, 다음 append write 가 truncated file
+    끝에 정상 추가됨.
     """
     import os as _os
     import subprocess as _sp
@@ -4524,10 +4542,10 @@ async def weekly_log_rotate(context):
         size = _os.path.getsize(log_path)
         if size > 100 * 1024 * 1024:
             _sp.run(
-                f"tail -c 10485760 {log_path} > {log_path}.tmp && mv {log_path}.tmp {log_path}",
+                f"tail -c 10485760 {log_path} > {log_path}.tmp && cat {log_path}.tmp > {log_path} && rm {log_path}.tmp",
                 shell=True, check=True
             )
-            print(f"[log_rotate] {size/1e6:.1f}MB -> 10MB 트림", flush=True)
+            print(f"[log_rotate] {size/1e6:.1f}MB -> 10MB 트림 (inode 보존)", flush=True)
     except FileNotFoundError:
         # 로그 파일 부재 (개발/테스트 환경)
         pass

@@ -30,6 +30,7 @@
 | 02:00 | 전체 | `dart_incremental` | `daily_dart_incremental` | DART 신규 정기공시 증분 수집 → 알파 재계산 | 4/16 신규 |
 | 03:00 | 일 | `weekly_us_harvest` | `weekly_us_ratings_universe_scan` | S&P 500 ∪ Russell 1000 전체 레이팅 수집 (~1000종목, ~33분) | 4/23 Russell 확장 |
 | 03:30 | 일 | `weekly_nps` | `weekly_nps_collect` | NPS 통합 수집: KR 5%룰 (data.go.kr) + US 13F-HR (SEC EDGAR) + KR 풀포트 200종목 (whale-insight 미러) + DART 5/10%룰 14일 풀백필 | 4/27 신규 |
+| 04:00 | 전체 | `nps_dart_inc` | `daily_nps_dart_increment` | NPS 5%룰 DART 증분 수집 (분기 사이 NPS 변동 보고 캡처) | 4/27 신규 |
 | 04:05 | 전체 | `dart_disclosure` | `daily_dart_disclosure_collect` | DART 5%룰 (D001) + 10%룰 (D002) 매일 증분 수집 (2일치, ~10초). 24h 내 1%p+ 큰 변동 시 텔레그램 알림 | 5/9 정정 (04:00→04:05, weekly_us_analyst_sync 충돌 회피) |
 | 04:00 | 일 | `weekly_us_analyst_sync` | `weekly_us_analyst_sync` | ratings → us_analysts 마스터 자동 동기화 + 별점 4.5+ 콜 5+ 자동 watched=1 | 4/25 신규 |
 | 05:05 | 화~토 | `us_summary_dst` | `us_market_summary` | 미국 장 마감 요약 (DST, 내부 가드로 중복 방지) | — |
@@ -66,10 +67,11 @@
 
 | 시간 | D | 잡 이름 | 담당 함수 | 핵심 동작 | 최근 변경 |
 |------|---|---------|-----------|-----------|-----------|
-| 18:30 | 평일 | `daily_collect` ★ | `daily_collect_job` | **KRX 전종목 DB 수집** (18:30 + post_init retry + 주간 무결성) | 4/18 안전장치 3종 |
+| 18:30 | 평일 | `daily_collect` | `daily_collect_job` ★ | **KRX 전종목 DB 수집** (18:30 + post_init retry + 주간 무결성) | 4/18 안전장치 3종 |
 | 18:55 | 전체 | `macro_pm` | `macro_dashboard` | 매크로 대시보드 저녁 (수집 완료 후) | — |
 | 19:00 | 평일 | `watch_change` | `watch_change_detect` | 워치리스트 변경 감지 | — |
 | 19:00 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | — |
+| 19:00 | 일 | `weekly_us_analyst` | `weekly_us_analyst_report` | 다음주 월요일 준비용 미국 애널 리포트 | 5/8 신규 |
 | 19:07 | 일 | `weekly_report_digest` | `weekly_report_digest_notify` | 비종목 리포트 분석 시간 알림 (통계 + Claude.ai 프롬프트 템플릿, 봇 판단 X) | 4/26 신규 |
 | 09:00 | 토 | `weekly_sat_port_check` | `weekly_sat_port_check_notify` | SAT_PORT_CHECK 시작 알림 (토요일 포트관리 v2) | 4/27 신규 |
 | 09:00 | 일 | `weekly_sun_discovery` | `weekly_sun_discovery_notify` | SUN_DISCOVERY 시작 알림 (일요일 신규발굴 v2) | 4/27 신규 |

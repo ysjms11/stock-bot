@@ -42,7 +42,8 @@ def collect_schedule_md_jobs() -> set:
         # 백틱 잡 이름은 보통 3번째 컬럼 (반복 잡: cols[2], 일일 잡: cols[3])
         # 안전하게 모든 컬럼 스캔
         for col in cols:
-            m = re.fullmatch(r"`([a-z_0-9]+)`", col)
+            # re.search 로 데코(★ 등) 허용 — 잡 이름은 백틱 wrap 만 보장
+            m = re.search(r"`([a-z_0-9]+)`", col)
             if m:
                 name = m.group(1)
                 # 함수명/잡명 둘 다 추출되는데 main.py 등록값과 일치하는 것만 카운트
