@@ -2079,7 +2079,7 @@ async def weekly_financial_job(context):
     if not _HAS_DB_COLLECTOR:
         return
     try:
-        result = await asyncio.wait_for(collect_financial_weekly(), timeout=3600)  # 60분
+        result = await asyncio.wait_for(collect_financial_weekly(), timeout=7200)  # 120분 (2864종목×2phase ~50분)
         if isinstance(result, dict):
             t = result.get("tickers", 0)
             ist = result.get("income_statement", 0)
@@ -2096,8 +2096,8 @@ async def weekly_financial_job(context):
             msg = "📊 주간 재무 수집 완료"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg)
     except asyncio.TimeoutError:
-        print("[weekly_financial] 60분 타임아웃")
-        await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ 주간 재무 수집 60분 초과 타임아웃")
+        print("[weekly_financial] 120분 타임아웃")
+        await context.bot.send_message(chat_id=CHAT_ID, text="⚠️ 주간 재무 수집 120분 초과 타임아웃")
     except Exception as e:
         print(f"[weekly_financial] 오류: {e}")
         try:
