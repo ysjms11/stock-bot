@@ -9,15 +9,26 @@
 
 **우선순위 순:**
 
-1. **🚨 5/9 PTB v20+ days= 매핑 36개 일괄 fix 직후 — 첫 정상 토요일 발사 확인** — 09:00 KST `weekly_sat_port_check` 정상. 5/8 (금)에 잘못 발사된 같은 알림 더 이상 안 옴.
+1. **✅ 5/9 PTB days= fix + 4 bug 일괄 fix 검증 완료** — SAT 알림 정상 발사 (09:00 KST), 봇 재시작 후 새 PID 97408 정상 부팅, port 8080 충돌 0건.
 
-2. **🟡 5/11 (월) 18:30 `daily_collect` 첫 정상 평일 실행 검증** — 5/8 (금) 누락 (PTB days 버그) 이후 첫 자동 평일. 매주 금요일 데이터 손실 종료.
+2. **🟢 5/10 (일) 04:05 KST `dart_disclosure` 첫 발사 검증** (학습 #13 재현 fix). 다음날 5/11 `sqlite3 data/stock.db "SELECT MAX(rcept_dt) FROM dart_5pct_changes"` 가 5/10 또는 5/11 이면 정상.
 
-3. **5/8 daily_snapshot 백필** — 토요일 KIS API 500 (가설: 휴일 일부 엔드포인트 제한 + 토큰 동시 사용 충돌). 월요일 5/11 06:00 이전 KIS API 안정화 후 `collect_daily(date='20260508')` 수동 실행.
+3. **🟡 5/11 (월) 18:30 `daily_collect` 첫 정상 평일 실행 검증** — 5/8 (금) 누락 (PTB days 버그) 이후 첫 자동 평일. 매주 금요일 데이터 손실 종료.
 
-4. **🟢 5/10 (일) 03:00 / 03:30 / 04:00 / 07:15 / 19:00 일요일 잡 5종 검증**: `weekly_us_harvest` / `weekly_nps` / `weekly_us_analyst_sync` / `weekly_financial` / `sunday_30_reminder` 등 — 모두 매핑 (6,)→(0,) 변경 후 첫 일요일 발사.
+4. **🟢 5/11 (월) 16:30 `pension_collect` 검증** — pykrx 1.2.8 + (선택) silent_failure 가드 (5/9 #7) 발사. saved=0 3회 연속 시 텔레그램 escalate.
 
-5. **🟢 5/11 (월) 07:00 `weekly_universe_update`**: (0,)→(1,) 매핑 변경. 페이지네이션 fix 와 함께 ~600종목 회복.
+5. **5/8 daily_snapshot 백필** — 토요일 KIS API 500. 월요일 5/11 06:00 이전 KIS API 안정화 후 `collect_daily(date='20260508')` 수동 실행.
+
+6. **🟢 5/10 (일) 03:00 / 03:30 / 04:00 / 07:15 / 19:00 일요일 잡 5종 검증**: `weekly_us_harvest` / `weekly_nps` / `weekly_us_analyst_sync` / `weekly_financial` / `sunday_30_reminder` 등 — 모두 매핑 (6,)→(0,) 변경 후 첫 일요일 발사.
+
+7. **🟢 5/11 (월) 07:00 `weekly_universe_update`**: (0,)→(1,) 매핑 변경. 페이지네이션 fix 와 함께 ~600종목 회복.
+
+8. **🟡 잠재 위험 (general-purpose audit 5/9)** — 5/9 fix 미반영, 별도 commit 필요:
+   - wi_5pct_changes 38일 정체 (4/1~) — 별도 path 깨짐 진단
+   - KIS API 500 RETRY 35,056건 — 성공률 분석 필요
+   - yfinance OperationalError "unable to open database file" — 캐시 락
+   - NPS US 13F stale (2/10 마지막) — 5/15 deadline 후 확인
+   - graceful shutdown signal handler — TCPSite reuse_address 의 근본 fix 별도 critic gate
 
 5. **🟢 KR 풀 딥서치 진행 (Claude.ai Project 권장)** — Tier 1 우선:
    - ✅ **064400 LG씨엔에스** thesis 완료 (5/8, 65K 감시가 RR 3.71, AX/RX/CBDC, 사용자 보강)
@@ -39,7 +50,70 @@
 
 ---
 
-## 📜 5/9 세션 — PTB v20+ days= 매핑 시스템 버그 일괄 fix
+## 📜 5/9 세션 (오후) — 시스템-wide 버그 사냥 4 fix + 팀 룰 위반 보강
+
+### 사용자 지적: "팀으로 하기로 했는데 코드리뷰 안 하더라"
+
+오전 PTB days= fix 시 verifier 만 돌리고 code-reviewer / critic 누락 → 사용자 지적 후 사후 보강 + 룰 재정립.
+
+**룰 재정립 (CLAUDE.md "모든 코드 작업은 팀 구조로")**:
+- 신기능: architect → developer → (kis-api-specialist) → test-writer → code-reviewer → (고위험 시 critic)
+- 버그: debugger → (developer) → code-reviewer → verifier (self-approve 금지)
+- **"버그라서 팀 생략"는 룰 위반** — 작업 유형별 권장 순서일 뿐, 팀 자체는 항상 필수
+
+### 4 bug 일괄 사냥 (debugger 3 parallel + general-purpose audit)
+
+44MB 로그 + DB freshness + 코드 grep 종합:
+
+| # | 버그 | 학습 # | commit |
+|---|---|---|---|
+| #1 | dart_5pct/10pct 잡 등록 누락 (4/28 도입 후 11일 정체) | #13 재현 | `803b454` |
+| #2 | `_upsert_dart_full_row` FK 가드 호출 site 한 곳만 fix → 헬퍼 자체 내재화 | #29 위반 | `803b454` |
+| #3 | `_safe_send` 26곳 중 3곳만 적용 — `macro_dashboard`/`d1_alert` 등에서 19건 parse fail 재현 | #27 후속 | `c1fce85` + `e9374d2` |
+| #7 | `_track_silent_failure` 가드 1잡만 적용 — daily_collect 등 5잡 확장 | #27 패턴 정착 | `c1fce85` |
+| #4 | `web.TCPSite reuse_address=False` → 17,406 startup port 충돌 traceback | (신규) | `b82323e` |
+| #5 | dashboard NameError | — | false alarm (5/5 분리 시 fix 됨) |
+
+### 룰대로 진행 흔적
+
+1. **3 parallel debugger** (DART / 알림 / 인프라) — minimal diff 계획 작성, 코드 수정 X
+2. **python-developer (general-purpose)** — 3 commits 생성 (push 보류)
+3. **code-reviewer 1차** — 🔴 blocker 발견 (commit 2 _safe_send 7곳 미치환)
+4. **python-developer follow-up** — 7곳 보강 + schedule.md 정정 (commit `e9374d2`)
+5. **code-reviewer 2차** — APPROVE
+6. **critic** — TCPSite 1줄 변경 CONDITIONAL_PASS (aiohttp 3.13.5 시그니처 + macOS SO_REUSEADDR 시맨틱 직접 확인)
+7. **verifier** — 17 acceptance criteria 모두 PASS, Confidence high, Blockers 0
+8. **봇 재시작 검증** — 새 PID 97408 정상 부팅, `address already in use` 에러 0건, `MCP SSE 서버 시작` 로그 1회 — TCPSite reuse_address 효과 확인
+
+### 학습 #32 — 팀 구조의 비대체성 (code-reviewer 가 jugular vein)
+
+오전 verifier 만 돌렸을 때 PTB days fix 자체는 OK 였으나 **startup assertion / 버전 핀 같은 하드닝 권고는 critic 만 발견**. 오후 code-reviewer 1차에서 `_safe_send` 26곳 중 7곳 미치환 발견 — 이거 안 보고 push 했으면 **production silent failure 7개 알림 path 영구 stuck**.
+
+**원칙**:
+- verifier = "선언한 acceptance criteria 충족 검증" (self-approve 금지)
+- code-reviewer = "선언 안 된 갭 발견" (블로커 발급권)
+- critic = "구조적 약점/하드닝 권고" (다관점 갭)
+- **3개는 직교 — 어느 하나도 다른 둘로 대체 불가**
+
+학습 #30 ("발굴 도구 = 데이터 품질 검사기") 와 결합: code-reviewer 자체가 **개발자가 놓치는 것을 발굴하는 검사기**. verifier 의 "PASS" 와 reviewer 의 "REQUEST_CHANGES" 가 자주 공존 — 둘 다 봐야 진짜 안전.
+
+### 부수 효과 — 신규 잡 등록
+
+`dart_disclosure` 잡이 `04:05 매일` 으로 등록됨 (4/28 도입 후 11일째 미등록). 검증: 5/10 04:05 KST 첫 발사. 5/11 sqlite `MAX(rcept_dt)` 가 5/10 또는 5/11 이면 fix 정상.
+
+### 학습 #28~31 + #32 종합
+
+| # | 학습 | 핵심 |
+|---|---|---|
+| #28 | 잡 실행 카운트 ≠ 데이터 품질 | 매일 발사 ≠ 매일 정상 데이터 (5/8 derived 컬럼 사고) |
+| #29 | 외부 사이트 응답 변경 → pip upgrade 먼저 | pykrx 1.2.4 → 1.2.8 (5/8 사고) — fix 호출 site 전수 적용 (5/9 #2 사고) 으로 확장 |
+| #30 | 발굴 도구가 데이터 품질 검사기 | 사용자 발굴 시도 = 데이터 검사 발굴 (5/8 derived) |
+| #31 | 의존성 메이저 업그레이드 시 break-change 매핑 검증 | PTB v19→v20 days= 매핑 사고 (5/9 오전) |
+| #32 | 팀 구조 비대체성 (verifier ≠ reviewer ≠ critic) | 5/9 오후 사고 — reviewer 가 7곳 미치환 잡음 |
+
+---
+
+## 📜 5/9 세션 (오전) — PTB v20+ days= 매핑 시스템 버그 일괄 fix
 
 ### 🚨 사용자 신고 + 즉시 진단
 
