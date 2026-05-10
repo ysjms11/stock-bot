@@ -55,6 +55,66 @@
 
 ---
 
+## 📜 5/10 세션 (오후) — 추가 audit + 워크플로 자동화 검토 후 폐기
+
+### 추가 fix 4건 (5/10 오후)
+
+| commit | 내용 |
+|---|---|
+| `13cc19a` | fscore 임계 50% → 20% (자연 한계 반영) |
+| `858e474` | weekly_financial timeout 60분 → 120분 |
+| `8a1785d` | get_us_earnings_transcript Q1 string coercion |
+| `f01b3b4` | WebSocket _fired reset 재연결마다 호출 제거 |
+
+### 의외의 발견 — mscore 백필 자동 진행 중
+
+어제 critic 가 "mscore Phase 4 = 별도 4-6시간 큰 작업" 분류한 게 **오판**:
+- 실제로는 `weekly_financial` Phase C (DART CFS 11456콜) 가 mscore 백필 자체
+- 매주 일 07:15 자동 실행 중
+- 5/10 60분 timeout 으로 abort, 120분 fix 후 5/17 완주 예상
+- **mscore 진짜 회복 시점 = 5/17 일요일**
+
+### 워크플로 자동화 검토 후 폐기 (학습 #38 적용)
+
+KR_DEEPSEARCH/KR_EXIT 자동화 (옵션 A2) 검토:
+- 사용자 질문: "data/KR_DEEPSEARCH.md 보고 진행해" 한 줄 워크플로 vs 자동화 차이?
+- **결론: 차이 작음. 안 함**.
+
+이유:
+1. Claude.ai (Opus 4.7 1M) 가 KR_DEEPSEARCH.md 자율 진행 가능 — 자동화 90% 완성 상태
+2. MCP 도구 호출 latency 작음 (각 < 1s) — 토큰/시간 절약 마진 미미
+3. 자동화 = 데이터 정리·thesis 템플릿 미리 채움 정도 = 가치 작음
+
+→ **진짜 가치 있는 자동화는 다른 영역**:
+- 분석 후 자동 매수감시 등록 (watchalert.json auto-set)
+- thesis intact 자동 판정 (보유 종목 변화 감지)
+- 누적 분석 통계 비교
+
+이 영역은 별도 task. 오늘 세션엔 안 함.
+
+### 학습 #38 — 자동화 ROI 평가는 사용자 워크플로 분석 후
+
+자동화 가치 = (단계 시간 × 빈도) - (구현 시간 + 유지보수). 옵션 A2 추천 시 사용자 워크플로 ("KR_DEEPSEARCH.md 보고 진행" 한 줄) 분석 안 함 → 잘못 추천. 사용자 질문으로 정정.
+
+→ 자동화 제안 전 **현재 워크플로 단계 시간 측정** 필수.
+
+### 5/10 세션 종합
+
+총 18 commits (5/9~5/10):
+- 5/9: 4 commits (옵션 C 빡센 audit)
+- 5/10 새벽: 5 commits (Wave A+B audit + 신규 fix)
+- 5/10 오후: 4 commits (transcript Q1 + _fired reset + 임계 + timeout) + PROGRESS docs
+
+봇 PID 63357 alive, universe 600 유지, 모든 fix 적용.
+
+**자연 검증 대기**:
+- 5/11 (월) 18:30 daily_collect — PTB days fix + market_cap fallback + silent_guard
+- 5/11 16:30 pension_collect — pykrx 1.2.8
+- 5/17 (일) 07:15 weekly_financial 120분 — mscore 진짜 회복
+- 5/17 07:05 weekly_sanity — fscore 알림 사라질지
+
+---
+
 ## 📜 5/10 세션 (새벽) — Wave A+B 빡센 audit + 4 신규 fix
 
 사용자 "다해" — 15개 항목 audit.
@@ -283,6 +343,7 @@ verifier 가 APPROVE 했으나 reviewer/critic 가 3 blocker 발견:
 | #35 | Adversarial audit 결과 false alarm 비율 = 시스템 성숙 지표 | 5/10 5 audits 중 4건 false alarm — 학습 #13~#33 누적 효과로 시스템 견고. 다음 audit 사이클 ROI 체감 예상 |
 | #36 | PROGRESS.md "펜딩" 항목 직접 검증 필수 | 5/10 Wave 3 시도 — iCloud 펜딩 (이미 wired) / universe 페이지네이션 펜딩 (5/5 c8b71c1 라고 git log 에 적혔으나 실제 수동 트리거 시 여전히 60종목) — PROGRESS 자체 stale 가능. 추측 금지 + 직접 grep/sqlite/실행 검증 |
 | #37 | debugger git log 신뢰 X — 실데이터 검증 | 5/10 universe debugger 1차: c8b71c1 fix 결론. 실제: KIS API 30건 한계 + 페이지네이션 자체 없음. 2차: 공식 샘플 + 실제 API 호출로 진짜 root cause 발견 |
+| #38 | 자동화 ROI 평가는 워크플로 분석 후 | 5/10 옵션 A2 (KR_DEEPSEARCH 자동화) 추천 시 현재 워크플로 ("KR_DEEPSEARCH.md 보고 진행" 한 줄) 분석 안 함 → 잘못 추천. 사용자 질문 "장점이 있어?" 로 정정. 자동화 제안 전 현재 단계 시간 측정 필수 |
 
 ---
 
