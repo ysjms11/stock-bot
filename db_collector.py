@@ -815,6 +815,10 @@ async def backfill_day_via_chart(date: str, tickers: list) -> dict:
                     {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
                      "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": end_dt,
                      "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+            # KIS FHKST03010100: output1 = header (PER/PBR/EPS/시총/신용잔고비율),
+            # output2 = candle 리스트 (OHLCV). 5/11 reviewer blocker — output2 에서
+            # PER/PBR 등 읽으면 영구 0 INSERT (silent corruption).
+            hdr = d.get("output1") or {}
             row = next((c for c in (d.get("output2") or [])
                         if c.get("stck_bsop_date") == date), None)
             if not row:
@@ -834,11 +838,11 @@ async def backfill_day_via_chart(date: str, tickers: list) -> dict:
                 int(row.get("stck_lwpr", 0) or 0),
                 int(row.get("acml_vol", 0) or 0),
                 int(row.get("acml_tr_pbmn", 0) or 0),
-                int(row.get("hts_avls", 0) or 0),
-                float(row.get("per", 0) or 0),
-                float(row.get("pbr", 0) or 0),
-                float(row.get("eps", 0) or 0),
-                float(row.get("itewhol_loan_rmnd_ratem", 0) or 0),
+                int(hdr.get("hts_avls", 0) or 0),  # 억원 (KIS hts_avls 단위)
+                float(hdr.get("per", 0) or 0),
+                float(hdr.get("pbr", 0) or 0),
+                float(hdr.get("eps", 0) or 0),
+                float(hdr.get("itewhol_loan_rmnd_ratem", 0) or 0),
             ))
             ok += 1
             await asyncio.sleep(0.3)
