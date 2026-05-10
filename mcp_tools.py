@@ -4582,7 +4582,7 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
         elif name == "get_us_earnings_transcript":
             ticker = (arguments.get("ticker") or "").strip().upper()
             year = int(arguments.get("year") or 0)
-            quarter = int(arguments.get("quarter") or 0)
+            quarter = int(str(arguments.get("quarter") or "0").lstrip("Qq") or 0)
             max_chars = int(arguments.get("max_chars") or 0)
             if not ticker or not year or quarter not in (1, 2, 3, 4):
                 result = {"error": "ticker/year/quarter(1-4) 필수"}
