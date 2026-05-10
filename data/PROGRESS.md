@@ -19,7 +19,7 @@
 
 4. **🟢 5/11 (월) 16:30 `pension_collect` 검증** — pykrx 1.2.8 + (선택) silent_failure 가드 (5/9 #7) 발사. saved=0 3회 연속 시 텔레그램 escalate.
 
-5. **5/8 daily_snapshot 백필** — 토요일 KIS API 500. 월요일 5/11 06:00 이전 KIS API 안정화 후 `collect_daily(date='20260508')` 수동 실행.
+5. **✅ 5/8 daily_snapshot 백필 완료 (5/11 새벽)** — backfill_day_via_chart 인프라 + universe 600 종목 백필 (3분 39초). 5/8 빈 곳 영구 종결. 미래 누락 시 weekly_sanity (일 07:05) 자동 catchup 또는 bash 직접 호출.
 
 6. **🟢 5/10 (일) 03:00 / 03:30 / 04:00 / 07:15 / 19:00 일요일 잡 5종 검증**: `weekly_us_harvest` / `weekly_nps` / `weekly_us_analyst_sync` / `weekly_financial` / `sunday_30_reminder` 등 — 모두 매핑 (6,)→(0,) 변경 후 첫 일요일 발사.
 
@@ -52,6 +52,64 @@
 8. **펜딩 결정**:
    - weekly_financial redundancy (daily_dart_incremental 와 겹침, 분기 피크일만 축소?)
    - 한국 리포트 PDF 확장 3옵션 (메리츠 가입 막힘)
+
+---
+
+## 📜 5/11 세션 (월요일 새벽) — backfill 인프라 + 5/8 데이터 회복
+
+### 사용자 발견 → GPT 진단 → 우회 path 발견
+
+5/8 daily_snapshot 백필 시도 (토/일/월 새벽 모두 KIS 500 + KRX LOGOUT). 사용자가 GPT 한테 KIS 에러 물어봄:
+- KIS `inquire-price` (현재가 API) 가 새벽/휴장일 시세 엔진 비기동 → 500
+- **백필은 "기간별 시세 API"** (`inquire-daily-itemchartprice`) 사용 권장 — EOD 데이터, 휴장일/새벽 무관
+- 마스터 갱신 시간 (05:30~06:10, 06:50~07:10, 07:30~08:00) 회피 권장
+
+→ stock-bot 안에 이미 `kis_daily_closes` 함수 (FHKST03010100 사용) 존재. 활용 가능.
+
+### 디자인 결정 — MCP 노출 vs 자동 catchup
+
+옵션 비교:
+- **A** (자동 catchup, MCP 없음): 봇 자율, Claude.ai 영향 0
+- **A+** (MCP 노출): 사용자 즉시 trigger 가능, **Claude.ai context 누적 부담**
+
+사용자 질문 "MCP 추가대면 클로드 ai 무거워지자나" — 정확. **A 채택**.
+
+### 학습 #39 — MCP 노출 ≠ 인프라
+
+자동 catchup / 백그라운드 정비는 봇 내부. MCP 노출은 사용자 trigger 명확한 것만.
+
+### 구현 (2 commits)
+
+| commit | 내용 |
+|---|---|
+| `4ed637c` | backfill_day_via_chart + weekly_sanity catchup (~80줄) |
+| `91c655c` | output1 header 분리 (reviewer blocker fix — PER/PBR/EPS/시총 영구 0 INSERT 위험) |
+
+### 룰대로 진행
+
+1. **debugger 1차 진단** — KIS 일봉 차트 응답 매핑 + 통합 위치
+2. **python-developer** — `backfill_day_via_chart` 함수 + weekly_sanity catchup
+3. **dry-run** 005930 5/8 → ok=1, **단** PER/PBR/EPS/시총/loan 모두 0 (debugger 가정 오류 발견)
+4. **code-reviewer (Opus)** REQUEST_CHANGES — output1 (header) vs output2 (candle) 차이 잡음
+5. **python-developer follow-up** `91c655c` — `hdr = d.get("output1") or {}` 분리
+6. **dry-run 재검증** → close=268500, market_cap=15,697,258 억원 (~1,569조), per=40.65, pbr=4.2, eps=6605 ✅
+7. **verifier (Opus)** APPROVE 17/17 AC
+8. **push + 봇 재시작** PID 43408
+9. **5/8 universe 600 종목 수동 백필** — 600 ok=600 fail=0 (3분 39초)
+
+### 검증 결과
+
+```
+trade_date='20260508': 600 rows, close>0: 600 (100%), per>0: 146 (24.3%)
+```
+
+**5/8 빈 곳 영구 종결**. PTB days 버그 영향 회복. 미래 누락 시 weekly_sanity 자동 catchup (일 07:05) + 또는 직접 호출.
+
+### 학습 #28 영구 대응 인프라 완성
+
+- daily_collect 누락 → weekly_sanity 자동 백필 (일 07:05)
+- 사용자 즉시 trigger → bash 직접 호출 (MCP 없이)
+- KIS 새벽 차단 / KRX 데이터 누락 우회
 
 ---
 
@@ -344,6 +402,7 @@ verifier 가 APPROVE 했으나 reviewer/critic 가 3 blocker 발견:
 | #36 | PROGRESS.md "펜딩" 항목 직접 검증 필수 | 5/10 Wave 3 시도 — iCloud 펜딩 (이미 wired) / universe 페이지네이션 펜딩 (5/5 c8b71c1 라고 git log 에 적혔으나 실제 수동 트리거 시 여전히 60종목) — PROGRESS 자체 stale 가능. 추측 금지 + 직접 grep/sqlite/실행 검증 |
 | #37 | debugger git log 신뢰 X — 실데이터 검증 | 5/10 universe debugger 1차: c8b71c1 fix 결론. 실제: KIS API 30건 한계 + 페이지네이션 자체 없음. 2차: 공식 샘플 + 실제 API 호출로 진짜 root cause 발견 |
 | #38 | 자동화 ROI 평가는 워크플로 분석 후 | 5/10 옵션 A2 (KR_DEEPSEARCH 자동화) 추천 시 현재 워크플로 ("KR_DEEPSEARCH.md 보고 진행" 한 줄) 분석 안 함 → 잘못 추천. 사용자 질문 "장점이 있어?" 로 정정. 자동화 제안 전 현재 단계 시간 측정 필수 |
+| #39 | MCP 노출 ≠ 인프라 — context 부담 누적 | 5/11 backfill 인프라 디자인 시 사용자 질문 "MCP 추가하면 Claude.ai 무거워지자나" 로 자동 catchup 우월성 발견. 자동화 = 봇 자율 운영 + Claude.ai context 0 영향. MCP 노출은 명확한 사용자 trigger 필요한 도구만 (set_alert, manage_watch 등). 백필/정비/모니터링은 봇 내부 |
 
 ---
 
