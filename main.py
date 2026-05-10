@@ -4444,6 +4444,26 @@ async def weekly_sanity_check(context):
             msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
             await context.bot.send_message(chat_id=CHAT_ID, text=msg)
 
+            # 누락 영업일 감지 후 자동 백필 (학습 #28 영구 대응)
+            try:
+                import json as _json
+                from db_collector import backfill_day_via_chart
+                universe_data = (_json.load(open(UNIVERSE_FILE))
+                                 if os.path.exists(UNIVERSE_FILE) else {})
+                tickers = list(universe_data.get("codes", {}).keys())
+                if not tickers:
+                    print("[catchup] universe 비어있음, 스킵", flush=True)
+                else:
+                    for d in missing:
+                        try:
+                            r = await backfill_day_via_chart(d, tickers)
+                            print(f"[catchup] {d}: ok={r['ok']} fail={r['fail']}",
+                                  flush=True)
+                        except Exception as e:
+                            print(f"[catchup] {d} 오류: {e}", flush=True)
+            except Exception as e:
+                print(f"[catchup] 오류: {e}", flush=True)
+
         # KRX 공휴일 list 연 1회 갱신 알림
         # 정상 한 해 13~16건. 8건 미만이면 list 미갱신/누락으로 간주
         this_year_str = str(datetime.now(KST).year)

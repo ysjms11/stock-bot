@@ -789,6 +789,66 @@ async def collect_daily(date: str = None) -> dict:
     return report
 
 
+async def backfill_day_via_chart(date: str, tickers: list) -> dict:
+    """FHKST03010100 일봉 차트로 단일 날짜 백필.
+
+    KIS inquire-price (현재가) 새벽/휴장일 500 차단 우회.
+    EOD 데이터라 안정적. OHLCV + PER/PBR/EPS/시총/신용잔고비율 채움.
+    수급/공매도/시간외/52주고저는 NULL (별도 호출 필요).
+
+    학습 #28 (잡 실행 ≠ 데이터 품질) 영구 대응 인프라.
+    INSERT OR IGNORE: 기존 정상 행 보호.
+    """
+    from kis_api import get_kis_token, _kis_get
+    token = await get_kis_token()
+    conn = _get_db()
+    ok, fail = 0, 0
+    end_dt = (datetime.strptime(date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+    start_dt = (datetime.strptime(date, "%Y%m%d") - timedelta(days=5)).strftime("%Y%m%d")
+    timeout = aiohttp.ClientTimeout(total=8)
+    for ticker in tickers:
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                _, d = await _kis_get(s,
+                    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                    "FHKST03010100", token,
+                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                     "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": end_dt,
+                     "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+            row = next((c for c in (d.get("output2") or [])
+                        if c.get("stck_bsop_date") == date), None)
+            if not row:
+                fail += 1
+                continue
+            conn.execute("""
+                INSERT OR IGNORE INTO daily_snapshot
+                (trade_date, symbol, close, open, high, low,
+                 volume, trade_value, market_cap, per, pbr, eps,
+                 loan_balance_rate, collected_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+            """, (
+                date, ticker,
+                int(row.get("stck_clpr", 0) or 0),
+                int(row.get("stck_oprc", 0) or 0),
+                int(row.get("stck_hgpr", 0) or 0),
+                int(row.get("stck_lwpr", 0) or 0),
+                int(row.get("acml_vol", 0) or 0),
+                int(row.get("acml_tr_pbmn", 0) or 0),
+                int(row.get("hts_avls", 0) or 0),
+                float(row.get("per", 0) or 0),
+                float(row.get("pbr", 0) or 0),
+                float(row.get("eps", 0) or 0),
+                float(row.get("itewhol_loan_rmnd_ratem", 0) or 0),
+            ))
+            ok += 1
+            await asyncio.sleep(0.3)
+        except Exception:
+            fail += 1
+    conn.commit()
+    conn.close()
+    return {"date": date, "ok": ok, "fail": fail}
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Part 2 — 기술지표 계산 + 하위호환 심볼 + 재무
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
