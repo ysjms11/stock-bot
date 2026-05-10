@@ -3280,7 +3280,8 @@ class KisRealtimeManager:
             await asyncio.sleep(30)
 
     async def _connect_and_run(self):
-        self.reset_fired()
+        # 재연결 시 _fired 보존 — 당일 알림 중복 방지
+        # (일별 reset 은 외부 daily 잡 또는 자정 자동)
         key = await get_kis_ws_approval_key()
         if not key:
             print("[WS] 접속키 없음, 스킵")
