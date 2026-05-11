@@ -5225,20 +5225,18 @@ async def post_init(application: Application):
         except Exception as e:
             print(f"[restore] 자동 복원 실패: {e}")
 
-    dart_status = "✅ DART 활성" if DART_API_KEY else "❌ DART 미설정 (DART_API_KEY 필요)"
-    try:
-        await application.bot.send_message(
-            chat_id=CHAT_ID,
-            text=(
-                f"✅ *부자가될거야 v7 시작!*\n\n"
-                f"🔔 알림: 손절/복합신호/DART/장마감/미국/환율/주간리뷰\n"
-                f"📢 {dart_status}\n"
-                f"/help"
-            ),
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"시작 알림 실패: {e}")
+    # 봇 시작 알림 — silent (학습 #?? 5/12: 재시작 시 텔레그램 노이즈 제거)
+    # 사용자가 봇 가동 여부 확인하려면 /health 또는 /help 명령
+    if not DART_API_KEY:
+        try:
+            await application.bot.send_message(
+                chat_id=CHAT_ID,
+                text="⚠️ DART_API_KEY 미설정 — DART 알림 비활성",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"DART 경고 알림 실패: {e}")
+    print(f"✅ 부자가될거야 v7 시작 (DART {'✅' if DART_API_KEY else '❌'}) — silent startup", flush=True)
 
     # ── KIS API 시작 테스트 ──────────────────────────────────────
     if KIS_APP_KEY and KIS_APP_SECRET:
@@ -5265,11 +5263,16 @@ async def post_init(application: Application):
             await chk("업종별 시세",            kis_sector_price(token))
         except Exception as e:
             lines.append(f"❌ 토큰 발급 실패: {e}")
-        try:
-            await application.bot.send_message(
-                chat_id=CHAT_ID, text="\n".join(lines), parse_mode="Markdown")
-        except Exception as e:
-            print(f"KIS 테스트 결과 전송 실패: {e}")
+        # KIS API 시작테스트 결과 — 에러 시만 발사 (5/12 fix: 재시작 노이즈 제거)
+        # 정상 시 print 만, 에러 (❌) 1건+ 있으면 텔레그램 알림
+        has_error = any("❌" in line for line in lines)
+        print("\n".join(lines), flush=True)
+        if has_error:
+            try:
+                await application.bot.send_message(
+                    chat_id=CHAT_ID, text="\n".join(lines), parse_mode="Markdown")
+            except Exception as e:
+                print(f"KIS 테스트 결과 전송 실패: {e}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 재시작 시 당일 미완 daily_collect_job 재실행
