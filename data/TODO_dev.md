@@ -3,6 +3,22 @@
 
 ---
 
+## 🟡 보류 (가치 확인 후 결정)
+
+- [ ] **Skill 시스템 도입** (5/11 발견, NomaDamas/k-skill 참조)
+  - `.claude/skills/kr-deepsearch/SKILL.md` 등 4개 워크플로 skill 화 후보
+  - Claude Code 환경 (이 채팅) 전용 — Claude.ai 영향 X
+  - 사용자 워크플로 80% Claude.ai / 20% Claude Code → 가치 작음
+  - MCP 도구 추가 (context 부담, 학습 #39) 대비 우월하나 환경 제한
+  - 진행 시 후보: KR_DEEPSEARCH / KR_EXIT / SAT_PORT_CHECK / SUN_DISCOVERY
+- [ ] **Claude.ai Project 셋업 가이드** (사용자 80% 워크플로)
+  - `data/setup/claude_ai_project_setup.md` 신규
+  - Project 생성 단계, 첨부 파일 조합, system instruction 템플릿
+  - MCP 연결 확인 (bot.arcbot-server.org/mcp), 사용 예시
+  - 셋업 후: 사용자 "064400 딥서치" 한 줄 → 자동 분석
+
+---
+
 ## 🔴 확인 (매일/주간 운영)
 
 **자동 가동 중 — 알림 도착만 확인:**
