@@ -3059,8 +3059,8 @@ async def daily_pension_alert(context: ContextTypes.DEFAULT_TYPE):
     try:
         import sqlite3 as _s
         conn = _s.connect(REPORT_DB_PATH, timeout=10)
-        # 5일 누적 (영업일 기준 추정 — 7일 cal day cutoff)
-        cutoff_dt = (now - timedelta(days=8)).strftime("%Y%m%d")
+        # 5일 누적 (영업일 기준 추정 — 수집 공백 대비 14일 cal day cutoff)
+        cutoff_dt = (now - timedelta(days=14)).strftime("%Y%m%d")
 
         # 5일 누적 매매 + 시총 join (daily_snapshot)
         rows = conn.execute("""
