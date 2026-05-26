@@ -3560,14 +3560,25 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         reports = [{"date": r.get("date"), "ticker": r.get("ticker"),
                                     "name": r.get("name"), "source": r.get("source"),
                                     "title": r.get("title"),
-                                    "extraction_status": r.get("extraction_status", "unknown")} for r in reports]
+                                    "extraction_status": r.get("extraction_status", "unknown"),
+                                    "source_used": r.get("source_used", ""),
+                                    "pdf_readable": (
+                                        r.get("extraction_status") == "success"
+                                        and bool(r.get("pdf_path", ""))
+                                    )} for r in reports]
                     else:
-                        # full_text 3000자 제한 + extraction_status 하위호환
+                        # full_text 3000자 제한 + extraction_status 하위호환 + pdf_readable 플래그
                         for r in reports:
                             if not r.get("extraction_status"):
                                 r["extraction_status"] = "unknown"
                             if r.get("full_text") and len(r["full_text"]) > 3000:
                                 r["full_text"] = r["full_text"][:3000] + "...(truncated)"
+                            r["pdf_readable"] = (
+                                r.get("extraction_status") == "success"
+                                and bool(r.get("pdf_path", ""))
+                            )
+                            if not r.get("source_used"):
+                                r["source_used"] = ""
 
                     result = {
                         "count": len(reports),
@@ -3591,7 +3602,9 @@ async def _execute_tool(name: str, arguments: dict) -> dict | list:
                         if ticker_filter:
                             name_for_ticker = tickers.get(ticker_filter, ticker_filter)
                             tickers = {ticker_filter: name_for_ticker}
-                        new_reports = await loop.run_in_executor(None, collect_reports, tickers)
+                        new_reports = await loop.run_in_executor(
+                            None, lambda: collect_reports(tickers, force_retry_meta_only=True)
+                        )
 
                     result = {
                         "collected": len(new_reports),

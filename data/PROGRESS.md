@@ -2,7 +2,7 @@
 
 ### 변경 요약
 - **pdf_collectors.py 폐기** (1,221라인 → 삭제): 브로커 직접 URL 호환 한계, 성공률 0% 확인
-  - 백업: `/tmp/stock-bot-rollback-20260527/pdf_collectors.py`
+  - 백업: `data/archive/pdf_collectors_polished_20260527.py.archived`
 - **report_crawler.py 정리**: pdf_collectors import/폴백 코드 전면 제거
 - **한경컨센서스 수집 기간 180일 → 365일 확장** (`crawl_hankyung_reports`, `crawl_hankyung_listing`)
 - **한경 pagenum 20 → 100** (페이지당 더 많은 리포트 수집)
@@ -11,17 +11,34 @@
 - **PDF_INFRA_UPGRADE.md** INVALID 마킹 (문서 보존, 학습 자료)
 
 ### 7종목 재검증 결과 (force_retry_meta_only=True)
-| 종목 | total | success | partial | meta_only | PDF율 |
-|------|-------|---------|---------|-----------|-------|
-| 005380 현대차 | 72 | 2 | 8 | 62 | 13.9% |
-| 005930 삼성전자 | 71 | 3 | 10 | 57 | 18.3% |
-| 035420 NAVER | 69 | 2 | 8 | 59 | 14.5% |
-| 000660 SK하이닉스 | 61 | 3 | 7 | 51 | 16.4% |
-| 001450 현대해상 | 61 | 1 | 0 | 60 | 1.6% |
-| 064400 LG씨엔에스 | 27 | 0 | 0 | 27 | 0.0% |
-| 058610 에스피지 | 17 | 1 | 0 | 16 | 5.9% |
+| 종목 | total | success | partial | meta_only | success율 | success+partial율 |
+|------|-------|---------|---------|-----------|-----------|-------------------|
+| 005380 현대차 | 72 | 2 | 8 | 62 | 2.8% | 13.9% |
+| 005930 삼성전자 | 71 | 3 | 10 | 57 | 4.2% | 18.3% |
+| 035420 NAVER | 69 | 2 | 8 | 59 | 2.9% | 14.5% |
+| 000660 SK하이닉스 | 61 | 3 | 7 | 51 | 4.9% | 16.4% |
+| 001450 현대해상 | 61 | 1 | 0 | 60 | 1.6% | 1.6% |
+| 064400 LG씨엔에스 | 27 | 0 | 0 | 27 | 0.0% | 0.0% |
+| 058610 에스피지 | 17 | 1 | 0 | 16 | 5.9% | 5.9% |
 
-**평균 PDF 성공률: 11.3%** (목표 5%+ 달성)
+**PDF율 (weighted success+partial): 9.2%** | **weighted success only: 3.6%** | unweighted mean: 10.1%
+- 058610 mid-cap: 1/17 = 5.9% (success only)
+- 0.6% baseline: 미검증 (pre-patch 수치, 동일 조건 재측정 필요)
+- 목표 5%+ 달성 여부: success+partial 기준으로만 달성, success only 기준 미달성
+
+### 2026-05-27 학습 — PDF 인프라 풀스택 실패 및 교훈
+
+1. **30-min feasibility spike 누락**: pdf_collectors.py 1,221 lines 빌드 전 broker 직접 URL 인증 검증 안 함. 결과 0% 효과 후 폐기. 향후 외부 fetch 작업 >500 LOC 전 mandatory curl spike.
+
+2. **CLAUDE.md "reviewer + verifier 필수" 룰 위반**: 4 dev cycle (T3/T6/T8/T11) 동안 code-reviewer 호출 없음. critic ADVERSARIAL 판정 후 사후 발견. 향후 매 dev cycle 후 reviewer 호출 강제.
+
+3. **negative result 후 mandatory pause**: T9 회귀 0.6% 후 옵션 A, B 시도가 sunk cost driven. negative result 마일스톤마다 즉시 재범위 결정.
+
+4. **메트릭 conflation 위험**: unweighted mean vs weighted, success vs success+partial 명시 구분 의무. PROGRESS.md 헤드라인 메트릭은 method 명시 필수.
+
+5. **wisereport 구독 cost/benefit 미평가** (PENDING): 월 33-99k원 추정, 23% → 70%+ lift 가능성. 다음 세션 cost decision option으로 surface.
+
+6. **force_retry_meta_only production 미배선**: 기능 구현 후 실제 호출 경로(main.py + mcp_tools.py)에 파라미터 전달 누락. 2026-05-27 패치로 수정.
 
 ### 다음 세션에서 할 일
 - 위의 Ralph 무한모드 산출물 기반 포트폴리오 실행 (5/26 ACTION_MATRIX)

@@ -2217,7 +2217,9 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
             return
 
         loop = asyncio.get_running_loop()
-        new_reports = await loop.run_in_executor(None, collect_reports, tickers)
+        new_reports = await loop.run_in_executor(
+            None, lambda: collect_reports(tickers, force_retry_meta_only=True)
+        )
 
         # 비종목 리포트 (산업/시황/투자전략/경제) 수집
         try:

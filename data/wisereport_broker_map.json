@@ -1,0 +1,13 @@
+{
+  "1":  {"broker": "삼성증권",     "func_name": "samsungpop",  "label": "samsungpop_direct"},
+  "3":  {"broker": "신한투자증권", "func_name": "shinhansec",  "label": "shinhansec_direct"},
+  "16": {"broker": "DB금융투자",   "func_name": "dbfi",        "label": "dbfi_direct"},
+  "24": {"broker": "NH투자증권",   "func_name": "nhqv",        "label": "nhqv_direct"},
+  "26": {"broker": "키움증권",     "func_name": "kiwoom",      "label": "kiwoom_direct"},
+  "27": {"broker": "한국투자증권", "func_name": "koreainvest", "label": null},
+  "34": {"broker": "하나증권",     "func_name": "hanaw",       "label": "hanaw_direct"},
+  "44": {"broker": "다올투자증권", "func_name": "daol",        "label": null},
+  "56": {"broker": "미래에셋증권", "func_name": "miraeasset",  "label": "miraeasset_direct"},
+  "57": {"broker": "하나증권",     "func_name": "hanaw",       "label": "hanaw_direct"},
+  "63": {"broker": "유진투자증권", "func_name": "eugenefn",    "label": "eugenefn_direct"}
+}

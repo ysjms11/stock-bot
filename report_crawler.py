@@ -1177,16 +1177,22 @@ def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> 
             except Exception as e:
                 print(f"[hankyung] {name}({ticker}) 실패: {e}")
 
-            # naver: 캐시 확인 후 크롤링
+            # naver: 캐시 hit URL은 HTTP skip — existing_urls에 선제 추가
             ticker_cache = naver_cache.get(ticker, {})
-            # 모든 캐시 hit URLs는 existing_urls에 이미 있을 경우 skip됨.
-            # 캐시 miss인 URL만 실제 크롤링.
-            naver_reports = crawl_naver_reports(ticker, name, existing_urls)
+            cached_hit_urls: set[str] = set()
+            for purl, entry in ticker_cache.items():
+                if _naver_cache_hit(naver_cache, ticker, purl):
+                    cached_hit_urls.add(purl)
+            # existing_urls에 캐시 hit URL 병합 → crawl_naver_reports 내부에서 skip
+            effective_existing = existing_urls | cached_hit_urls
+            naver_reports = crawl_naver_reports(ticker, name, effective_existing)
             for nr in naver_reports:
                 purl = nr.get("pdf_url", "")
-                if not _naver_cache_hit(naver_cache, ticker, purl):
+                if purl and not _naver_cache_hit(naver_cache, ticker, purl):
                     _naver_cache_update(naver_cache, ticker, purl,
                                         nr.get("date", ""), nr.get("source", ""))
+            if cached_hit_urls:
+                print(f"[naver-cache] {name}({ticker}): {len(cached_hit_urls)} URLs skipped (cache hit)")
             reports.extend(naver_reports)
 
             try:
