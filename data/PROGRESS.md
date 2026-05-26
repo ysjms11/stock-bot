@@ -1,3 +1,19 @@
+## 🏗 2026-05-27 C1 리팩토링 완료 — kis_api.py → kis_api/ 패키지 분할
+
+### 변경 요약
+- **kis_api.py 9,187라인 → kis_api/ 패키지** (16 기능 모듈 + 4 공통 모듈 + __init__.py = 21 파일)
+- 패키지 구조: `_config`, `_session`, `_helpers`, `_files`, `consensus`, `portfolio`, `kr_stock`, `us_stock`, `ranks`, `universe`, `websocket`, `macro`, `dart`, `us_ratings`, `backup`, `news`, `regime`, `fmp`, `polymarket`, `pension`
+- **100% 하위호환**: `main.py`, `mcp_tools.py`, `dashboard.py` 변경 없음. `from kis_api import *` + explicit import 모두 그대로 동작
+- **레거시 백업**: `data/archive/kis_api_LEGACY_20260527.py.archived`
+- **봇 재시작 후 health 200 OK** 확인. PID 22377. WebSocket KR 24 + US 16 구독 정상
+- 총 추출 라인: ~10,112 (패키지 py 파일 합계)
+
+### 다음 세션에서 할 일
+- 위의 Ralph 무한모드 산출물 기반 포트폴리오 실행 (5/26 ACTION_MATRIX)
+- 현대해상(001450) / LG씨엔에스(064400) 한경 URL 직접 확인 (낮은 PDF율 원인 파악)
+
+---
+
 ## 🛠 2026-05-27 PDF 인프라 재설계 완료
 
 ### 변경 요약
