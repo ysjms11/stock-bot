@@ -63,7 +63,7 @@ flowchart TB
 
     subgraph COLLECT["📥 1단계: 수집"]
         K[kis_api.py]
-        X[krx_crawler.py<br/>⚠️ 4/7 이후 중단]
+        X[krx_crawler.py<br/>db_collector.py 호환 wrapper (SQLite 마이그레이션 완료)]
         C[db_collector.py<br/>⏰매일 자동수집]
         R[report_crawler.py<br/>⚠️ 와이즈리포트 차단]
     end
@@ -132,7 +132,7 @@ flowchart LR
 | 파일 | 역할 | 상태 |
 |---|---|---|
 | `kis_api.py` 364KB | 한국투자증권 API 래퍼 (시세, 수급, 주문) | ✅ |
-| `krx_crawler.py` 60KB | KRX 전종목 데이터 크롤러 | ⚠️ 4/7 이후 중단 (CC 진단 대기) |
+| `krx_crawler.py` 60KB | db_collector.py 호환 wrapper (SQLite 마이그레이션 완료) | ✅ |
 | `db_collector.py` 138KB | 위 두 개 돌려서 매일 DB에 쌓는 수집기 | ✅ |
 | `report_crawler.py` 47KB | 증권사 리포트 PDF 다운로드 | ⚠️ 와이즈리포트 차단 (성공률 4.2%) |
 
@@ -151,7 +151,8 @@ flowchart LR
 | `dart_reports/` | DART 사업보고서 txt 저장 (현 6건) |
 | `report_pdfs/` | 증권사 리포트 PDF (현재 다수) |
 | `thesis/[ticker]_[종목명].md` | 종목별 thesis 문서 (보유+감시) |
-| `krx_db/` | KRX 일별 데이터 ⚠️ 마지막 20260407.json |
+| `krx_db/` | KRX 일별 데이터 ⚠️ deprecated (stock.db로 통합, 5/4~) |
+| `supply_history.json` | 보유+감시 종목 외인/기관 수급 일별 히스토리 (180일 보관, 백테스트용) |
 
 ### 🧠 두뇌 레이어
 | 파일 | 역할 |
@@ -234,7 +235,7 @@ set_alert(log_type="trade", side="buy", ticker="058610", qty=33, price=99000)
 → GitHub Gist (data/*.json) ⚠️ PATCH 409 에러 PENDING. 매일 자동 백업 불안정.
 
 **Q. KRX 데이터 왜 멈췄어?**
-→ 4/7 이후 krx_crawler.py 수집 중단. CC 진단 대기. KRX OPEN API 승인(4/4 신청, 8개 서비스) 후 GitHub Actions로 전환 예정.
+→ stock.db daily_snapshot으로 마이그레이션 완료 (2025-04-23 ~ 현재 266일 연속). data/krx_db/ JSON 백업은 deprecated.
 
 ---
 
@@ -242,12 +243,12 @@ set_alert(log_type="trade", side="buy", ticker="058610", qty=33, price=99000)
 
 | # | 작업 | 우선순위 | 상태 |
 |---|---|---|---|
-| 1 | KRX 수급 수집 파이프라인 진단·복구 | 🔴 높음 | CC 진단 대기 (4/7 이후 중단) |
+| 1 | KRX 수급 수집 파이프라인 진단·복구 | ✅ 완료 | stock.db SQLite 마이그레이션 완료 (5/4~) |
 | 2 | KRX OPEN API 전환 | 🟡 중간 | 4/4 신청, 승인 대기 |
 | 3 | Gist 백업 PATCH 409 에러 | 🟡 중간 | 데이터 백업 불안정 |
 | 4 | ~~bot_architecture.md 생성~~ | ✅ 완료 | 이 문서 (5/4 v2) |
 | 5 | Railway 완전 삭제 | 🟢 낮음 | Procfile/runtime.txt/data_backup_before_railway/ |
-| 6 | PDF 다운로드 인프라 폴백 시스템 | 🔴 높음 | data/PDF_INFRA_UPGRADE.md 명세 작성 완료, 구현 대기 |
+| 6 | PDF 다운로드 인프라 폴백 시스템 | ✅ 완료 (폐기) | 5/27: pdf_collectors.py 구현 시도 후 폐기 (외부 broker 직접 URL 호환 한계). 대신 한경컨센서스 365일 확장 + naver 매핑 캐시(data/naver_pdf_cache.json, 30일 TTL)로 대체. data/PDF_INFRA_UPGRADE.md → INVALID 마킹됨. |
 | 7 | git push 미완료 커밋 일괄 처리 | ✅ 완료 | 5/4 dcae76d까지 push 완료 |
 
 ---
@@ -265,5 +266,7 @@ set_alert(log_type="trade", side="buy", ticker="058610", qty=33, price=99000)
 
 ## 변경 이력
 
+- **2026-05-27 v4**: PENDING #6 정정 — pdf_collectors.py 폐기, 한경 365일 + naver 캐시로 대체
+- **2026-05-26 v3**: KRX 데이터 상태 정정 (SQLite 마이그레이션 완료 반영), supply_history.json 역할 추가
 - **2026-05-04 v2**: 인프라 섹션 (맥미니/Cloudflare Tunnel/MCP URL) 추가, 데이터 흐름 사례 3개 추가, PENDING 표 신설, 운영 문서 목록 추가
 - 2026-04-20 v1: 최초 작성

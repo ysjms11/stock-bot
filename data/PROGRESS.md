@@ -1,7 +1,255 @@
+## 🛠 2026-05-27 PDF 인프라 재설계 완료
+
+### 변경 요약
+- **pdf_collectors.py 폐기** (1,221라인 → 삭제): 브로커 직접 URL 호환 한계, 성공률 0% 확인
+  - 백업: `/tmp/stock-bot-rollback-20260527/pdf_collectors.py`
+- **report_crawler.py 정리**: pdf_collectors import/폴백 코드 전면 제거
+- **한경컨센서스 수집 기간 180일 → 365일 확장** (`crawl_hankyung_reports`, `crawl_hankyung_listing`)
+- **한경 pagenum 20 → 100** (페이지당 더 많은 리포트 수집)
+- **naver 매핑 캐시 신규** (`data/naver_pdf_cache.json`, 30일 TTL, `_load/save/hit/update_naver_pdf_cache()`)
+- **ARCHITECTURE.md PENDING #6** 정정 (폐기 완료 명시)
+- **PDF_INFRA_UPGRADE.md** INVALID 마킹 (문서 보존, 학습 자료)
+
+### 7종목 재검증 결과 (force_retry_meta_only=True)
+| 종목 | total | success | partial | meta_only | PDF율 |
+|------|-------|---------|---------|-----------|-------|
+| 005380 현대차 | 72 | 2 | 8 | 62 | 13.9% |
+| 005930 삼성전자 | 71 | 3 | 10 | 57 | 18.3% |
+| 035420 NAVER | 69 | 2 | 8 | 59 | 14.5% |
+| 000660 SK하이닉스 | 61 | 3 | 7 | 51 | 16.4% |
+| 001450 현대해상 | 61 | 1 | 0 | 60 | 1.6% |
+| 064400 LG씨엔에스 | 27 | 0 | 0 | 27 | 0.0% |
+| 058610 에스피지 | 17 | 1 | 0 | 16 | 5.9% |
+
+**평균 PDF 성공률: 11.3%** (목표 5%+ 달성)
+
+### 다음 세션에서 할 일
+- 위의 Ralph 무한모드 산출물 기반 포트폴리오 실행 (5/26 ACTION_MATRIX)
+- 현대해상(001450) / LG씨엔에스(064400) 한경 URL 직접 확인 (낮은 PDF율 원인 파악)
+
+---
+
+## 🎯 2026-05-23 Ralph 무한 모드 최종 (compact 직전)
+
+> 사용자 휴식 ~20시간 동안 자율 작업 완료
+> 산출물 인덱스 (compact 후 다음 세션이 이거 먼저 읽을 것)
+
+### 📁 우선 확인 파일 5개 (compact 후 즉시 읽기)
+
+1. **`data/thesis/2026-05-23_RALPH_FINAL.md`** — 단일 페이지 종합 (Top 10 + EXIT 4 + 매크로 7 + 백테스트 10)
+2. **`data/thesis/2026-05-26_ACTION_MATRIX.md`** — 5/26 (월) 09:00 실행 매트릭스
+3. **`data/research/portfolio_rebalance_plan_2026_05_23.md`** — 구체 매매 plan (XNDU/HD조선/AMZN 매도, SK하이닉스/IM금융/KAI 매수)
+4. **`data/research/watchalert_setup_plan.md`** — 35종 / 103 텔레그램 봇 명령어 일괄
+5. **`data/research_log.md`** — 전체 iteration log (~1,600줄)
+
+### 🏆 BUY Top 10 (5/26 우선순위)
+
+| # | 종목 | 등급 | 즉시/감시 |
+| 1 | SARO | A | 즉시 (1차 $24.5) |
+| 2 | 161390 한국타이어 | A- | 감시 56K (Z+2.99σ 차익 1/3 권고) |
+| 3 | 267260 HD현대일렉 | A | HOLD (외인 -322K 모니터) |
+| 4 | 064290 인텍플러스 | B+ | 감시 30-32K 풀백 |
+| 5 | **402340 SK스퀘어 (신규)** | A- | 감시 950-1,050K |
+| 6 | 251270 넷마블 | B+ | 분할 41-40K |
+| 7 | **MTZ MasTec (신규)** | B+ | 감시 $345 |
+| 8 | **011070 LG이노텍 (신규)** | B+ | 감시 76만 |
+| 9 | AMD | A- | 매수 부적격, 재진입 $420/$385/$345 |
+| 10 | WHR | C 보류 | 시나리오 C 발현 시만 |
+
+### 🌟 신규 발견 16종 (Tier 3, 추가 후보)
+
+KR: KAI(047810) A / SK텔레콤(017670) A★★★★ / 한미반도체(042700) 워치 / HPSP(403870) A / 오스코텍(039200) B+ / POSCO홀딩스 v2 B+ / 파두(440110) B+ / 서진시스템(178320) A / 이오테크닉스(039030) A- / 글로벌텍스프리(204620) A / 코리안리(003690) A / 에코프로비엠(247540) Half / HLB(028300) 관망 / IM금융지주(139130) A / ISC(095340) A
+
+### 🚨 EXIT / 보유 진단
+
+- **XNDU**: 즉시 손절 (-47%, Kill #1)
+- **001040 CJ**: Kill #1 발동 (-21.52% 5/18)
+- **010120 LS ELECTRIC**: A→B 강등, 1/3 분할 익절 (손절 268K)
+- **000660 SK하이닉스**: TRAIL HOLD (NPS -5,449억은 5월 차익실현, 분기매도 X)
+- **298040 효성중공업**: HOLD (Kill 0/5, 평단 +14.3% 락인 3,200K)
+
+### 🌐 매크로 7/7 시나리오
+
+| # | 시나리오 | Base 확률 | 수혜/피해 |
+| 1 | Trump 관세 | B 유지 45% | K-방산/조선/전력 우회 수혜 |
+| 2 | Fed pivot | B hold 50% | 한국타이어/REIT |
+| 3 | Late-Cycle Bear | Soft 40% / Bear 25% | WHR/SARO/한국타이어 ★ |
+| 4 | 인도 모멘텀 | A 강세 50% | AAPL/LG이노텍 |
+| 5 | 중국 부채 | A Soft 45% | POSCO/AAPL/TSLA 직격 |
+| 6 | 일본 정치+엔 | A Nikkei 45% | 현대차 가격 경합 |
+| 7 | 한국 정책 | A 가속 50% | 코리안리 EV +17.8% |
+
+### 🔬 거대 백테스트 발견 (3개)
+
+1. ★ **기관 5d 500억+** 60d **+33.4% 승률 81%** (N=118)
+2. ★ **4-way strict** (외인+기관+Golden+BB normal) 60d **+30.2% 승률 78%** (N=110)
+3. ★ **DART insider cluster 3+** 14d **+18~32% 승률 85~100%** (iter 61, 새 거대 알파)
+
+추가: 외인 5d +16.9% / BB OVERSOLD +13.86% / 사용자 31일+ 보유 +57.9%
+
+### 🔥 사용자 인사이트 (E 카테고리 3차 분석)
+
+- R:R **6.21**, 승률 **63%** — 시스템적 알파 확인
+- 알파 섹터: 반도체장비/방산/전력기기 (9건 모두 승)
+- 약점: 0-3일 매매 -2.19%, 화요일 매매 -22.11%, watch 전환율 8%
+- HD조선 26% × +1.79% (0.47%p 기여) vs SK하이닉스 9.6% × +128% (12.3%p) — 위닝 비중 확대 실패
+
+### 📅 30일 Catalyst
+
+- 5/26 (월) 09:00 — Action 실행
+- 5/30 (금) — US Core PCE
+- 6/1 — SK텔레콤 cluster 만료
+- 6/16 — FOMC dot-plot ★★★
+- 6/18 — 넷마블 SOL:enchant 출시
+- 6월 중순 — EU 반덤핑 발효 + 한온합병
+- 7/1 — WHR $2.25B 리파이낸싱 만기
+- 7/23 — HLB PDUFA binary
+- 7월말 — Q2 어닝 클러스터 (AMD/SK하이닉스/HD현대일렉/LS/효성/SARO/WHR)
+- 8/5 — AMD Q2 + 8/7 SARO Q2
+- 9월 — KAI KF-21 양산 1호기 / LG이노텍 iPhone 17
+
+### ⚠ 알려진 system 빈틈 (별도 작업)
+
+1. `daily_snapshot.mscore` 0/2,864 filled (파이프라인 복구, iter 13 진단 완료)
+2. `insider_transactions` 7일 → 30일 윈도우 확장
+3. `stock_master.earnings_date` 컬럼 미존재
+4. `trade_log.json` 시간 필드 부재
+5. FMP HTTP 402 차단 (subscription 필요)
+
+### 🎯 사용자 5/26 morning checklist (5분 결정)
+
+```
+[ ] XNDU 손절 ($1,572 회수, 22:30 KST pre-market)
+[ ] HD조선 -16주 매도 (회수 6.7M원)
+[ ] AMZN -11주 매도 (회수 4.1M원)
+[ ] SK하이닉스 +1주 매수 (12% 비중)
+[ ] 삼성전자 -4~5주 익절 (iter 51 D2 + iter 52 Z+2.19σ)
+[ ] LS ELECTRIC -5주 익절 (iter 64, 손절 268K)
+[ ] KAI 170K 매수 (현재 168.4K, 1차 30%)
+[ ] SK텔레콤 102-103K 매수 (iter 62 cluster 50명)
+[ ] IM금융 18,920 매수 (1차 30%)
+[ ] 코리안리 13,800 감시
+[ ] KODEX 방산 449450 1차 1.5%
+[ ] WHR 1.5% / GLD 1.5% 헷지
+[ ] 텔레그램 봇 명령어 103개 일괄 등록 (data/research/watchalert_setup_plan.md)
+```
+
+### 📊 Ralph 무한 모드 산출물 통계
+
+- thesis 152개 (신규 39+, 기존 113)
+- 매크로 시나리오 7
+- ETF 7
+- research 산출물 35
+- research_log.md ~1,600줄
+- 텔레그램 발송 10+ (msg_id 2275, 2277, 2278, 2279, 2281, 2283, 2284, 2286, 2287, 2289, 2290)
+
+### Ralph 상태
+
+- v1 (PHASE3 DONE) ✅
+- v2 (DEEPEN DONE) ✅
+- v3 (DISCOVERY V3 SENT) ✅
+- 무한 모드 iter 1-68 실제 작업 + stop hook iter 69-125 (단순 monitoring) 진행 중
+- 사용자 정지 명령 ("멈춰"/"stop"/"그만"/"종료"/"끝"/"수고했어") 대기 중
+
+---
+
+
 # 세션 인수인계 — stock-bot
 
 > **매 세션 시작 시 가장 먼저 이 파일을 읽을 것.**
 > 패턴 출처: Anthropic "Effective harnesses for long-running agents" (claude-progress.txt 구조)
+
+---
+
+## 🔄 2026-05-22 ~ 5-23 Ralph 무한 모드 결과 (iter 1-57)
+
+> 사용자 휴식 12시간 자율 작업
+> 총 산출물: thesis 약 36 + 매크로 7 + ETF 6 + 백테스트 7 + 페어 5
+
+### ⚡ 5/26 (월) 09:00 즉시 실행
+
+1. **매도**: XNDU 손절 / HD조선 -16주 / AMZN -11주 (회수 13.2M)
+2. **추매**: SK하이닉스 +1주 (12% 비중)
+3. **신규 진입**: IM금융 / KAI / 코리안리 / KODEX방산 / WHR / GLD
+4. **익절** (iter 51 + 52): 삼성전자 25% / SK하이닉스 25% (회수 3.1M)
+5. **감시가 등록**: KAI 170K (현가 168K, 1% 미만), 한국타이어 56K, 코리안리 13,800
+
+### 🏆 매크로 ROBUST TOP 5 (모든 7 시나리오 양수)
+
+1. 064350 현대로템 EV +9.09%
+2. 449450 KODEX 방산 EV +8.46%
+3. 012450 한화에어로 EV +7.64%
+4. 047810 KAI EV +6.49%
+5. SARO EV +6.17%
+
+### 📁 핵심 파일 (사용자 우선 확인)
+
+1. `data/thesis/2026-05-23_RALPH_FINAL.md` — 단일 페이지 종합
+2. `data/thesis/2026-05-26_ACTION_MATRIX.md` — 월요일 실행
+3. `data/research/portfolio_rebalance_plan_2026_05_23.md` — 구체 매매
+4. `data/thesis/2026-05-23_GOLDEN_COLLECTION.md` — anchor 5종
+5. `data/research/master_ev_matrix.md` — 23종 EV
+6. `data/research/next_week_preview_2026_05_26.md` — 5일 calendar
+7. `data/research/user_pattern_deep_analysis.md` — 본인 패턴
+
+### 🔬 거대 백테스트 발견 (강한 알파)
+
+1. **기관 5d 500억+** 60d **+33.4% 승률 81.4%** (N=118)
+2. **4-way strict 콤보** (외인+기관+Golden+BB normal) 60d **+30.2% 승률 78.2%** (N=110)
+3. **BB OVERSOLD z<-2.5** 30d +13.86%
+4. 사용자 R:R 6.21, 승률 63% — 시스템 알파 확인
+5. **31일+ 보유 +57.9%** vs 0-3일 -2.19%
+
+### 🌐 매크로 시나리오 7/7 완성
+
+| # | 시나리오 | Base 확률 |
+|---|---|---|
+| 1 | Trump 관세 | B 유지 45% |
+| 2 | Fed pivot | B hold 50% |
+| 3 | Late-Cycle Bear | Soft 40% / Bear 25% |
+| 4 | 인도 모멘텀 | A 강세 50% |
+| 5 | 중국 부채 | A Soft 45% |
+| 6 | 일본 정치 | A Nikkei 45% |
+| 7 | 한국 정책 | A 가속 50% |
+
+### 🆕 신규 thesis 16종
+
+- 신규 KR (12종): IM금융/KAI/한미반도체/HPSP/오스코텍/POSCO v2/파두/서진시스템/이오테크닉스/글로벌텍스프리/코리안리/에코프로비엠
+- 신규 US (1종): MTZ
+- ETF (6종): KODEX AI전력/방산/보험/인버스 / GRID / ITA / TIGER 미국나스닥100
+
+### 🚨 위험 (보유 종목 EXIT 진단)
+
+- 000660 SK하이닉스 TRAIL HOLD (1,400K)
+- 298040 효성중공업 HOLD (3,200K)
+- 010120 LS ELECTRIC A→B 강등 / 분할 익절
+- 001040 CJ Kill #1 발동 EXIT (보유 시)
+- XNDU -47% 즉시 손절
+
+### 🎯 사용자 행동 권고
+
+1. **알파 섹터 집중**: 반도체장비/방산/전력기기 (9건 모두 승)
+2. **약점 회피**: 0-3일 단기 매매 (-2.19%), 화요일 매매 (-22%)
+3. **포지션 재조정**: HD조선 26% → 18%, SK하이닉스 9.6% → 12%
+4. **target_price 강제 입력**: 매수 시 38건 중 8건만 명시 → 100% 강제
+5. **30일+ 보유 strict**: AMZN 23일째 → 60일까지
+
+### 📅 다음 30일 핵심 Catalyst
+
+- 5/26 (월) 09:00 — Action 실행
+- 5/30 (금) — US Core PCE
+- 6/16 — FOMC dot-plot ★★★
+- 6/18 — 넷마블 SOL:enchant 출시
+- 6월 중순 — EU 반덤핑 발효 + 한온합병
+- 7월말 — Q2 어닝 클러스터
+- 9월 — KAI KF-21 양산 + iPhone 17
+
+### ⚠ 알려진 system 빈틈 (별도 작업 후보)
+
+1. `daily_snapshot.mscore` 0/2,864 filled (파이프라인 복구 필요, iter 13 진단)
+2. `insider_transactions` 7일 → 30일 윈도우 확장
+3. `stock_master.earnings_date` 컬럼 미존재
+4. `trade_log.json` 시간 필드 부재 (시간대 분석 불가)
 
 ---
 

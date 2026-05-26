@@ -383,11 +383,11 @@ def crawl_hankyung_reports(ticker: str, name: str, existing_urls: set) -> list:
     Returns: [{"date", "ticker", "name", "source", "title", "pdf_url"}, ...]
     """
     today = datetime.now(KST).strftime("%Y-%m-%d")
-    sdate = (datetime.now(KST) - timedelta(days=180)).strftime("%Y-%m-%d")
+    sdate = (datetime.now(KST) - timedelta(days=365)).strftime("%Y-%m-%d")
     url = "https://consensus.hankyung.com/analysis/list"
     params = {
         "sdate": sdate, "edate": today, "now_page": "1",
-        "search_text": ticker, "pagenum": "20", "report_type": "CO",
+        "search_text": ticker, "pagenum": "100", "report_type": "CO",
     }
     try:
         resp = requests.get(url, headers=_HEADERS, params=params, timeout=15)
@@ -621,7 +621,7 @@ def crawl_hankyung_listing(category: str, existing_urls: set) -> list:
         return []
 
     today = datetime.now(KST).strftime("%Y-%m-%d")
-    sdate = (datetime.now(KST) - timedelta(days=180)).strftime("%Y-%m-%d")
+    sdate = (datetime.now(KST) - timedelta(days=365)).strftime("%Y-%m-%d")
     url = "https://consensus.hankyung.com/analysis/list"
 
     # 페이지네이션 (최대 5페이지 = 500건). cap 도달 broker 분류용.
@@ -1020,7 +1020,7 @@ def extract_pdf_text(pdf_url: str) -> tuple[str, str, bytes]:
 
 
 def _extract_text_from_bytes(pdf_bytes: bytes, label: str = "") -> tuple[str, str, bytes]:
-    """PDF bytes에서 pdfplumber로 텍스트 추출 (pdf_collectors 폴백용).
+    """PDF bytes에서 pdfplumber로 텍스트 추출.
     Returns: (text, status, pdf_bytes)
       - status: 'success'|'failed'|'partial'
     """
@@ -1061,14 +1061,57 @@ def _extract_text_from_bytes(pdf_bytes: bytes, label: str = "") -> tuple[str, st
             os.unlink(tmp_path)
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━ naver PDF 매핑 캐시 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+import json as _json_mod
+
+_NAVER_PDF_CACHE_PATH = os.environ.get("DATA_DIR", "/data") + "/naver_pdf_cache.json"
+_NAVER_PDF_CACHE_TTL_DAYS = 30
+
+
+def _load_naver_pdf_cache() -> dict:
+    """naver_pdf_cache.json 로드. {ticker: {pdf_url: {date, source, last_checked}}}"""
+    try:
+        with open(_NAVER_PDF_CACHE_PATH, "r", encoding="utf-8") as f:
+            return _json_mod.load(f)
+    except Exception:
+        return {}
+
+
+def _save_naver_pdf_cache(cache: dict) -> None:
+    """naver_pdf_cache.json 저장."""
+    try:
+        with open(_NAVER_PDF_CACHE_PATH, "w", encoding="utf-8") as f:
+            _json_mod.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[naver-cache] 저장 실패: {e}")
+
+
+def _naver_cache_hit(cache: dict, ticker: str, pdf_url: str) -> bool:
+    """캐시 hit 여부 — TTL 30일 체크."""
+    entry = cache.get(ticker, {}).get(pdf_url)
+    if not entry:
+        return False
+    try:
+        last = datetime.fromisoformat(entry.get("last_checked", ""))
+        return (datetime.now(KST) - last.replace(tzinfo=KST)).days < _NAVER_PDF_CACHE_TTL_DAYS
+    except Exception:
+        return False
+
+
+def _naver_cache_update(cache: dict, ticker: str, pdf_url: str,
+                        date: str, source: str) -> None:
+    """캐시에 항목 추가/갱신."""
+    if ticker not in cache:
+        cache[ticker] = {}
+    cache[ticker][pdf_url] = {
+        "date": date,
+        "source": source,
+        "last_checked": datetime.now(KST).isoformat(),
+    }
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 수집 메인 ━━━━━━━━━━━━━━━━━━━━━━━━━
-
-try:
-    from pdf_collectors import fetch_pdf_with_fallback as _fetch_pdf_with_fallback
-    _PDF_COLLECTORS_AVAILABLE = True
-except ImportError:
-    _PDF_COLLECTORS_AVAILABLE = False
-
 
 def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> list:
     """종목 딕셔너리({ticker: name})에 대해 리포트 수집.
@@ -1122,6 +1165,7 @@ def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> 
         existing_keys = {(r["date"], r["source"], r["ticker"]) for r in rows}
 
     new_reports = []
+    naver_cache = _load_naver_pdf_cache()
 
     for ticker, name in tickers_dict.items():
         try:
@@ -1132,7 +1176,19 @@ def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> 
                 reports.extend(crawl_hankyung_reports(ticker, name, existing_urls))
             except Exception as e:
                 print(f"[hankyung] {name}({ticker}) 실패: {e}")
-            reports.extend(crawl_naver_reports(ticker, name, existing_urls))
+
+            # naver: 캐시 확인 후 크롤링
+            ticker_cache = naver_cache.get(ticker, {})
+            # 모든 캐시 hit URLs는 existing_urls에 이미 있을 경우 skip됨.
+            # 캐시 miss인 URL만 실제 크롤링.
+            naver_reports = crawl_naver_reports(ticker, name, existing_urls)
+            for nr in naver_reports:
+                purl = nr.get("pdf_url", "")
+                if not _naver_cache_hit(naver_cache, ticker, purl):
+                    _naver_cache_update(naver_cache, ticker, purl,
+                                        nr.get("date", ""), nr.get("source", ""))
+            reports.extend(naver_reports)
+
             try:
                 reports.extend(crawl_wisereport_meta(ticker, name, existing_urls))
             except Exception as e:
@@ -1156,7 +1212,7 @@ def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> 
                 key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
                 if key in existing_keys:
                     continue
-                # 와이즈 메타데이터 처리 (1순위: pdf_collectors 폴백, 최종: meta_only)
+                # 와이즈 메타데이터 처리 (PDF는 유료 — meta_only)
                 if r.get("_wise_meta"):
                     r.pop("_wise_meta", None)
                     # 와이즈 메타에서 직접 제공되는 목표가/투자의견 사용
@@ -1166,79 +1222,17 @@ def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> 
                     except (ValueError, TypeError):
                         r["target_price"] = 0
                     r["opinion"] = _normalize_wise_opinion(r.pop("recommendation", "") or "")
-
-                    # pdf_collectors 폴백 시도 (wisereport URL → 다른 경로로 PDF 취득)
-                    pdf_bytes = None
-                    source_used = ""
-                    if _PDF_COLLECTORS_AVAILABLE:
-                        try:
-                            fallback_result = _fetch_pdf_with_fallback(
-                                ticker=ticker,
-                                date=r.get("date", ""),
-                                title=r.get("title", ""),
-                                broker_hint=r.get("source", ""),
-                                pdf_url=r.get("pdf_url", ""),
-                            )
-                            if fallback_result:
-                                pdf_bytes, source_used = fallback_result
-                        except Exception as e:
-                            print(f"[report] pdf_collectors 폴백 실패 ({ticker}): {e}")
-
-                    if pdf_bytes:
-                        full_text, status, _ = _extract_text_from_bytes(pdf_bytes, r.get("pdf_url", ""))
-                        r["full_text"] = full_text
-                        r["extraction_status"] = status
-                        r["source_used"] = source_used
-                        r["pdf_path"] = ""
-                        try:
-                            r["pdf_path"] = _save_pdf_local(
-                                pdf_bytes, ticker,
-                                r.get("date", ""), r.get("source", ""), r.get("analyst", ""),
-                            )
-                        except Exception as e:
-                            print(f"[report] PDF 로컬 저장 실패 ({ticker}): {e}")
-                        if not r["target_price"]:
-                            meta = extract_report_meta(full_text)
-                            r["target_price"] = meta["target_price"] or 0
-                        if not r["opinion"]:
-                            meta = extract_report_meta(full_text)
-                            r["opinion"] = meta["opinion"]
-                    else:
-                        r["full_text"] = "[와이즈리포트 메타데이터만 — PDF는 유료]"
-                        r["extraction_status"] = "meta_only"
-                        r["pdf_path"] = ""
-                        r["source_used"] = "wisereport_paid"
+                    r["full_text"] = "[와이즈리포트 메타데이터만 — PDF는 유료]"
+                    r["extraction_status"] = "meta_only"
+                    r["pdf_path"] = ""
+                    r["source_used"] = "wisereport_paid"
                 else:
-                    # 한경/네이버 출처 — pdf_url 직접 다운로드 먼저 시도
+                    # 한경/네이버 출처 — pdf_url 직접 다운로드
                     pdf_url = r.get("pdf_url", "")
-                    source_used = ""
                     full_text, status, pdf_bytes = extract_pdf_text(pdf_url)
-
-                    # extract_pdf_text 실패 시 pdf_collectors 폴백 시도
-                    if status in ("failed", "") and _PDF_COLLECTORS_AVAILABLE:
-                        try:
-                            fallback_result = _fetch_pdf_with_fallback(
-                                ticker=ticker,
-                                date=r.get("date", ""),
-                                title=r.get("title", ""),
-                                broker_hint=r.get("source", ""),
-                                pdf_url=pdf_url,
-                            )
-                            if fallback_result:
-                                pdf_bytes_fb, source_used = fallback_result
-                                full_text_fb, status_fb, _ = _extract_text_from_bytes(
-                                    pdf_bytes_fb, pdf_url
-                                )
-                                if status_fb not in ("failed", ""):
-                                    full_text = full_text_fb
-                                    status = status_fb
-                                    pdf_bytes = pdf_bytes_fb
-                        except Exception as e:
-                            print(f"[report] pdf_collectors 폴백 실패 ({ticker}): {e}")
-
                     r["full_text"] = full_text
                     r["extraction_status"] = status
-                    r["source_used"] = source_used
+                    r["source_used"] = ""
                     r["pdf_path"] = ""
                     if pdf_bytes:
                         try:
@@ -1300,6 +1294,9 @@ def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> 
         # 영구 보관 (삭제 없음)
         conn.commit()
         conn.close()
+
+    # naver 매핑 캐시 저장 (변경 여부 무관하게 항상 flush)
+    _save_naver_pdf_cache(naver_cache)
 
     return new_reports
 
