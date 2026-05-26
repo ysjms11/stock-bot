@@ -1,3 +1,20 @@
+## 🏗 2026-05-27 C3 리팩토링 완료 — mcp_tools.py → mcp_tools/ 패키지 분할
+
+### 변경 요약
+- **mcp_tools.py 4,861라인 → mcp_tools/ 패키지** (5 공통 모듈 + 18 tool 모듈 + __init__.py = 24 파일)
+- 패키지 구조: `_helpers.py` (DART캐시/PDF/스캔/US헬퍼/Git헬퍼), `_registry.py` (45 elif → TOOL_HANDLERS dispatch dict), `_execute.py` (entry point), `server.py` (SSE/JSON-RPC), `tools/` (18 파일)
+- **45 elif chain → TOOL_HANDLERS dict** (O(1) dispatch)
+- **100% 하위호환**: `main.py` 변경 없음. `MCP_TOOLS 46개 = TOOL_HANDLERS 46개` 완벽 매칭
+- **레거시 백업**: `data/archive/mcp_tools_LEGACY_20260527.py.archived`
+- **봇 재시작 후 health 200 OK** 확인. PID 24976
+- 총 tool 파일: 18개 (`price`, `portfolio`, `alerts`, `supply`, `dart`, `macro`, `sector`, `consensus`, `market_signal`, `news`, `backtest`, `regime`, `scan`, `files`, `git`, `us`, `youtube`, `manage_report`)
+
+### 다음 세션에서 할 일
+- 위의 Ralph 무한모드 산출물 기반 포트폴리오 실행 (5/26 ACTION_MATRIX)
+- 현대해상(001450) / LG씨엔에스(064400) 한경 URL 직접 확인 (낮은 PDF율 원인 파악)
+
+---
+
 ## 🏗 2026-05-27 C1 리팩토링 완료 — kis_api.py → kis_api/ 패키지 분할
 
 ### 변경 요약
