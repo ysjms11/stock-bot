@@ -74,10 +74,11 @@ async def handle_get_us_analyst(arguments: dict) -> dict | list:
 
 
 async def handle_watch_analyst(arguments: dict) -> dict | list:
-    result = None
-    result = await _exec_watch_analyst(**arguments)
-
-    return result
+    slug = (arguments.get("slug") or "").strip()
+    if not slug:
+        return {"error": "slug 파라미터 필수. 예: watch_analyst(slug='mark-strouse')"}
+    watched = bool(arguments.get("watched", True))
+    return await _exec_watch_analyst(slug=slug, watched=watched)
 
 
 async def handle_get_us_buy_candidates(arguments: dict) -> dict | list:

@@ -88,18 +88,45 @@ TOOL_HANDLERS: dict = {
 }
 
 
-async def execute_tool(name: str, arguments: dict) -> dict | list:
+import inspect as _inspect
+
+# 핸들러 시그니처 캐시 (id → bool)
+_HANDLER_SIG_CACHE: dict[int, bool] = {}
+
+
+def _needs_token(handler) -> bool:
+    """핸들러가 token 인자를 받는지 inspect로 자동 판별 + 캐시.
+
+    token=None 기본값이 있더라도 2번째 파라미터가 존재하면 token 전달.
+    단, 실제로 token=None 기본값을 가진 핸들러는 KIS 호출 없이 token 없이도 동작하므로
+    len(params) >= 2 이면서 token 파라미터가 있을 때만 True.
+    """
+    h_id = id(handler)
+    if h_id in _HANDLER_SIG_CACHE:
+        return _HANDLER_SIG_CACHE[h_id]
+    sig = _inspect.signature(handler)
+    params = list(sig.parameters.keys())
+    needs = len(params) >= 2 and params[1] in ("token", "token_")
+    _HANDLER_SIG_CACHE[h_id] = needs
+    return needs
+
+
+async def execute_tool(name: str, arguments: dict, token: str = "") -> dict | list:
     """dispatch dict 기반 tool 실행. 핸들러 없으면 error dict 반환."""
     handler = TOOL_HANDLERS.get(name)
     if handler is None:
         return {"error": f"unknown tool: {name}"}
-    # token 파라미터 필요 여부: _NO_TOKEN_TOOLS에 없으면 token 필요
-    from ._helpers import _NO_TOKEN_TOOLS
-    from kis_api import get_kis_token
-    if name in _NO_TOKEN_TOOLS:
-        return await handler(arguments)
-    else:
-        token = await get_kis_token()
-        if not token:
-            return {"error": "KIS 토큰 발급 실패"}
-        return await handler(arguments, token)
+    try:
+        if _needs_token(handler):
+            if not token:
+                from kis_api import get_kis_token
+                token = await get_kis_token()
+            if not token:
+                return {"error": "KIS 토큰 발급 실패"}
+            return await handler(arguments, token)
+        else:
+            return await handler(arguments)
+    except TypeError as e:
+        return {"error": f"TypeError: {e}", "tool": name}
+    except Exception as e:
+        return {"error": str(e), "tool": name}
