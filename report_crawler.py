@@ -80,6 +80,11 @@ def _get_report_db() -> sqlite3.Connection:
         conn.commit()
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE reports ADD COLUMN source_used TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass  # 이미 컬럼 존재 시 무시
     return conn
 
 
@@ -1014,18 +1019,107 @@ def extract_pdf_text(pdf_url: str) -> tuple[str, str, bytes]:
             os.unlink(tmp_path)
 
 
+def _extract_text_from_bytes(pdf_bytes: bytes, label: str = "") -> tuple[str, str, bytes]:
+    """PDF bytes에서 pdfplumber로 텍스트 추출 (pdf_collectors 폴백용).
+    Returns: (text, status, pdf_bytes)
+      - status: 'success'|'failed'|'partial'
+    """
+    tmp_path = None
+    try:
+        import pdfplumber
+    except ImportError:
+        return ("", "failed", pdf_bytes)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(pdf_bytes)
+        text = ""
+        truncated = False
+        with pdfplumber.open(tmp_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+                if len(text) >= _MAX_TEXT:
+                    truncated = True
+                    break
+        text = text[:_MAX_TEXT].strip()
+        if not text:
+            return ("", "failed", pdf_bytes)
+        if _is_chart_image_text(text):
+            return ("[PDF 텍스트 추출 실패 - 차트/이미지 PDF]", "failed", pdf_bytes)
+        if not _validate_korean_text(text):
+            return ("[PDF 텍스트 추출 실패 - 이미지 기반 PDF]", "failed", pdf_bytes)
+        if truncated:
+            return (text, "partial", pdf_bytes)
+        return (text, "success", pdf_bytes)
+    except Exception as e:
+        print(f"[report] bytes 추출 실패 ({label}): {e}")
+        return ("", "failed", pdf_bytes)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━ 수집 메인 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def collect_reports(tickers_dict: dict) -> list:
+try:
+    from pdf_collectors import fetch_pdf_with_fallback as _fetch_pdf_with_fallback
+    _PDF_COLLECTORS_AVAILABLE = True
+except ImportError:
+    _PDF_COLLECTORS_AVAILABLE = False
+
+
+def collect_reports(tickers_dict: dict, force_retry_meta_only: bool = False) -> list:
     """종목 딕셔너리({ticker: name})에 대해 리포트 수집.
-    Returns: 새로 수집된 리포트 리스트.
+
+    Args:
+        tickers_dict: {ticker: name} 딕셔너리
+        force_retry_meta_only: True이면 extraction_status='meta_only' 행을
+            existing_keys에서 제외하여 재시도 대상으로 포함시킴.
+            성공 시 기존 행을 UPDATE (id 유지). 기본값 False.
+
+    Returns:
+        새로 수집된 또는 업데이트된 리포트 리스트.
     """
     # SQLite에서 기존 URL/키 로드 (중복 방지)
     _conn = _get_report_db()
-    rows = _conn.execute("SELECT pdf_url, date, source, ticker FROM reports").fetchall()
+    rows = _conn.execute(
+        "SELECT id, pdf_url, date, source, ticker, extraction_status FROM reports"
+    ).fetchall()
     _conn.close()
-    existing_urls = {r["pdf_url"] for r in rows if r["pdf_url"]}
-    existing_keys = {(r["date"], r["source"], r["ticker"]) for r in rows}
+    # force_retry_meta_only=True이면 meta_only URL도 existing_urls에서 제외하여
+    # crawl_wisereport_meta가 동일 URL을 다시 수집하도록 허용
+    if force_retry_meta_only:
+        meta_only_urls = {r["pdf_url"] for r in rows if r["extraction_status"] == "meta_only" and r["pdf_url"]}
+        existing_urls = {r["pdf_url"] for r in rows if r["pdf_url"] and r["pdf_url"] not in meta_only_urls}
+    else:
+        existing_urls = {r["pdf_url"] for r in rows if r["pdf_url"]}
+
+    # force_retry_meta_only=True이면 meta_only 행은 existing_keys에서 제외 (재시도 허용)
+    if force_retry_meta_only:
+        meta_only_keys = {
+            (r["date"], r["source"], r["ticker"])
+            for r in rows
+            if r["extraction_status"] == "meta_only"
+        }
+        meta_only_id_map = {
+            (r["date"], r["source"], r["ticker"]): r["id"]
+            for r in rows
+            if r["extraction_status"] == "meta_only"
+        }
+        meta_only_count = len(meta_only_keys)
+        if meta_only_count:
+            print(f"[collect_reports] force_retry: retrying {meta_only_count} meta_only rows")
+        existing_keys = {
+            (r["date"], r["source"], r["ticker"])
+            for r in rows
+            if r["extraction_status"] != "meta_only"
+        }
+    else:
+        meta_only_keys = set()
+        meta_only_id_map = {}
+        existing_keys = {(r["date"], r["source"], r["ticker"]) for r in rows}
 
     new_reports = []
 
@@ -1062,11 +1156,8 @@ def collect_reports(tickers_dict: dict) -> list:
                 key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
                 if key in existing_keys:
                     continue
-                # 와이즈 메타데이터는 PDF 추출 스킵
+                # 와이즈 메타데이터 처리 (1순위: pdf_collectors 폴백, 최종: meta_only)
                 if r.get("_wise_meta"):
-                    r["full_text"] = "[와이즈리포트 메타데이터만 — PDF는 유료]"
-                    r["extraction_status"] = "meta_only"
-                    r["pdf_path"] = ""
                     r.pop("_wise_meta", None)
                     # 와이즈 메타에서 직접 제공되는 목표가/투자의견 사용
                     try:
@@ -1075,10 +1166,79 @@ def collect_reports(tickers_dict: dict) -> list:
                     except (ValueError, TypeError):
                         r["target_price"] = 0
                     r["opinion"] = _normalize_wise_opinion(r.pop("recommendation", "") or "")
+
+                    # pdf_collectors 폴백 시도 (wisereport URL → 다른 경로로 PDF 취득)
+                    pdf_bytes = None
+                    source_used = ""
+                    if _PDF_COLLECTORS_AVAILABLE:
+                        try:
+                            fallback_result = _fetch_pdf_with_fallback(
+                                ticker=ticker,
+                                date=r.get("date", ""),
+                                title=r.get("title", ""),
+                                broker_hint=r.get("source", ""),
+                                pdf_url=r.get("pdf_url", ""),
+                            )
+                            if fallback_result:
+                                pdf_bytes, source_used = fallback_result
+                        except Exception as e:
+                            print(f"[report] pdf_collectors 폴백 실패 ({ticker}): {e}")
+
+                    if pdf_bytes:
+                        full_text, status, _ = _extract_text_from_bytes(pdf_bytes, r.get("pdf_url", ""))
+                        r["full_text"] = full_text
+                        r["extraction_status"] = status
+                        r["source_used"] = source_used
+                        r["pdf_path"] = ""
+                        try:
+                            r["pdf_path"] = _save_pdf_local(
+                                pdf_bytes, ticker,
+                                r.get("date", ""), r.get("source", ""), r.get("analyst", ""),
+                            )
+                        except Exception as e:
+                            print(f"[report] PDF 로컬 저장 실패 ({ticker}): {e}")
+                        if not r["target_price"]:
+                            meta = extract_report_meta(full_text)
+                            r["target_price"] = meta["target_price"] or 0
+                        if not r["opinion"]:
+                            meta = extract_report_meta(full_text)
+                            r["opinion"] = meta["opinion"]
+                    else:
+                        r["full_text"] = "[와이즈리포트 메타데이터만 — PDF는 유료]"
+                        r["extraction_status"] = "meta_only"
+                        r["pdf_path"] = ""
+                        r["source_used"] = "wisereport_paid"
                 else:
-                    full_text, status, pdf_bytes = extract_pdf_text(r["pdf_url"])
+                    # 한경/네이버 출처 — pdf_url 직접 다운로드 먼저 시도
+                    pdf_url = r.get("pdf_url", "")
+                    source_used = ""
+                    full_text, status, pdf_bytes = extract_pdf_text(pdf_url)
+
+                    # extract_pdf_text 실패 시 pdf_collectors 폴백 시도
+                    if status in ("failed", "") and _PDF_COLLECTORS_AVAILABLE:
+                        try:
+                            fallback_result = _fetch_pdf_with_fallback(
+                                ticker=ticker,
+                                date=r.get("date", ""),
+                                title=r.get("title", ""),
+                                broker_hint=r.get("source", ""),
+                                pdf_url=pdf_url,
+                            )
+                            if fallback_result:
+                                pdf_bytes_fb, source_used = fallback_result
+                                full_text_fb, status_fb, _ = _extract_text_from_bytes(
+                                    pdf_bytes_fb, pdf_url
+                                )
+                                if status_fb not in ("failed", ""):
+                                    full_text = full_text_fb
+                                    status = status_fb
+                                    pdf_bytes = pdf_bytes_fb
+                        except Exception as e:
+                            print(f"[report] pdf_collectors 폴백 실패 ({ticker}): {e}")
+
                     r["full_text"] = full_text
                     r["extraction_status"] = status
+                    r["source_used"] = source_used
                     r["pdf_path"] = ""
                     if pdf_bytes:
                         try:
@@ -1103,23 +1263,40 @@ def collect_reports(tickers_dict: dict) -> list:
         time.sleep(1)  # 종목간 딜레이
 
     if new_reports:
-        # SQLite에 INSERT (UNIQUE 제약으로 중복 자동 스킵)
+        # SQLite에 INSERT 또는 UPDATE (force_retry_meta_only 시 기존 meta_only 행 UPDATE)
         conn = _get_report_db()
         for r in new_reports:
-            conn.execute(
-                """INSERT OR IGNORE INTO reports
-                   (date, ticker, name, source, analyst, title, pdf_url,
-                    full_text, pdf_path, extraction_status, collected_at,
-                    target_price, opinion, category)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
-                 r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
-                 r.get("pdf_url", ""), r.get("full_text", ""),
-                 r.get("pdf_path", ""), r.get("extraction_status", ""),
-                 r.get("collected_at", ""),
-                 r.get("target_price", 0), r.get("opinion", ""),
-                 "company"),
-            )
+            key = (r.get("date", ""), r.get("source", ""), r.get("ticker", ""))
+            existing_id = meta_only_id_map.get(key)
+            if existing_id and force_retry_meta_only:
+                # 기존 meta_only 행 UPDATE (id 유지, DB 데이터 삭제 없음)
+                conn.execute(
+                    """UPDATE reports SET
+                       full_text=?, pdf_path=?, extraction_status=?,
+                       collected_at=?, target_price=?, opinion=?, source_used=?
+                       WHERE id=?""",
+                    (r.get("full_text", ""), r.get("pdf_path", ""),
+                     r.get("extraction_status", ""),
+                     r.get("collected_at", ""),
+                     r.get("target_price", 0), r.get("opinion", ""),
+                     r.get("source_used", ""), existing_id),
+                )
+                r["_updated_id"] = existing_id
+            else:
+                conn.execute(
+                    """INSERT OR IGNORE INTO reports
+                       (date, ticker, name, source, analyst, title, pdf_url,
+                        full_text, pdf_path, extraction_status, collected_at,
+                        target_price, opinion, category, source_used)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (r.get("date", ""), r.get("ticker", ""), r.get("name", ""),
+                     r.get("source", ""), r.get("analyst", ""), r.get("title", ""),
+                     r.get("pdf_url", ""), r.get("full_text", ""),
+                     r.get("pdf_path", ""), r.get("extraction_status", ""),
+                     r.get("collected_at", ""),
+                     r.get("target_price", 0), r.get("opinion", ""),
+                     r.get("category", "company"), r.get("source_used", "")),
+                )
         # 영구 보관 (삭제 없음)
         conn.commit()
         conn.close()
