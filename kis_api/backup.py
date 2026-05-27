@@ -67,51 +67,41 @@ def _save_us_holdings_sent(data: dict) -> None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def _gist_patch_with_retry(s, gist_id: str, files: dict, headers: dict,
                                  description: str, max_retries: int = 3) -> dict:
-    """ETag 기반 Gist PATCH. 409 Conflict 시 GET → ETag 재취득 후 최대 3회 재시도.
-    Backoff: 1s, 2s, 4s (exponential)."""
+    """Gist PATCH + 409/429 시 exponential backoff retry.
+
+    GitHub Gist API는 If-Match conditional request 미지원 (400 반환).
+    단순 PATCH (last-write-wins) + 409/429 시 backoff."""
     url = f"https://api.github.com/gists/{gist_id}"
-    etag: str = ""
+    payload = {"description": description, "files": files}
 
     for attempt in range(max_retries):
-        # 1. GET으로 현재 ETag 취득 (첫 시도도 항상 GET — 안전한 If-Match 보장)
         try:
-            async with s.get(url, headers=headers) as get_resp:
-                if get_resp.status != 200:
-                    text = await get_resp.text()
-                    return {"ok": False, "error": f"GET {get_resp.status}: {text[:200]}"}
-                etag = get_resp.headers.get("ETag", "")
-        except Exception as e:
-            return {"ok": False, "error": f"GET 예외: {e}"}
-
-        # 2. PATCH with If-Match
-        patch_headers = {**headers}
-        if etag:
-            patch_headers["If-Match"] = etag
-
-        payload = {"description": description, "files": files}
-        try:
-            async with s.patch(url, json=payload, headers=patch_headers) as resp:
+            async with s.patch(url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     d = await resp.json()
                     return {"ok": True, "action": "updated", "gist_id": d["id"],
                             "updated_at": d.get("updated_at", ""), "attempts": attempt + 1}
                 if resp.status == 409:
-                    # 3. 409 Conflict — concurrent update, backoff & retry
                     wait = 2 ** attempt  # 1s, 2s, 4s
-                    print(f"[backup] PATCH 409 Conflict (ETag 불일치), {wait}s 후 재시도 ({attempt + 1}/{max_retries})")
+                    print(f"[backup] PATCH 409 Conflict, {wait}s 후 재시도 ({attempt + 1}/{max_retries})")
                     await asyncio.sleep(wait)
+                    continue
+                if resp.status == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 60))
+                    print(f"[backup] PATCH 429 Rate limit, {retry_after}s 후 재시도")
+                    await asyncio.sleep(retry_after)
                     continue
                 text = await resp.text()
                 return {"ok": False, "error": f"PATCH {resp.status}: {text[:200]}"}
         except Exception as e:
             return {"ok": False, "error": f"PATCH 예외: {e}"}
 
-    return {"ok": False, "error": f"PATCH 409 Conflict — {max_retries}회 재시도 후 실패"}
+    return {"ok": False, "error": f"PATCH — {max_retries}회 재시도 후 실패"}
 
 
 async def backup_data_files() -> dict:
     """GitHub Gist에 /data/*.json 백업 (PATCH 기존 Gist 또는 POST 신규 생성).
-    PATCH 409 Conflict 시 ETag 재취득 후 최대 3회 exponential backoff 재시도."""
+    PATCH 409/429 시 최대 3회 exponential backoff 재시도."""
     if not GITHUB_TOKEN:
         return {"ok": False, "error": "GITHUB_TOKEN 미설정"}
 
