@@ -226,19 +226,13 @@ async def handle_get_stock_detail(arguments: dict, token=None) -> dict | list:
             start_dt = (datetime.now(KST) - timedelta(days=n * buffer)).strftime("%Y%m%d")
 
             if _is_us_ticker(ticker):
-                excd = _guess_excd(ticker)
-                s = _get_session()
-                _, d = await _kis_get(s, "/uapi/overseas-price/v1/quotations/dailyprice",
-                    "HHDFS76240000", token,
-                    {"AUTH": "", "EXCD": excd, "SYMB": ticker,
-                     "GUBN": "0", "BYMD": today_str, "MODP": "0"})
-                candles = d.get("output2", [])
+                # KIS HHDFS76240000은 단일 페이지 ~30건만 반환 → yfinance로 충분한 일봉 확보
+                years_needed = max(1, (n // 250) + 1)
+                all_candles = await asyncio.to_thread(get_historical_ohlcv, ticker, years_needed)
+                candles_sliced = all_candles[-n:] if len(all_candles) >= n else all_candles
                 result = {
                     "ticker": ticker, "market": "US", "period": period,
-                    "candles": [{"date": c.get("xymd"), "open": c.get("open"),
-                                 "high": c.get("high"), "low": c.get("low"),
-                                 "close": c.get("clos"), "vol": c.get("tvol")}
-                                for c in candles[:n]],
+                    "candles": candles_sliced,
                 }
             else:
                 s = _get_session()

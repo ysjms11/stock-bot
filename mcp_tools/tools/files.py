@@ -86,8 +86,21 @@ async def handle_read_file(arguments: dict) -> dict | list:
             elif os.path.getsize(_fpath) > 100 * 1024:
                 result = {"error": f"파일 크기 초과 (최대 100KB, 실제 {os.path.getsize(_fpath) // 1024}KB)"}
             else:
+                _lines_limit = arguments.get("lines")
+                _offset = int(arguments.get("offset") or 0)
                 with open(_fpath, "r", encoding="utf-8") as _rf:
-                    result = {"path": rel, "content": _rf.read()}
+                    if _lines_limit:
+                        _all = _rf.readlines()
+                        _sliced = _all[_offset: _offset + int(_lines_limit)]
+                        result = {
+                            "path": rel,
+                            "content": "".join(_sliced),
+                            "lines_returned": len(_sliced),
+                            "total_lines": len(_all),
+                            "offset": _offset,
+                        }
+                    else:
+                        result = {"path": rel, "content": _rf.read()}
 
     return result
 
