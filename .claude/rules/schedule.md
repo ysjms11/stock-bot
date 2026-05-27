@@ -41,10 +41,10 @@
 
 | 시간 | D | 잡 이름 | 담당 함수 | 핵심 동작 | 최근 변경 |
 |------|---|---------|-----------|-----------|-----------|
-| 07:00 | 평일 | `earnings_cal` | `check_earnings_calendar` | KR 실적 캘린더 체크 | — |
-| 07:00 | 평일 | `dividend_cal` | `check_dividend_calendar` | 배당 캘린더 체크 | — |
 | 07:00 | 토 | `weekly` | `weekly_review` | 주간 리뷰 | — |
-| 07:00 | 월 | `universe_update` | `weekly_universe_update` | KOSPI250+KOSDAQ350 유니버스 갱신 | — |
+| 07:01 | 월 | `universe_update` | `weekly_universe_update` | KOSPI250+KOSDAQ350 유니버스 갱신 | 5/28 +1m stagger |
+| 07:02 | 평일 | `earnings_cal` | `check_earnings_calendar` | KR 실적 캘린더 체크 | 5/28 +2m stagger |
+| 07:03 | 평일 | `dividend_cal` | `check_dividend_calendar` | 배당 캘린더 체크 | 5/28 +3m stagger |
 | 07:05 | 일 | `consensus_update` | `weekly_consensus_update` | FnGuide 컨센서스 주간 업데이트 | — |
 | 07:05 | 일 | `weekly_sanity` | `weekly_sanity_check` | daily_snapshot 영업일 누락 감시 | 4/18 신규 |
 | 07:10 | 평일 | `us_earnings_cal` | `check_us_earnings_calendar` | 미국 실적 캘린더 체크 | — |
@@ -58,7 +58,7 @@
 |------|----|---|---------|-----------|-----------|-----------|
 | 12:00 | ET | 평일 | `us_holdings_noon` | `hourly_us_holdings_check` | 미국 보유 종목 애널 레이팅 감시 (DST 자동) | 4/18 신규 |
 | 15:40 | KST | 평일 | `kr_summary` | `daily_kr_summary` | 한국 장 마감 요약 | — |
-| 15:40 | KST | 평일 | `supply_drain` | `check_supply_drain` | 수급 고갈 체크 | — |
+| 15:42 | KST | 평일 | `supply_drain` | `check_supply_drain` | 수급 고갈 체크 | 5/28 +2m stagger |
 | 15:50 | KST | 평일 | `snapshot_dd` | `snapshot_and_drawdown` | 포트폴리오 스냅샷 + 드로다운 체크 | — |
 | 16:30 | KST | 평일 | `momentum_check` | `momentum_exit_check` | 모멘텀 이탈 체크 | — |
 | 16:30 | ET | 평일 | `us_holdings_close` | `hourly_us_holdings_check` | 미국 장 마감 애널 레이팅 감시 | 4/18 신규 |
@@ -76,7 +76,7 @@
 | 09:00 | 토 | `weekly_sat_port_check` | `weekly_sat_port_check_notify` | SAT_PORT_CHECK 시작 알림 (토요일 포트관리 v2) | 4/27 신규 |
 | 09:00 | 일 | `weekly_sun_discovery` | `weekly_sun_discovery_notify` | SUN_DISCOVERY 시작 알림 (일요일 신규발굴 v2) | 4/27 신규 |
 | 19:30 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 4/27 신규 |
-| 16:30 | 평일 | `pension_collect` | `daily_pension_collect` | 연기금 (NPS) 종목별 매매 수집 → pension_flow_daily DB | 4/27 신규 |
+| 16:32 | 평일 | `pension_collect` | `daily_pension_collect` | 연기금 (NPS) 종목별 매매 수집 → pension_flow_daily DB | 5/28 +2m stagger |
 | 19:00 | 평일 | `pension_alert` | `daily_pension_alert` | 연기금 5일 누적 매매 알림 (시총% 기준, 보유/워치 양방향 + 발굴 매수 TOP) | 4/27 신규 |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
 | 19:15 | 평일 | `collect_sanity_1` | `daily_collect_sanity_check` | 자가진단 — 당일 snapshot 0건이면 collect_daily 재실행 | 4/25 신규 |
