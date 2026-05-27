@@ -1,6 +1,8 @@
 """파일 저장/로드 + 환경변수 기반 데이터 복원."""
 import os
 import json
+import fcntl
+import tempfile
 from datetime import datetime
 
 from ._config import (
@@ -63,8 +65,29 @@ def load_json(filepath, default=None):
 
 
 def save_json(filepath, data):
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Atomic write: temp file 생성 → fsync → atomic rename.
+    동시 read/write 경합 방지 (read는 이전 상태 또는 새 상태만 봄).
+    fcntl advisory lock으로 multi-writer race 제거."""
+    filepath = str(filepath)
+    dir_path = os.path.dirname(os.path.abspath(filepath))
+    lock_path = filepath + ".lock"
+
+    with open(lock_path, "w") as _lock:
+        fcntl.flock(_lock.fileno(), fcntl.LOCK_EX)
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=dir_path)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, filepath)  # POSIX atomic rename
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+        finally:
+            fcntl.flock(_lock.fileno(), fcntl.LOCK_UN)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
