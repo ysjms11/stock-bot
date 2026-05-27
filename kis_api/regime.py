@@ -36,6 +36,9 @@ from ._files import (
     load_consensus_cache, load_sector_flow_cache, save_sector_flow_cache,
     load_compare_log, load_watchlist_log, append_watchlist_log, load_events,
 )
+# C1 분할 시 누락된 cross-module import
+from .us_stock import get_yahoo_quote
+from .news import _yf_history
 
 
 def compute_turbulence(sp: list, kospi: list,
