@@ -1,0 +1,862 @@
+{
+  "005930": {
+    "name": "삼성전자 추매",
+    "market": "KR",
+    "buy_price": 187000.0,
+    "qty": 0,
+    "memo": "",
+    "grade": "A",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-16"
+  },
+  "PANW": {
+    "name": "팔로알토네트웍스",
+    "buy_price": 149.0,
+    "memo": "v3딥서치완료. 해자Yes+수요StrongYes+이익No=2/3→B+. PEG게이트2.0 FAIL(5.4,정상화2.6)이나 SaaS기준Rule of 40=63 ELITE. CEO$10M매수. CyberArk$25B통합리스크. 5/26 Q3에서③전환여부확인. 목표$210 손절$100.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-03-18",
+    "updated_at": "2026-04-15",
+    "created": "2026-03-18 18:50"
+  },
+  "AVGO": {
+    "name": "Broadcom",
+    "buy_price": 375.0,
+    "memo": "4/19 풀7단계 재검증 완료. Q1FY26 beat+Q2가이던스$22B(+47%)+AI$10.7B(+140%). Google 2031계약+Meta 2029연장+Anthropic 3.5GW(2027~). EV/FCF 64.78x(10yr median 216%초과), FCF yield 1.95%(5yr avg대비 -42%), PEG 0.68 저평가. 29애널 Strong Buy, avg target $438(+8%), 최고 Evercore $582, 최저 RBC $360. Seaport 4/8 Buy→Neutral다운그레이드(벤더파이낸싱+컨센이미선반영). SEC 8-K 4/6: \"Anthropic 3.5GW는 상업적성공 의존+재무파트너 협의중\"=벤더파이낸싱 리스크 명시. 내부자90일 324K주/$106M매도(CEO Hock Tan 1/6 $347.30에 70K주 $24.3M). CFO 6/12교체 Amie Thuener(구Google CAO). Software +1%만(VMware +13%, legacy감소). SBC 11.3%rev 부담. 무효화조건5개:①AI성장50%↓2Q연속 ②하이퍼스케일러 자체칩전환 ③EBITDA마진65%↓2Q ④Anthropic ARR급락 ⑤벤더파이낸싱SPV공식화. 6/4 Q2실적이 최강 검증점. 포지션상한6-7%(Anthropic집중↑). 현재$406.54=Stretched(감시가+8%).",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-03-18",
+    "updated_at": "2026-04-19",
+    "created": "2026-03-18 19:17"
+  },
+  "003230": {
+    "name": "삼양식품",
+    "buy_price": 1150000.0,
+    "memo": "A등급확정(4/13딥리서치). 불닭UGC문화해자+K푸드구조적성장+컨센+29.8%상향. 25년OP5239억(+52%)OPM22.3%. 26EOP6750-7200억(+29-38%). FwdPER17xPEG0.46xROE39.6%. 15매수TP평균181.4만(최고200만유안타). 밀양2공장26H2가동률67.5%→매출레버리지. 미국M/S4→12→23%. 월마트90%+CVS미진입(공급부족). 중국자싱공장2027가동. ⚠️불닭의존65%.공매도10%변동적.미국관세25%. 115만=20MA부근RR4.3:1. 10종목맥스→pilot1주진입후추매.",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-13",
+    "created": "2026-04-01 06:25"
+  },
+  "000660": {
+    "name": "SK하이닉스",
+    "buy_price": 1100000.0,
+    "memo": "A등급 재확정(4/20 재검증). HBM Rubin 70% 점유 예상(UBS)+2026 풀캐파 완판+supercycle. RR 1:2 (손절 80만/목표 170만). Kill: 3Q26 HBM ASP QoQ 마이너스 OR 삼성 HBM3e 12H Blackwell Ultra 퀄통과+SK점유율 50%이하 OR 1Q26 OP 컨센 35.9조 5%이상 하회</memo>",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-20",
+    "created": "2026-04-01 16:01"
+  },
+  "241710": {
+    "name": "코스메카코리아",
+    "buy_price": 76000.0,
+    "memo": "7단계풀+TP검증완료4/14. B+(2.5/3). 교보TP130K=PER18.9x(피크멀티플,과대30%), 유안타120K=PER20x(근거불명). 한국콜마FwdPER13.2x대비 코스메카 성장프리미엄→적정PER15x. 내적정가100K(=EPS6658×15x). 감시가76K=RR1:2.5(TP100K,손절POC67K). FwdPEG0.23(26E). K-Beauty인디D사(아마존틱톡)+잉글우드랩66.7%. 부채비율88%. 무효화:D사매출급감,ODM단가압력,K-Beauty역전",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-01 06:24"
+  },
+  "001430": {
+    "name": "세아베스틸지주",
+    "buy_price": 60000.0,
+    "memo": "B등급(상한). SST thesis+SpaceX옵셔널리티. 진입조건3개동시충족필요: ①공매도5%이하3일연속 ②60K이하(RR3.1:1) ③포트1자리확보. SpaceX IPO 6월→5월Prospectus에세아확인시B+재검토. SST 2026H2준공. FwdPE28xPEG0.76. 10매수1중립TP85K. 항공방산OPM19%. ⚠️현재공매도10%+외인매도. 일일체크:get_market_signal(short_sale,001430).",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-13",
+    "created": "2026-04-01 06:24"
+  },
+  "VRT": {
+    "name": "Vertiv Holdings",
+    "buy_price": 260.0,
+    "memo": "A등급 회사, $310에서 감시가 $260 미달. 51x FwdPE 고평가. 내부자 $100M+ 매도 경고. 4/22 Q1실적 후 재평가. RR1:2 = $260 이하 진입 검토. 무효화: 하이퍼스케일러 CapEx 삭감 or 백로그 $12B 이하.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-05 21:47"
+  },
+  "ETN": {
+    "name": "Eaton",
+    "buy_price": 360.0,
+    "memo": "ETN deepsearch 2026-05-01: 2/3 Gate 통과(산업+리더), 밸류 FwdPE 32.5x 평균선, 모멘텀 과열. 5월 5일 Q1 어닝 대기. FV -25% 진입가 $360.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-03-27",
+    "updated_at": "2026-05-01",
+    "created": "2026-03-27 14:19"
+  },
+  "009150": {
+    "name": "삼성전기",
+    "buy_price": 450000.0,
+    "memo": "4/14 딥서치 최종: A등급(3/3). MLCC인상4/1확정(무라타+삼전기동시), 2Q두자릿수추가인상예상. FC-BGA NVIDIA LPU 1st벤더, 2028전량예약. 10%인상시2027OP+6000억. 무효화: MLCC판가2Q연속미실현/FC-BGA가동70%이하/NVIDIA탈락/2026OP1.2조미만. Bear: AI CapEx급감. 목표650K(인상확정반영)/손절350K(3/4저점).",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-03-30",
+    "updated_at": "2026-04-14",
+    "created": "2026-03-30 23:50"
+  },
+  "086790": {
+    "name": "하나금융지주",
+    "buy_price": 114000.0,
+    "memo": "7단계풀+TP검증완료4/14. B+(2.5/3). NH TP143K=BPS×PBR0.87x(합리적), 한투128K=PBR0.78x(보수적), 한화168K=PBR1.02x(역사적전무,과대). 내적정가135K=BPS164.8K×PBR0.82x. 감시가114K=RR1:2.5(TP135K,손절VA106K). PER8.5x,PBR0.73x. NP4조(+7.1%역대최대). 주주환원50%:배당5.9%+소각1.8%=총7.7%. 4년발행주식7.3%감소. 무효화:NIM급락,대손급증,밸류업후퇴",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-05 20:46"
+  },
+  "META": {
+    "name": "Meta Platforms",
+    "buy_price": 599.0,
+    "memo": "A등급 확정. 3.5B DAP+AI광고+ROIC28%>>WACC. 2yrFV $898(2028E EPS$40.84×22x). 현재가$659=26.6%할인→1차트랜치진입가능(2yrFV방식). 감시가$599=2~3차트랜치용. 무효화: ROIC<WACC or 광고매출2Q연속역성장 or FTC항소성공+인스타분리명령. PEG0.84. 다음촉매: Q1실적 4/29.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-01 04:55"
+  },
+  "MRVL": {
+    "name": "Marvell Technology",
+    "buy_price": 143.0,
+    "memo": "v4 메인. 3-Gate 3/3. FV $190 (FY28E $5×38x) MOS 25% = $143. NVDA $2B + Google MPU/TPU 협상 + 1.6T DSP. 리스크: AVGO ASIC 60-70% 우세, MSFT Maia 이탈 가능성, 내부자 6mo net sale 109K주 매수0. 5/21 Q1 FY27 어닝 critical.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-05-01",
+    "created": "2026-04-01 05:08"
+  },
+  "UNH": {
+    "name": "UnitedHealth Group",
+    "buy_price": 280.0,
+    "memo": "딥서치 완료 2026-04-15. FwdPE 17.6x, PEG 1.76(Pass). CEO/CFO $30M 클러스터매수(2025.05). DOJ 수사+반독점 소송 오버행. Q1 실적 4/21. 감시가 $280(RR1:3, 목표$390, 손절$240)",
+    "grade": "B",
+    "market": "US",
+    "created_at": "2026-03-31",
+    "updated_at": "2026-04-15",
+    "created": "2026-03-31 23:57"
+  },
+  "GLW": {
+    "name": "Corning",
+    "buy_price": 145.0,
+    "memo": "3-Gate 3/3 + 김단태 4/4=A. AI fiber supercycle, Optical+36% YoY, 3 hyperscaler LTA $18B+, MCF tech, 50%+ share. 1차 $145 (어닝갭다운저점), 2차 $135 (60MA). RR 1:2.25. 밸류Yellow(FwdPE 53x). May6 Springboard2030 발표 catalyst.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-05-01",
+    "created": "2026-04-01 05:04"
+  },
+  "013030": {
+    "name": "하이록코리아",
+    "buy_price": 32000.0,
+    "memo": "7단계풀완료4/14. B+(2.5/3,③컨센1개판단불가). DART확인: OPM27.5%,무차입,순현금1962억(시총대비39%),매년자사주150억소각,배당2.8%. 피팅/밸브국내1위,46개국120대리점,공급자승인기반제한경쟁. 가동률89%(전년75%급증). PER10.3x,EV/EBITDA4.8x→극저평가. 감시가32K(EPS4211×8x커버리지할인). 한투TP53K단일참고. 무효화:조선해양수주급감,Swagelok가격공세,반도체CAPEX축소. Bear①커버리지1개교차검증불가②유동성극저(일10~30억)",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-01 20:12"
+  },
+  "128940": {
+    "name": "한미약품",
+    "buy_price": 460000.0,
+    "memo": "4/14 딥서치 최종: A등급(3/3). 에페=fast-follower(유사효과+저가), 2027매출보수적1000~1200억. MASH 5/27 EASL 진짜변곡점. 무효화: 에페허가거절/MASH2b미달/2027OP300B미만/MSD중단. Bear: 위고비마운자로선점, MASH실망. 목표620K컨센avg/손절380K.",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-01 20:12"
+  },
+  "007810": {
+    "name": "코리아써키트",
+    "buy_price": 65000.0,
+    "memo": "B등급워치확정. 컨센91.2K(5명전원매수,NH94K메리츠95K). 26F매출1.7조(+13%)OP1350억(+151%)EPS3565원PER13.5배. 서버메모리모듈ASP+가동률동시↑. SoCAMM2 2Q26매출개시. 브로드컴AI FC-BGA퀄테스트. CAPA증설3Q26(면적45%↑). 원자재리스크(금/CCL)있으나수요>공급. 손절55K 목표93K. RR1:2.8. 포트PCB0개.",
+    "grade": "",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "",
+    "created": "2026-04-01 20:12"
+  },
+  "021240": {
+    "name": "코웨이",
+    "buy_price": 87000.0,
+    "memo": "A등급(3/3) PDF게이트 4건 전수 재검증 4/17. PDF 이미지 완독: 한화4/13 150K(내적정152K,15x)+한화1/19 140K(13.7x)+메리츠2/9 150K(15.4x,\"현저한 저평가\")+LS2/9 110K(11.9x,보수). 신한115K 해당기업 meta_only. 브로커2026E: 한화10151/메리츠9763/LS9222/평균9712. 2026E OP: 한화1조333억/메리츠9556/LS9630. 2027E EPS 평균11392×13.5x(중립PER)=153K. 목표 127K→140K 상향(2027E 기준 보수+중립). RR 현재 3.31:1 (A등급1:2 크게 충족). 3중 수급: ①넷마블1500억(4/6공시, 5/7 1차400억) ②내부자 서장원대표2/20+4/1 연속매수(60일매도0) ③공매도 3월19%→4월2.8%. 한화1/19 분석: 주가조정 K원인(금리상관-0.7). 동남아3국 4Q25 흑전(말레+21/태국+39/인니+40). 한화 증권사 매수87% 비율. 감시87K RR3.31:1. 1차 pilot15주즉시진입(1.25M).",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-01",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-01 20:12"
+  },
+  "083450": {
+    "name": "지에스티",
+    "buy_price": 33000.0,
+    "memo": "4/14 딥서치: B+(2/3). 7단계완료. 감시가22K→33K재조정. 2026E OP745억(+25.8%YoY)사상최대(iM). 삼성P4+마이크론팹. 외인5일연속강매수. 숏커버링완. VP브레이크아웃. 무효화: 삼성투자지연/마이크론감산/2026OP500억미만. Bear: 고객집중80%(삼성+마이크론), 52주고가. 목표45K/손절28K.",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-05 22:15"
+  },
+  "LEU": {
+    "name": "Centrus Energy",
+    "buy_price": 152.0,
+    "memo": "미국유일농축+$900M HALEU+$3.8B백로그. Short22%⛔. 매출가시성2yr+=A차단. CB$805M+ATM$1B희석. 2028E $7.74(고불확실). 무효화: HALEU계약취소 or 3yr+건설지연. BWXT경쟁진입(~2035).",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-05 21:47"
+  },
+  "MOD": {
+    "name": "Modine",
+    "buy_price": 208.0,
+    "memo": "",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-19",
+    "created": "2026-04-19 18:39"
+  },
+  "BWXT": {
+    "name": "BWX Technologies",
+    "buy_price": 189.0,
+    "memo": "해군원자로 독점+$7.3B백로그+DUECE. PEG3.4x⛔현재가RR미충족. 2yr FV $228(40x 2028E $5.71). 무효화: 해군계약미갱신 or ROIC<WACC 2Q연속. Q1실적 5/4.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-05 21:47"
+  },
+  "034020": {
+    "name": "두산에너빌리티",
+    "buy_price": 85000.0,
+    "memo": "7단계딥서치4/14완료. 3/3=A(해자:유일원자로주기기+가스터빈국산화+SMR파운드리, 구조적수요:AI전력+글로벌원전르네상스, 컨센상향중). 적정가85~101K(2027E SOTP, 에너빌리티EBITDA2.1조×25~30배+밥캣6조+퓨얼셀1조). 감시가85K=FairValue하단. 대신130KTP는2035E할인미적용50%과대. 현재99.3K=FV상단→조정대기. 무효화조건:SMR공장취소,미국원전정책후퇴,가스터빈CAPA갭미해소. Bear①연결EPS편차3배(밥캣관세+퓨얼셀적자통제불가) ②SMR일정리스크(TVA PPA미확정)",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-05 22:20"
+  },
+  "XYL": {
+    "name": "Xylem",
+    "buy_price": 114.0,
+    "memo": "v3딥서치 B등급. GM38.5%(상위사분위), PEG1.73, Z4.8. ROIC~WACC 간극 좁음+내부자 매도only→A불가. 4/28 Q1실적 관전. RR1:3(목표$155/손절$100)",
+    "grade": "B",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-05 22:31"
+  },
+  "214450": {
+    "name": "파마리서치",
+    "buy_price": 250000.0,
+    "memo": "리쥬란. 13곳전원매수552K(+90%). PER20PEG0.7. OPM40%. 🚨🚨🚨공매도18~29%극단적=진입절대차단. VA하단이탈(POC446K현재290K). 52주저점286.5K터치중. 바닥미형성. 단일제품+DOT특허2028만료. 공매도5%이하정상화+VA복귀(329K이상)+바닥확인필요. 현시점C+등급. 손절200K목표450K.",
+    "grade": "",
+    "market": "KR",
+    "created_at": "2026-04-05",
+    "updated_at": "",
+    "created": "2026-04-05 22:39"
+  },
+  "028050": {
+    "name": "삼성E&A",
+    "buy_price": 41000.0,
+    "memo": "7단계딥서치4/14. 3/3=A(해자:삼성캡티브독점+중동화공실적, 구조적수요:AI반도체CAPEX110조+중동에너지전환+LNG/SAF, 컨센상향:TP1월32~41K→4월42~65K). 적정가46~50K(2026E PER14.5x peer동일). 현재49.5K=FV도달→진입매력없음. 감시가41K(EPS3400×12x중동할인). LS65K논리약함(peer PBR2.7x는LNG포함,삼성E&A LNG실적無). 키움56K도21~22년유동성장세멀티플적용과대. 하나46K·유진49K가합리적. Bear①중동매출40~50%이란전쟁장기화②삼성전자CAPEX의존100%",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-05 22:50"
+  },
+  "189300": {
+    "name": "인텔리안테크",
+    "buy_price": 108000.0,
+    "memo": "10Step 딥서치 완결(2026-04-17). **B+ 등급** 확정(3/3이나 TP편차±26%+단일분기검증으로 상한). 감시가 100K→108K 상향(VA상단지지+RR 1:3 충족). Thesis: 非스타링크 LEO 인프라 독점(게이트웨이34.5%+ESA26.5%+VSAT36.3%). 4Q25 OPM16% 어닝서프(일회성無, 믹스개선+R&D효율화). 2026E매출4076-4179억 OP375-395억 OPM9.3-9.5%. 2027E OPM11.4%. 게이트웨이 수주잔고2900억(A사향 28년 인도분). ASTS vs 삽파는기업논리: D2C든VSAT이든수혜. Kill:①수주잔고YoY감소 ②분기OPM5%미달2Q연속 ③Starlink게이트웨이내재화로비스타링크투자축소 ④공매도20%재진입2주연속. 진입조건3동시:108K이하+공매도10%이하3일+🟡레짐(or 🟢 Pilot10주즉시). 목표170K(키움) 손절88K RR3.1:1. 1Q26실적(4월말~5월초) OPM10%+시 A승격검토. PDF:대신+키움+한화 3개 통과.",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-05 22:59"
+  },
+  "ASTS": {
+    "name": "AST SpaceMobile",
+    "buy_price": 45.0,
+    "memo": "B-등급(매수보류). 시총$34B/매출$71M=P/S480x. 주식수65%YoY급증,Short12%⛔A차단. 프리프로핏,2028E까지EPS적자. SpaceX+Amazon경쟁심화(GSAT$11.6B인수). 현재가$89=애널PT$72-88상회→안전마진0. 매출가시성2yr+=B상한. 재검토조건: 상업서비스개시(H2-2026)+MNO매출ramp확인+P/S20x미만($45이하).",
+    "grade": "B-",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-05 22:59"
+  },
+  "NVT": {
+    "name": "nVent",
+    "buy_price": 95.0,
+    "memo": "NVT deepsearch 2026-05-01: 1/3 Gate(산업만), 해자 미확보(ROIC 9.45%≈WACC), 밸류 FwdPE 35.6x vs 5yr avg 24x(+48% 프리미엄), 매수 금지. 현재가 $145 = 기존 목표가 $140 추월. thesis 재검증 트리거. 감시가 $95 유지(B 등급, 1:3 RR).",
+    "grade": "B-",
+    "market": "US",
+    "created_at": "2026-04-05",
+    "updated_at": "2026-05-01",
+    "created": "2026-04-05 23:07"
+  },
+  "006400": {
+    "name": "삼성SDI",
+    "buy_price": 485000.0,
+    "memo": "전고체 2027H2 양산 + 피지컬AI 파우치 + 북미 ESS 전량수주. TP 600K 손절 440K RR 1:2.5. FCF 연속적자+EPS편차로 A불가",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-06",
+    "updated_at": "2026-04-20",
+    "created": "2026-04-06 00:44"
+  },
+  "TSLA": {
+    "name": "Tesla",
+    "buy_price": 300.0,
+    "memo": "AI+에너지+로보틱스플랫폼. SOTP두번째리서치$810~890B(Bullish max). 자동차$70~100B+에너지$200B+FSD/로보택시$300~350B+Optimus$240B. 현시총$1.35T중$4700B+갭=AI프리미엄과대. 에너지$12.8B+27%GPM30%유일한실체. 로보택시Austin4~8대(Waymo2500대10도시). Q1배송358K미스+재고5만대. 브랜드-36%(-$15.4B). PER335x. 트리거:로보택시2번째도시상업운행OR Optimus첫외부매출. $300=두리서치모두Base하단. 손절$200 목표$450. RR1:1.5→트리거확인후재평가.",
+    "grade": "C",
+    "market": "US",
+    "created_at": "2026-04-06",
+    "updated_at": "2026-04-06",
+    "created": "2026-04-06 13:08"
+  },
+  "009540": {
+    "name": "HD한국조선해양 추매2차",
+    "buy_price": 405000.0,
+    "memo": "",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-11",
+    "updated_at": "2026-04-19",
+    "created": "2026-04-11 04:14"
+  },
+  "298040": {
+    "name": "효성중공업",
+    "buy_price": 2867000.0,
+    "memo": "A등급 확정. 3문 3/3 (해자·구조수요·컨센상향). RR 1:2.0. 대주주 클러스터 매수(조현상+조현준+국민연금). PEG 1.13. Kill: PJM 5GW→2GW↓ / 2Q OPM<20% / 반덤핑관세 25%+. 감시가 2,700K→2,867K 상향 (RR 역산).",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-11",
+    "updated_at": "2026-04-20",
+    "created": "2026-04-11 04:14"
+  },
+  "267260": {
+    "name": "HD현대일렉트릭",
+    "buy_price": 1000000.0,
+    "memo": "A등급(3/3). 1Q26 어닝 4/28. 미국 북미 27F 54% 매출 + 초고압 변압기 리드타임 5년. 킬스위치: 수주 가이던스 하향/IRA 삭감/OPM 27% 미달",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-11",
+    "updated_at": "2026-04-20",
+    "created": "2026-04-11 04:14"
+  },
+  "AMD": {
+    "name": "AMD 부분매도검토",
+    "buy_price": 400.0,
+    "memo": "부분매도 트리거. $400 도달 시 1/3 정리 검토 (FwdPE 51x→58x, 유포리아 4트리거 확정 시)",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-11",
+    "updated_at": "2026-04-28",
+    "created": "2026-04-11 04:14"
+  },
+  "NVDA": {
+    "name": "NVIDIA 추매2차",
+    "buy_price": 176.0,
+    "memo": "2차추매30%. 24개월목표$330기준 RR1:3.3. VP핵심지지$171~183구간상단.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-11",
+    "updated_at": "2026-04-11",
+    "created": "2026-04-11 18:42"
+  },
+  "017670": {
+    "name": "SK텔레콤",
+    "buy_price": 80000.0,
+    "memo": "■등급B(B+상한) ①해자:통신1위(5G/ARPU최고)있으나 AI해자없음 ②수요:통신유지형+AI DC 2027H2완공=가시성2년+뒤→B상한 ③컨센상향:14매수/3중립,OP1.07→1.8~2.0조 정상화회복 ■앤스로픽$100M투자→지분가치4조+추정,IPO 2026.10목표$400~500B. 단 유동화계획없음,NDA ■울산DC 7조(아마존협력)2027H2 ■PER28x/ROE5%=통신주로비쌈 ■무효화조건:앤스로픽IPO무산+통신점유율40%미회복+AI DC수주부진 ■감시가80K=RR1:3(목표110K/손절70K)",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-04-14",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-14 02:41"
+  },
+  "103140": {
+    "name": "풍산",
+    "buy_price": 97000.0,
+    "memo": "4/14 딥서치 재평가: B+(2/3). 리포트6개크로스체크후 삭제철회. 매각무산=프리미엄소멸이지 방산가치소멸아님. 방산독점+이익70%+대구경탄3-4yr수주. EPS7800~10000, PER10~13x(@99.5K). 가이던스Cu$10700보수적(현재$13000). 무효화: 방산수출완전소멸/Cu$8000급락/승계리스크현실화. Bear: 수출비중하락(42%)+소구경관세+차입금1.07조. 목표140K/손절80K.",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-14",
+    "updated_at": "2026-04-14",
+    "created": "2026-04-14 07:11"
+  },
+  "ON": {
+    "name": "ON Semiconductor",
+    "buy_price": 62.0,
+    "memo": "v3딥서치 B+: PEG1.01 매력적, SiC#2+AI파워(Treo), FCF24%. 단 ROIC<WACC+CEO/CFO매도+Short8.8%. GM40%회복+매출YoY양전환 확인 필요. Q1실적5/4, AnalystDay9/16. $62진입시 RR1:2.7",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-15",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-15 07:25"
+  },
+  "064760": {
+    "name": "티씨케이",
+    "buy_price": 243000.0,
+    "memo": "A등급 CVD-SiC Ring 과점. AI/NAND 9세대+HBM4e HCB+중국N사. FwdPEG0.44. 감시가243K=현TP340K기준 RR1:2. 1Q26 서프라이즈시 TP상향→감시가재산정. Kill:NAND capex YoY-20%이상. process loss 1건(262K미실행)",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-15",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-15 08:11"
+  },
+  "LITE": {
+    "name": "Lumentum 추매",
+    "buy_price": 650.0,
+    "memo": "A등급 추매감시가 하향조정. 2yrFV=$665(FY2028E EPS$19×35x). $650=2yrFV영역, RR충족 가능. 현재가$853=28%프리미엄→추매부적합. 기존보유분유지. 무효화: AI capex사이클피크확인 or InP기술대체 or NVIDIA계약해지.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-15",
+    "updated_at": "2026-04-15",
+    "created": "2026-04-15 16:12"
+  },
+  "V": {
+    "name": "Visa",
+    "buy_price": 297.0,
+    "memo": "B+ 판정. 3대질문 3/3(①조건부). ROIC52%>>WACC, OP마진67%, FCF$23B. 해자 건재하나 CCCA(15-25%확률)+국가결제망+AI에이전트 구조적 역풍. FY26E EPS$13.10, FY28E$16.63. PEG1.83(Pass). 기술적0/3, 내부자매도일색. 감시가$297(RR1:2.5). 2yr FV$416(25x×$16.63). 무효화: CCCA통과 or 볼륨2Q역성장. 다음촉매: 4/28 Q2실적.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 02:30"
+  },
+  "HROW": {
+    "name": "Harrow Inc",
+    "buy_price": 38.57,
+    "memo": "안과 전문 제약. VEVYE(건성안)+IHEEZO(마취)+TRIESENCE(시각화) 번들링 모트. ③불합격(추정치 하향). Q1 2026 trough 확정 후 판단. 5/7 실적 후 VEVYE NRx 가속+추정치 반전 확인 시 A 승격 검토. 무효화: VEVYE NRx 3개월 역성장 / FY26 EBITDA<70M / IHEEZO -30%YoY / 리파이낸싱 리스크. 부채 $300M@8.625% 주의.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 05:08"
+  },
+  "APP": {
+    "name": "AppLovin",
+    "buy_price": 440.0,
+    "memo": "A등급(3/3). 해자: MAX 73% top games, 60% 중재시장, AXON AI flywheel. 구조적 수요: 게이밍 광고+이커머스 $170B TAM(0.1% 침투). 컨센 상향중. 핵심리스크: SEC 조사(active, 2/20 확인). 무효화: SEC 정식기소+사기증거, EBITDA<75% 2Q연속, MAX점유<50%. Q1실적 5/6. PEG 1.28x.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 05:18"
+  },
+  "064350": {
+    "name": "현대로템",
+    "buy_price": 190000.0,
+    "memo": "A등급. pilot 즉시→4/21 휴전만료 후 재평가로 이연. 휴전이 호재가 아니라 '덜 악재'. Thesis: K2 유일 즉시대량납품 NATO MBT + 35조 파이프라인. Kill: ①이라크+루마니아 2027까지 미체결 ②EC2 OPM 15%미만 2Q연속. 전차무용론=인식이지 팩트아님(MWI/M1E3 검증)",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 05:42"
+  },
+  "079550": {
+    "name": "LIG디펜스앤에어로스페이스",
+    "buy_price": 700000.0,
+    "memo": "A등급. pilot 즉시→휴전 조정(650~750K) 대기로 이연. 전쟁프리미엄 +58% 반영 상태, 휴전 시 625~750K 조정 예상. Thesis: 천궁-II 96%실전검증+중동28포대+L-SAM. Kill: ①추가수주 1년공백 ②UAE 대금회수 부실. SK증권: 긴급납품은 기존물량 앞당김, 서프라이즈 과도",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 05:47"
+  },
+  "012450": {
+    "name": "한화에어로스페이스",
+    "buy_price": 1380000.0,
+    "memo": "A등급이나 현재가 RR 1.89:1로 미충족. 1,380K 이하 시 pilot 40% 진입. Thesis: K9 70%M/S+국산화86%+유럽현지화+한화오션. Kill: ①EU SAFE 부적격 ②유증 5조+ 확정. ⚠️유증 논란+리포트PDF 미분해",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 06:46"
+  },
+  "PWR": {
+    "name": "Quanta Services",
+    "buy_price": 503.0,
+    "memo": "전력인프라시공1위. 85%자체수행+6만명인력=진입장벽. 백로그$44B역대최고. 2030E adj.EPS$21.6-26.75(15-20%CAGR). 리스크:ROIC<WACC(8.3vs11), FwdPE43x/PEG2.7극단프리미엄. PEG게이트Fail. 무효화:유틸CAPEX한자릿수하락 or 2분기연속백로그감소. Q1실적4/30.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 15:22"
+  },
+  "CEG": {
+    "name": "Constellation Energy",
+    "buy_price": 284.0,
+    "memo": "미국최대원전22GW+Calpine=55GW세계최대민간발전. 원전=대체불가moat, 94%+가동률. MS 20yr PPA(Crane835MW), CyrusOne380MW. 2026E adj.EPS$11-12, 2029까지 base EPS 20%+CAGR. PEG1.26pass. 2yrFV$363-412(22-25x). 리스크:TMI재가동지연(PJM송전2031), Calpine통합, 2028E EPS분산극대($12-21.5). 무효화:원전PTC폐지 or Crane취소+MS PPA해지. Q1실적5/5.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 15:44"
+  },
+  "101490": {
+    "name": "에스앤에스텍",
+    "buy_price": 85000.0,
+    "memo": "국내유일 블랭크마스크. EUV 삼성인증 2Q26 목표 진행중. 인증확정시 A승격+현재가진입 가능. Kill: EUV인증실패/지연, 중국DUV수요급감. PDF게이트 미통과(브로커커버리지부재). 감시가 80K→85K 상향(VP지지대).",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-16",
+    "created": "2026-04-16 17:15"
+  },
+  "267270": {
+    "name": "HD건설기계",
+    "buy_price": 150000.0,
+    "memo": "A등급(3/3) 재검증 4/17. PDF게이트 4건 통과(키움4/13 TP210K SOTP건설15x+엔진20x, 한화2/19 TP192K PER17x, 삼성4/16 TP190K, LS1/19 TP145K). 브로커EPS 2026E: 키움10051/한화10710/LS10400/iM10533. 2027E: 키움12523/한화14186. 내적정가178K(27F EPS 12446×14.3x=피어16.8x-한국할인15%). 3/3: ①해자(M/S75-80%+K2엔진독점) ②구조적수요(방산+발전+AI데이터센터초대형엔진2027+중동재건) ③컨센상향(키움1월161K→4월210K +30%). 1Q26E OP1538억(+40.5%YoY)컨센상회(키움). 감시가 160K→150K 하향(기존RR1.67:1 A최소1:2 미달→RR2.4:1 확보). 공매도0.5~2.3% 극저. 52주고167.7K 급등후조정초입. Kill: ①북미관세OPM2Q연속15%↓ ②수출2Q YoY-15% ③일회성비용분기300억+재발. 실적(4월말~5월초) 확인후 재평가.",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-16",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-16 18:56"
+  },
+  "010120": {
+    "name": "LS ELECTRIC trailing -15%",
+    "buy_price": 239275.0,
+    "memo": "정점 4/28 281,500원 -15% trailing. 도달 시 STEP 1-3 재실행 후 부분 매도(30-50%) 검토. KR_EXIT 5-1 보정 적용. (NB: 이건 매수감시가 아닌 trailing alert)",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-29",
+    "created": "2026-04-17 03:08"
+  },
+  "094820": {
+    "name": "일진파워",
+    "buy_price": 14500.0,
+    "memo": "원전+화력 정비 과점. 2025 매출+30.5% OP+134.9%. 커버리지0건→B등급상한. 14500 도달시 킬3통과 조건 1차1.3M검토. Kill:화력매출YoY-15%2Q연속 OR iSMR중단/CHPS축소",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-17 03:51"
+  },
+  "001040": {
+    "name": "CJ",
+    "buy_price": 203000.0,
+    "memo": "A등급(3/3). 올리브영K-뷰티+상법개정9/10+2027H1합병기대. 목표250K/손절180K. 4/16 +4.15% 후 조정대기. 킬: 올리브영IPO재추진/상법폐지/올리브영OPM10%이하",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-17 04:19"
+  },
+  "272210": {
+    "name": "272210",
+    "buy_price": 120000.0,
+    "memo": "A등급 승격(B→A, 4/17 딥서치 10단계). 3/3 확신: ①K-방공레이더 국내 독점 해자 ②이란전쟁+폴란드K2+우주+美함정 3축 구조적수요 ③컨센 3개월간 137K→170K 상향랠리. SK증권 4/7 TP160K(28E EPS3130×PER50) + 한화투자 160K + 키움170K. 2026E OP 3093억(+158%), OPM 7.2%, FwdPEG 1.18. Kill: ①1Q26 OP 450억 하회 ②4Q26 필리 흑전실패 공식 발표. 🟢탐욕이라 120K 도달시 1차트랜치만, 기존A 추매우선.</memo>\n<parameter name=\"name\">한화시스템",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-17 05:23"
+  },
+  "237690": {
+    "name": "에스티팜",
+    "buy_price": 135000.0,
+    "memo": "B+ 올리고CDMO글로벌3위. RR 2.65 @135K. 27년이익레버리지 OP+33%. Kill: 매출처A사(24%)계약해지/siRNA임상3상2건+실패. GLP-1경구형은영향없음(siRNA/ASO기전)",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-17 05:25"
+  },
+  "073490": {
+    "name": "LIG아큐버",
+    "buy_price": 38500.0,
+    "memo": "B+ 2/3 (해자 글로벌T&M경쟁/컨센 커버리지1개). Thesis: 5G SA 2026말 의무화 + LIG아큐버 사명통합 그룹시너지 + 방산확장. 감시38.5K RR1:2.5. Kill ①5G SA 집행지연 ②2026F EPS 2000원 하향",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-17 05:30"
+  },
+  "010820": {
+    "name": "퍼스텍",
+    "buy_price": 11500.0,
+    "memo": "방산 부품업체. 수주잔고 1조(매출 3.5배). K방산 수출 수혜. 증권사 커버리지 0건(PDF게이트 실패) + 투자경고종목 지정예고(4/15) → B등급 보수적 적용. Kill: ①Q1/Q2 영업이익률 3% 미만 고착 ②투자경고 확정+수급 급랭",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-04-17",
+    "updated_at": "2026-04-17",
+    "created": "2026-04-17 14:37"
+  },
+  "MA": {
+    "name": "Mastercard",
+    "buy_price": 570.0,
+    "memo": "딥서치4/17완료. A등급(3/3). 2yrFV$740(+42%). PEG1.74. Q1실적4/30. 스테이블코인공포로-14%조정=멀티플압축. thesis intact. Q1후 진입판단.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-18",
+    "updated_at": "2026-04-18",
+    "created": "2026-04-18 03:38"
+  },
+  "BE": {
+    "name": "Bloom Energy",
+    "buy_price": 150.0,
+    "memo": "SOFC AI 데이터센터 온사이트. PEG 4.2 FAIL, 현재 $207 +72% 프리미엄. 2yr FV $120. 내부자 매도 44건, Short 8.7%. 감시가 $150 풀백 + Q1 어닝 4/28 확인 후 재평가. 손절 $130, 목표 $200, RR 1:2.5.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-18",
+    "updated_at": "2026-04-18",
+    "created": "2026-04-18 04:04"
+  },
+  "NOW": {
+    "name": "ServiceNow",
+    "buy_price": 85.0,
+    "memo": "B+ 강등 (4/17 A→B+ 다운그레이드). thesis 3차 트리거 영역. Q1 Beat이나 시장 기대치 reset 진행 중.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-18",
+    "updated_at": "2026-05-03",
+    "created": "2026-04-18 04:05"
+  },
+  "GEV": {
+    "name": "GE Vernova",
+    "buy_price": 967.0,
+    "memo": "[재재수정 A 복귀] 최신 애널 타겟 놓쳤던 오류 수정. BofA 4/14 $1,095 (2027 EBITDA 34x), Susquehanna 4/9 $1,080, Rothschild 3/9 Sell→Buy $1,100 더블 업그레이드. 최근 3개 평균 $950~$1,020. EV/EBITDA 기반 2yrFV $1,075 (현재 -7%). 전력 부족 확정 thesis + 주문 book-to-bill 1.6x. Q1 어닝 4/22, Beat 시 현재가 $1,005 1차 예외 진입 고려. 손절 $850, 목표 $1,200, RR 1:2.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-18",
+    "updated_at": "2026-04-18",
+    "created": "2026-04-18 04:18"
+  },
+  "005380": {
+    "name": "005380",
+    "buy_price": 518000.0,
+    "memo": "B+, RR 2.5:1. Thesis: 1Q26 바닥→2H26 HEV/SDV 리레이팅. Kill: 관세25%+ or HEV 6M+ 지연. FY28E PER 9.3x. 1Q26 Beat 시 A승격 재평가. PDF 1건만 read.</memo>\n<parameter name=\"name\">현대차",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-18",
+    "updated_at": "2026-04-18",
+    "created": "2026-04-18 19:42"
+  },
+  "213420": {
+    "name": "덕산네오룩스",
+    "buy_price": 51000.0,
+    "memo": "A등급 OLED 소재+가스터빈 재평가. Thesis: 삼성D 공급망+Black PDL 독점+CoE 확산+폴더블 iPhone+AIDC 가스터빈. Kill: ①iPhone 폴더블 지연+독점권 상실 ②CoE 채택 2027년 이후 지연",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-18",
+    "updated_at": "2026-04-18",
+    "created": "2026-04-18 22:01"
+  },
+  "141080": {
+    "name": "141080",
+    "buy_price": 187000.0,
+    "memo": "리가켐바이오 B+ 예비등급. 🟢 레짐 신규 불가. 감시가 187K(B+ RR 1:2.5 역산). A승격 조건: (1) 얀센 LCB84 옵션 행사 공식화 OR (2) 2026-05 ASCO LCB71 결과 긍정. Kill: 얀센 옵션 미행사+신규 파트너 공백 OR LCB14 중국3상 지연 OR 연내 신규 딜 0건</memo>\n<parameter name=\"name\">리가켐바이오",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-19",
+    "updated_at": "2026-04-19",
+    "created": "2026-04-19 19:02"
+  },
+  "AMZN": {
+    "name": "Amazon",
+    "buy_price": 236.0,
+    "memo": "A등급 신규. RR1:2, 목표$307, 손절$200. Morgan Stanley 2026 Top Pick $320, Wolfe Top Pick $275. 2028E EPS $12.26×25x=$307. AWS +24% 가속, Trainium3 2026 완판, Bedrock 100K+기업. Q1/26 어닝 4/30 critical. 현재 $250.56 Extended. 감시가 대기 권장.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-04-19",
+    "updated_at": "2026-04-19",
+    "created": "2026-04-19 19:21"
+  },
+  "ALAB": {
+    "name": "Astera Labs",
+    "buy_price": 130.0,
+    "memo": "B+ | 3대질문 2.5/3 | RR1:2.7 | Top1 엔드고객 70% 집중 | 5/12 Q1/26 어닝 | Scorpio X 2H26 ramp | 🟢 신규금지 대기",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-19",
+    "updated_at": "2026-04-19",
+    "created": "2026-04-19 20:07"
+  },
+  "NET": {
+    "name": "Cloudflare",
+    "buy_price": 170.0,
+    "memo": "B- / PEG 5.4 FAIL, 2yr FV 19% 할인으로 감시가 체계 적용 / pilot entry only, RR 1:2.5 / 52일MA $193 아래 진입 시 1차 트랜치 / 5/7 Q1 어닝 후 재평가",
+    "grade": "B-",
+    "market": "US",
+    "created_at": "2026-04-20",
+    "updated_at": "2026-04-20",
+    "created": "2026-04-20 08:28"
+  },
+  "114810": {
+    "name": "한솔아이원스",
+    "buy_price": 15500.0,
+    "memo": "반도체 전공정 장비 부품 원스톱(정밀가공+세정코팅). HBM capex 간접 수혜. 2026F OP +51%, Fwd PER 11.9x. Kill: Q1 매출 YoY<15% or 삼성/하닉 HBM4 capex 하향",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-04-20",
+    "updated_at": "2026-04-20",
+    "created": "2026-04-20 08:28"
+  },
+  "066970": {
+    "name": "엘앤에프",
+    "buy_price": 178500.0,
+    "memo": "Tesla N95 독점 + 삼성SDI LFP 1.6조(26-29년 연3.9만톤). 3Q26 LFP SOP. 부채 397% ICR 1.4 재무 경계. RR 1:2.5 감시만, 🟢+B+신규금지. Kill: N95조달다변화/LFP계약해지/증자공시</memo>",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-22",
+    "updated_at": "2026-04-22",
+    "created": "2026-04-22 21:30"
+  },
+  "AMAT": {
+    "name": "Applied Materials",
+    "buy_price": 340.0,
+    "memo": "딥서치 완료 2026-04-23. 등급 B+ (3대질문 3/3 A급이나 내부자 매도 클러스터+PEG경계+2년후 적정가 $311 프리미엄으로 하향). 감시가 $340 1차(RR 1:2.5), $310 2차. 2년후 적정가(2028E EPS $12.45 × 25x) $311. Thesis 무효화: ①China 분기 $2B 이하 ②FY27 EPS 컨센 $10 이하 ③Q2 FY26 이후 4Q 연속 가이던스 하향. 다음 촉매: Q2 FY26 실적 2026-05-14 AMC.",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-23",
+    "updated_at": "2026-04-23",
+    "created": "2026-04-23 07:27"
+  },
+  "COHR": {
+    "name": "Coherent",
+    "buy_price": 300.0,
+    "memo": "",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-23",
+    "updated_at": "2026-04-23",
+    "created": "2026-04-23 08:00"
+  },
+  "263750": {
+    "name": "펄어비스",
+    "buy_price": 50000.0,
+    "memo": "붉은사막 AAA 콘솔 신작(2026-03-20). Bull: 중국+DLC+지분투자. Bear: 2027 이익반감+후속작 공백. Gate 1-2/3 통과, Starter 스윙 한정. Kill Switch: (1) 스팀 동접 피크 대비 -60% 이상+8주 연속 둔화 (2) 중국 2Q 100만장 미달 (3) 후속작 2028+ 지연. RR 1:4.4 at 감시가.",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-04-24",
+    "updated_at": "2026-04-24",
+    "created": "2026-04-24 16:41"
+  },
+  "NOC": {
+    "name": "Northrop Grumman",
+    "buy_price": 532.0,
+    "memo": "3-Gate 2/3 (Gate1 부분/Gate2 PASS/Gate3 1/3 밸류만). Starter 자격, Standard/Core 미달. FV 중립 $665(2027 EPS $30.24×PE22), MOS 20% = $532. 트리거 둘 중 하나: ① $532 도달 ② Q2/26 어닝(7월말) FCF 정상화 확인. 리스크: 내부자 32:0 매도, UBS/Wellington $2.2B 출회, Trump CEO보수/배당/buyback 제한 행정명령. 200일 SMA $583 이탈시 손절.",
+    "grade": "",
+    "market": "US",
+    "created_at": "2026-04-25",
+    "updated_at": "2026-04-25",
+    "created": "2026-04-25 20:10"
+  },
+  "BX": {
+    "name": "BX",
+    "buy_price": 115.0,
+    "memo": "1차 진입가 $111-115 (POC $112 + Value Area 하단). 3-Gate 2/3 통과 (Gate 1 약점). Starter Half-position 3-5%. AI 인프라 $310B 베팅, AUM $1.30T 사상최대, Forward P/E 18.5x, PEG 0.91. Bold Bull mean $166. 1Q'26 어닝 DE +25% 강함, 다만 Real Estate 약세·BCRED outflow 잔존</memo>\n<parameter name=\"name\">Blackstone",
+    "grade": "B+",
+    "market": "US",
+    "created_at": "2026-04-25",
+    "updated_at": "2026-04-25",
+    "created": "2026-04-25 20:39"
+  },
+  "278470": {
+    "name": "에이피알",
+    "buy_price": 380000.0,
+    "memo": "3-Gate 3/3 통과 Core 후보. K-뷰티 글로벌 확장 사이클 리더(메디큐브 브랜드). 미국 아마존 1위, ULTA Top10. 2026 가이던스 2.1조(+40% YoY). Kill: 2Q 연속 미국 QoQ 역성장 / 월마트·타겟·코스트코 2026/6 0개 입점 / 단일 브랜드 95%+ 의존 신제품 실패. Bear: 오프라인 확장 지연 → PER 35→25 컨트랙션. 신규진입 Starter 5% 한정. 카테고리=메인. RR 2.1:1 (380K 감시가/320K 손절/510K 목표).",
+    "grade": "A",
+    "market": "KR",
+    "created_at": "2026-04-27",
+    "updated_at": "2026-04-27",
+    "created": "2026-04-27 00:52"
+  },
+  "008770": {
+    "name": "호텔신라",
+    "buy_price": 56500.0,
+    "memo": "호텔신라 1차 트랜치. 1Q26 OP +204억 빅서프라이즈로 turnaround 확증. 인천DF1·마카오 종료로 연 700~800억 이익 회복. RR=(90,000-56,500)/(56,500-47,000)=3.53. 추격 금지 (4/24 +9.88% 갭상승). Kill: 26E OP 가이던스 -30% 하향, 2분기 연속 미스, 외인입국자 YoY 마이너스 전환.",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-04-27",
+    "updated_at": "2026-04-27",
+    "created": "2026-04-27 01:03"
+  },
+  "095610": {
+    "name": "095610",
+    "buy_price": 80000.0,
+    "memo": "3-Gate 3통과/메인. 27년 DRAM P5·Y1+NAND 시안V9·다롄2. 진입 시 Starter 3~5%, 70K 도달시 Standard 확대. KillSwitch: 27년 P5·Y1 6M+ 지연 / 2분기 연속 컨센 -10%+ 미스+가이던스 하향 / 외인+기관 10일 연속 순매도</memo>\n<parameter name=\"name\">테스",
+    "grade": null,
+    "market": "KR",
+    "created_at": "2026-04-27",
+    "updated_at": "2026-04-27",
+    "created": "2026-04-27 01:07"
+  },
+  "006110": {
+    "name": "006110",
+    "buy_price": 55000.0,
+    "memo": "조정 후 재검토용 감시가. 게이트 ② 리더 실패(F=3,G=4,ROE-10.8). 1Q26 실적+LME 알루미늄 동향 확인 후 재진입 검토. Kill: LME 알루미늄 $2800↓, 1Q26 OP -30억 초과, 2Q26 흑자전환 실패</memo>\n<parameter name=\"name\">삼아알미늄",
+    "grade": "B-",
+    "market": "KR",
+    "created_at": "2026-04-27",
+    "updated_at": "2026-04-27",
+    "created": "2026-04-27 20:08"
+  },
+  "092780": {
+    "name": "DYP",
+    "market": "KR",
+    "buy_price": 0.0,
+    "qty": 0,
+    "memo": "",
+    "grade": null,
+    "created_at": "2026-04-30",
+    "updated_at": "2026-04-30"
+  },
+  "MU": {
+    "name": "Micron Technology",
+    "buy_price": 460.0,
+    "memo": "메인 3-Gate 3/3. 1차 진입 $460 (컨센 -10% 또는 어닝 갭다운). 2차 $430~$440. 손절 $430 (-15%). 목표 2Y $715 (FY27 보수 EPS $40 × SOX 17.5x). RR 1:2.8. 무효화: HBM4 NVDA 퀄 지연 2Q+ OR DDR5 contract -10% 2Q연속 OR 2Q연속 EPS 미스+가이드↓ OR NAND 재적자.",
+    "grade": "A",
+    "market": "US",
+    "created_at": "2026-05-01",
+    "updated_at": "2026-05-01",
+    "created": "2026-05-01 07:34"
+  },
+  "050890": {
+    "name": "쏠리드",
+    "buy_price": 16000.0,
+    "memo": "쏠리드 1차 트랜치 감시. Starter 3% (75주). 키움 4/28 Top Pick (AI-RAN), 글로벌 DAS Top3 15.1%. Kill Switch: ①AT&T Open RAN 1년+ 연기 ②미국 매출 2Q 연속 YoY 역성장 ③컨센 EPS 2M -20% 하향. 2yr TP 23,000원 (2028F EPS 929 × PER 25, PEG 0.48).",
+    "grade": "B+",
+    "market": "KR",
+    "created_at": "2026-05-03",
+    "updated_at": "2026-05-03",
+    "created": "2026-05-03 01:54"
+  },
+  "009450": {
+    "name": "009450",
+    "buy_price": 73000.0,
+    "memo": "3-Gate 3/3 통과 / Starter 3-5%, 메인 / 감시가 73K (POC+매물대) / 손절 65K(-11%) / 1차 TP 89K(+22%, 컨센) / 2차 110K(+51%) / RR 2.0~2.3:1 / Kill: 26F EPS<7K, 미관세>25%+가격↑불가, OPM<7%</memo>\n<parameter name=\"name\">경동나비엔",
+    "grade": "",
+    "market": "KR",
+    "created_at": "2026-05-03",
+    "updated_at": "2026-05-03",
+    "created": "2026-05-03 02:15"
+  },
+  "486990": {
+    "name": "486990",
+    "buy_price": 33500.0,
+    "memo": "노타 Starter 3% 한정·스윙 / 3-Gate 2/3 통과 / 손절 30K(-10.4%) / 목표 43K(+28%) / RR 1:2.7 / Kill: 1Q26 매출<50억 OR 런웨이<4Q OR F사·ARM·삼성 계약 무효 / 5/3 6개월 보호예수 235만주 해제 후 진입</memo>\n<parameter name=\"name\">노타",
+    "grade": "B",
+    "market": "KR",
+    "created_at": "2026-05-03",
+    "updated_at": "2026-05-03",
+    "created": "2026-05-03 03:15"
+  },
+  "058610": {
+    "name": "에스피지",
+    "market": "KR",
+    "buy_price": 99000.0,
+    "qty": 0,
+    "memo": "Thesis: 정밀감속기 韓 유일 풀스택(SH·SR·유성), 레인보우 100% 단독+코카콜라/GE/Stryker 글로벌, 휴머노이드 BOM 4-5x 확장+미중 디커플링 수혜. Kill Switch: ①Q4-Q1 정밀감속기 분기매출<60억 ②중국 Leader Drive·HDS 가격인하로 가격우위 무력화 ③휴머노이드 양산 2027 이후 추가 연기. PDF게이트 부분충족(SK증권 1건만 직접확인, 다올TP170K 메타).",
+    "grade": "B",
+    "created_at": "2026-05-04",
+    "updated_at": "2026-05-04"
+  }
+}
