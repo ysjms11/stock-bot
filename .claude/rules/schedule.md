@@ -30,7 +30,7 @@
 | 02:00 | 전체 | `dart_incremental` | `daily_dart_incremental` | DART 신규 정기공시 증분 수집 → 알파 재계산 | 4/16 신규 |
 | 03:00 | 일 | `weekly_us_harvest` | `weekly_us_ratings_universe_scan` | S&P 500 ∪ Russell 1000 전체 레이팅 수집 (~1000종목, ~33분) | 4/23 Russell 확장 |
 | 03:30 | 일 | `weekly_nps` | `weekly_nps_collect` | NPS 통합 수집: KR 5%룰 (data.go.kr) + US 13F-HR (SEC EDGAR) + KR 풀포트 200종목 (whale-insight 미러) + DART 5/10%룰 14일 풀백필 | 4/27 신규 |
-| 04:00 | 전체 | `nps_dart_inc` | `daily_nps_dart_increment` | NPS 5%룰 DART 증분 수집 (분기 사이 NPS 변동 보고 캡처) | 4/27 신규 |
+| 04:02 | 전체 | `nps_dart_inc` | `daily_nps_dart_increment` | NPS 5%룰 DART 증분 수집 (분기 사이 NPS 변동 보고 캡처) | 5/28 +2m stagger (weekly_us_analyst_sync 04:00 충돌) |
 | 04:05 | 전체 | `dart_disclosure` | `daily_dart_disclosure_collect` | DART 5%룰 (D001) + 10%룰 (D002) 매일 증분 수집 (2일치, ~10초). 24h 내 1%p+ 큰 변동 시 텔레그램 알림 | 5/9 정정 (04:00→04:05, weekly_us_analyst_sync 충돌 회피) |
 | 04:00 | 일 | `weekly_us_analyst_sync` | `weekly_us_analyst_sync` | ratings → us_analysts 마스터 자동 동기화 + 별점 4.5+ 콜 5+ 자동 watched=1 | 4/25 신규 |
 | 05:05 | 화~토 | `us_summary_dst` | `us_market_summary` | 미국 장 마감 요약 (DST, 내부 가드로 중복 방지) | — |
@@ -46,7 +46,7 @@
 | 07:02 | 평일 | `earnings_cal` | `check_earnings_calendar` | KR 실적 캘린더 체크 | 5/28 +2m stagger |
 | 07:03 | 평일 | `dividend_cal` | `check_dividend_calendar` | 배당 캘린더 체크 | 5/28 +3m stagger |
 | 07:05 | 일 | `consensus_update` | `weekly_consensus_update` | FnGuide 컨센서스 주간 업데이트 | — |
-| 07:05 | 일 | `weekly_sanity` | `weekly_sanity_check` | daily_snapshot 영업일 누락 감시 | 4/18 신규 |
+| 07:06 | 일 | `weekly_sanity` | `weekly_sanity_check` | daily_snapshot 영업일 누락 감시 | 5/28 +1m stagger (weekly_consensus 07:05 충돌) |
 | 07:10 | 평일 | `us_earnings_cal` | `check_us_earnings_calendar` | 미국 실적 캘린더 체크 | — |
 | 07:15 | 일 | `weekly_financial` | `weekly_financial_job` | 주간 재무 수집 (DART) | — |
 | 07:30 | 전체 | `us_ratings` | `daily_us_rating_scan` | 미국 애널 레이팅 스캔 | 4/18 신규 |
