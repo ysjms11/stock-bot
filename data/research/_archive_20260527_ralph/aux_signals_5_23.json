@@ -1,0 +1,47 @@
+{
+  "collected_at": "2026-05-23T12:45 KST",
+  "source": "get_macro dashboard + get_macro us_sector + get_macro sector_etf + get_stock_detail D10 + get_macro_external",
+  "fx": {
+    "USDKRW": {"price": 1520.5, "chg_pct": 0.89, "note": "한미 금리차 부담 잔존, 1,500 후반 고점 영역"},
+    "DXY": {"price": 99.32, "chg_pct": 0.08, "note": "100 하회 약달러 지속"},
+    "US10Y": {"price": 4.56, "chg_pct": -0.61, "note": "지난주 4.47 → 4.57 +10bp (Treasury 매도)"},
+    "US2Y": 4.08,
+    "spread_10y_2y": 0.49,
+    "recession_signal": "정상"
+  },
+  "commodities": {
+    "WTI": {"price": 97.0, "chg_pct": 0.67, "note": "이란 ceasefire 5/27까지 99.55% 컨센, 95+ 인플레 압력 잔존"},
+    "GOLD": {"price": 4510.5, "chg_pct": -0.7, "note": "역사고점 부근, 통화완화·지정학 헷지"},
+    "COPPER": {"price": 6.38, "chg_pct": 1.37, "note": "산업 수요 견고 시그널 지속, 자동차·전력기기 호재"}
+  },
+  "volatility": {
+    "VIX": {"price": 16.7, "chg_pct": -0.36, "note": "20 하회 risk-on 환경 유지"}
+  },
+  "us_sector_etf_5d": [
+    {"ticker": "XLU", "name": "유틸리티", "chg_1d": 0.78, "chg_5d": 3.37},
+    {"ticker": "XLV", "name": "헬스케어", "chg_1d": 1.17, "chg_5d": 3.3},
+    {"ticker": "XLK", "name": "기술", "chg_1d": 1.0, "chg_5d": 2.34},
+    {"ticker": "XLY", "name": "임의소비", "chg_1d": 0.4, "chg_5d": 2.27},
+    {"ticker": "XLF", "name": "금융", "chg_1d": 0.41, "chg_5d": 1.64},
+    {"ticker": "QQQ", "name": "나스닥100", "chg_1d": 0.42, "chg_5d": 1.21},
+    {"ticker": "SPY", "name": "S&P500", "chg_1d": 0.39, "chg_5d": 0.88},
+    {"ticker": "XLI", "name": "산업재", "chg_1d": 0.73, "chg_5d": 0.22},
+    {"ticker": "XLP", "name": "필수소비", "chg_1d": 0.17, "chg_5d": 0.19},
+    {"ticker": "XLE", "name": "에너지", "chg_1d": 0.61, "chg_5d": 0.08},
+    {"ticker": "XLRE", "name": "부동산", "chg_1d": 0.13, "chg_5d": 3.08}
+  ],
+  "us_theme_etf": {
+    "SOXX": {"price": 537.33, "chg_5d_pct": 5.66, "chg_10d_pct": 0.86, "note": "5/18 저점 495 → 5/22 537 +8.4% V-shape, 반도체 ETF 자금 회복"},
+    "SMH": {"price": 576.32, "chg_5d_pct": 6.45, "note": "SOXX와 동조, 메모리·로직 동시 강세"}
+  },
+  "kr_etf_5d": {
+    "091160": {"name": "KODEX 반도체", "close": 155500, "chg_5d_pct": 6.59, "note": "5/18 146,250 → 5/22 155,500 V-shape 회복"},
+    "449450": {"name": "KODEX 방산", "close": 71985, "chg_5d_pct": 4.49, "note": "K-shock 이후 회복, 5/22 +4.28%"},
+    "140710": {"name": "KODEX 조선", "close": 6965, "chg_pct": 2.43},
+    "261070": {"name": "KODEX 전력에너지", "close": 16645, "chg_pct": 8.72, "note": "1d +8.72% 거대 자금 유입"},
+    "244580": {"name": "KODEX 바이오", "close": 11230, "chg_pct": 7.67},
+    "305720": {"name": "KODEX 2차전지", "close": 19675, "chg_pct": 4.02},
+    "069500": {"name": "KODEX 200", "close": 123350, "chg_pct": 0.24}
+  },
+  "fed_decision_june": {"prob_no_change": 0.9765, "fomc_date": "2026-06-16"}
+}

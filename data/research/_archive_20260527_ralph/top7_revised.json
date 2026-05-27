@@ -1,0 +1,325 @@
+{
+  "generated_at": "2026-05-23T03:48:00Z",
+  "deepening_complete": true,
+  "iters_completed": [1, 2, 3, 5, 6, 7],
+  "iters_skipped": [4],
+  "skip_reason": {
+    "iter_4": "FMP HTTP 402 (subscription/payment required) — earnings transcript endpoint not included in current plan. Substituted by iter 1 (PDF) + iter 7 (aux macro)."
+  },
+  "scoring_rubric": {
+    "dimensions": [
+      "catalyst (1-10): 30~90일 발현 가능성",
+      "supply (1-10): 외인+기관+NPS+retail 정합 (5/22 raw 반영)",
+      "macro (1-10): 시나리오 매트릭스 적합도",
+      "value (1-10): PER/PBR/TP upside",
+      "risk (1-10): Kill Switch + 손절가 명확성",
+      "iter_value (1-10): iter 1-7 보강 신규 시그널 강도"
+    ],
+    "grade_change_policy": "1단계만 점진적 변경 (B→B+, A-→A 등)"
+  },
+  "previous_top7": [
+    {"rank": 1, "ticker": "SARO", "name": "StandardAero", "grade": "A"},
+    {"rank": 2, "ticker": "064290", "name": "인텍플러스", "grade": "B"},
+    {"rank": 3, "ticker": "251270", "name": "넷마블", "grade": "B+"},
+    {"rank": 4, "ticker": "161390", "name": "한국타이어앤테크놀로지", "grade": "B+"},
+    {"rank": 5, "ticker": "267260", "name": "HD현대일렉트릭", "grade": "A"},
+    {"rank": 6, "ticker": "AMD", "name": "Advanced Micro Devices", "grade": "A-"},
+    {"rank": 7, "ticker": "WHR", "name": "Whirlpool", "grade": "C (보류)"}
+  ],
+  "revised_top7": [
+    {
+      "rank": 1,
+      "ticker": "SARO",
+      "name": "StandardAero",
+      "previous_rank": 1,
+      "delta": "0",
+      "grade_prev": "A",
+      "grade_new": "A",
+      "scores": {
+        "catalyst": 8,
+        "supply": 8,
+        "macro": 8,
+        "value": 7,
+        "risk": 9,
+        "iter_value": 6
+      },
+      "score_total": 46,
+      "key_changes": [
+        "iter 1 PDF: 90일 7건 (Strong Buy 2 + Buy 3 + Hold 2), 0 downgrade — 톱애널 풀스택 6명 avg 4.45★ 정렬 유지",
+        "iter 4 FMP 차단되었으나 v2 본문 CEO 5/7 'LEAP 4배' 인용이 컨콜 대체",
+        "iter 7: SOXX/SMH V-shape는 직접 무관, 매크로는 A×A 변동 없음",
+        "엔진 MRO 슈퍼사이클 thesis intact — UBS 5/11 Upgrade 단발 백본"
+      ],
+      "rationale": "톱애널 6명 풀스택 (Tier S 3 + A 3) avg 4.45★는 504 풀 유일. 90일 0 downgrade + Q1 매출 +13.3% 비트 + 연간 가이드 상향 + Bain 4,200건 capacity -15% 부족 매크로 anchor. 변동 없음 — 풀스택 정합 유지."
+    },
+    {
+      "rank": 2,
+      "ticker": "267260",
+      "name": "HD현대일렉트릭",
+      "previous_rank": 5,
+      "delta": "+3",
+      "grade_prev": "A",
+      "grade_new": "A",
+      "scores": {
+        "catalyst": 8,
+        "supply": 6,
+        "macro": 10,
+        "value": 6,
+        "risk": 8,
+        "iter_value": 9
+      },
+      "score_total": 47,
+      "key_changes": [
+        "iter 7: KODEX 전력에너지 +8.72% 1d ★ — 매크로 A×A 'AI 데이터센터 전력기기' A축 실측 confirm (외인 -322K 매도 흡수)",
+        "iter 2 YouTube: SK증권 '2차 사이클 시작' 시각 명문화 + 엔비디아 800VDC 직류송전 sub-thesis (변압기 외 ESS·커패시터 확장)",
+        "iter 3 WebFetch: 5/7 북미 1,730억 765kV 단발 수주 + 5/5 파이낸셜뉴스 1면 '美 빅테크도 줄서는 K변압기 5년치 일감 꽉 찼다'",
+        "iter 5 KIS Raw: 5/21 외인 -45,282주(★5월 최대 매도) + 5월 누적 -322K (임계 -500K의 64%) — 단기 supply 약함",
+        "iter 7 USDKRW 1,520.5: 컨센 1,350 가정 대비 +12.6% → 2Q26 가이드 상향 가능성"
+      ],
+      "rationale": "3중 매크로 confirm (KODEX 전력 +8.72% × USDKRW 1,520 × 엔비디아 800VDC) + 2차 사이클 thesis 백본 강화 + 1면 보도 1차 사이클 normalization view 무력화. 단 외인 -322K 매도가 supply 발목 → 6월 초 재검토. 등급 A 유지, ranking +3 상향 (매크로 정합 strongest)."
+    },
+    {
+      "rank": 3,
+      "ticker": "064290",
+      "name": "인텍플러스",
+      "previous_rank": 2,
+      "delta": "-1",
+      "grade_prev": "B",
+      "grade_new": "B+",
+      "scores": {
+        "catalyst": 9,
+        "supply": 9,
+        "macro": 8,
+        "value": 5,
+        "risk": 5,
+        "iter_value": 10
+      },
+      "score_total": 46,
+      "key_changes": [
+        "iter 5 KIS Raw: 5/22 기관 +497,734주 (+16,596백만원, 시총 4.4%) ★사상최대 단일 매수 — 외인(5/14~19) → 기관(5/20~22) 바통터치",
+        "iter 6 Paxnet: retail 강세 60-70% (인텔 +16% 유리기판 catalyst 해석) + smart money (기관 사상최대 매수) 정합",
+        "iter 2 YouTube: TSMC SCM 진입 단서 — Kill Switch #1 선행 시그널",
+        "iter 3 WebFetch: 5/22 종가 35,850원 +26.68% 폭등 — 본 thesis 진입가 24~29K 모두 stale → v2 재설정 필요",
+        "iter 7: KODEX 반도체 +6.59% / SMH +6.45% 5d V-shape — 폭등의 매크로 wave 배경 확정"
+      ],
+      "rationale": "5/22 시총 4.4% 사상최대 기관 매수 + retail/smart money 정합 + TSMC SCM 진입 시그널 = 신규 발견 가치 10/10 최고. 그러나 진입가 stale (24~29K → 35,850원) + 적자 잔존 + 코스닥 소형주 변동성 = ranking -1 하향. 등급은 5/22 폭등 catalyst confirm 으로 B → B+ 상향 (점진적 1단계, 2Q26 흑전 확인 후 A 승급)."
+    },
+    {
+      "rank": 4,
+      "ticker": "161390",
+      "name": "한국타이어앤테크놀로지",
+      "previous_rank": 4,
+      "delta": "0",
+      "grade_prev": "B+",
+      "grade_new": "A-",
+      "scores": {
+        "catalyst": 9,
+        "supply": 7,
+        "macro": 9,
+        "value": 9,
+        "risk": 7,
+        "iter_value": 9
+      },
+      "score_total": 50,
+      "key_changes": [
+        "iter 1 PDF: LS증권 5/13 NDR — 동사 6월 판가 +3% 인상 + EU 반덤핑 동사 3.4% (경쟁사 29.9%) 원가 부담 상쇄 시그널",
+        "iter 3 WebFetch: 5/8 한경 1면 EU 반덤핑 동사 3.4% vs 금호·넥센 29.9% — 3사 매출의 EU 40% 비중 fix",
+        "iter 5 KIS Raw: 호가 0.25 (3.94x sell pressure) + 5/18 대차 +417,591주 ★대형 차입 + 5/21~22 외인 +121K = 6/7월 한온 합병 직전 short 셋업 / hedge 양방향",
+        "iter 7 USDKRW 1,520.5 (+0.89%) ★ — 한국타이어 매출 EU+북미 65% 수출, 컨센 1,450 가정 대비 +5% → 1Q26 OPM 미반영",
+        "iter 2 YouTube: 한온 R&D 자본화→비용화 처리로 컨센 OPM 미반영 + 합병 잔존 절차 (베트남) 5%룰 hidden gate"
+      ],
+      "rationale": "EU 반덤핑 3.4% vs 경쟁사 29.9% = 5/8 한경 1면 확정 보도 = thesis 변화 가장 큼. 한온 합병 6/7월 + OPM +361% 시너지 + USDKRW 1,520 약원 + PER 7.0 / PBR 0.62 KR 자동차 최저 밸류 = 4중 정합. score 총합 50 (revised Top 7 최고점). 등급 B+ → A- 상향 (점진적 1단계, 2Q26 어닝 비트 확인 후 A 승급)."
+    },
+    {
+      "rank": 5,
+      "ticker": "251270",
+      "name": "넷마블",
+      "previous_rank": 3,
+      "delta": "-2",
+      "grade_prev": "B+",
+      "grade_new": "B+",
+      "scores": {
+        "catalyst": 8,
+        "supply": 8,
+        "macro": 6,
+        "value": 8,
+        "risk": 7,
+        "iter_value": 8
+      },
+      "score_total": 45,
+      "key_changes": [
+        "iter 5 KIS Raw: 5/22 외+기 동반 매수 +56,898주 = 5월 첫 외+기 양전환 + 공매도 거래 22→16.44% 급감 + 대차잔고 -89,976 청산 = supply squeeze 셋업",
+        "iter 3 WebFetch: SOL:enchant 6/18 출시 fix (삼성 5/14 '6월 연기' 우려 해소)",
+        "iter 2 YouTube: 자체 IP 비중↑로 수수료 -2% 이미 빠지는 중 (구글 인하 catalyst 보수적) + 이자비용 1,400→700억 절반 감소 OP-순익 레버리지 극적 개선",
+        "iter 6 Paxnet: retail 강세 65-70% + 공매도 squeeze 시그널 retail 미인지 = smart money 1step 앞서 (향후 squeeze 발생 시 retail FOMO 합류 가능)",
+        "PBR 0.63 + 코웨이+하이브 2.9조 자산 floor (시총의 85%) 안전판 유지"
+      ],
+      "rationale": "공매도 squeeze 셋업 + 6/18 SOL:enchant 출시 fix 양대 catalyst 정합 + supply 양전환 + retail FOMO 잠재 = 단기 squeeze 가능성 명확. 그러나 매크로 매트릭스 B×B (게임은 매크로 의존도 낮음) + 1Q26 미스 잔효 + 매크로 정합 6/10 = ranking -2 하향. 등급 B+ 유지 (변동 없음, 6/18 출시 후 NQ Q2 비트 시 A- 검토)."
+    },
+    {
+      "rank": 6,
+      "ticker": "AMD",
+      "name": "Advanced Micro Devices",
+      "previous_rank": 6,
+      "delta": "0",
+      "grade_prev": "A-",
+      "grade_new": "A-",
+      "scores": {
+        "catalyst": 7,
+        "supply": 9,
+        "macro": 9,
+        "value": 4,
+        "risk": 6,
+        "iter_value": 9
+      },
+      "score_total": 44,
+      "key_changes": [
+        "iter 1 PDF: ★Bernstein UPGRADE Hold→Buy PT $265→$525 (+98%) ★단일 최대 시그널 (90일 12건 중 1 upgrade + 10 maintain + 1 downgrade, TP 평균 +50%, ★4.5+ 톱애널 5명 confirm Buy)",
+        "iter 7: SOXX 5d +5.66% / SMH 5d +6.45% V-shape 회복 + AMD 5/22 +3.99% ETF 동조 + VIX 16.7 risk-on 환경",
+        "현재가 $467은 1m TP $453.6 초과 — Gate 2 진입 타이밍 FAIL (매수 부적격)",
+        "watchalert.json buy_price=$420 등록 권장 (1차 진입가 추적)"
+      ],
+      "rationale": "Bernstein UPGRADE Hold→Buy PT $265→$525 (+98%) 단일 최대 신규 시그널 — iter_value 9/10. SOXX V-shape + VIX 16.7 매크로 정합 강함. 그러나 가격이 1m TP 초과 = Gate 2 FAIL → 매수 부적격 (Watch only). 풀백 $380~$420 시 재매수 검토. 등급 A- 유지 (가격 메리트 부재로 A 승급 보류). ranking 변동 없음."
+    },
+    {
+      "rank": 7,
+      "ticker": "WHR",
+      "name": "Whirlpool",
+      "previous_rank": 7,
+      "delta": "0",
+      "grade_prev": "C (보류)",
+      "grade_new": "C (보류)",
+      "scores": {
+        "catalyst": 4,
+        "supply": 3,
+        "macro": 5,
+        "value": 8,
+        "risk": 3,
+        "iter_value": 7
+      },
+      "score_total": 30,
+      "key_changes": [
+        "iter 1 PDF: ★톱애널 net negative 확정 (90일 9건 중 Buy 0 / Hold 6 / Sell 2 + 1 downgrade Buy→Hold + 2 initiate Hold) — brief의 '★4.5+ Buy initiate' 가정 오류 검증 (initiate는 Hold)",
+        "5/14 Goldman Sachs Downgrade Buy→Hold PT $72→$53 (-26%) — RBC Dahl $32 가장 비관, 시나리오 C 헷지 진입선",
+        "5/8 dividend 55년 만에 첫 suspension + junk bond rating (Moody's Ba3 / S&P B+) + Q1 GAAP 손실 $85M + 2026 EPS 가이던스 $6.23 → $3.00~3.50 (-52% 컷) + CEO '2008 수준 demand' 코멘트",
+        "iter 7: WHR 5/22 -1.25% (S&P +0.37%, XLK +1.0%, SOXX +2.40% 강세 거꾸로) — household durables 약세 정합",
+        "3-Gate 1.5/3 통과 → [보류] 결정 강화"
+      ],
+      "rationale": "톱애널 net NEGATIVE 확정 (Sell 2 + Hold 6 + Buy 0) — brief 가정 오류 정량 검증. dividend suspension + junk rating + 2008형 demand 경고 + 시나리오 C 헷지 anchor로서 정성 가치만 잔존. Q2 어닝 (~7/30) + 리파이낸싱 (7/1) + 6/16 FOMC dot-plot 3중 트리거 통과 확인 후 $38~40 진입 검토. 등급 C 보류 유지, ranking 변동 없음."
+    }
+  ],
+  "score_totals_sorted": [
+    {"rank": 1, "ticker": "161390", "name": "한국타이어앤테크놀로지", "total": 50, "grade": "A-"},
+    {"rank": 2, "ticker": "267260", "name": "HD현대일렉트릭", "total": 47, "grade": "A"},
+    {"rank": 3, "ticker": "SARO", "name": "StandardAero", "total": 46, "grade": "A"},
+    {"rank": 4, "ticker": "064290", "name": "인텍플러스", "total": 46, "grade": "B+"},
+    {"rank": 5, "ticker": "251270", "name": "넷마블", "total": 45, "grade": "B+"},
+    {"rank": 6, "ticker": "AMD", "name": "Advanced Micro Devices", "total": 44, "grade": "A-"},
+    {"rank": 7, "ticker": "WHR", "name": "Whirlpool", "total": 30, "grade": "C 보류"}
+  ],
+  "ranking_methodology_note": "score_totals_sorted는 6차원 raw 합산. revised_top7 ranking은 raw score + qualitative gate (가격 메리트, 진입 자격, 매크로 anchor weight) 가중 — SARO는 raw 46이나 톱애널 풀스택 정렬 유일성으로 #1 유지. 161390은 raw 1위이나 한온 합병 발효 전 hidden gate (베트남 등) 잔존으로 #4. 267260은 매크로 anchor 자격 (B×B 22.5% 최대 단일 셀)로 raw 47 + #2.",
+  "grade_changes": [
+    {
+      "ticker": "064290",
+      "name": "인텍플러스",
+      "prev": "B",
+      "new": "B+",
+      "reason": "5/22 기관 +497K 사상최대 매수 + TSMC SCM 진입 단서 + retail/smart money 정합 — iter 1+5+6 합치 catalyst confirm"
+    },
+    {
+      "ticker": "161390",
+      "name": "한국타이어앤테크놀로지",
+      "prev": "B+",
+      "new": "A-",
+      "reason": "EU 반덤핑 동사 3.4% vs 경쟁사 29.9% 1면 확정 + USDKRW 1,520 약원 + 한온 OPM +361% + PER 7.0 KR 자동차 최저 밸류 — 4중 정합"
+    }
+  ],
+  "no_grade_change": [
+    {"ticker": "SARO", "grade": "A", "reason": "변동 없음 — 풀스택 정합 유지, iter 4 FMP 차단으로 추가 confirm 부재"},
+    {"ticker": "267260", "grade": "A", "reason": "신고가 후 -15.6% 조정 잔존 + 외인 -322K (임계 64%) — 매크로 정합 강하나 supply 약점, A 유지·HOLD"},
+    {"ticker": "251270", "grade": "B+", "reason": "6/18 SOL:enchant 출시 후 NQ Q2 결과 확인 전 점진적 정책 — 5/22 외+기 양전환 + squeeze 셋업이나 1Q26 미스 잔효"},
+    {"ticker": "AMD", "grade": "A-", "reason": "Bernstein UPGRADE 단일 최대 시그널 + SOXX V-shape이나 가격 $467 > 1m TP $453.6 — Gate 2 FAIL, 매수 부적격, A 승급 보류"},
+    {"ticker": "WHR", "grade": "C 보류", "reason": "톱애널 net negative 확정, 4 게이트 미충족 — Q2/리파이낸싱/FOMC 3중 트리거 통과 확인 전 보류 유지"}
+  ],
+  "exit_signals": [
+    {
+      "ticker": "WHR",
+      "reason": "톱애널 net negative 확정 (Buy 0 / Hold 6 / Sell 2 + Goldman 5/14 downgrade Buy→Hold PT $72→$53 -26%), 4 게이트 미충족 → 진입 X 유지",
+      "next_review": "2026-07-30 (Q2 earnings) + 2026-07-01 (refinancing) + 2026-06-16 (FOMC dot-plot)"
+    }
+  ],
+  "biggest_thesis_change": {
+    "ticker": "161390",
+    "name": "한국타이어앤테크놀로지",
+    "change": "EU 반덤핑 동사 3.4% vs 금호·넥센 29.9% 5/8 한경 1면 확정 보도",
+    "impact": "thesis 'EU 40% 매출 비중'에 직접 가격 정합 + USDKRW 1,520 약원 호재 중첩 + 6월 발효 fix → 컨센 OPM 미반영 시그널이 1면 sentiment trigger로 전환. 등급 B+ → A- 1단계 상향, score raw 50 (revised Top 7 최고점)."
+  },
+  "new_catalysts_next_30d": [
+    {
+      "date": "2026-06-XX (mid)",
+      "ticker": "161390",
+      "event": "EU 반덤핑 6월 발효 fix (3.4% 동사 vs 경쟁사 29.9%)",
+      "impact": "thesis A 발현 trigger"
+    },
+    {
+      "date": "2026-06-16",
+      "ticker": "ALL",
+      "event": "FOMC dot-plot — Polymarket No-change 97.75%, 매파 surprise 시 WHR Kill Switch + 시장 헷지 활성",
+      "impact": "AMD/SARO 풀백 zone 진입 가능"
+    },
+    {
+      "date": "2026-06-18",
+      "ticker": "251270",
+      "event": "넷마블 SOL:enchant 출시 (삼성 5/14 '6월 연기' 우려 해소된 fix 일정)",
+      "impact": "공매도 squeeze trigger + retail FOMO 합류 가능"
+    },
+    {
+      "date": "2026-06-30 ~ 07-01",
+      "ticker": "161390",
+      "event": "한국타이어-한온시스템 합병 효력 발생 (잔존 베트남 등 5%룰 hidden gate 클리어 필요)",
+      "impact": "thesis A→Standard 승급 검증"
+    },
+    {
+      "date": "2026-07-01",
+      "ticker": "WHR",
+      "event": "credit facility 리파이낸싱 만기",
+      "impact": "Kill Switch #3 (리파이낸싱 실패 → junk grade 추가 강등) — 통과 시 진입 검토"
+    },
+    {
+      "date": "2026-07-30 ± 5",
+      "ticker": "267260",
+      "event": "2Q26 어닝 — 컨센 14건 BUY 검증 + USDKRW 1,520 가이드 상향 가능성",
+      "impact": "PER cap 27→30 돌파 confirm 또는 normalization 시그널"
+    },
+    {
+      "date": "2026-07-30 ± 5",
+      "ticker": "WHR",
+      "event": "Q2 어닝 — 2026 EPS 가이드 maintain 여부 ($3.00~3.50)",
+      "impact": "Bear B 가이드 추가 컷 시 신용등급 추가 강등 / maintain 시 진입 1차 검토"
+    },
+    {
+      "date": "2026-07-XX",
+      "ticker": "SARO",
+      "event": "Farnborough Airshow + 2Q26 가이드 raise 여부",
+      "impact": "LEAP shop-visit demand maintain 검증 (Kill Switch #2 trigger)"
+    },
+    {
+      "date": "2026-08-XX",
+      "ticker": "064290",
+      "event": "2Q26 어닝 — 흑전 첫 분기 가능성",
+      "impact": "Standard ½ → 풀비중 승급 검증, A 승급 후보"
+    },
+    {
+      "date": "2026-08-XX",
+      "ticker": "251270",
+      "event": "2Q26 어닝 (D-90)",
+      "impact": "Kill Switch #1 검증 / 컨센 부합 시 갭업 트리거 +20%"
+    },
+    {
+      "date": "2026-08-05 ± 2",
+      "ticker": "AMD",
+      "event": "Q2 어닝 — DC $6B+ 검증 + 평단 <$420 풀백 시 A 등급 컨버전",
+      "impact": "재매수 zone $380~$420 도달 시 1차 진입"
+    }
+  ]
+}

@@ -1,0 +1,5873 @@
+{
+  "generated_at": "2026-05-22T08:53:11.148274+09:00",
+  "total": 251,
+  "distribution": {
+    "market_cap": {
+      "라지": 133,
+      "메가": 55,
+      "미드": 63
+    },
+    "sectors": {
+      "금융": 34,
+      "산업재": 34,
+      "소비재": 23,
+      "AI인프라": 18,
+      "헬스케어": 18,
+      "방산": 17,
+      "반도체": 15,
+      "전력기기": 13,
+      "에너지": 12,
+      "미디어/엔터": 10,
+      "원자력": 6,
+      "빅테크": 5,
+      "양자컴퓨팅": 5,
+      "자동차": 4,
+      "ITService": 4,
+      "소프트웨어": 3,
+      "여행": 3,
+      "통신": 3,
+      "데이터센터": 3,
+      "광학": 3,
+      "원자재": 3,
+      "화학": 3,
+      "비철금속": 2,
+      "보안": 2,
+      "리츠/물류": 2,
+      "철강": 2,
+      "게임": 1,
+      "우주항공": 1,
+      "전자부품": 1,
+      "위성통신": 1
+    },
+    "thesis_status": {
+      "기존": 37,
+      "신규": 214
+    }
+  },
+  "candidates": [
+    {
+      "ticker": "SARO",
+      "name": "StandardAero",
+      "sector": "방산",
+      "market_cap_usd": "10B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 28.94,
+        "total_advisors": 6,
+        "tier_s": 3,
+        "tier_a": 3,
+        "latest_call_days": 10,
+        "price": 26.11,
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 4.5,
+        "avg_pt_change": -5.3,
+        "last_rating": "2026-05-12",
+        "thesis_grade": "Standard",
+        "thesis_sector": "방산/항공정비",
+        "thesis_modified": "2026-05-21 17:54"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 67
+    },
+    {
+      "ticker": "ORCL",
+      "name": "Oracle",
+      "sector": "AI인프라",
+      "market_cap_usd": "530B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 18.56,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 27,
+        "price": 189.77,
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 4.19,
+        "avg_pt_change": 7.8,
+        "last_rating": "2026-05-13",
+        "nps_value_mn_usd": 715.9,
+        "nps_issuer": "ORACLE CORP",
+        "thesis_grade": "B (3-Gate 2/3, 어닝 후 ",
+        "thesis_sector": "AI인프라",
+        "thesis_modified": "2026-05-07 05:08"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 62
+    },
+    {
+      "ticker": "AMD",
+      "name": "AMD",
+      "sector": "AI인프라",
+      "market_cap_usd": "230B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 22,
+        "bull_actions": 3,
+        "avg_stars": 4.35,
+        "avg_pt_change": 46.6,
+        "last_rating": "2026-05-13",
+        "nps_value_mn_usd": 734.9,
+        "nps_issuer": "ADVANCED MICRO DEVICES INC",
+        "thesis_grade": "B+",
+        "thesis_sector": "AI인프라",
+        "thesis_modified": "2026-05-05 02:08"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 53
+    },
+    {
+      "ticker": "MA",
+      "name": "Mastercard",
+      "sector": "금융",
+      "market_cap_usd": "470B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 35.1,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 97,
+        "price": 499.62,
+        "events_30d": 7,
+        "bull_actions": 1,
+        "avg_stars": 2.75,
+        "avg_pt_change": -2.7,
+        "last_rating": "2026-05-12",
+        "nps_value_mn_usd": 960.3,
+        "nps_issuer": "MASTERCARD INCORPORATED",
+        "thesis_grade": "보류",
+        "thesis_sector": "금융",
+        "thesis_modified": "2026-05-11 04:20",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 50
+    },
+    {
+      "ticker": "V",
+      "name": "visa",
+      "sector": "금융",
+      "market_cap_usd": "660B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 13.25,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 93,
+        "price": 331.12,
+        "events_30d": 8,
+        "bull_actions": 1,
+        "avg_stars": 2.68,
+        "avg_pt_change": 1.9,
+        "last_rating": "2026-05-12",
+        "nps_value_mn_usd": 1156.2,
+        "nps_issuer": "VISA INC",
+        "thesis_grade": "B+",
+        "thesis_sector": "금융",
+        "thesis_modified": "2026-04-16 02:32",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 50
+    },
+    {
+      "ticker": "LRCX",
+      "name": "Lam_Research",
+      "sector": "반도체",
+      "market_cap_usd": "260B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 13,
+        "bull_actions": 2,
+        "avg_stars": 4.6,
+        "avg_pt_change": 8.2,
+        "last_rating": "2026-05-18",
+        "nps_value_mn_usd": 567.0,
+        "nps_issuer": "LAM RESEARCH CORP",
+        "thesis_sector": "반도체",
+        "thesis_modified": "2026-05-07 05:02"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 49
+    },
+    {
+      "ticker": "BWXT",
+      "name": "BWX Technologies",
+      "sector": "원자력",
+      "market_cap_usd": "20B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 12.33,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 6,
+        "price": 202.52,
+        "events_30d": 2,
+        "bull_actions": 1,
+        "avg_stars": 3.01,
+        "avg_pt_change": 13.9,
+        "last_rating": "2026-05-15",
+        "thesis_grade": "A (PEG 3.4x⛔ → 감시가 대",
+        "thesis_sector": "원자력",
+        "thesis_modified": "2026-04-15 16:50"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 48
+    },
+    {
+      "ticker": "MU",
+      "name": "Micron",
+      "sector": "반도체",
+      "market_cap_usd": "200B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 7,
+        "bull_actions": 2,
+        "avg_stars": 4.12,
+        "avg_pt_change": 36.6,
+        "last_rating": "2026-05-19",
+        "nps_value_mn_usd": 871.0,
+        "nps_issuer": "MICRON TECHNOLOGY INC",
+        "thesis_grade": "Core",
+        "thesis_sector": "반도체",
+        "thesis_modified": "2026-05-01 07:34"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 47
+    },
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA",
+      "sector": "AI인프라",
+      "market_cap_usd": "3.8T",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 27,
+        "bull_actions": 0,
+        "avg_stars": 4.68,
+        "avg_pt_change": 11.6,
+        "last_rating": "2026-05-21",
+        "nps_value_mn_usd": 9344.9,
+        "nps_issuer": "NVIDIA CORPORATION",
+        "thesis_grade": "A (확정)",
+        "thesis_sector": "AI인프라",
+        "thesis_modified": "2026-04-15 17:06"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 47
+    },
+    {
+      "ticker": "JNJ",
+      "name": "Johnson & Johnson",
+      "sector": "헬스케어",
+      "market_cap_usd": "390B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 14.36,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 8,
+        "price": 231.73,
+        "nps_value_mn_usd": 1032.8,
+        "nps_issuer": "JOHNSON & JOHNSON",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 46
+    },
+    {
+      "ticker": "NOW",
+      "name": "ServiceNow",
+      "sector": "소프트웨어",
+      "market_cap_usd": "85B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 30.4,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 3,
+        "price": 99.69,
+        "events_30d": 28,
+        "bull_actions": 2,
+        "avg_stars": 2.95,
+        "avg_pt_change": -8.7,
+        "last_rating": "2026-05-18",
+        "thesis_sector": "소프트웨어",
+        "thesis_modified": "2026-05-03 23:01"
+      },
+      "theme_match": [],
+      "raw_score": 46
+    },
+    {
+      "ticker": "GFS",
+      "name": "GFS",
+      "sector": "반도체",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 10.63,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 15,
+        "price": 81.35,
+        "events_30d": 9,
+        "bull_actions": 2,
+        "avg_stars": 4.91,
+        "avg_pt_change": 39.9,
+        "last_rating": "2026-05-11"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 45
+    },
+    {
+      "ticker": "AMZN",
+      "name": "Amazon",
+      "sector": "빅테크",
+      "market_cap_usd": "2.2T",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 25,
+        "bull_actions": 0,
+        "avg_stars": 3.97,
+        "avg_pt_change": 9.2,
+        "last_rating": "2026-05-20",
+        "nps_value_mn_usd": 4580.2,
+        "nps_issuer": "AMAZON COM INC",
+        "thesis_grade": "3/3",
+        "thesis_sector": "빅테크",
+        "thesis_modified": "2026-05-01 06:34"
+      },
+      "theme_match": [
+        "K뷰티"
+      ],
+      "raw_score": 44
+    },
+    {
+      "ticker": "ABNB",
+      "name": "Airbnb",
+      "sector": "여행",
+      "market_cap_usd": "85B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 20.3,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 29,
+        "price": 134.25,
+        "events_30d": 14,
+        "bull_actions": 2,
+        "avg_stars": 3.78,
+        "avg_pt_change": 8.3,
+        "last_rating": "2026-05-11",
+        "thesis_sector": "여행",
+        "thesis_modified": "2026-05-21 17:52",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 43
+    },
+    {
+      "ticker": "MRK",
+      "name": "Merck",
+      "sector": "헬스케어",
+      "market_cap_usd": "200B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 7.87,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 15,
+        "price": 115.88,
+        "events_30d": 2,
+        "bull_actions": 1,
+        "avg_stars": 4.22,
+        "avg_pt_change": -3.3,
+        "last_rating": "2026-05-06",
+        "nps_value_mn_usd": 609.4,
+        "nps_issuer": "MERCK & CO INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 42
+    },
+    {
+      "ticker": "AVGO",
+      "name": "Broadcom",
+      "sector": "AI인프라",
+      "market_cap_usd": "1.0T",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 3155.5,
+        "nps_issuer": "BROADCOM INC",
+        "thesis_grade": "A",
+        "thesis_sector": "AI인프라",
+        "thesis_modified": "2026-04-15 11:19"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 42
+    },
+    {
+      "ticker": "RTX",
+      "name": "RTX Corp",
+      "sector": "방산",
+      "market_cap_usd": "180B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 13.65,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 50,
+        "price": 175.98,
+        "nps_value_mn_usd": 506.5,
+        "nps_issuer": "RTX CORPORATION"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 42
+    },
+    {
+      "ticker": "TSLA",
+      "name": "Tesla",
+      "sector": "자동차",
+      "market_cap_usd": "1.3T",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 31.63,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 98,
+        "price": 417.85,
+        "events_30d": 9,
+        "bull_actions": 0,
+        "avg_stars": 3.58,
+        "avg_pt_change": -0.2,
+        "last_rating": "2026-04-23",
+        "nps_value_mn_usd": 2551.2,
+        "nps_issuer": "TESLA INC"
+      },
+      "theme_match": [],
+      "raw_score": 41
+    },
+    {
+      "ticker": "MSFT",
+      "name": "Microsoft",
+      "sector": "빅테크",
+      "market_cap_usd": "3.2T",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.31,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 58,
+        "price": 419.09,
+        "events_30d": 20,
+        "bull_actions": 0,
+        "avg_stars": 3.47,
+        "avg_pt_change": -1.5,
+        "last_rating": "2026-05-13",
+        "nps_value_mn_usd": 7016.8,
+        "nps_issuer": "MICROSOFT CORP"
+      },
+      "theme_match": [],
+      "raw_score": 41
+    },
+    {
+      "ticker": "ZBRA",
+      "name": "ZebraTechnologies",
+      "sector": "산업재",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 25.9,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 8,
+        "price": 242.26,
+        "events_30d": 7,
+        "bull_actions": 1,
+        "avg_stars": 3.74,
+        "avg_pt_change": 2.9,
+        "last_rating": "2026-05-14",
+        "thesis_sector": "산업재",
+        "thesis_modified": "2026-05-21 17:34"
+      },
+      "theme_match": [],
+      "raw_score": 41
+    },
+    {
+      "ticker": "TMUS",
+      "name": "TMobile",
+      "sector": "통신",
+      "market_cap_usd": "230B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 36.2,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 22,
+        "price": 190.9,
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 3.29,
+        "avg_pt_change": -2.9,
+        "last_rating": "2026-04-29",
+        "thesis_sector": "통신",
+        "thesis_modified": "2026-05-21 17:40",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 40
+    },
+    {
+      "ticker": "WHR",
+      "name": "WHR",
+      "sector": "산업재",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 61.23,
+        "total_advisors": 3,
+        "tier_s": 0,
+        "tier_a": 3,
+        "latest_call_days": 29,
+        "price": 43.21,
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 4.01,
+        "avg_pt_change": -17.1,
+        "last_rating": "2026-05-14"
+      },
+      "theme_match": [],
+      "raw_score": 40
+    },
+    {
+      "ticker": "IP",
+      "name": "IP",
+      "sector": "산업재",
+      "market_cap_usd": "17B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 25.4,
+        "total_advisors": 2,
+        "tier_s": 2,
+        "tier_a": 0,
+        "latest_call_days": 17,
+        "price": 31.5,
+        "events_30d": 6,
+        "bull_actions": 2,
+        "avg_stars": 2.5,
+        "avg_pt_change": -9.7,
+        "last_rating": "2026-05-04"
+      },
+      "theme_match": [],
+      "raw_score": 40
+    },
+    {
+      "ticker": "MTZ",
+      "name": "MTZ",
+      "sector": "산업재",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 23.47,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 8,
+        "price": 388.77,
+        "events_30d": 13,
+        "bull_actions": 1,
+        "avg_stars": 4.46,
+        "avg_pt_change": 23.3,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 40
+    },
+    {
+      "ticker": "GOOGL",
+      "name": "Alphabet",
+      "sector": "빅테크",
+      "market_cap_usd": "2.4T",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 28,
+        "bull_actions": 0,
+        "avg_stars": 4.16,
+        "avg_pt_change": 9.4,
+        "last_rating": "2026-05-21",
+        "nps_value_mn_usd": 7163.8,
+        "nps_issuer": "ALPHABET INC",
+        "thesis_grade": "A (3-Gate 2.5/3)",
+        "thesis_sector": "빅테크",
+        "thesis_modified": "2026-05-07 04:45"
+      },
+      "theme_match": [],
+      "raw_score": 38
+    },
+    {
+      "ticker": "META",
+      "name": "Meta Platforms",
+      "sector": "빅테크",
+      "market_cap_usd": "1.8T",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 18,
+        "bull_actions": 0,
+        "avg_stars": 4.3,
+        "avg_pt_change": -3.1,
+        "last_rating": "2026-05-20",
+        "nps_value_mn_usd": 3041.5,
+        "nps_issuer": "META PLATFORMS INC",
+        "thesis_grade": "A",
+        "thesis_sector": "빅테크",
+        "thesis_modified": "2026-04-15 15:46"
+      },
+      "theme_match": [],
+      "raw_score": 38
+    },
+    {
+      "ticker": "AAPL",
+      "name": "Apple",
+      "sector": "빅테크",
+      "market_cap_usd": "3.3T",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 13,
+        "bull_actions": 0,
+        "avg_stars": 4.28,
+        "avg_pt_change": 5.8,
+        "last_rating": "2026-05-14",
+        "nps_value_mn_usd": 8208.9,
+        "nps_issuer": "APPLE INC",
+        "thesis_grade": "B+ (3-Gate 3/3, Gate",
+        "thesis_sector": "빅테크",
+        "thesis_modified": "2026-05-07 05:01"
+      },
+      "theme_match": [],
+      "raw_score": 38
+    },
+    {
+      "ticker": "GE",
+      "name": "GE Aerospace",
+      "sector": "산업재",
+      "market_cap_usd": "240B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 11.84,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 50,
+        "price": 301.76,
+        "nps_value_mn_usd": 731.5,
+        "nps_issuer": "GE AEROSPACE",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 37
+    },
+    {
+      "ticker": "PLTR",
+      "name": "PLTR",
+      "sector": "AI인프라",
+      "market_cap_usd": "230B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 9,
+        "bull_actions": 2,
+        "avg_stars": 3.1,
+        "avg_pt_change": -4.9,
+        "last_rating": "2026-05-06",
+        "nps_value_mn_usd": 850.3,
+        "nps_issuer": "PALANTIR TECHNOLOGIES INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 35
+    },
+    {
+      "ticker": "SIRI",
+      "name": "SIRI",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "10B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 58.68,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 28,
+        "price": 28.99,
+        "events_30d": 6,
+        "bull_actions": 1,
+        "avg_stars": 3.8,
+        "avg_pt_change": 27.3,
+        "last_rating": "2026-05-04"
+      },
+      "theme_match": [],
+      "raw_score": 35
+    },
+    {
+      "ticker": "TER",
+      "name": "TER",
+      "sector": "반도체",
+      "market_cap_usd": "20B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 13.17,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 21,
+        "price": 353.44,
+        "events_30d": 6,
+        "bull_actions": 1,
+        "avg_stars": 4.69,
+        "avg_pt_change": 13.4,
+        "last_rating": "2026-04-30"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 35
+    },
+    {
+      "ticker": "QCOM",
+      "name": "QCOM",
+      "sector": "반도체",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "events_30d": 15,
+        "bull_actions": 2,
+        "avg_stars": 4.66,
+        "avg_pt_change": 17.8,
+        "last_rating": "2026-05-08",
+        "nps_value_mn_usd": 436.0,
+        "nps_issuer": "QUALCOMM INC"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 34
+    },
+    {
+      "ticker": "CACI",
+      "name": "CACI",
+      "sector": "방산",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 47.94,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 50,
+        "price": 490.07
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 34
+    },
+    {
+      "ticker": "NOC",
+      "name": "NOC",
+      "sector": "방산",
+      "market_cap_usd": "78B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 45.04,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 50,
+        "price": 551.58
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 34
+    },
+    {
+      "ticker": "ST",
+      "name": "ST",
+      "sector": "산업재",
+      "market_cap_usd": "7B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 22.21,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 8,
+        "price": 47.46,
+        "events_30d": 8,
+        "bull_actions": 1,
+        "avg_stars": 4.02,
+        "avg_pt_change": 13.5,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [],
+      "raw_score": 34
+    },
+    {
+      "ticker": "AVT",
+      "name": "AVT",
+      "sector": "산업재",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 5.52,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 8,
+        "price": 83.4,
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 4.83,
+        "avg_pt_change": 27.0,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [],
+      "raw_score": 34
+    },
+    {
+      "ticker": "BAC",
+      "name": "BAC",
+      "sector": "금융",
+      "market_cap_usd": "400B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 16.53,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 51.49,
+        "nps_value_mn_usd": 834.0,
+        "nps_issuer": "BANK AMERICA CORP",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 33
+    },
+    {
+      "ticker": "SMCI",
+      "name": "SMCI",
+      "sector": "AI인프라",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 91.27,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 196,
+        "price": 33.46,
+        "events_30d": 8,
+        "bull_actions": 1,
+        "avg_stars": 4.46,
+        "avg_pt_change": 7.7,
+        "last_rating": "2026-05-12"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 33
+    },
+    {
+      "ticker": "PSKY",
+      "name": "PSKY",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 36.19,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 20,
+        "price": 10.28,
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 4.17,
+        "avg_pt_change": 0.2,
+        "last_rating": "2026-05-05"
+      },
+      "theme_match": [],
+      "raw_score": 33
+    },
+    {
+      "ticker": "BX",
+      "name": "Blackstone",
+      "sector": "금융",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 29.88,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 38,
+        "price": 118.57,
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 3.3,
+        "avg_pt_change": -0.8,
+        "last_rating": "2026-05-18",
+        "thesis_sector": "금융",
+        "thesis_modified": "2026-04-25 20:38",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 32
+    },
+    {
+      "ticker": "AMAT",
+      "name": "AMAT",
+      "sector": "반도체",
+      "market_cap_usd": "330B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "events_30d": 24,
+        "bull_actions": 2,
+        "avg_stars": 4.27,
+        "avg_pt_change": 14.5,
+        "last_rating": "2026-05-19",
+        "nps_value_mn_usd": 497.4,
+        "nps_issuer": "APPLIED MATLS INC"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 32
+    },
+    {
+      "ticker": "JPM",
+      "name": "JPM",
+      "sector": "금융",
+      "market_cap_usd": "780B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 5,
+        "bull_actions": 1,
+        "avg_stars": 3.96,
+        "avg_pt_change": -1.3,
+        "last_rating": "2026-04-17",
+        "nps_value_mn_usd": 1742.9,
+        "nps_issuer": "JPMORGAN CHASE & CO.",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 32
+    },
+    {
+      "ticker": "CHRW",
+      "name": "CHRW",
+      "sector": "산업재",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 11.72,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 6,
+        "price": 178.13,
+        "events_30d": 9,
+        "bull_actions": 1,
+        "avg_stars": 4.32,
+        "avg_pt_change": 3.3,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [],
+      "raw_score": 32
+    },
+    {
+      "ticker": "DTM",
+      "name": "DTM",
+      "sector": "에너지",
+      "market_cap_usd": "8B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 10.57,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 29,
+        "price": 149.22,
+        "events_30d": 6,
+        "bull_actions": 1,
+        "avg_stars": 4.25,
+        "avg_pt_change": 10.3,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 32
+    },
+    {
+      "ticker": "LLY",
+      "name": "LLY",
+      "sector": "헬스케어",
+      "market_cap_usd": "750B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 10,
+        "bull_actions": 1,
+        "avg_stars": 3.74,
+        "avg_pt_change": -1.4,
+        "last_rating": "2026-05-05",
+        "nps_value_mn_usd": 1736.3,
+        "nps_issuer": "ELI LILLY & CO",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 31
+    },
+    {
+      "ticker": "CR",
+      "name": "CR",
+      "sector": "산업재",
+      "market_cap_usd": "10B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 22.58,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 22,
+        "price": 175.4,
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 4.74,
+        "avg_pt_change": 2.5,
+        "last_rating": "2026-04-29"
+      },
+      "theme_match": [],
+      "raw_score": 31
+    },
+    {
+      "ticker": "ONTO",
+      "name": "ONTO",
+      "sector": "반도체",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.53,
+        "total_advisors": 2,
+        "tier_s": 2,
+        "tier_a": 0,
+        "latest_call_days": 34,
+        "price": 261.45
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 31
+    },
+    {
+      "ticker": "XOM",
+      "name": "XOM",
+      "sector": "에너지",
+      "market_cap_usd": "470B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "events_90d": 19,
+        "bull_actions": 1,
+        "avg_stars": 3.24,
+        "avg_pt_change": 8.5,
+        "last_rating": "2026-05-11",
+        "nps_value_mn_usd": 1122.9,
+        "nps_issuer": "EXXON MOBIL CORP"
+      },
+      "theme_match": [],
+      "raw_score": 30
+    },
+    {
+      "ticker": "NRG",
+      "name": "NRG",
+      "sector": "전력기기",
+      "market_cap_usd": "27B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 70.35,
+        "total_advisors": 4,
+        "tier_s": 0,
+        "tier_a": 4,
+        "latest_call_days": 163,
+        "price": 136.92
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 30
+    },
+    {
+      "ticker": "LDOS",
+      "name": "LDOS",
+      "sector": "방산",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 34.1,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 50,
+        "price": 123.04
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 30
+    },
+    {
+      "ticker": "WWD",
+      "name": "WWD",
+      "sector": "산업재",
+      "market_cap_usd": "21B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 25.08,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 34,
+        "price": 355.76
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 30
+    },
+    {
+      "ticker": "CEG",
+      "name": "Constellation Energy",
+      "sector": "원자력",
+      "market_cap_usd": "92B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 24.55,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 99,
+        "price": 285.83,
+        "thesis_grade": "Core 후보",
+        "thesis_sector": "원자력",
+        "thesis_modified": "2026-05-11 05:00"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 30
+    },
+    {
+      "ticker": "ANET",
+      "name": "ANET",
+      "sector": "AI인프라",
+      "market_cap_usd": "190B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 21.14,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 44,
+        "price": 148.59,
+        "events_30d": 7,
+        "bull_actions": 0,
+        "avg_stars": 4.34,
+        "avg_pt_change": 6.8,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 30
+    },
+    {
+      "ticker": "NFLX",
+      "name": "NFLX",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "450B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 17,
+        "bull_actions": 2,
+        "avg_stars": 3.83,
+        "avg_pt_change": 1.8,
+        "last_rating": "2026-05-15",
+        "nps_value_mn_usd": 878.7,
+        "nps_issuer": "NETFLIX INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 29
+    },
+    {
+      "ticker": "BIIB",
+      "name": "BIIB",
+      "sector": "헬스케어",
+      "market_cap_usd": "27B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 22.45,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 31,
+        "price": 189.47,
+        "events_30d": 8,
+        "bull_actions": 2,
+        "avg_stars": 3.63,
+        "avg_pt_change": 6.8,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [],
+      "raw_score": 29
+    },
+    {
+      "ticker": "HII",
+      "name": "HII",
+      "sector": "방산",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 15.47,
+        "total_advisors": 3,
+        "tier_s": 1,
+        "tier_a": 2,
+        "latest_call_days": 50,
+        "price": 317.55
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 29
+    },
+    {
+      "ticker": "RKT",
+      "name": "RKT",
+      "sector": "금융",
+      "market_cap_usd": "28B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 65.83,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 66,
+        "price": 13.87,
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 3.17,
+        "avg_pt_change": -2.3,
+        "last_rating": "2026-05-12",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 28
+    },
+    {
+      "ticker": "BA",
+      "name": "BA",
+      "sector": "방산",
+      "market_cap_usd": "140B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.53,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 50,
+        "price": 219.61
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 28
+    },
+    {
+      "ticker": "GD",
+      "name": "GD",
+      "sector": "방산",
+      "market_cap_usd": "92B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.28,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 50,
+        "price": 338.71
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 28
+    },
+    {
+      "ticker": "HXL",
+      "name": "HXL",
+      "sector": "방산",
+      "market_cap_usd": "5B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 6.18,
+        "total_advisors": 4,
+        "tier_s": 1,
+        "tier_a": 3,
+        "latest_call_days": 50,
+        "price": 84.76
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 28
+    },
+    {
+      "ticker": "LMT",
+      "name": "LMT",
+      "sector": "방산",
+      "market_cap_usd": "120B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 24.33,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 50,
+        "price": 522.79
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 27
+    },
+    {
+      "ticker": "OXY",
+      "name": "OXY",
+      "sector": "에너지",
+      "market_cap_usd": "47B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 17,
+        "bull_actions": 4,
+        "avg_stars": 3.16,
+        "avg_pt_change": 17.5,
+        "last_rating": "2026-05-08"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 27
+    },
+    {
+      "ticker": "CSCO",
+      "name": "CSCO",
+      "sector": "AI인프라",
+      "market_cap_usd": "240B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "events_30d": 12,
+        "bull_actions": 1,
+        "avg_stars": 4.24,
+        "avg_pt_change": 40.2,
+        "last_rating": "2026-05-15",
+        "nps_value_mn_usd": 734.2,
+        "nps_issuer": "CISCO SYS INC"
+      },
+      "theme_match": [],
+      "raw_score": 26
+    },
+    {
+      "ticker": "VIK",
+      "name": "VIK",
+      "sector": "여행",
+      "market_cap_usd": "20B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.19,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 29,
+        "price": 83.9,
+        "events_30d": 8,
+        "bull_actions": 1,
+        "avg_stars": 3.77,
+        "avg_pt_change": 10.1,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [],
+      "raw_score": 26
+    },
+    {
+      "ticker": "VRT",
+      "name": "Vertiv",
+      "sector": "데이터센터",
+      "market_cap_usd": "60B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 12,
+        "bull_actions": 1,
+        "avg_stars": 4.53,
+        "avg_pt_change": 17.1,
+        "last_rating": "2026-05-15",
+        "thesis_grade": "2/3",
+        "thesis_sector": "데이터센터",
+        "thesis_modified": "2026-05-11 04:37"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 26
+    },
+    {
+      "ticker": "ALAB",
+      "name": "AsteraLabs",
+      "sector": "AI인프라",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 11,
+        "bull_actions": 1,
+        "avg_stars": 4.41,
+        "avg_pt_change": 27.8,
+        "last_rating": "2026-05-19",
+        "thesis_sector": "AI인프라",
+        "thesis_modified": "2026-04-19 20:13"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 26
+    },
+    {
+      "ticker": "BRK.B",
+      "name": "BRK.B",
+      "sector": "금융",
+      "market_cap_usd": "1.0T",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 1334.8,
+        "nps_issuer": "BERKSHIRE HATHAWAY INC DEL"
+      },
+      "theme_match": [],
+      "raw_score": 25
+    },
+    {
+      "ticker": "WMT",
+      "name": "WMT",
+      "sector": "소비재",
+      "market_cap_usd": "650B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 1093.3,
+        "nps_issuer": "WALMART INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 25
+    },
+    {
+      "ticker": "EXC",
+      "name": "EXC",
+      "sector": "전력기기",
+      "market_cap_usd": "45B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 27.89,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 45.35
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 25
+    },
+    {
+      "ticker": "LITE",
+      "name": "Lumentum",
+      "sector": "광학",
+      "market_cap_usd": "26B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 8,
+        "bull_actions": 1,
+        "avg_stars": 4.28,
+        "avg_pt_change": 40.8,
+        "last_rating": "2026-05-07",
+        "thesis_grade": "A (기존 보유 유지, 추매 보류)",
+        "thesis_sector": "광학",
+        "thesis_modified": "2026-04-15 16:13"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 25
+    },
+    {
+      "ticker": "CAI",
+      "name": "CAI",
+      "sector": "헬스케어",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 75.66,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 38,
+        "price": 15.94
+      },
+      "theme_match": [],
+      "raw_score": 25
+    },
+    {
+      "ticker": "VST",
+      "name": "VST",
+      "sector": "전력기기",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 59.65,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 205,
+        "price": 149.08
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 24
+    },
+    {
+      "ticker": "RGLD",
+      "name": "RGLD",
+      "sector": "원자재",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 46.18,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 36,
+        "price": 222.33
+      },
+      "theme_match": [],
+      "raw_score": 24
+    },
+    {
+      "ticker": "TKO",
+      "name": "TKO",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 17.41,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 20,
+        "price": 191.63,
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 2.83,
+        "avg_pt_change": 0.2,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [],
+      "raw_score": 24
+    },
+    {
+      "ticker": "FIX",
+      "name": "FIX",
+      "sector": "산업재",
+      "market_cap_usd": "20B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 9.19,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 27,
+        "price": 1835.33,
+        "events_30d": 2,
+        "bull_actions": 1,
+        "avg_stars": 4.12,
+        "avg_pt_change": 18.6,
+        "last_rating": "2026-04-27"
+      },
+      "theme_match": [],
+      "raw_score": 24
+    },
+    {
+      "ticker": "OKE",
+      "name": "OKE",
+      "sector": "에너지",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 7.97,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 57,
+        "price": 92.62,
+        "events_30d": 7,
+        "bull_actions": 0,
+        "avg_stars": 4.11,
+        "avg_pt_change": 2.3,
+        "last_rating": "2026-05-08"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 24
+    },
+    {
+      "ticker": "COHR",
+      "name": "Coherent",
+      "sector": "광학",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 4.02,
+        "avg_pt_change": 26.4,
+        "last_rating": "2026-05-07",
+        "thesis_grade": "Core",
+        "thesis_sector": "광학",
+        "thesis_modified": "2026-05-11 00:06"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 24
+    },
+    {
+      "ticker": "UNH",
+      "name": "UNH",
+      "sector": "헬스케어",
+      "market_cap_usd": "470B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 11,
+        "bull_actions": 1,
+        "avg_stars": 3.08,
+        "avg_pt_change": 8.5,
+        "last_rating": "2026-04-28",
+        "nps_value_mn_usd": 633.9,
+        "nps_issuer": "UNITEDHEALTH GROUP INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 23
+    },
+    {
+      "ticker": "CAT",
+      "name": "CAT",
+      "sector": "산업재",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 7,
+        "bull_actions": 1,
+        "avg_stars": 3.5,
+        "avg_pt_change": 33.0,
+        "last_rating": "2026-05-05",
+        "nps_value_mn_usd": 560.8,
+        "nps_issuer": "CATERPILLAR INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 23
+    },
+    {
+      "ticker": "CVX",
+      "name": "CVX",
+      "sector": "에너지",
+      "market_cap_usd": "300B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "events_90d": 15,
+        "bull_actions": 1,
+        "avg_stars": 3.11,
+        "avg_pt_change": 9.9,
+        "last_rating": "2026-05-11",
+        "nps_value_mn_usd": 664.5,
+        "nps_issuer": "CHEVRON CORP NEW"
+      },
+      "theme_match": [],
+      "raw_score": 23
+    },
+    {
+      "ticker": "LIN",
+      "name": "LIN",
+      "sector": "화학",
+      "market_cap_usd": "230B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 8,
+        "bull_actions": 1,
+        "avg_stars": 3.3,
+        "avg_pt_change": 6.2,
+        "last_rating": "2026-05-05",
+        "nps_value_mn_usd": 511.1,
+        "nps_issuer": "LINDE PLC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 23
+    },
+    {
+      "ticker": "BAH",
+      "name": "BAH",
+      "sector": "방산",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 11.33,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 50,
+        "price": 76.35
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 23
+    },
+    {
+      "ticker": "MRVL",
+      "name": "Marvell",
+      "sector": "AI인프라",
+      "market_cap_usd": "150B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 7,
+        "bull_actions": 0,
+        "avg_stars": 4.91,
+        "avg_pt_change": 50.3,
+        "last_rating": "2026-05-21",
+        "thesis_grade": "보류",
+        "thesis_sector": "AI인프라",
+        "thesis_modified": "2026-05-12 09:19"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 23
+    },
+    {
+      "ticker": "WING",
+      "name": "WING",
+      "sector": "소비재",
+      "market_cap_usd": "4B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 43.23,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 49,
+        "price": 132.65,
+        "events_30d": 10,
+        "bull_actions": 0,
+        "avg_stars": 3.14,
+        "avg_pt_change": -17.7,
+        "last_rating": "2026-05-04"
+      },
+      "theme_match": [],
+      "raw_score": 23
+    },
+    {
+      "ticker": "WFC",
+      "name": "WFC",
+      "sector": "금융",
+      "market_cap_usd": "260B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 31.72,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 56,
+        "price": 75.92,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 22
+    },
+    {
+      "ticker": "CHTR",
+      "name": "CHTR",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 118.27,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 227,
+        "price": 148.9,
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 3.5,
+        "avg_pt_change": -12.4,
+        "last_rating": "2026-04-29"
+      },
+      "theme_match": [],
+      "raw_score": 22
+    },
+    {
+      "ticker": "HLNE",
+      "name": "HLNE",
+      "sector": "금융",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 86.82,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 219,
+        "price": 88.59
+      },
+      "theme_match": [],
+      "raw_score": 22
+    },
+    {
+      "ticker": "RBLX",
+      "name": "RBLX",
+      "sector": "게임",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 82.05,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 101,
+        "price": 46.14,
+        "events_30d": 15,
+        "bull_actions": 1,
+        "avg_stars": 3.56,
+        "avg_pt_change": -32.6,
+        "last_rating": "2026-05-05",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 22
+    },
+    {
+      "ticker": "COR",
+      "name": "COR",
+      "sector": "헬스케어",
+      "market_cap_usd": "50B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 50.69,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 112,
+        "price": 265.44,
+        "events_30d": 6,
+        "bull_actions": 1,
+        "avg_stars": 2.73,
+        "avg_pt_change": -14.1,
+        "last_rating": "2026-05-11"
+      },
+      "theme_match": [],
+      "raw_score": 22
+    },
+    {
+      "ticker": "PPL",
+      "name": "PPL",
+      "sector": "전력기기",
+      "market_cap_usd": "26B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 14.74,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 86,
+        "price": 36.17
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 22
+    },
+    {
+      "ticker": "AAL",
+      "name": "AAL",
+      "sector": "여행",
+      "market_cap_usd": "9B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 128.11,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 90,
+        "price": 13.59
+      },
+      "theme_match": [],
+      "raw_score": 21
+    },
+    {
+      "ticker": "PCG",
+      "name": "PCG",
+      "sector": "전력기기",
+      "market_cap_usd": "47B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 39.9,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 205,
+        "price": 16.44
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 21
+    },
+    {
+      "ticker": "DKS",
+      "name": "DKS",
+      "sector": "소비재",
+      "market_cap_usd": "18B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 35.3,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 35,
+        "price": 221.73
+      },
+      "theme_match": [],
+      "raw_score": 21
+    },
+    {
+      "ticker": "WMB",
+      "name": "WMB",
+      "sector": "에너지",
+      "market_cap_usd": "75B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 7.07,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 31,
+        "price": 77.52
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 21
+    },
+    {
+      "ticker": "INTC",
+      "name": "INTC",
+      "sector": "반도체",
+      "market_cap_usd": "120B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 17,
+        "bull_actions": 2,
+        "avg_stars": 4.5,
+        "avg_pt_change": 42.0,
+        "last_rating": "2026-05-12"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 21
+    },
+    {
+      "ticker": "GLW",
+      "name": "Corning",
+      "sector": "데이터센터",
+      "market_cap_usd": "45B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 10,
+        "bull_actions": 0,
+        "avg_stars": 4.46,
+        "avg_pt_change": 28.6,
+        "last_rating": "2026-05-12",
+        "thesis_sector": "데이터센터",
+        "thesis_modified": "2026-05-11 05:50"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 21
+    },
+    {
+      "ticker": "GEV",
+      "name": "GE Vernova",
+      "sector": "전력기기",
+      "market_cap_usd": "260B",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 9,
+        "bull_actions": 0,
+        "avg_stars": 4.19,
+        "avg_pt_change": 35.0,
+        "last_rating": "2026-04-27",
+        "thesis_sector": "전력기기",
+        "thesis_modified": "2026-05-11 05:02"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 20
+    },
+    {
+      "ticker": "JEF",
+      "name": "JEF",
+      "sector": "금융",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 42.99,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 216,
+        "price": 52.45
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "CRH",
+      "name": "CRH",
+      "sector": "산업재",
+      "market_cap_usd": "75B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 33.62,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 36,
+        "price": 101.03
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "AMTM",
+      "name": "AMTM",
+      "sector": "방산",
+      "market_cap_usd": "7B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 29.53,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 176,
+        "price": 23.16
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 20
+    },
+    {
+      "ticker": "SBUX",
+      "name": "SBUX",
+      "sector": "소비재",
+      "market_cap_usd": "120B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 17.16,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 36,
+        "price": 104.13,
+        "events_30d": 15,
+        "bull_actions": 1,
+        "avg_stars": 3.14,
+        "avg_pt_change": 5.1,
+        "last_rating": "2026-05-14",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "PNFP",
+      "name": "PNFP",
+      "sector": "금융",
+      "market_cap_usd": "8B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 16.44,
+        "total_advisors": 3,
+        "tier_s": 0,
+        "tier_a": 3,
+        "latest_call_days": 44,
+        "price": 97.33,
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 3.89,
+        "avg_pt_change": 7.2,
+        "last_rating": "2026-05-11"
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "AA",
+      "name": "AA",
+      "sector": "비철금속",
+      "market_cap_usd": "8B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 13.17,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 14,
+        "price": 66.27
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "PWR",
+      "name": "Quanta Services",
+      "sector": "전력기기",
+      "market_cap_usd": "100B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 8,
+        "bull_actions": 0,
+        "avg_stars": 4.25,
+        "avg_pt_change": 27.7,
+        "last_rating": "2026-05-11",
+        "thesis_grade": "B+",
+        "thesis_sector": "전력기기",
+        "thesis_modified": "2026-05-11 04:46"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 20
+    },
+    {
+      "ticker": "ROK",
+      "name": "Rockwell_Automation",
+      "sector": "전력기기",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 4.21,
+        "avg_pt_change": 12.6,
+        "last_rating": "2026-05-13",
+        "thesis_grade": "A (3/3)",
+        "thesis_sector": "전력기기",
+        "thesis_modified": "2026-05-21 04:36",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 20
+    },
+    {
+      "ticker": "OKTA",
+      "name": "OKTA",
+      "sector": "보안",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 17,
+        "bull_actions": 4,
+        "avg_stars": 3.0,
+        "avg_pt_change": -7.6,
+        "last_rating": "2026-05-14"
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "XNDU",
+      "name": "Xanadu",
+      "sector": "양자컴퓨팅",
+      "market_cap_usd": null,
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_90d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_90d": 2,
+        "bull_actions": 2,
+        "avg_stars": 3.12,
+        "last_rating": "2026-04-23",
+        "thesis_grade": "보류",
+        "thesis_sector": "양자컴퓨팅",
+        "thesis_modified": "2026-05-07 03:26"
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "BROS",
+      "name": "BROS",
+      "sector": "소비재",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 9,
+        "bull_actions": 4,
+        "avg_stars": 2.82,
+        "avg_pt_change": 1.7,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [],
+      "raw_score": 20
+    },
+    {
+      "ticker": "ABBV",
+      "name": "ABBV",
+      "sector": "헬스케어",
+      "market_cap_usd": "340B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 8,
+        "bull_actions": 0,
+        "avg_stars": 3.75,
+        "avg_pt_change": 0.6,
+        "last_rating": "2026-05-15",
+        "nps_value_mn_usd": 881.2,
+        "nps_issuer": "ABBVIE INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "QXO",
+      "name": "QXO",
+      "sector": "산업재",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 84.97,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 309,
+        "price": 17.03
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "DPZ",
+      "name": "DPZ",
+      "sector": "소비재",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 42.19,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 86,
+        "price": 316.47,
+        "events_30d": 15,
+        "bull_actions": 0,
+        "avg_stars": 3.44,
+        "avg_pt_change": -9.7,
+        "last_rating": "2026-04-28"
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "LNG",
+      "name": "LNG",
+      "sector": "에너지",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 30.17,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 59,
+        "price": 240.45
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "AMCR",
+      "name": "AMCR",
+      "sector": "산업재",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 29.87,
+        "total_advisors": 2,
+        "tier_s": 2,
+        "tier_a": 0,
+        "latest_call_days": 134,
+        "price": 38.5
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "ETN",
+      "name": "Eaton",
+      "sector": "전력기기",
+      "market_cap_usd": "140B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 4.05,
+        "avg_pt_change": 11.3,
+        "last_rating": "2026-05-06",
+        "thesis_sector": "전력기기",
+        "thesis_modified": "2026-05-11 05:27",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 19
+    },
+    {
+      "ticker": "RKLB",
+      "name": "RKLB",
+      "sector": "우주항공",
+      "market_cap_usd": "20B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 15,
+        "bull_actions": 3,
+        "avg_stars": 4.54,
+        "avg_pt_change": 20.1,
+        "last_rating": "2026-05-12",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "SRE",
+      "name": "SRE",
+      "sector": "전력기기",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 10,
+        "bull_actions": 2,
+        "avg_stars": 3.92,
+        "avg_pt_change": 3.1,
+        "last_rating": "2026-05-11"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 19
+    },
+    {
+      "ticker": "POOL",
+      "name": "POOL",
+      "sector": "소비재",
+      "market_cap_usd": "7B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 76.12,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 129,
+        "price": 181.69
+      },
+      "theme_match": [],
+      "raw_score": 19
+    },
+    {
+      "ticker": "KRMN",
+      "name": "KRMN",
+      "sector": "방산",
+      "market_cap_usd": "1.5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 8,
+        "bull_actions": 2,
+        "avg_stars": 3.92,
+        "avg_pt_change": 2.1,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 19
+    },
+    {
+      "ticker": "DIS",
+      "name": "DIS",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "210B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 10,
+        "bull_actions": 1,
+        "avg_stars": 3.66,
+        "avg_pt_change": -1.3,
+        "last_rating": "2026-05-08",
+        "nps_value_mn_usd": 471.7,
+        "nps_issuer": "DISNEY WALT CO",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "VZ",
+      "name": "VZ",
+      "sector": "통신",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 6,
+        "bull_actions": 1,
+        "avg_stars": 3.71,
+        "avg_pt_change": 6.7,
+        "last_rating": "2026-04-30",
+        "nps_value_mn_usd": 420.6,
+        "nps_issuer": "VERIZON COMMUNICATIONS INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "COST",
+      "name": "COST",
+      "sector": "소비재",
+      "market_cap_usd": "420B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 792.7,
+        "nps_issuer": "COSTCO WHSL CORP NEW",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "PG",
+      "name": "PG",
+      "sector": "소비재",
+      "market_cap_usd": "390B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 774.5,
+        "nps_issuer": "PROCTER AND GAMBLE CO",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "HD",
+      "name": "HD",
+      "sector": "소비재",
+      "market_cap_usd": "380B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 735.5,
+        "nps_issuer": "HOME DEPOT INC"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "KO",
+      "name": "KO",
+      "sector": "소비재",
+      "market_cap_usd": "300B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 636.6,
+        "nps_issuer": "COCA COLA CO",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "GS",
+      "name": "GS",
+      "sector": "금융",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 580.2,
+        "nps_issuer": "GOLDMAN SACHS GROUP INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "PM",
+      "name": "PM",
+      "sector": "소비재",
+      "market_cap_usd": "220B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 575.4,
+        "nps_issuer": "PHILIP MORRIS INTL INC"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "CRM",
+      "name": "CRM",
+      "sector": "소프트웨어",
+      "market_cap_usd": "270B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 554.8,
+        "nps_issuer": "SALESFORCE INC"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "ABT",
+      "name": "ABT",
+      "sector": "헬스케어",
+      "market_cap_usd": "230B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 504.1,
+        "nps_issuer": "ABBOTT LABS",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "CBRE",
+      "name": "CBRE",
+      "sector": "리츠/물류",
+      "market_cap_usd": "40B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 41.18,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 87,
+        "price": 131.04
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "OZK",
+      "name": "OZK",
+      "sector": "금융",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.37,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 44,
+        "price": 48.17
+      },
+      "theme_match": [],
+      "raw_score": 18
+    },
+    {
+      "ticker": "BE",
+      "name": "Bloom Energy",
+      "sector": "에너지",
+      "market_cap_usd": "8B",
+      "size_bucket": "미드",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 8,
+        "bull_actions": 0,
+        "avg_stars": 3.76,
+        "avg_pt_change": 59.4,
+        "last_rating": "2026-04-30",
+        "thesis_grade": "B+ (2/3 Yes, 해자 Weak",
+        "thesis_sector": "에너지",
+        "thesis_modified": "2026-04-18 04:03"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 18
+    },
+    {
+      "ticker": "TXN",
+      "name": "TXN",
+      "sector": "반도체",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 17,
+        "bull_actions": 1,
+        "avg_stars": 4.73,
+        "avg_pt_change": 22.7,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 17
+    },
+    {
+      "ticker": "MCD",
+      "name": "MCD",
+      "sector": "소비재",
+      "market_cap_usd": "210B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 10,
+        "bull_actions": 1,
+        "avg_stars": 3.06,
+        "avg_pt_change": -3.0,
+        "last_rating": "2026-05-11",
+        "nps_value_mn_usd": 476.0,
+        "nps_issuer": "MCDONALDS CORP",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "SOFI",
+      "name": "SOFI",
+      "sector": "금융",
+      "market_cap_usd": "18B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 91.69,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 101,
+        "price": 15.65,
+        "events_30d": 7,
+        "bull_actions": 0,
+        "avg_stars": 2.58,
+        "avg_pt_change": -15.2,
+        "last_rating": "2026-05-12",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "FDS",
+      "name": "FDS",
+      "sector": "ITService",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 88.88,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 241,
+        "price": 225.01
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "FIS",
+      "name": "FIS",
+      "sector": "금융",
+      "market_cap_usd": "37B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 67.35,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 211,
+        "price": 43.62
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "VRSK",
+      "name": "VRSK",
+      "sector": "ITService",
+      "market_cap_usd": "37B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 60.26,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 203,
+        "price": 171.6
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "HLI",
+      "name": "HLI",
+      "sector": "금융",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 51.77,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 230,
+        "price": 151.55
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "RPM",
+      "name": "RPM",
+      "sector": "산업재",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 26.0,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 78,
+        "price": 99.21
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "EQH",
+      "name": "EQH",
+      "sector": "금융",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 24.65,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 42.52
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "STX",
+      "name": "STX",
+      "sector": "반도체",
+      "market_cap_usd": "21B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 13,
+        "bull_actions": 1,
+        "avg_stars": 4.85,
+        "avg_pt_change": 38.1,
+        "last_rating": "2026-05-12"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 17
+    },
+    {
+      "ticker": "NVT",
+      "name": "nVent Electric",
+      "sector": "전력기기",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "us_analyst_ratings_30d",
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "events_30d": 7,
+        "bull_actions": 0,
+        "avg_stars": 3.53,
+        "avg_pt_change": 23.8,
+        "last_rating": "2026-05-05",
+        "thesis_grade": "B",
+        "thesis_sector": "전력기기",
+        "thesis_modified": "2026-04-15 11:01"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 17
+    },
+    {
+      "ticker": "PFE",
+      "name": "PFE",
+      "sector": "헬스케어",
+      "market_cap_usd": "150B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 10,
+        "bull_actions": 3,
+        "avg_stars": 3.94,
+        "avg_pt_change": 3.6,
+        "last_rating": "2026-04-29"
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "MOD",
+      "name": "Modine Manufacturing",
+      "sector": "데이터센터",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "thesis_grade": "B+",
+        "thesis_sector": "데이터센터",
+        "thesis_modified": "2026-04-15 11:14"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 17
+    },
+    {
+      "ticker": "FRMI",
+      "name": "FRMI",
+      "sector": "헬스케어",
+      "market_cap_usd": "2B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 395.05,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 206,
+        "price": 6.06
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "CERT",
+      "name": "CERT",
+      "sector": "헬스케어",
+      "market_cap_usd": "1B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 209.48,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 322,
+        "price": 5.17,
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 2.65,
+        "avg_pt_change": -14.4,
+        "last_rating": "2026-05-12"
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "MSM",
+      "name": "MSM",
+      "sector": "산업재",
+      "market_cap_usd": "4B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 10.4,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 24,
+        "price": 105.98
+      },
+      "theme_match": [],
+      "raw_score": 17
+    },
+    {
+      "ticker": "LEU",
+      "name": "Centrus Energy",
+      "sector": "원자력",
+      "market_cap_usd": "4B",
+      "size_bucket": "미드",
+      "thesis_exists": true,
+      "source": [
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "thesis_grade": "B+ (Short 22%⚠️, 매출가",
+        "thesis_sector": "원자력",
+        "thesis_modified": "2026-05-12 09:15"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 17
+    },
+    {
+      "ticker": "CPRT",
+      "name": "CPRT",
+      "sector": "산업재",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 45.35,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 317,
+        "price": 34.4
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "LKQ",
+      "name": "LKQ",
+      "sector": "자동차",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 45.09,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 162,
+        "price": 26.88
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "G",
+      "name": "G",
+      "sector": "ITService",
+      "market_cap_usd": "10B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 40.62,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 211,
+        "price": 32.0
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "MTD",
+      "name": "MTD",
+      "sector": "헬스케어",
+      "market_cap_usd": "23B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 32.97,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 62,
+        "price": 1090.45
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "EMR",
+      "name": "EMR",
+      "sector": "전력기기",
+      "market_cap_usd": "80B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 24.54,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 136,
+        "price": 134.9,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 16
+    },
+    {
+      "ticker": "LNC",
+      "name": "LNC",
+      "sector": "금융",
+      "market_cap_usd": "6B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.51,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 35.98
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "LYV",
+      "name": "LYV",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "33B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 9,
+        "bull_actions": 3,
+        "avg_stars": 3.78,
+        "avg_pt_change": 4.7,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "DELL",
+      "name": "DELL",
+      "sector": "AI인프라",
+      "market_cap_usd": "60B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 14,
+        "bull_actions": 1,
+        "avg_stars": 4.4,
+        "avg_pt_change": 18.6,
+        "last_rating": "2026-05-14",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 16
+    },
+    {
+      "ticker": "MDLN",
+      "name": "MDLN",
+      "sector": "산업재",
+      "market_cap_usd": "8B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 48.25,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 105,
+        "price": 37.1
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "DCI",
+      "name": "DCI",
+      "sector": "산업재",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 45.24,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 132,
+        "price": 82.62
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "ATR",
+      "name": "ATR",
+      "sector": "산업재",
+      "market_cap_usd": "7.5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 24.66,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 62,
+        "price": 115.51
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "ALGM",
+      "name": "ALGM",
+      "sector": "반도체",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 14.09,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 97,
+        "price": 44.7,
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 4.93,
+        "avg_pt_change": 13.3,
+        "last_rating": "2026-05-08"
+      },
+      "theme_match": [],
+      "raw_score": 16
+    },
+    {
+      "ticker": "CLF",
+      "name": "CLF",
+      "sector": "철강",
+      "market_cap_usd": "5B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 35.51,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 132,
+        "price": 10.7
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "TEL",
+      "name": "TEL",
+      "sector": "전자부품",
+      "market_cap_usd": "60B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 33.29,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 114,
+        "price": 202.57
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "LHX",
+      "name": "LHX",
+      "sector": "방산",
+      "market_cap_usd": "55B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 19.81,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 156,
+        "price": 306.33
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 15
+    },
+    {
+      "ticker": "CHRD",
+      "name": "CHRD",
+      "sector": "에너지",
+      "market_cap_usd": "8B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 17.61,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 55,
+        "price": 142.85
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "RRC",
+      "name": "RRC",
+      "sector": "에너지",
+      "market_cap_usd": "10B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 16.67,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 49,
+        "price": 41.14
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "USB",
+      "name": "USB",
+      "sector": "금융",
+      "market_cap_usd": "75B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 10.89,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 56,
+        "price": 54.56
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "CIEN",
+      "name": "CIEN",
+      "sector": "AI인프라",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 4.24,
+        "avg_pt_change": 47.4,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 15
+    },
+    {
+      "ticker": "HSIC",
+      "name": "HSIC",
+      "sector": "헬스케어",
+      "market_cap_usd": "10B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 15,
+        "bull_actions": 3,
+        "avg_stars": 3.32,
+        "avg_pt_change": 9.3,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "AMT",
+      "name": "AMT",
+      "sector": "리츠/물류",
+      "market_cap_usd": "100B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 12,
+        "bull_actions": 3,
+        "avg_stars": 3.38,
+        "avg_pt_change": -0.0,
+        "last_rating": "2026-04-30",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "BF.B",
+      "name": "BF.B",
+      "sector": "소비재",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 11,
+        "bull_actions": 3,
+        "avg_stars": 2.35,
+        "avg_pt_change": -4.3,
+        "last_rating": "2026-04-29"
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "IQV",
+      "name": "IQV",
+      "sector": "헬스케어",
+      "market_cap_usd": "35B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 4,
+        "bull_actions": 3,
+        "avg_stars": 2.03,
+        "avg_pt_change": 1.5,
+        "last_rating": "2026-04-08"
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "TDG",
+      "name": "TDG",
+      "sector": "방산",
+      "market_cap_usd": "75B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 5,
+        "bull_actions": 1,
+        "avg_stars": 4.16,
+        "avg_pt_change": -5.1,
+        "last_rating": "2026-05-06",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 15
+    },
+    {
+      "ticker": "TXT",
+      "name": "TXT",
+      "sector": "방산",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 5,
+        "bull_actions": 1,
+        "avg_stars": 4.37,
+        "avg_pt_change": 3.8,
+        "last_rating": "2026-05-04",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 15
+    },
+    {
+      "ticker": "QS",
+      "name": "QS",
+      "sector": "자동차",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 43.2,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 164,
+        "price": 8.38
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "NXST",
+      "name": "NXST",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "6B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 16.14,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 41,
+        "price": 189.42
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "CAVA",
+      "name": "CAVA",
+      "sector": "소비재",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 20,
+        "bull_actions": 3,
+        "avg_stars": 2.89,
+        "avg_pt_change": 13.6,
+        "last_rating": "2026-05-14"
+      },
+      "theme_match": [],
+      "raw_score": 15
+    },
+    {
+      "ticker": "INCY",
+      "name": "INCY",
+      "sector": "헬스케어",
+      "market_cap_usd": "21B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 38.59,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 105,
+        "price": 97.41
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "BRO",
+      "name": "BRO",
+      "sector": "금융",
+      "market_cap_usd": "33B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 24.74,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 112,
+        "price": 58.52,
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 3.3,
+        "avg_pt_change": -5.5,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "PEG",
+      "name": "PEG",
+      "sector": "전력기기",
+      "market_cap_usd": "39B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 17.23,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 121,
+        "price": 78.48
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 14
+    },
+    {
+      "ticker": "PNC",
+      "name": "PNC",
+      "sector": "금융",
+      "market_cap_usd": "78B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 14.48,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 218.37
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "COF",
+      "name": "COF",
+      "sector": "금융",
+      "market_cap_usd": "78B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 14.11,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 42,
+        "price": 186.66
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "UNM",
+      "name": "UNM",
+      "sector": "금융",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 12.44,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 84.49
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "DOW",
+      "name": "DOW",
+      "sector": "화학",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 11.39,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 70,
+        "price": 35.91,
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 3.43,
+        "avg_pt_change": 5.1,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "NEM",
+      "name": "Newmont",
+      "sector": "원자재",
+      "market_cap_usd": "60B",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "source": [
+        "get_us_buy_candidates",
+        "existing_thesis",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 5.23,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 210,
+        "price": 108.33,
+        "thesis_grade": "Core 후보",
+        "thesis_sector": "원자재",
+        "thesis_modified": "2026-05-08 02:17",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 14
+    },
+    {
+      "ticker": "ROL",
+      "name": "ROL",
+      "sector": "산업재",
+      "market_cap_usd": "26B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 35.8,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 167,
+        "price": 53.02
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "ALLE",
+      "name": "ALLE",
+      "sector": "산업재",
+      "market_cap_usd": "13B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 29.3,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 280,
+        "price": 130.7
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "FCX",
+      "name": "FCX",
+      "sector": "비철금속",
+      "market_cap_usd": "85B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 21.97,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 90,
+        "price": 62.31,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "DOV",
+      "name": "DOV",
+      "sector": "산업재",
+      "market_cap_usd": "29B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 16.96,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 65,
+        "price": 207.77,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "PKG",
+      "name": "PKG",
+      "sector": "산업재",
+      "market_cap_usd": "23B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 9.0,
+        "total_advisors": 1,
+        "tier_s": 1,
+        "tier_a": 0,
+        "latest_call_days": 135,
+        "price": 213.76,
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 1.83,
+        "avg_pt_change": 6.4,
+        "last_rating": "2026-05-04"
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "WDC",
+      "name": "WDC",
+      "sector": "반도체",
+      "market_cap_usd": "21B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 11,
+        "bull_actions": 0,
+        "avg_stars": 4.91,
+        "avg_pt_change": 30.4,
+        "last_rating": "2026-05-04"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 13
+    },
+    {
+      "ticker": "INSM",
+      "name": "INSM",
+      "sector": "헬스케어",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 18,
+        "bull_actions": 2,
+        "avg_stars": 4.2,
+        "avg_pt_change": -0.1,
+        "last_rating": "2026-05-14"
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "AYI",
+      "name": "AYI",
+      "sector": "산업재",
+      "market_cap_usd": "9B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 35.17,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 261,
+        "price": 281.13
+      },
+      "theme_match": [],
+      "raw_score": 13
+    },
+    {
+      "ticker": "C",
+      "name": "C",
+      "sector": "금융",
+      "market_cap_usd": "150B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 7.81,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 125.22,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "PEP",
+      "name": "PEP",
+      "sector": "소비재",
+      "market_cap_usd": "220B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 451.2,
+        "nps_issuer": "PEPSICO INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "T",
+      "name": "T",
+      "sector": "통신",
+      "market_cap_usd": "240B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 444.4,
+        "nps_issuer": "AT&T INC",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "ADBE",
+      "name": "ADBE",
+      "sector": "소프트웨어",
+      "market_cap_usd": "240B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "nps_us_holdings_2025Q4"
+      ],
+      "raw_signals": {
+        "nps_value_mn_usd": 378.5,
+        "nps_issuer": "ADOBE INC"
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "GL",
+      "name": "GL",
+      "sector": "금융",
+      "market_cap_usd": "11B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 7.28,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 156.6
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "AKAM",
+      "name": "AKAM",
+      "sector": "AI인프라",
+      "market_cap_usd": "12B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 10,
+        "bull_actions": 1,
+        "avg_stars": 3.03,
+        "avg_pt_change": 42.6,
+        "last_rating": "2026-05-14",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 12
+    },
+    {
+      "ticker": "EL",
+      "name": "EL",
+      "sector": "소비재",
+      "market_cap_usd": "32B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_30d": 7,
+        "bull_actions": 1,
+        "avg_stars": 2.74,
+        "avg_pt_change": 4.0,
+        "last_rating": "2026-05-15",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K뷰티"
+      ],
+      "raw_score": 12
+    },
+    {
+      "ticker": "MCHP",
+      "name": "MCHP",
+      "sector": "반도체",
+      "market_cap_usd": "37B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 11,
+        "bull_actions": 0,
+        "avg_stars": 4.66,
+        "avg_pt_change": 24.8,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 12
+    },
+    {
+      "ticker": "KLAC",
+      "name": "KLAC",
+      "sector": "AI인프라",
+      "market_cap_usd": "120B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 9,
+        "bull_actions": 0,
+        "avg_stars": 4.78,
+        "avg_pt_change": 9.1,
+        "last_rating": "2026-05-01"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 12
+    },
+    {
+      "ticker": "NUE",
+      "name": "NUE",
+      "sector": "철강",
+      "market_cap_usd": "32B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 12,
+        "bull_actions": 2,
+        "avg_stars": 3.89,
+        "avg_pt_change": 12.4,
+        "last_rating": "2026-04-29"
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "AMGN",
+      "name": "AMGN",
+      "sector": "헬스케어",
+      "market_cap_usd": "180B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 9,
+        "bull_actions": 2,
+        "avg_stars": 4.01,
+        "avg_pt_change": 0.8,
+        "last_rating": "2026-05-14"
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "ULTA",
+      "name": "ULTA",
+      "sector": "소비재",
+      "market_cap_usd": "23B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 15,
+        "bull_actions": 1,
+        "avg_stars": 3.59,
+        "avg_pt_change": 1.7,
+        "last_rating": "2026-04-20",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K뷰티"
+      ],
+      "raw_score": 12
+    },
+    {
+      "ticker": "ZION",
+      "name": "ZION",
+      "sector": "금융",
+      "market_cap_usd": "9B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 21.38,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 80,
+        "price": 61.79
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "BPOP",
+      "name": "BPOP",
+      "sector": "금융",
+      "market_cap_usd": "8B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 7.05,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 44,
+        "price": 149.46
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "BHF",
+      "name": "BHF",
+      "sector": "금융",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 6.84,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 56,
+        "price": 62.71
+      },
+      "theme_match": [],
+      "raw_score": 12
+    },
+    {
+      "ticker": "ELF",
+      "name": "ELF",
+      "sector": "소비재",
+      "market_cap_usd": "6.5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 8,
+        "bull_actions": 1,
+        "avg_stars": 3.19,
+        "avg_pt_change": -22.9,
+        "last_rating": "2026-05-01",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K뷰티"
+      ],
+      "raw_score": 12
+    },
+    {
+      "ticker": "EXP",
+      "name": "EXP",
+      "sector": "산업재",
+      "market_cap_usd": "9B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 31.07,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 225,
+        "price": 199.13
+      },
+      "theme_match": [],
+      "raw_score": 11
+    },
+    {
+      "ticker": "TREX",
+      "name": "TREX",
+      "sector": "산업재",
+      "market_cap_usd": "4B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 28.63,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 129,
+        "price": 38.87
+      },
+      "theme_match": [],
+      "raw_score": 11
+    },
+    {
+      "ticker": "TKR",
+      "name": "TKR",
+      "sector": "산업재",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 9.31,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 101,
+        "price": 118.93,
+        "events_30d": 6,
+        "bull_actions": 1,
+        "avg_stars": 3.69,
+        "avg_pt_change": 11.5,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [],
+      "raw_score": 11
+    },
+    {
+      "ticker": "BALL",
+      "name": "BALL",
+      "sector": "산업재",
+      "market_cap_usd": "16B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 12.69,
+        "total_advisors": 2,
+        "tier_s": 1,
+        "tier_a": 1,
+        "latest_call_days": 135,
+        "price": 56.35
+      },
+      "theme_match": [],
+      "raw_score": 11
+    },
+    {
+      "ticker": "TT",
+      "name": "TT",
+      "sector": "산업재",
+      "market_cap_usd": "85B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 12.44,
+        "total_advisors": 3,
+        "tier_s": 0,
+        "tier_a": 3,
+        "latest_call_days": 121,
+        "price": 447.64,
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 3.78,
+        "avg_pt_change": 8.6,
+        "last_rating": "2026-05-14"
+      },
+      "theme_match": [],
+      "raw_score": 11
+    },
+    {
+      "ticker": "LPLA",
+      "name": "LPLA",
+      "sector": "금융",
+      "market_cap_usd": "30B",
+      "size_bucket": "라지",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d"
+      ],
+      "raw_signals": {
+        "events_90d": 10,
+        "bull_actions": 2,
+        "avg_stars": 3.81,
+        "avg_pt_change": -4.7,
+        "last_rating": "2026-05-01"
+      },
+      "theme_match": [],
+      "raw_score": 11
+    },
+    {
+      "ticker": "BLK",
+      "name": "BLK",
+      "sector": "금융",
+      "market_cap_usd": "330B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 28.23,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 118,
+        "price": 1063.75,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 10
+    },
+    {
+      "ticker": "BEN",
+      "name": "BEN",
+      "sector": "금융",
+      "market_cap_usd": "11B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 6,
+        "bull_actions": 2,
+        "avg_stars": 3.56,
+        "avg_pt_change": 17.5,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 10
+    },
+    {
+      "ticker": "QRVO",
+      "name": "QRVO",
+      "sector": "반도체",
+      "market_cap_usd": "7B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 4.71,
+        "avg_pt_change": 12.2,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [],
+      "raw_score": 10
+    },
+    {
+      "ticker": "LFUS",
+      "name": "LFUS",
+      "sector": "산업재",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 4.85,
+        "avg_pt_change": 15.9,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [],
+      "raw_score": 10
+    },
+    {
+      "ticker": "ASTS",
+      "name": "AST SpaceMobile",
+      "sector": "위성통신",
+      "market_cap_usd": "8B",
+      "size_bucket": "미드",
+      "thesis_exists": true,
+      "source": [
+        "existing_thesis"
+      ],
+      "raw_signals": {
+        "thesis_grade": "B- (매수 보류)",
+        "thesis_sector": "위성통신",
+        "thesis_modified": "2026-04-15 15:51"
+      },
+      "theme_match": [],
+      "raw_score": 10
+    },
+    {
+      "ticker": "MS",
+      "name": "MS",
+      "sector": "금융",
+      "market_cap_usd": "180B",
+      "size_bucket": "메가",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_90d",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "events_90d": 11,
+        "bull_actions": 1,
+        "avg_stars": 4.22,
+        "avg_pt_change": 94.7,
+        "last_rating": "2026-05-08",
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 8
+    },
+    {
+      "ticker": "IPGP",
+      "name": "IPGP",
+      "sector": "광학",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 4.09,
+        "avg_pt_change": 9.3,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 7
+    },
+    {
+      "ticker": "NBIS",
+      "name": "NBIS",
+      "sector": "AI인프라",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "CRDO",
+      "name": "CRDO",
+      "sector": "AI인프라",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "IREN",
+      "name": "IREN",
+      "sector": "AI인프라",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "APLD",
+      "name": "APLD",
+      "sector": "AI인프라",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "WOLF",
+      "name": "WOLF",
+      "sector": "반도체",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "AI반도체"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "OKLO",
+      "name": "OKLO",
+      "sector": "원자력",
+      "market_cap_usd": "4B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "SMR",
+      "name": "SMR",
+      "sector": "원자력",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "NNE",
+      "name": "NNE",
+      "sector": "원자력",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "전력기기"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "ONDS",
+      "name": "ONDS",
+      "sector": "방산",
+      "market_cap_usd": "0.5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [
+        "K방산"
+      ],
+      "raw_score": 7
+    },
+    {
+      "ticker": "MP",
+      "name": "MP",
+      "sector": "원자재",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates",
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 15.0,
+        "total_advisors": 1,
+        "tier_s": 0,
+        "tier_a": 1,
+        "latest_call_days": 167,
+        "price": 61.74,
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 6
+    },
+    {
+      "ticker": "WU",
+      "name": "WU",
+      "sector": "금융",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "get_us_buy_candidates"
+      ],
+      "raw_signals": {
+        "tp_upside_pct": 5.88,
+        "total_advisors": 2,
+        "tier_s": 0,
+        "tier_a": 2,
+        "latest_call_days": 211,
+        "price": 8.5
+      },
+      "theme_match": [],
+      "raw_score": 6
+    },
+    {
+      "ticker": "TXRH",
+      "name": "TXRH",
+      "sector": "소비재",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 9,
+        "bull_actions": 1,
+        "avg_stars": 3.22,
+        "avg_pt_change": 0.7,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "WEN",
+      "name": "WEN",
+      "sector": "소비재",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 6,
+        "bull_actions": 1,
+        "avg_stars": 2.8,
+        "avg_pt_change": -5.6,
+        "last_rating": "2026-05-13"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "FOUR",
+      "name": "FOUR",
+      "sector": "금융",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 2.69,
+        "avg_pt_change": -4.2,
+        "last_rating": "2026-05-12"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "LPX",
+      "name": "LPX",
+      "sector": "산업재",
+      "market_cap_usd": "7B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 5,
+        "bull_actions": 1,
+        "avg_stars": 3.09,
+        "avg_pt_change": -2.0,
+        "last_rating": "2026-05-08"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "CELH",
+      "name": "CELH",
+      "sector": "소비재",
+      "market_cap_usd": "4B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 2.21,
+        "avg_pt_change": -7.5,
+        "last_rating": "2026-05-08"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "NYT",
+      "name": "NYT",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 2.62,
+        "avg_pt_change": 14.6,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "VGNT",
+      "name": "VGNT",
+      "sector": "산업재",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 4,
+        "bull_actions": 1,
+        "avg_stars": 2.27,
+        "avg_pt_change": 12.7,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "ASH",
+      "name": "ASH",
+      "sector": "화학",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 3.22,
+        "avg_pt_change": -11.9,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "AUR",
+      "name": "AUR",
+      "sector": "자동차",
+      "market_cap_usd": "9B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 1.6,
+        "avg_pt_change": 24.5,
+        "last_rating": "2026-05-11"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "FRPT",
+      "name": "FRPT",
+      "sector": "소비재",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 3,
+        "bull_actions": 1,
+        "avg_stars": 1.64,
+        "avg_pt_change": -2.5,
+        "last_rating": "2026-05-07"
+      },
+      "theme_match": [],
+      "raw_score": 5
+    },
+    {
+      "ticker": "MTCH",
+      "name": "MTCH",
+      "sector": "미디어/엔터",
+      "market_cap_usd": "10B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 8,
+        "bull_actions": 0,
+        "avg_stars": 3.36,
+        "avg_pt_change": 13.3,
+        "last_rating": "2026-05-06"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "GLOB",
+      "name": "GLOB",
+      "sector": "ITService",
+      "market_cap_usd": "6B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "us_analyst_ratings_30d"
+      ],
+      "raw_signals": {
+        "events_30d": 6,
+        "bull_actions": 0,
+        "avg_stars": 2.59,
+        "avg_pt_change": -18.9,
+        "last_rating": "2026-05-15"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "S",
+      "name": "S",
+      "sector": "보안",
+      "market_cap_usd": "8B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "PLUG",
+      "name": "PLUG",
+      "sector": "에너지",
+      "market_cap_usd": "3B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "FCEL",
+      "name": "FCEL",
+      "sector": "에너지",
+      "market_cap_usd": "1.5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "IONQ",
+      "name": "IONQ",
+      "sector": "양자컴퓨팅",
+      "market_cap_usd": "13B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "RGTI",
+      "name": "RGTI",
+      "sector": "양자컴퓨팅",
+      "market_cap_usd": "5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "QBTS",
+      "name": "QBTS",
+      "sector": "양자컴퓨팅",
+      "market_cap_usd": "9B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    },
+    {
+      "ticker": "QUBT",
+      "name": "QUBT",
+      "sector": "양자컴퓨팅",
+      "market_cap_usd": "1.5B",
+      "size_bucket": "미드",
+      "thesis_exists": false,
+      "source": [
+        "theme_curated"
+      ],
+      "raw_signals": {
+        "theme_priority": "manual_high_conviction"
+      },
+      "theme_match": [],
+      "raw_score": 0
+    }
+  ]
+}

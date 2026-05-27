@@ -1,0 +1,294 @@
+{
+  "selected_at": "2026-05-22T09:15:00+09:00",
+  "total_pool": 504,
+  "pool_breakdown": {
+    "kr": 253,
+    "us": 251,
+    "unique_tickers": 504,
+    "duplicates": 0
+  },
+  "scoring_method": {
+    "base": "raw_score from kr_candidates.json + us_candidates.json",
+    "sql_signal_bonus": {
+      "foreign_5d_streak": 8,
+      "consensus_upgrade_14d": 10,
+      "f_m_fcf_triple_top": 6,
+      "nps_kr_new_entries_q1": 12,
+      "nps_us_new_entries_q1": 12,
+      "insider_cluster_7d": 15,
+      "sector_relative_per_discount": 5,
+      "volume_spike_2x_with_price_up": 5,
+      "consensus_disconnect": 8,
+      "earnings_within_7d": 3
+    },
+    "multi_signal_bonus": "+10 when >=3 SQL signals matched",
+    "matrix_bonus": "+10 if ticker in B×B (관세 유지 + Fed hold) matrix winners (>=20% expected return)",
+    "nps_sell_risk_penalty": "-15 for {000660, 010120, 298040, 402340}"
+  },
+  "diversity_constraints": {
+    "kr_us_ratio": "KR 3 + US 2 (achieved)",
+    "sector_uniqueness": "5 unique sectors (achieved: 방산, 엔터/미디어, 자동차, AI인프라, 전력기기)",
+    "bxb_winners_min2": "achieved (SARO inverse-hedge + 267260 B×B +22%)"
+  },
+  "top5": [
+    {
+      "rank": 1,
+      "ticker": "SARO",
+      "name": "StandardAero",
+      "country": "US",
+      "sector": "방산",
+      "market_cap": "10B USD",
+      "size_bucket": "라지",
+      "thesis_exists": true,
+      "thesis_grade": "Standard",
+      "thesis_modified": "2026-05-21 17:54",
+      "final_score": 67.0,
+      "rank_in_pool": 1,
+      "components": {
+        "raw_score": 67,
+        "sql_signal_bonus": 0,
+        "matrix_bonus": 0,
+        "nps_penalty": 0
+      },
+      "matrix_cell": "B×A 또는 B×B (관세 25% 유지 + Fed hold) — K-방산 inverse hedge",
+      "sql_signals_matched": [],
+      "macro_theme": "K-방산 슈퍼사이클 (이란 종전·관세 우회 수혜)",
+      "differentiation": "톱 애널 6명 중 Tier S 3 + Tier A 3 (avg 4.5★) — Phase 2 후보 풀 유일한 풀스택 best-in-class 컨센. UBS Tier A 4.2★ 5/11 Upgrade Buy TP $34 (+28.94% upside) + Q1 2026 매출 컨센 +9.6% 비트 + Pratt & Whitney Unified Turbines 인수로 글로벌 항공 MRO #1.",
+      "rationale_vs_6_10": "ORCL(rank 2, AI인프라) 대비 톱애널 수 6 vs 1 — analyst quality gap 압도. 한국타이어(rank 4, 자동차)는 거버넌스 risk 잔존(조현범 횡령). MA/V(rank 7-8, 금융)는 thesis 보류·B+ 등급으로 모멘텀 약함. SARO는 thesis v2 작성 후 2일 내 신규 5/12 latest call까지 들어와 신호 신선도 최강.",
+      "key_catalysts_30d": [
+        "5/28 NVDA Q1 어닝 (AI 데이터센터 MRO sentiment spillover)",
+        "Pratt & Whitney 부품 사업 통합 마일스톤 — 단기 OPM 가이드",
+        "K-방산 페루·이라크 본계약 발표 시 글로벌 항공 MRO sentiment 동조"
+      ],
+      "thesis_priority": "기존 thesis v2 갱신 (5/21 작성된 신규 thesis → 2주 내 분기 가이드 반영 v3)",
+      "thesis_update_justification": "5/21 작성 후 D+1만에 신규 시그널 부재 — 그러나 5/12 latest analyst call이 thesis 작성 후이므로 'rating freshness 10일' 자체가 +1 사이클 가속 신호. v2 유지하되 30일 액션 트리거 확정 필요."
+    },
+    {
+      "rank": 2,
+      "ticker": "251270",
+      "name": "넷마블",
+      "country": "KR",
+      "sector": "엔터/미디어",
+      "market_cap": "3.4조원",
+      "size_bucket": "중형",
+      "thesis_exists": false,
+      "thesis_grade": null,
+      "final_score": 58.0,
+      "rank_in_pool": 3,
+      "components": {
+        "raw_score": 25.0,
+        "sql_signal_bonus": 33,
+        "matrix_bonus": 0,
+        "nps_penalty": 0,
+        "multi_signal_bonus_included": true
+      },
+      "matrix_cell": "B×B (관세 유지 + Fed hold) — 게임 IP 내수+해외 매출, 관세 영향 미미·duration 짧음",
+      "sql_signals_matched": [
+        "earnings_within_7d",
+        "consensus_disconnect",
+        "nps_kr_new_entries_q1"
+      ],
+      "macro_theme": "Risk-On Late-Stage SMID-cap 회전 + KR 섹터 sparse 보강 (엔터/미디어)",
+      "differentiation": "504 풀 중 SQL signals 3개 동시 매칭 + multi-signal +10 bonus (4종 후보군 중 유일하게 NPS 신규 + consensus disconnect + 어닝 D-7 트리거 중첩). PER 16x / PBR 0.63 / 컨센갭 +61.69% — value+catalyst 동시. YTD -13.16% 디스카운트 후 turnaround.",
+      "rationale_vs_6_10": "한국타이어(rank 4)는 거버넌스 단기 risk, 자이에스앤디(rank 6) 시총 1,514억으로 유동성 약함. HD현대에너지솔루션(rank 9)은 YTD +240% 과열·PER 50x. 삼성EA(rank 10) 건설 sector 중복 가능성. 넷마블은 1) 신규 thesis (mode B 신규발굴 가산), 2) KR thesis index에서 게임 1개뿐(sparse), 3) NPS 신규 진입(분기 매수 시작) — 'new-money flow + 가치 disconnect' 클래식 setup.",
+      "key_catalysts_30d": [
+        "어닝 D-7 (latest_period 202603 직후 다음 분기 발표) — earnings_within_7d 시그널",
+        "NPS 5%룰 신규 진입 (2025Q4 기준 매수 시작, Q1 매수 가속 가능)",
+        "Marvel/나혼자만레벨업/일곱개의대죄 글로벌 매출 reset 가능"
+      ],
+      "thesis_priority": "신규 deep dive 1순위 (mode B 신규발굴 핵심)"
+    },
+    {
+      "rank": 3,
+      "ticker": "161390",
+      "name": "한국타이어앤테크놀로지",
+      "country": "KR",
+      "sector": "자동차",
+      "market_cap": "7.7조원",
+      "size_bucket": "중형",
+      "thesis_exists": true,
+      "thesis_grade": null,
+      "thesis_modified": "2026-05-09 09:44",
+      "thesis_entry": "56,000원",
+      "thesis_tp": "86,250",
+      "final_score": 53.2,
+      "rank_in_pool": 4,
+      "components": {
+        "raw_score": 38.2,
+        "sql_signal_bonus": 15,
+        "matrix_bonus": 0,
+        "nps_penalty": 0
+      },
+      "matrix_cell": "A×B (관세 정상화 + Fed hold) — 자동차 시나리오 A 수혜군 (현대차/기아 family). 관세 25→15% 협상 시 +25%.",
+      "sql_signals_matched": [
+        "earnings_within_7d",
+        "nps_kr_new_entries_q1"
+      ],
+      "macro_theme": "관세 시나리오 A (정상화) 수혜 + 자동차 가치주",
+      "differentiation": "한온시스템 인수로 매출 10조→21조 구조 변화 (인수 후 1Q26 OP +43% 비트). PER 7.03 / PBR 0.62 / 컨센갭 +37.77% — 자동차 섹터 중 최저 PER. NPS 5%룰 신규 진입 + 어닝 D-7 트리거. KOSPI 자동차 family 중 유일한 thesis index 빈자리(현대차/기아 5개 vs 부품 0개).",
+      "rationale_vs_6_10": "자이에스앤디(rank 6)는 시총 1,514억으로 진입 어려움. MA/V(rank 7-8)는 미국 결제·thesis 보류. HD현대에너지솔루션(rank 9) YTD +240% 후행. 삼성EA(rank 10) 건설/부동산 sector 중복(자이에스앤디와). 한국타이어는 thesis 5/9 작성 후 13일 — '5/8 대법원 조현범 횡령 2년 확정' 단기 risk가 5/9 thesis에 이미 반영됨 → 거버넌스 risk가 가격에 디스카운트 → NPS+earnings catalyst 신선 가산.",
+      "key_catalysts_30d": [
+        "어닝 D-7 (latest_period 202603, 다음 분기 catalyst)",
+        "NPS 5%룰 신규 진입 (2025Q4 기준 매수)",
+        "Trump 관세 시나리오 A 진행 시 자동차 family 수혜 가속 (Polymarket·APEC Q4)"
+      ],
+      "thesis_priority": "기존 thesis v2 갱신 (NPS 신규 진입 catalyst + 어닝 catalyst 신규 시그널 +15점, thesis v1 작성 후 13일 / SQL signal 가산 분이 thesis 본문에 미반영)",
+      "thesis_update_justification": "기존 thesis는 거버넌스 risk + 수급 디스카운트만 강조. 5/22 신규 시그널: ① NPS 5%룰 신규 진입(Q4 매수 시작 — thesis 작성일 5/9 이후), ② 어닝 D-7 (다음 분기 catalyst). final_score 53.2는 raw 38.2 대비 +15(39%) 증가 — thesis 후 신규 신호 강도 변화 39% > 임계 충족."
+    },
+    {
+      "rank": 4,
+      "ticker": "AMD",
+      "name": "AMD",
+      "country": "US",
+      "sector": "AI인프라",
+      "market_cap": "230B USD",
+      "size_bucket": "메가",
+      "thesis_exists": true,
+      "thesis_grade": "B+",
+      "thesis_modified": "2026-05-05 02:08",
+      "final_score": 53.0,
+      "rank_in_pool": 5,
+      "components": {
+        "raw_score": 53,
+        "sql_signal_bonus": 0,
+        "matrix_bonus": 0,
+        "nps_penalty": 0
+      },
+      "matrix_cell": "A×A (관세 정상화 + Fed pivot) — Fed 시나리오 A에서 +25% (duration+그로스 이중 베타). 반도체 25% 관세 Section 232 잔존하나 NVDA 대비 데이터센터 GPU MI300X 마진 catalyst",
+      "sql_signals_matched": [],
+      "macro_theme": "AI/반도체 슈퍼사이클 후기 + Fed pivot 베팅 (NVDA 5/28 어닝 D-6 spillover)",
+      "differentiation": "NPS US 13F-HR 2025Q4 보유 종목(qualified flow signal) + 톱애널 4.35★ + 메가캡 (롤오버 risk 낮음). NVDA 대비 데이터센터 GPU 점유율 회복 catalyst — MI300X 출하 가속. 5/28 NVDA 어닝 D-6 직전 자세 잡기. thesis 5/5 작성 B+ 후 17일 — Fed 6/16 첫 회의 D-25 변곡점 직전.",
+      "rationale_vs_6_10": "ORCL(rank 2, AI인프라) sector 중복 회피하면서 score 53 = ORCL 62 - 9점만 양보. MA/V(rank 7-8, 금융) 톱애널 1명 vs AMD 풀스택 NPS+ratings. LRCX(rank 11, 반도체) 별점 4.6 살짝 우수하나 NPS 보유 가산 동일·sector 중복 회피. AMD는 NVDA 5/28 어닝 spillover에서 NVDA 대비 risk-adjusted upside 우월 (NVDA YTD +180% 과열, AMD YTD 보수적).",
+      "key_catalysts_30d": [
+        "5/28 NVDA Q1 어닝 (D-6 변곡점) — AI capex 검증 시 AMD 동조 spillover",
+        "6/16 Warsh 첫 FOMC — Fed pivot 시 duration 그로스 +25%",
+        "MI300X 데이터센터 출하 가속 + Anthropic/Meta wave 채택"
+      ],
+      "thesis_priority": "기존 thesis v2 갱신 (5/5 B+ → NVDA 5/28 어닝 후 v3 / Fed 6/16 후 grade 재판정)",
+      "thesis_update_justification": "5/5 thesis 작성 후 NVDA 어닝 5/28 D-6 직전 — 매크로 시나리오(Fed pivot 15% / hawkish 35%) 두 시나리오 매트릭스가 thesis 본문에 미반영. final_score raw=53 (높음) → 17일 holding period 통과 후 reassess required."
+    },
+    {
+      "rank": 5,
+      "ticker": "267260",
+      "name": "HD현대일렉트릭",
+      "country": "KR",
+      "sector": "전력기기",
+      "market_cap": "40.9조원",
+      "size_bucket": "대형",
+      "thesis_exists": true,
+      "thesis_grade": "Core",
+      "thesis_modified": "2026-05-07 02:19",
+      "final_score": 29.4,
+      "rank_in_pool": 135,
+      "components": {
+        "raw_score": 26.4,
+        "sql_signal_bonus": 3,
+        "matrix_bonus": 0,
+        "nps_penalty": 0,
+        "note": "rank 낮으나 매크로 매트릭스 B×B 핵심 anchor — 다양성/매트릭스 정합성 가산"
+      },
+      "matrix_cell": "B×B (관세 유지 + Fed hold) — 시나리오 매트릭스 22.5% 최대 단일 셀. 트럼프 관세 +22% / Fed hold +20% 동시 ⭐",
+      "sql_signals_matched": [
+        "earnings_within_7d"
+      ],
+      "macro_theme": "전력기기 / 그리드 / 원자력 르네상스 (AI 데이터센터 capex 견고)",
+      "differentiation": "504 풀 중 B×B 매트릭스 (최대 단일 시나리오 22.5%) 정렬 anchor. 트럼프 시나리오표 +22% (베이스), Fed 시나리오표 +20% (베이스) — 양쪽 base case 동시 정렬되는 유일 종목. 1Q26 OP +18.4% / OPM 24.9% / 수주 +34.6% 검증 완료. 북미 매출 비중 2024 30% → 2027F 54% 구조 전환. Core 등급 thesis 5/7.",
+      "rationale_vs_6_10": "score 29.4로 #135 (rank 6-10 대비 낮음) 이지만, 5개 sector 다양성 충족 (방산/엔터/자동차/AI인프라 다음 5번째 sector 후보군: 건설/금융/반도체/소비재 중 택). 건설(자이에스앤디 score 50)·금융(MA/V) 대신 전력기기 anchor 선택 이유: ① 매크로 매트릭스 B×B 22.5% 권장조건 충족(SARO+267260=2개), ② Core 등급 정합, ③ HD현대일렉 thesis 5/7 작성 후 15일 — earnings_within_7d 신호 신선, ④ rank 6-10 중 유효 신호 가산 종목(자이에스앤디 sector_relative_per_discount/consensus_disconnect)은 시총 1,514억 유동성 한계.",
+      "key_catalysts_30d": [
+        "earnings_within_7d (latest_period 202603 보고 후 다음 분기 catalyst)",
+        "AI 데이터센터 전력 capex 1H26 가이드 (5/28 NVDA spillover)",
+        "6/16 Warsh FOMC dot-plot 결과 (hold 시 +22% 매트릭스 활성)"
+      ],
+      "thesis_priority": "기존 thesis v2 유지 + B×B 매트릭스 anchor 명시 갱신 (5/7 작성 후 신규 매크로 시나리오 매트릭스 22.5% 셀 적용)",
+      "thesis_update_justification": "5/7 thesis는 매크로 시나리오 매트릭스 (5/22 작성) 이전 — 신규 매크로 인풋: 트럼프 시나리오 B 45% × Fed 시나리오 B 50% = B×B 22.5% (최대 단일 셀) anchor 자격. earnings_within_7d 가산 +3점은 thesis 미반영. v2 갱신 가치 명확."
+    }
+  ],
+  "matrix_distribution": {
+    "B×B (22.5%)": ["267260"],
+    "B×A_or_B (inverse_hedge)": ["SARO"],
+    "A×B (자동차 정상화)": ["161390"],
+    "A×A (Fed pivot)": ["AMD"],
+    "B×B (게임/내수)": ["251270"]
+  },
+  "honorable_mentions": [
+    {
+      "ticker": "ORCL",
+      "name": "Oracle",
+      "country": "US",
+      "score": 62.0,
+      "rank": 2,
+      "sector": "AI인프라",
+      "reason_not_top5": "AMD와 sector 중복 (AI인프라). score 62 > 53이지만 sector uniqueness 제약. AMD가 NVDA 5/28 어닝 spillover risk-adjusted upside 우월."
+    },
+    {
+      "ticker": "317400",
+      "name": "자이에스앤디",
+      "country": "KR",
+      "score": 50.0,
+      "rank": 6,
+      "sector": "건설/부동산",
+      "reason_not_top5": "시총 1,514억 소형 — 5%룰 5종 thesis 진입 시 유동성 한계. 그러나 컨센갭 +74% / PER 5.37 / sector_relative_per_discount 매칭은 극강. Phase 3 watchlist 등록 후보."
+    },
+    {
+      "ticker": "028050",
+      "name": "삼성EA",
+      "country": "KR",
+      "score": 49.0,
+      "rank": 10,
+      "sector": "건설/부동산",
+      "reason_not_top5": "insider_cluster_7d(+15) + consensus_upgrade(+10) + NPS 신규(+12) 신선 시그널 강력. 자이에스앤디와 sector 중복으로 양립 불가. 다음 iteration 후보."
+    },
+    {
+      "ticker": "004170",
+      "name": "신세계",
+      "country": "KR",
+      "score": 48.8,
+      "rank": 12,
+      "sector": "소비재/유통/패션",
+      "reason_not_top5": "w52_position 1.0 신고가 + YTD +134% 후행 모멘텀 — late entry risk. NPS 신규 + 외인 5일 매수 양호. 조정 시 starter."
+    },
+    {
+      "ticker": "BWXT",
+      "name": "BWX Technologies",
+      "country": "US",
+      "score": 48.0,
+      "rank": 13,
+      "sector": "원자력",
+      "reason_not_top5": "원자력 thesis 'A (PEG 3.4x⛔ 감시가 대기)' — 단기 entry 매력 낮음. PEG 정상화 시 즉시 승급 후보. Fed pivot 시나리오 A 동조."
+    }
+  ],
+  "risk_alerts": [
+    {
+      "ticker": "000660",
+      "name": "SK하이닉스",
+      "alert": "NPS Q1 -5,449억 매도 시그널 (페널티 -15 적용). 기존 thesis 재검토 필요.",
+      "action": "thesis index 'SK하이닉스' 항목 status 재확인 + Q1 NPS 매도 사유 분석(PER 정상화 vs 분기 단순 rebalance) 후 가중 조정"
+    },
+    {
+      "ticker": "298040",
+      "name": "효성중공업",
+      "alert": "기존 thesis EXIT 등급 + NPS 매도. final_score -4.0 (504위 최하위). 페널티 -15 적용.",
+      "action": "thesis status EXIT 유지 — Phase 2 재발굴 대상 아님"
+    },
+    {
+      "ticker": "010120",
+      "name": "LS ELECTRIC",
+      "alert": "기존 thesis 3/3 통과 등급이나 NPS Q1 매도 시그널. 페널티 -15 적용 후 score 0.8 (493위).",
+      "action": "thesis index 'LS ELECTRIC' status 재검토 — HD현대일렉트릭/효성중공업 전력기기 trio 중 NPS sell 단독 시그널이라면 종목 특이 risk 우선 진단"
+    },
+    {
+      "ticker": "402340",
+      "name": "SK스퀘어",
+      "alert": "NPS Q1 매도 시그널 (위 4종 중 후보 풀 미포함). thesis 신규 진입 보류.",
+      "action": "Phase 2 재발굴 대상 아님 — SK하이닉스 thesis와 cross-check"
+    }
+  ],
+  "summary": {
+    "kr_us_split": "KR 3 (251270/161390/267260) + US 2 (SARO/AMD)",
+    "sector_coverage": "방산/엔터·미디어/자동차/AI인프라/전력기기 — 5 unique sectors",
+    "thesis_status": "신규 1 (251270) + 기존 갱신 4 (SARO v2, 161390 v2, AMD v2, 267260 v2)",
+    "matrix_anchor_count": "B×B 명시 2개 (SARO inverse hedge + 267260 B×B 22.5% 셀) — 권장조건 ≥2 충족",
+    "smid_cap_count": "KR 중형 2 (251270/161390) + KR 대형 1 (267260) + US 라지 1 (SARO) + US 메가 1 (AMD) — Risk-On Late-Stage SMID 회전 부분 정합",
+    "next_action": "Phase 2 Step 2: 5종 풀딥서치 thesis 작성 (3-Gate / Kill Switch / 매크로 매트릭스 셀 명시) — 신규 1순위 = 251270 넷마블"
+  }
+}
