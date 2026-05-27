@@ -52,6 +52,59 @@ except ImportError:
     REPORT_DB_PATH = ""
 
 
+def _compute_date_distribution(broker_targets: list) -> dict:
+    """broker_targets 리스트에서 발행일자 분포 필드 3개를 계산한다.
+
+    Returns:
+        {
+            "broker_dist": [...],          # broker_targets 그대로 (date 기준 내림차순 정렬)
+            "date_dist": {
+                "last_7_days": int,
+                "last_30_days": int,
+                "last_90_days": int,
+            },
+            "median_age_days": int | None, # 중앙값 발행 경과일 (오늘 기준)
+        }
+    """
+    today = datetime.now().date()
+    ages = []
+    for row in broker_targets:
+        raw = row.get("date", "")
+        if not raw:
+            continue
+        try:
+            pub = datetime.strptime(raw[:10], "%Y-%m-%d").date()
+            ages.append((today - pub).days)
+        except Exception:
+            pass
+
+    last_7  = sum(1 for a in ages if a <= 7)
+    last_30 = sum(1 for a in ages if a <= 30)
+    last_90 = sum(1 for a in ages if a <= 90)
+
+    if ages:
+        sorted_ages = sorted(ages)
+        mid = len(sorted_ages) // 2
+        if len(sorted_ages) % 2 == 1:
+            median_age = sorted_ages[mid]
+        else:
+            median_age = (sorted_ages[mid - 1] + sorted_ages[mid]) // 2
+    else:
+        median_age = None
+
+    sorted_dist = sorted(broker_targets, key=lambda r: r.get("date", ""), reverse=True)
+
+    return {
+        "broker_dist": sorted_dist,
+        "date_dist": {
+            "last_7_days":  last_7,
+            "last_30_days": last_30,
+            "last_90_days": last_90,
+        },
+        "median_age_days": median_age,
+    }
+
+
 async def handle_get_consensus(arguments: dict) -> dict | list:
     result = None
     ticker = arguments.get("ticker", "").strip().upper()
@@ -69,6 +122,14 @@ async def handle_get_consensus(arguments: dict) -> dict | list:
             None, get_us_consensus, ticker
         )
         result = r if r else {"error": f"{ticker} 컨센서스 데이터 없음"}
+
+    # 발행일자 분포 추가 (KR only — broker_targets 있을 때만)
+    if isinstance(result, dict) and "error" not in result and result.get("broker_targets"):
+        dist = _compute_date_distribution(result["broker_targets"])
+        result["broker_dist"]   = dist["broker_dist"]
+        result["date_dist"]     = dist["date_dist"]
+        result["median_age_days"] = dist["median_age_days"]
+
     if brief and isinstance(result, dict) and "error" not in result:
         if "reports" in result:
             result["reports"] = [
@@ -77,6 +138,8 @@ async def handle_get_consensus(arguments: dict) -> dict | list:
             ]
         if "broker_targets" in result:
             result["broker_targets"] = result["broker_targets"][:5]
+        if "broker_dist" in result:
+            result["broker_dist"] = result["broker_dist"][:5]
 
     return result
 
