@@ -1,3 +1,59 @@
+## 🚀 2026-05-27 SEC EDGAR Phase 1 완료 — 1차 공시 도구 + DB
+
+### 변경 요약
+- **kis_api/sec_edgar.py** (신규, 230라인): SEC EDGAR 1차 공시 통합 모듈
+  - `ensure_cik_map_loaded()`: SEC company_tickers.json 전종목 다운로드 → data/sec_cik_map.json 캐시 (24h TTL)
+  - `ticker_to_cik()` / `bulk_fetch_cik_map()`: 메모리+파일+API 3단 캐시
+  - `get_company_filings()`: CIK 기준 최근 N일 공시 목록 (CRITICAL/WATCH 분류)
+  - `upsert_sec_filings()` / `query_sec_filings()`: sec_filings DB I/O
+  - certifi SSL context 명시 (Python 3.12 macOS CA 번들 없음 대응)
+- **mcp_tools/tools/sec.py** (신규): `handle_get_sec_filings()` — ticker/tickers/forms/days/db_only 파라미터
+- **mcp_tools/_registry.py**: `get_sec_filings` 핸들러 등록 (총 47개)
+- **mcp_tools/__init__.py**: MCP_TOOLS 스키마 #47 추가 (총 47개)
+- **data/db_schema.sql**: `sec_filings` 테이블 + 3 인덱스 추가
+- **봇 재시작 health 200 OK** 확인
+
+### 5종목 테스트 결과
+| 종목 | CIK | filings(90d) | 주요 폼 |
+|------|-----|--------------|---------|
+| NVDA | 0001045810 | 23 | 8-K |
+| AMZN | 0001018724 | 35 | 4, 8-K |
+| XNDU | 0002097163 | 14 | F-1[CRITICAL], 424B3[CRITICAL], 6-K |
+| SARO | 0002025410 | 15 | 8-K, 4 |
+| AVGO | 0001730168 | 27 | 4 |
+
+**DB 저장: TOTAL=114 / CRITICAL=13** (XNDU F-1 5/22 + 424B3 5/21 포착됨)
+
+### Phase 2 (다음 세션)
+- main_pkg/jobs/sec_polling.py (10분 주기 폴링)
+- 8-K / EFFECT 즉시 텔레그램 알림
+- data/events.json 자동 등록
+
+### 다음 세션에서 할 일
+- SEC EDGAR Phase 2: auto polling + telegram 알림 (main.py 스케줄 잡 등록)
+- 위의 Ralph 무한모드 산출물 기반 포트폴리오 실행 (5/26 ACTION_MATRIX)
+- 현대해상(001450) / LG씨엔에스(064400) 한경 URL 직접 확인
+
+---
+
+## 🛠 2026-05-27 B2 버그픽스 완료 — ticker mismatch + memo escape
+
+### 변경 요약
+- **read_report_pdf ticker mismatch guard** (`mcp_tools/tools/files.py`): `report_id` 지정 조회 시 DB에서 가져온 row의 `ticker`가 요청 `ticker`와 다르면 구조화된 에러 반환. 기존엔 다른 종목 PDF를 silent하게 서빙.
+- **memo XML artifact cleaner** (`mcp_tools/tools/alerts.py`): `_clean_memo()` 헬퍼 추가. `</memo>/<parameter name=...>` 등 도구호출 태그가 memo에 오염된 케이스 정제. get_alerts(read) + set_alert(write) 양방향 적용.
+- **watchalert.json 11건 정제** (gitignored, 서버 직접 수정): NEM, 006400, 079550, 095610, 440110, PANW, BX, 000660, 189300, 013030, 073490
+- **commit**: `53ad395`
+
+### 태스크 1 조사 결과 (PEG 산식 통일)
+- PEG를 계산하는 Python 코드 없음. PEG는 analyst가 thesis .md 문서에 수동 기입하는 값.
+- "PEG 0.67 → 1.15~1.34" 메모는 연구 문서 내 수동 산식 오류를 가리킴. 봇 코드 수정 범위 없음.
+
+### 다음 세션에서 할 일
+- 위의 Ralph 무한모드 산출물 기반 포트폴리오 실행 (5/26 ACTION_MATRIX)
+- 현대해상(001450) / LG씨엔에스(064400) 한경 URL 직접 확인 (낮은 PDF율 원인 파악)
+
+---
+
 ## 🏗 2026-05-27 C3 리팩토링 완료 — mcp_tools.py → mcp_tools/ 패키지 분할
 
 ### 변경 요약

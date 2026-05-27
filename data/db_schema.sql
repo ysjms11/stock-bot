@@ -384,6 +384,28 @@ CREATE INDEX IF NOT EXISTS idx_ins_date ON insider_transactions(rcept_dt);
 -- CREATE INDEX IF NOT EXISTS idx_ds_foreign ON daily_snapshot(trade_date, foreign_net_qty);
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SEC EDGAR 1차 공시 (Phase 1: 2026-05-27)
+-- IPO/de-SPAC 8-K/F-1/S-1/424B/EFFECT 수집용
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
+CREATE TABLE IF NOT EXISTS sec_filings (
+    cik                TEXT NOT NULL,           -- SEC CIK 10자리 문자열
+    ticker             TEXT,                    -- 역매핑 티커 (EDGAR 제공)
+    form               TEXT NOT NULL,           -- 8-K, F-1, S-1, 424B3, EFFECT, 6-K 등
+    filing_date        TEXT NOT NULL,           -- YYYY-MM-DD
+    accession_number   TEXT NOT NULL,           -- 0001234567-24-012345 형식
+    primary_document   TEXT,                    -- 주 문서 파일명
+    description        TEXT,                    -- primaryDocDescription
+    url                TEXT,                    -- 문서 직접 URL
+    is_critical        INTEGER DEFAULT 0,       -- 1=F-1/S-1/EFFECT/424B 계열 (희석 위험)
+    is_alerted         INTEGER DEFAULT 0,       -- 1=텔레그램 알림 전송 완료 (Phase 2)
+    collected_at       TEXT,                    -- 수집 시각 UTC ISO
+    PRIMARY KEY (cik, accession_number)
+);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_form_date ON sec_filings(form, filing_date);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_ticker     ON sec_filings(ticker);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_alert      ON sec_filings(is_alerted, filing_date);
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- 스캔용 뷰 (master JOIN 미리 처리)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
 CREATE VIEW IF NOT EXISTS v_daily_scan AS

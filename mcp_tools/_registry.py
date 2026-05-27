@@ -37,6 +37,7 @@ from .tools.us import (
 )
 from .tools.youtube import handle_get_youtube_transcript
 from .tools.manage_report import handle_manage_report
+from .tools.sec import handle_get_sec_filings
 
 TOOL_HANDLERS: dict = {
     "get_rank":                 handle_get_rank,
@@ -85,6 +86,7 @@ TOOL_HANDLERS: dict = {
     "get_pension_flow":         handle_get_pension_flow,
     "get_us_buy_candidates":    handle_get_us_buy_candidates,
     "get_youtube_transcript":   handle_get_youtube_transcript,
+    "get_sec_filings":          handle_get_sec_filings,
 }
 
 

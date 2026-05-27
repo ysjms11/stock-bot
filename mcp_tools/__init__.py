@@ -311,6 +311,8 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {
                          "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (예: CLAUDE.md, kis_api.py)"},
+                         "lines": {"type": "integer", "description": "최대 N줄만 읽기 (생략 시 전체)"},
+                         "offset": {"type": "integer", "description": "시작 줄 번호 0-indexed (기본값 0, lines와 함께 사용)"},
                      },
                      "required": ["path"]}},
     {"name": "write_file",
@@ -524,6 +526,28 @@ MCP_TOOLS = [
                       "default": 0}
       },
       "required": ["url"]}},
+
+    # 47. get_sec_filings — SEC EDGAR 1차 공시 (2026-05-27 Phase 1)
+    {"name": "get_sec_filings",
+     "description": "SEC EDGAR 1차 공시 조회. de-SPAC/IPO 희석 위험 탐지용. 8-K/F-1/S-1/424B3/EFFECT/6-K 등. ticker 지정 시 SEC API 실시간 조회 + DB 저장. db_only=true 시 DB 캐시만 반환.",
+     "inputSchema": {"type": "object",
+      "properties": {
+        "ticker":  {"type": "string",
+                    "description": "단일 미국 티커 (예: 'XNDU', 'NVDA', 'AMZN')"},
+        "tickers": {"type": "string",
+                    "description": "복수 티커, 콤마 구분 (예: 'NVDA,AMZN,XNDU'). ticker와 함께 사용 가능."},
+        "forms":   {"type": "array", "items": {"type": "string"},
+                    "description": "필터할 폼 종류. 기본: ['8-K','F-1','F-1/A','S-1','S-1/A','424B3','424B4','424B5','424B1','424B2','EFFECT','6-K','6-K/A','SC 13D','SC 13G','4']"},
+        "days":    {"type": "integer", "default": 30,
+                    "description": "최근 N일 이내 공시 (기본 30, 최대 180)"},
+        "db_only": {"type": "boolean", "default": False,
+                    "description": "True면 SEC API 호출 없이 DB 캐시만 반환"},
+        "save_db": {"type": "boolean", "default": True,
+                    "description": "True면 결과를 stock.db sec_filings 테이블에 저장"},
+        "limit":   {"type": "integer", "default": 50,
+                    "description": "반환 최대 건수 (기본 50, 최대 200)"}
+      },
+      "required": []}},
 ]
 
 

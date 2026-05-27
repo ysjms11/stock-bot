@@ -21,6 +21,7 @@
   fmp.py        — FMP API + YouTube 자막
   polymarket.py — Polymarket + Treasury
   pension.py    — 연기금(NPS)
+  sec_edgar.py  — SEC EDGAR 1차 공시 (8-K/F-1/S-1/424B/EFFECT)
 """
 
 # ━━ 설정/상수 ━━
@@ -200,4 +201,12 @@ from .pension import (
     _dart_get, _dart_list_disclosures,
     collect_nps_dart_increments, collect_dart_5pct_changes,
     collect_dart_10pct_insiders, collect_wi_changes, fetch_nps_kr_full_holdings,
+)
+
+# ━━ SEC EDGAR 1차 공시 ━━
+from .sec_edgar import (
+    ensure_cik_map_loaded, ticker_to_cik, bulk_fetch_cik_map,
+    get_company_filings,
+    upsert_sec_filings, query_sec_filings,
+    FILING_FORMS_CRITICAL, FILING_FORMS_WATCH, FILING_FORMS_DEFAULT,
 )
