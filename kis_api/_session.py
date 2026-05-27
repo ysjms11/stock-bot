@@ -54,8 +54,8 @@ async def get_kis_token():
                 _token_cache["token"] = cached["token"]
                 _token_cache["expires"] = exp
                 return cached["token"]
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        print(f"[session] 토큰 파일 캐시 읽기 실패 (신규 발급 진행): {e}")
     # 3) 신규 발급
     url = f"{KIS_BASE_URL}/oauth2/tokenP"
     body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
@@ -71,8 +71,8 @@ async def get_kis_token():
                 os.makedirs(os.path.dirname(TOKEN_CACHE_FILE) or ".", exist_ok=True)
                 with open(TOKEN_CACHE_FILE, "w", encoding="utf-8") as f:
                     json.dump({"token": token, "expires": expires.isoformat()}, f)
-            except Exception:
-                pass
+            except OSError as e:
+                print(f"[session] 토큰 파일 캐시 저장 실패 (무시): {e}")
         return token
 
 

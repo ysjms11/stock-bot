@@ -299,8 +299,8 @@ async def _run_all(app, port):
         for msg in alerts:
             try:
                 await app.bot.send_message(chat_id=CHAT_ID, text=msg)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[entry] WS 알림 전송 실패 (무시): {e}")
 
     await ws_manager.start(_ws_alert_cb, get_ws_tickers())
     print(f"[WS] 실시간 매니저 시작 (KR {len(ws_manager._subscribed)}개 + US {len(ws_manager._subscribed_us)}개)")

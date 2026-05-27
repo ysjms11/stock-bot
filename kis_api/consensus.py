@@ -229,7 +229,8 @@ def get_us_consensus(ticker: str) -> dict | None:
             "consensus_target": {"avg": avg, "high": 0, "low": 0},
             "recommendation":   "N/A",
         }
-    except Exception:
+    except Exception as e:
+        print(f"[consensus] US 컨센서스 조회 실패 ({ticker}): {e}")
         return None
 
 

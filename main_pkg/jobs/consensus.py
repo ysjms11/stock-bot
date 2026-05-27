@@ -45,8 +45,8 @@ async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):
             rows = conn.execute("SELECT symbol, name FROM stock_master").fetchall()
             all_kr = {r["symbol"]: r["name"] for r in rows}
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[consensus_update] stock_master 조회 실패 (watch/portfolio만 사용): {e}")
         # stock_master에 없는 감시 종목도 추가
         wa = load_watchalert()
         for t, v in wa.items():

@@ -132,8 +132,8 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                     try:
                         _age = (datetime.now(KST) - datetime.fromisoformat(_upd)).total_seconds() / 86400
                         _cache_ok = _age < 7
-                    except Exception:
-                        pass
+                    except (ValueError, TypeError) as e:
+                        print(f"[kr_summary] 컨센서스 캐시 날짜 파싱 실패 (실시간 조회): {e}")
                 if _cache_ok:
                     for row in port_rows:
                         _cd = _cc.get("kr", {}).get(row["ticker"])
@@ -356,7 +356,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                     continue
                 try:
                     ev_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                except Exception:
+                except (ValueError, TypeError):
                     continue
                 diff = (ev_date - today).days
                 if 0 <= diff <= 7:
@@ -382,8 +382,8 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         # ── 수급 히스토리 축적 (백테스트용) ──
         try:
             await save_supply_snapshot(token)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[kr_summary] 수급 히스토리 저장 실패 (무시): {e}")
 
     except Exception as e:
         print(f"daily_kr_summary 오류: {e}")

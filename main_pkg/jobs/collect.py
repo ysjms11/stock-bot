@@ -110,8 +110,8 @@ async def daily_collect_sanity_check(context):
             chat_id=CHAT_ID,
             text=f"⚠️ daily_collect 미실행 감지 ({today} {hhmm}) — 재실행 시작",
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[sanity] 알림 전송 실패 (무시): {e}")
     await daily_collect_job(context)
 
 

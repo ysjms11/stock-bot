@@ -130,8 +130,8 @@ async def backup_data_files() -> dict:
                     parsed = json.loads(content)
                     if parsed == {} or parsed == []:
                         continue
-                except Exception:
-                    pass
+                except json.JSONDecodeError:
+                    pass  # JSON 파싱 실패 시 그대로 백업 포함
                 files[fname] = {"content": content}
                 backed_up.append(fname)
             except Exception as e:

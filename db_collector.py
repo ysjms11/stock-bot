@@ -1725,8 +1725,8 @@ async def collect_financial_weekly(date: str = None) -> dict:
             success_is += 1
         except asyncio.TimeoutError:
             _timeout_count["is"] += 1
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Finance] {ticker} 손익계산서 수집 실패 (무시): {e}")
         if (i + 1) % _PROGRESS_EVERY == 0:
             elapsed = asyncio.get_event_loop().time() - _phase_start
             print(f"[Finance] 손익: {i+1}/{len(tickers)} (성공 {success_is}, 타임아웃 {_timeout_count['is']}, {elapsed:.0f}s)", flush=True)
@@ -2160,7 +2160,7 @@ async def collect_financial_on_disclosure(days: int = 2,
             month = int(period[4:])
             q_map = {3: 1, 6: 2, 9: 3, 12: 4}
             quarter = q_map.get(month)
-        except Exception:
+        except (ValueError, TypeError, IndexError):
             continue
         if not quarter:
             continue

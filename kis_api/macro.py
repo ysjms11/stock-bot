@@ -285,7 +285,7 @@ def judge_regime(data: dict) -> dict:
             return None
         try:
             return float(str(v).replace(",", ""))
-        except Exception:
+        except (ValueError, TypeError):
             return None
 
     vix         = _sf(data.get("VIX",   {}))

@@ -170,14 +170,14 @@ def _calc_regime_v2() -> dict:
         try:
             v3m_hist = _yf_history("^VIX3M", "1mo")
             vix3m_val = v3m_hist[-1] if v3m_hist else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[regime] VIX3M 조회 실패 (무시): {e}")
         if vix3m_val is None:
             try:
                 v9d_hist = _yf_history("^VIX9D", "1mo")
                 vix3m_val = v9d_hist[-1] if v9d_hist else None
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[regime] VIX9D 조회 실패 (무시): {e}")
 
         if vix_val:
             term_ratio = round(vix_val / vix3m_val, 4) if vix3m_val and vix3m_val > 0 else None
@@ -245,8 +245,8 @@ async def _fetch_usd_krw_value() -> dict:
         fx = await get_yahoo_quote("KRW=X")
         if fx:
             usd_krw = float(fx.get("price", 0) or 0)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[regime] USD/KRW 조회 실패 (무시): {e}")
     return {
         "value": round(usd_krw, 1) if usd_krw else None,
         "note": "참고용 (레짐 판정에 미사용)",

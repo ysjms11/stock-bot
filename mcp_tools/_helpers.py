@@ -53,8 +53,8 @@ def _save_dart_screener_cache(cache_key: str, result: dict):
         if os.path.exists(_DART_CACHE_FILE):
             try:
                 data = json.load(open(_DART_CACHE_FILE, encoding="utf-8"))
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"[dart_cache] 캐시 파일 읽기 실패 (빈 캐시로 시작): {e}")
         today_map = data.get(today, {})
         today_map[cache_key] = result
         with open(_DART_CACHE_FILE, "w", encoding="utf-8") as f:
@@ -95,7 +95,7 @@ def _nf(val):
     s = str(val).replace(",", "").strip()
     try:
         return float(s) if s else None
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -250,18 +250,18 @@ def _op_extra_fields(annual: list) -> dict:
     try:
         rev_recent = _pf(annual[0].get("ebt")) if len(annual) > 0 else None
         rev_prev   = _pf(annual[0].get("op"))  if len(annual) > 0 else None
-    except Exception:
+    except (IndexError, TypeError, AttributeError):
         pass
     try:
         if rev_recent is not None and rev_prev is not None and abs(rev_prev) > 0:
             rev_growth = round((rev_recent - rev_prev) / abs(rev_prev) * 100, 1)
-    except Exception:
+    except (TypeError, ZeroDivisionError):
         pass
     try:
         op_recent_val = _pf(annual[2].get("ebt")) if len(annual) > 2 else None
         if op_recent_val is not None and rev_recent is not None and rev_recent > 0:
             op_margin = round(op_recent_val / rev_recent * 100, 1)
-    except Exception:
+    except (IndexError, TypeError, ZeroDivisionError):
         pass
     return {
         "op_margin":  op_margin,
@@ -342,8 +342,8 @@ async def _scan_dart_op_one(ticker: str, name: str, corp_code: str, sem: asyncio
             try:
                 raw_q = await kis_estimate_perform(ticker, token)
                 qoq_fields = _calc_qoq(raw_q.get("quarterly", []))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[dart_op_growth] {ticker} QoQ 조회 실패 (무시): {e}")
         return {"ticker": ticker, "name": name,
                 "period": f"{recent_year}연간 vs {recent_year - 1}연간",
                 "op_recent": op_recent, "op_prev": op_prev,
@@ -376,8 +376,8 @@ async def _scan_dart_turnaround_one(ticker: str, name: str, corp_code: str, sem:
             try:
                 raw_q = await kis_estimate_perform(ticker, token)
                 qoq_fields = _calc_qoq(raw_q.get("quarterly", []))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[dart_turnaround] {ticker} QoQ 조회 실패 (무시): {e}")
         return {"ticker": ticker, "name": name,
                 "period": f"{recent_year}연간 vs {recent_year - 1}연간",
                 "op_recent": op_recent, "op_prev": op_prev,

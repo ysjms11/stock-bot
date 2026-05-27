@@ -58,7 +58,7 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
                 vol_ok = False
                 try:
                     vol_ok = float(vol_rate) >= 150
-                except Exception:
+                except (ValueError, TypeError):
                     pass
 
                 inv = await get_investor_trend(ticker, token)
