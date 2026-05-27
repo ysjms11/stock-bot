@@ -74,6 +74,10 @@ async def daily_nps_dart_increment(context: ContextTypes.DEFAULT_TYPE):
         import sqlite3 as _s
         db_path = f"{_DATA_DIR}/stock.db"
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         cutoff_iso = (datetime.now(KST) - timedelta(hours=24)).isoformat()
         recent = conn.execute(
@@ -158,6 +162,10 @@ async def weekly_nps_collect(context: ContextTypes.DEFAULT_TYPE):
         prev_label = ""
         try:
             _conn = _s.connect(f"{_DATA_DIR}/stock.db", timeout=10)
+            _conn.execute("PRAGMA cache_size = -65536;")
+            _conn.execute("PRAGMA temp_store = MEMORY;")
+            _conn.execute("PRAGMA mmap_size = 268435456;")
+            _conn.execute("PRAGMA busy_timeout = 30000;")
             row = _conn.execute(
                 "SELECT quarter_label FROM nps_kr_full_holdings "
                 "ORDER BY snapshot_date DESC LIMIT 1"
