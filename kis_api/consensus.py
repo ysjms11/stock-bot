@@ -257,6 +257,7 @@ def _insert_consensus_history(kr_data: dict, us_data: dict):
         conn.execute("PRAGMA cache_size = -65536")
         conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.executemany("""
             INSERT INTO consensus_history
             (trade_date, symbol, target_avg, target_high, target_low, buy_count, hold_count, sell_count, collected_at)

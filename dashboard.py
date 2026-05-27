@@ -1364,6 +1364,10 @@ def _build_whale_summary_html() -> str:
     # 3) 연기금 5일 매수 TOP 3 (시총%)
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         dates = [r["trade_date"] for r in conn.execute(
             "SELECT DISTINCT trade_date FROM pension_flow_daily ORDER BY trade_date DESC LIMIT 5"
@@ -1415,6 +1419,10 @@ def _build_whale_summary_html() -> str:
     # 4) 임원·5%↑ 최근 매매 TOP 3
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         cutoff = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
         rows = conn.execute(
@@ -1480,6 +1488,10 @@ def _build_whale_section_html() -> str:
     # ── Card 1: NPS 5%룰 ──────────────────────────────────────
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         # 최신 분기 자동 식별
         latest_q_row = conn.execute(
@@ -1557,6 +1569,10 @@ def _build_whale_section_html() -> str:
     # ── Card 2 & 3: 연기금 5일 매수/매도 TOP (시총% 정규화) ──
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         # 최근 5 영업일 산정
         dates = [r["trade_date"] for r in conn.execute(
@@ -1659,6 +1675,10 @@ def _build_whale_section_html() -> str:
     # ── Card 4: 10%룰 임원·주요주주 (insider_transactions) ──
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         cutoff = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
         rows = conn.execute(
@@ -1848,6 +1868,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
              '<a href="#events">📅 이벤트</a>'
              '<a href="#watch">👀 감시종목</a>'
              '<a href="/dash/whale" target="_blank" rel="noopener">🐋 Whale ↗</a>'
+             '<a href="/v40" target="_blank" rel="noopener">🤖 v40 ↗</a>'
              '<a href="#decision">📝 투자판단</a>'
              '<a href="#trade">💼 매매</a>'
              '<a href="#invest">📈 투자</a>'
@@ -2052,6 +2073,10 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     try:
         import sqlite3 as _sqlite3_rpt
         rpt_conn = _sqlite3_rpt.connect(REPORT_DB_PATH, timeout=10)
+        rpt_conn.execute("PRAGMA cache_size = -65536;")
+        rpt_conn.execute("PRAGMA temp_store = MEMORY;")
+        rpt_conn.execute("PRAGMA mmap_size = 268435456;")
+        rpt_conn.execute("PRAGMA busy_timeout = 30000;")
         rpt_conn.row_factory = _sqlite3_rpt.Row
         ticker_counts = rpt_conn.execute("""
             SELECT ticker, name, COUNT(*) as cnt, MAX(date) as latest
@@ -2147,6 +2172,10 @@ async def _handle_dash_reports(request: web.Request) -> web.Response:
     import sqlite3 as _sqlite3_rpt2
     try:
         conn = _sqlite3_rpt2.connect(REPORT_DB_PATH, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _sqlite3_rpt2.Row
         rows = conn.execute("""
             SELECT date, source, analyst, title, pdf_path, extraction_status,
@@ -2400,6 +2429,10 @@ def _whale_render_home() -> str:
     total_10pct = 0
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
@@ -2718,6 +2751,10 @@ def _whale_render_kr_5pct() -> str:
     db_path = f"{_DATA_DIR}/stock.db"
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
@@ -2919,6 +2956,10 @@ def _whale_render_pension_flow() -> str:
     db_path = f"{_DATA_DIR}/stock.db"
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         dates = [r["trade_date"] for r in conn.execute(
             "SELECT DISTINCT trade_date FROM pension_flow_daily ORDER BY trade_date DESC LIMIT 5"
@@ -3043,6 +3084,10 @@ def _whale_render_insider() -> str:
     db_path = f"{_DATA_DIR}/stock.db"
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
@@ -3365,6 +3410,10 @@ def _build_whale_full_html() -> str:
     # ── 3) NPS KR 5%룰 (현 분기 전체) ──
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
@@ -3440,6 +3489,10 @@ def _build_whale_full_html() -> str:
     # ── 4) 연기금 5일 매수+매도 (한 카드 통합) ──
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         dates = [r["trade_date"] for r in conn.execute(
             "SELECT DISTINCT trade_date FROM pension_flow_daily "
@@ -3531,6 +3584,10 @@ def _build_whale_full_html() -> str:
     # ── 5) 임원·5%↑ 주주 매매 (전체, 90일) ──
     try:
         conn = _s.connect(db_path, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = _s.Row
         cutoff = (datetime.now(KST) - timedelta(days=90)).strftime("%Y-%m-%d")
         rows = conn.execute(

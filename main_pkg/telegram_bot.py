@@ -1164,6 +1164,10 @@ async def weekly_sanity_check(context):
             import sqlite3 as _s
             db_path = f"{_DATA_DIR}/stock.db"
             with _s.connect(db_path, timeout=10) as conn:
+                conn.execute("PRAGMA cache_size = -65536;")
+                conn.execute("PRAGMA temp_store = MEMORY;")
+                conn.execute("PRAGMA mmap_size = 268435456;")
+                conn.execute("PRAGMA busy_timeout = 30000;")
                 # 최신 영업일 종목 총카운트 (mscore/fscore 비율 기준)
                 total = conn.execute(
                     "SELECT COUNT(*) FROM daily_snapshot "

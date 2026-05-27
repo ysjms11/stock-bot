@@ -233,6 +233,10 @@ def _ensure_pension_table(db_path: str):
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pension_flow_daily (
             trade_date     TEXT NOT NULL,
@@ -277,6 +281,10 @@ def collect_pension_flow_daily(date_str: str = None) -> dict:
     counts = {}
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
 
     for m in ["KOSPI", "KOSDAQ"]:
