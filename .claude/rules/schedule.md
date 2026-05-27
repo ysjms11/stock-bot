@@ -70,14 +70,14 @@
 | 18:30 | 평일 | `daily_collect` | `daily_collect_job` ★ | **KRX 전종목 DB 수집** (18:30 + post_init retry + 주간 무결성) | 4/18 안전장치 3종 |
 | 18:55 | 전체 | `macro_pm` | `macro_dashboard` | 매크로 대시보드 저녁 (수집 완료 후) | — |
 | 19:00 | 평일 | `watch_change` | `watch_change_detect` | 워치리스트 변경 감지 | — |
-| 19:00 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | — |
+| 19:02 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | 5/28 +2m stagger |
 | 19:00 | 일 | `weekly_us_analyst` | `weekly_us_analyst_report` | 다음주 월요일 준비용 미국 애널 리포트 | 5/8 신규 |
 | 19:07 | 일 | `weekly_report_digest` | `weekly_report_digest_notify` | 비종목 리포트 분석 시간 알림 (통계 + Claude.ai 프롬프트 템플릿, 봇 판단 X) | 4/26 신규 |
 | 09:00 | 토 | `weekly_sat_port_check` | `weekly_sat_port_check_notify` | SAT_PORT_CHECK 시작 알림 (토요일 포트관리 v2) | 4/27 신규 |
 | 09:00 | 일 | `weekly_sun_discovery` | `weekly_sun_discovery_notify` | SUN_DISCOVERY 시작 알림 (일요일 신규발굴 v2) | 4/27 신규 |
-| 19:30 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 4/27 신규 |
+| 19:31 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 5/28 +1m stagger |
 | 16:32 | 평일 | `pension_collect` | `daily_pension_collect` | 연기금 (NPS) 종목별 매매 수집 → pension_flow_daily DB | 5/28 +2m stagger |
-| 19:00 | 평일 | `pension_alert` | `daily_pension_alert` | 연기금 5일 누적 매매 알림 (시총% 기준, 보유/워치 양방향 + 발굴 매수 TOP) | 4/27 신규 |
+| 19:01 | 평일 | `pension_alert` | `daily_pension_alert` | 연기금 5일 누적 매매 알림 (시총% 기준, 보유/워치 양방향 + 발굴 매수 TOP) | 5/28 +1m stagger |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
 | 19:15 | 평일 | `collect_sanity_1` | `daily_collect_sanity_check` | 자가진단 — 당일 snapshot 0건이면 collect_daily 재실행 | 4/25 신규 |
 | 19:30 | 평일 | `daily_consensus` | `daily_consensus_check` | 컨센서스 상향 체크 | — |
@@ -97,15 +97,19 @@
                              ├─ daily_collect 완료에 의존 (~21분 소요)
 18:55  macro_pm (매크로) ────┘
 
-19:00  watch_change, sunday_30 (일)
+19:00  watch_change (평일) / weekly_us_analyst (일)
+19:01  pension_alert (평일)  ← +1m stagger
+19:02  sunday_30 (일)        ← +2m stagger
 19:05  daily_change_scan  ─┐
-19:30  daily_consensus    │ daily_collect 결과 또는 DB 의존
+19:15  collect_sanity_1   │ daily_collect 결과 또는 DB 의존
+19:30  daily_consensus    │
+19:31  event_d1           ← +1m stagger
 20:00  insider_cluster    ┘
 
 22:00  auto_backup (전체 일괄)
 ```
 
-**5분 간격 분리**로 텔레그램 rate limit 회피. 신규 잡 추가 시 **19:10~19:25 구간** 비어 있음.
+**1~2분 stagger**로 동시 잡 충돌 회피. 신규 잡 추가 시 **19:10~19:25 구간** 비어 있음.
 
 ## 주말 활동
 
@@ -127,3 +131,6 @@
 2. `main.py` `main()` 의 `jq.run_daily(...)` 등록 (시간대/요일/name)
 3. **이 표에 1줄 추가** (같은 커밋)
 4. `data/PROGRESS.md` "주요 아키텍처 결정" 표에 신규 스케줄 기록 (변경일, 이유)
+5. **충돌 회피**: 동일 시각(HH:MM)에 다른 잡 존재 시 ±1~3분 stagger 적용.
+   KIS API 호출 잡은 `asyncio.sleep(0.3) × N tickers` 시간 추정 후 분산.
+   예) 19:00에 A 존재 → B는 19:01, C는 19:02 배치.
