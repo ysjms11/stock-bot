@@ -74,6 +74,10 @@ def _ensure_nps_holdings_table(db_path: str):
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS nps_holdings_disclosed (
             report_date    TEXT NOT NULL,    -- 보고서 작성기준일 (YYYY-MM-DD)
@@ -210,6 +214,11 @@ def _build_name_to_symbol_map(db_path: str) -> tuple:
     name_list = []  # [(normalized_name, symbol)]
     try:
         conn = _s.connect(db_path, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA cache_size = -65536;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         cur = conn.execute("SELECT symbol, name FROM stock_master WHERE name IS NOT NULL AND name != ''")
         for sym, nm in cur.fetchall():
             key = _normalize_company_name(nm)
@@ -274,6 +283,11 @@ async def collect_nps_5percent_disclosed() -> dict:
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
 
     matched = 0
@@ -340,6 +354,11 @@ def fetch_nps_holdings(quarter: str = None, days: int = 90, ratio_min: float = 0
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = _s.Row
 
     where = ["ratio_pct >= ?"]
@@ -415,6 +434,10 @@ def _ensure_nps_us_table(db_path: str):
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS nps_us_holdings (
             accession      TEXT NOT NULL,    -- 13F 파일 ID (예: 0001608046-26-000001)
@@ -580,6 +603,11 @@ async def collect_nps_us_13f(max_quarters: int = 4) -> dict:
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
 
     total_inserted = 0
@@ -657,6 +685,11 @@ def fetch_nps_us_holdings(quarter: str = None, top: int = 30,
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = _s.Row
 
     if not quarter:
@@ -743,6 +776,11 @@ def fetch_nps_us_holdings(quarter: str = None, top: int = 30,
                 continue
             # 이름은 직전 분기에서 가져와야 함
             conn = _s.connect(db_path, timeout=30)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA cache_size = -65536;")
+            conn.execute("PRAGMA temp_store = MEMORY;")
+            conn.execute("PRAGMA mmap_size = 268435456;")
+            conn.execute("PRAGMA busy_timeout = 30000;")
             conn.row_factory = _s.Row
             nm_row = conn.execute(
                 "SELECT name_of_issuer FROM nps_us_holdings WHERE cusip=? LIMIT 1",
@@ -785,6 +823,10 @@ def _ensure_nps_kr_full_table(db_path: str):
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS nps_kr_full_holdings (
             snapshot_date  TEXT NOT NULL,    -- 우리 수집 시점 (YYYY-MM-DD)
@@ -891,6 +933,11 @@ async def collect_nps_kr_full_from_whale_insight() -> dict:
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
 
     inserted = 0
@@ -955,6 +1002,10 @@ def _ensure_wi_change_tables(db_path: str):
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS wi_5pct_changes (
             report_date    TEXT NOT NULL,
@@ -1059,6 +1110,10 @@ def _ensure_dart_change_tables(db_path: str):
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS dart_5pct_changes (
             rcept_no       TEXT PRIMARY KEY,
@@ -1170,6 +1225,11 @@ async def collect_nps_dart_increments(days: int = 7) -> dict:
     # 컬럼 보강 (idempotent)
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     for col, ddl in [
         ("stkqy", "INTEGER DEFAULT 0"),
         ("stkqy_irds", "INTEGER DEFAULT 0"),
@@ -1199,6 +1259,11 @@ async def collect_nps_dart_increments(days: int = 7) -> dict:
             corp_codes[cc] = it.get("corp_name", "")
 
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
     nps_inserted = 0
     nps_seen = 0
@@ -1284,6 +1349,11 @@ async def collect_dart_5pct_changes(days: int = 14) -> dict:
     # 2) 각 corp_code에 majorstock.json 호출 → period 내 보고만 저장
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
     inserted = 0
     fetched_corps = 0
@@ -1355,6 +1425,11 @@ async def collect_dart_10pct_insiders(days: int = 14) -> dict:
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
     inserted = 0
     fetched_corps = 0
@@ -1416,6 +1491,11 @@ async def collect_wi_changes() -> dict:
 
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
 
     # ── 5%룰 변동 (major_stock) ──
@@ -1491,6 +1571,11 @@ def fetch_nps_kr_full_holdings(top: int = 30) -> dict:
     _ensure_nps_kr_full_table(db_path)
     import sqlite3 as _s
     conn = _s.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = _s.Row
     snap_row = conn.execute(
         "SELECT snapshot_date FROM nps_kr_full_holdings ORDER BY snapshot_date DESC LIMIT 1"
