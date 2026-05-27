@@ -141,6 +141,10 @@ async def daily_consensus_check(context: ContextTypes.DEFAULT_TYPE):
         try:
             import sqlite3 as _sqlite3
             conn = _sqlite3.connect(REPORT_DB_PATH, timeout=10)
+            conn.execute("PRAGMA cache_size = -65536")
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA mmap_size = 268435456")
+            conn.execute("PRAGMA busy_timeout = 30000")
             cutoff = (now - timedelta(days=15)).strftime("%Y%m%d")  # 2주치 점진 상향 캐치
             for ticker, name in kr_tickers.items():
                 if ticker in changes_tickers:

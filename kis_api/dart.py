@@ -545,6 +545,9 @@ def upsert_insider_transactions(symbol: str, corp_code: str, records: list) -> i
         return 0
     conn = sqlite3.connect(DB_PATH_FOR_INSIDER, timeout=30)
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA cache_size = -65536")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA mmap_size = 268435456")
     now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
     inserted = 0
     try:
@@ -590,6 +593,10 @@ def aggregate_insider_cluster(symbol: str, days: int = 30) -> dict:
     """
     import sqlite3
     conn = sqlite3.connect(DB_PATH_FOR_INSIDER, timeout=30)
+    conn.execute("PRAGMA cache_size = -65536")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA mmap_size = 268435456")
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.row_factory = sqlite3.Row
     cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
     rows = conn.execute(

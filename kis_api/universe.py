@@ -70,6 +70,10 @@ async def fetch_universe_from_krx(token: str) -> dict:
     # ── 1차: DB 기반 시총 상위 ─────────────────────────────────────────
     try:
         conn = _sqlite3.connect(_DB_PATH, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA busy_timeout = 30000")
         cur = conn.cursor()
         cur.execute("SELECT MAX(trade_date) FROM daily_snapshot")
         row = cur.fetchone()

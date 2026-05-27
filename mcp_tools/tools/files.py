@@ -203,6 +203,10 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
         else:
             try:
                 _conn = _sqlite3.connect(REPORT_DB_PATH, timeout=10)
+                _conn.execute("PRAGMA cache_size = -65536")
+                _conn.execute("PRAGMA temp_store = MEMORY")
+                _conn.execute("PRAGMA mmap_size = 268435456")
+                _conn.execute("PRAGMA busy_timeout = 30000")
                 _conn.row_factory = _sqlite3.Row
                 if _report_id:
                     _row = _conn.execute(

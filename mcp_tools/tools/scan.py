@@ -421,6 +421,10 @@ async def handle_get_finance_rank(arguments: dict, token=None) -> dict | list:
 
         try:
             conn = _sqlite3.connect(_DB_PATH, timeout=10)
+            conn.execute("PRAGMA cache_size = -65536")
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA mmap_size = 268435456")
+            conn.execute("PRAGMA busy_timeout = 30000")
             conn.row_factory = _sqlite3.Row
             # 최신 trade_date
             latest = conn.execute(

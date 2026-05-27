@@ -155,6 +155,10 @@ async def weekly_report_digest_notify(context: ContextTypes.DEFAULT_TYPE):
         # 1주일치 카테고리별 카운트
         cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
         conn = sqlite3.connect(REPORT_DB_PATH, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA busy_timeout = 30000")
         counts = {}
         for cat in ("industry", "strategy", "economy", "market"):
             cur = conn.execute(

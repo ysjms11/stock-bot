@@ -143,6 +143,10 @@ async def handle_get_alpha_metrics(arguments: dict) -> dict | list:
         from db_collector import DB_PATH as _DB_PATH
         try:
             conn = _sqlite3.connect(_DB_PATH, timeout=10)
+            conn.execute("PRAGMA cache_size = -65536")
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA mmap_size = 268435456")
+            conn.execute("PRAGMA busy_timeout = 30000")
             conn.row_factory = _sqlite3.Row
             # 종목 기본정보
             master = conn.execute(

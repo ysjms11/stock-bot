@@ -24,6 +24,9 @@
   sec_edgar.py  — SEC EDGAR 1차 공시 (8-K/F-1/S-1/424B/EFFECT)
 """
 
+# ━━ DB 공용 헬퍼 ━━
+from ._db import get_db_conn
+
 # ━━ 설정/상수 ━━
 from ._config import (
     TELEGRAM_TOKEN, CHAT_ID, KIS_APP_KEY, KIS_APP_SECRET, DART_API_KEY,

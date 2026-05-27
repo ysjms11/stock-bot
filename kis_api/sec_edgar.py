@@ -299,6 +299,10 @@ def _ensure_sec_table() -> None:
     """sec_filings 테이블이 없으면 생성."""
     try:
         conn = sqlite3.connect(_DB_PATH, timeout=15)
+        conn.execute("PRAGMA cache_size = -65536")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.executescript(_SEC_SCHEMA_DDL)
         conn.commit()
         conn.close()
@@ -330,6 +334,10 @@ def upsert_sec_filings(filings: list[dict]) -> int:
     ]
     try:
         conn = sqlite3.connect(_DB_PATH, timeout=15)
+        conn.execute("PRAGMA cache_size = -65536")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.executemany(
             """INSERT OR REPLACE INTO sec_filings
                (cik, ticker, form, filing_date, accession_number,
@@ -385,6 +393,10 @@ def query_sec_filings(
 
     try:
         conn = sqlite3.connect(_DB_PATH, timeout=10)
+        conn.execute("PRAGMA cache_size = -65536")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.row_factory = sqlite3.Row
         rows = conn.execute(sql, params).fetchall()
         conn.close()

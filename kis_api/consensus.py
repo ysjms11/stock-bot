@@ -254,6 +254,9 @@ def _insert_consensus_history(kr_data: dict, us_data: dict):
     try:
         conn = sqlite3.connect(_DB_PATH, timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA cache_size = -65536")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
         conn.executemany("""
             INSERT INTO consensus_history
             (trade_date, symbol, target_avg, target_high, target_low, buy_count, hold_count, sell_count, collected_at)
