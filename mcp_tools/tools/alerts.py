@@ -52,6 +52,30 @@ except ImportError:
     REPORT_DB_PATH = ""
 
 
+# ── XML artifact cleaner ───────────────────────────────────────────────────────
+# Claude 이전 세션에서 <parameter name="..."> / </memo> 등 XML 태그가
+# memo 필드에 잘못 삽입되는 경우 제거 (read + write 양쪽에 적용).
+# 패턴: </memo>는 실제 메모 끝을 의미하므로 그 이후 내용을 전부 제거 (도구 호출 아티팩트).
+# 이후 남은 XML 태그(<tag> / </tag>)도 제거.
+
+def _clean_memo(text: str) -> str:
+    """Remove XML/tool-call artifacts from memo strings.
+
+    1. Strip everything from </memo> onward (tool-call parameter leakage).
+    2. Strip remaining bare XML tags.
+    3. Collapse double newlines, strip whitespace.
+    """
+    if not text:
+        return text
+    # </memo> 뒤에 붙은 아티팩트 제거
+    cleaned = re.sub(r"</memo>.*$", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # 남은 XML 태그 제거
+    cleaned = re.sub(r"</?[a-zA-Z][^>]*>", "", cleaned)
+    # 연속 개행 정리
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned)
+    return cleaned.strip()
+
+
 async def handle_get_alerts(arguments: dict, token=None) -> dict | list:
     result = None
     stops = load_stoploss()
@@ -147,7 +171,7 @@ async def handle_get_alerts(arguments: dict, token=None) -> dict | list:
             "triggered": cur > 0 and cur <= buy_price,
             "grade": grade,
             "market": mkt,
-            "memo": wa_info.get("memo", ""),
+            "memo": _clean_memo(wa_info.get("memo", "")),
             "created": wa_info.get("created", ""),
             "updated_at": wa_info.get("updated_at", ""),
         })
@@ -199,7 +223,7 @@ async def handle_set_alert(arguments: dict) -> dict | list:
     stop_price   = float(arguments.get("stop_price", 0) or 0)
     target_price = float(arguments.get("target_price", 0) or 0)
     buy_price    = float(arguments.get("buy_price", 0) or 0)
-    memo         = arguments.get("memo", "").strip() if arguments.get("memo") else ""
+    memo         = _clean_memo(arguments.get("memo", "") or "")
 
     if log_type == "decision":
         # ── 투자판단 기록 모드 ──
@@ -302,7 +326,7 @@ async def handle_set_alert(arguments: dict) -> dict | list:
         held_score       = float(arguments.get("held_score", 0) or 0)
         candidate_score  = float(arguments.get("candidate_score", 0) or 0)
         reasoning        = arguments.get("reasoning", "").strip()
-        compare_memo     = arguments.get("memo", "").strip() if arguments.get("memo") else ""
+        compare_memo     = _clean_memo(arguments.get("memo", "") or "")
         log = load_compare_log()
         if not isinstance(log, list):
             log = []

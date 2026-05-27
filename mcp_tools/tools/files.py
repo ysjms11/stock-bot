@@ -207,6 +207,14 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
 
             if not _row:
                 result = {"error": f"리포트 없음 (ticker={_ticker}, report_id={_report_id})"}
+            elif _report_id and _ticker and _row["ticker"] != _ticker:
+                # ticker mismatch guard: report_id로 조회한 리포트가 다른 종목 소속
+                result = {
+                    "error": "ticker mismatch: report_id가 요청한 ticker와 다른 종목에 속합니다",
+                    "report_id": _report_id,
+                    "requested_ticker": _ticker,
+                    "actual_ticker": _row["ticker"],
+                }
             elif not _row["pdf_path"]:
                 result = {"error": "PDF 경로 없음 (pdf_path가 비어 있음)"}
             else:
