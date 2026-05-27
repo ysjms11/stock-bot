@@ -1,3 +1,17 @@
+## 2026-05-28 결정 — PDF 텍스트 추출 OFF (report_crawler.py)
+
+사용자 결정: "텍스트만 보면 쓸모 없다, 원본 PDF가 중요 (그림 자료 많음)"
+
+- `_PDF_TEXT_EXTRACT` 상수 추가 (기본 `False`, 환경변수 `PDF_TEXT_EXTRACT=1`로 재활성화)
+- `extract_pdf_text()` 초입에 가드 추가: OFF 시 PDF 다운로드만, 텍스트 추출 생략
+- 신규 reports: `full_text=""`, `extraction_status="text_disabled"`
+- 기존 reports.full_text 32MB (8,610건) 보존 — DELETE 안 함
+- PDF 원본 4.5GB 보존 — rm 안 함
+- 차트 확인: `read_report_pdf` 페이지 이미지 렌더링 사용
+- 재활성화: `export PDF_TEXT_EXTRACT=1` 후 봇 재시작
+
+---
+
 ## 🚀 2026-05-27 SEC EDGAR Phase 1 완료 — 1차 공시 도구 + DB
 
 ### 변경 요약

@@ -22,6 +22,9 @@ _MAX_TEXT = 10000      # PDF 텍스트 최대 글자수
 _MAX_PDF_BYTES = 50 * 1024 * 1024  # PDF 최대 50MB
 _RETAIN_DAYS = 90      # 레거시 (현재 미사용, 영구 보관)
 _MAX_PER_TICKER = 10   # 레거시 (현재 미사용, 영구 보관)
+# PDF 텍스트 추출 토글 — 기본 OFF (사용자 결정 2026-05-28: 원본 PDF 직접 확인)
+# 재활성화: export PDF_TEXT_EXTRACT=1 후 봇 재시작
+_PDF_TEXT_EXTRACT = os.environ.get("PDF_TEXT_EXTRACT", "0") == "1"
 _ALLOWED_PDF_DOMAINS = {"ssl.pstatic.net", "finance.naver.com", "stock.pstatic.net",
                         "consensus.hankyung.com"}
 
@@ -935,10 +938,43 @@ def _is_chart_image_text(text: str) -> bool:
 def extract_pdf_text(pdf_url: str) -> tuple[str, str, bytes]:
     """PDF 다운로드 후 pdfplumber로 텍스트 추출.
     Returns: (text, status, pdf_bytes)
-      - status: 'success'|'failed'|'partial'
+      - status: 'success'|'failed'|'partial'|'text_disabled'
       - pdf_bytes: 다운로드된 PDF 바이트 (실패 시 빈 bytes)
     최대 _MAX_TEXT(10000)자. 임시 파일은 처리 후 삭제.
+
+    _PDF_TEXT_EXTRACT=False(기본) 시 PDF 다운로드만 수행, 텍스트 추출 생략.
+    재활성화: export PDF_TEXT_EXTRACT=1 후 봇 재시작.
     """
+    if not _PDF_TEXT_EXTRACT:
+        # 텍스트 추출 OFF — PDF는 다운로드해서 bytes 반환, 텍스트는 빈 문자열
+        try:
+            host = urlparse(pdf_url).hostname or ""
+            if host not in _ALLOWED_PDF_DOMAINS:
+                return ("", "text_disabled", b"")
+        except Exception:
+            return ("", "text_disabled", b"")
+        try:
+            resp = requests.get(pdf_url, headers=_HEADERS, timeout=30, stream=True)
+            if resp.status_code != 200:
+                return ("", "text_disabled", b"")
+            content_len = resp.headers.get("Content-Length")
+            if content_len and int(content_len) > _MAX_PDF_BYTES:
+                resp.close()
+                return ("", "text_disabled", b"")
+            downloaded = 0
+            chunks = []
+            for chunk in resp.iter_content(8192):
+                downloaded += len(chunk)
+                if downloaded > _MAX_PDF_BYTES:
+                    break
+                chunks.append(chunk)
+            if downloaded > _MAX_PDF_BYTES:
+                return ("", "text_disabled", b"")
+            return ("", "text_disabled", b"".join(chunks))
+        except Exception as e:
+            print(f"[report] PDF 다운로드 실패 (text_disabled mode, {pdf_url}): {e}")
+            return ("", "text_disabled", b"")
+
     try:
         import pdfplumber
     except ImportError:
