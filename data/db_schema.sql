@@ -378,6 +378,9 @@ CREATE INDEX IF NOT EXISTS idx_rpt_date ON reports(date);
 CREATE INDEX IF NOT EXISTS idx_ins_symbol_date ON insider_transactions(symbol, rcept_dt);
 CREATE INDEX IF NOT EXISTS idx_ins_date ON insider_transactions(rcept_dt);
 
+-- daily_snapshot: 단종목 다일자 조회용 (symbol-first 쿼리 최적화, 5/28 추가)
+CREATE INDEX IF NOT EXISTS idx_daily_snapshot_symbol_date ON daily_snapshot(symbol, trade_date);
+
 -- 필요시 추가 후보 (데이터 수십만행 이상 시):
 -- CREATE INDEX IF NOT EXISTS idx_ds_change ON daily_snapshot(trade_date, change_pct);
 -- CREATE INDEX IF NOT EXISTS idx_ds_mcap ON daily_snapshot(trade_date, market_cap);

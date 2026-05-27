@@ -72,6 +72,9 @@ def _get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA cache_size = -65536")   # 64MB (negative = KB)
+    conn.execute("PRAGMA temp_store = MEMORY")   # temp 테이블 메모리 처리
+    conn.execute("PRAGMA mmap_size = 268435456") # 256MB memory-mapped I/O
     conn.row_factory = sqlite3.Row  # dict-like 접근
     _init_schema(conn)
     return conn
