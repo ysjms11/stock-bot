@@ -38,13 +38,53 @@ from ._files import (
 )
 
 
-async def _stockanalysis_ratings(ticker: str) -> dict | None:
-    """StockAnalysis.com 비공식 JSON API. 반환: 정규화 dict 또는 None.
-    주의: 2초 sleep은 호출자가 관리.
+def _decode_sveltekit_ratings(raw: dict) -> dict | None:
+    """SvelteKit __data.json 자기참조 배열을 구 JSON API 응답 구조로 변환.
+    반환: {status:200, data:{widget:{all:{...}}, ratings:[...]}} 또는 None.
     """
-    url = f"https://api.stockanalysis.com/api/symbol/s/{ticker.lower()}/ratings"
+    try:
+        nodes = raw.get("nodes", [])
+        node2 = next(
+            (n for n in nodes
+             if n.get("type") == "data"
+             and isinstance(n.get("data", [None])[0], dict)
+             and "ratings" in n.get("data", [{}])[0]),
+            None,
+        )
+        if node2 is None:
+            return None
+        d = node2["data"]
+        root = d[0]
+
+        def resolve(idx):
+            if not isinstance(idx, int) or idx < 0 or idx >= len(d):
+                return None
+            v = d[idx]
+            if isinstance(v, dict):
+                return {k: resolve(vi) for k, vi in v.items()}
+            if isinstance(v, list):
+                return [resolve(i) for i in v]
+            return v
+
+        return {
+            "status": 200,
+            "data": {
+                "widget": resolve(root["widget"]),
+                "ratings": resolve(root["ratings"]),
+            },
+        }
+    except Exception:
+        return None
+
+
+async def _stockanalysis_ratings(ticker: str) -> dict | None:
+    """StockAnalysis.com SvelteKit __data.json 엔드포인트. 반환: 정규화 dict 또는 None.
+    주의: 2초 sleep은 호출자가 관리.
+    구 api.stockanalysis.com/api/symbol/s/{ticker}/ratings 는 2026-05 이후 404.
+    """
+    url = f"https://stockanalysis.com/stocks/{ticker.lower()}/ratings/__data.json"
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-    timeout = aiohttp.ClientTimeout(total=5)
+    timeout = aiohttp.ClientTimeout(total=10)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers) as resp:
@@ -55,8 +95,9 @@ async def _stockanalysis_ratings(ticker: str) -> dict | None:
                 if resp.status != 200:
                     print(f"[stockanalysis] {ticker} HTTP {resp.status}")
                     return None
-                data = await resp.json()
-                if data.get("status") != 200:
+                raw = await resp.json(content_type=None)
+                data = _decode_sveltekit_ratings(raw)
+                if data is None:
                     return None
                 return _normalize_stockanalysis_response(ticker, data)
     except Exception as e:
