@@ -276,6 +276,13 @@ async def handle_set_alert(arguments: dict) -> dict | list:
             result = {"error": "ticker, side, qty, price는 필수입니다"}
         elif side not in ("buy", "sell"):
             result = {"error": "side는 'buy' 또는 'sell' 이어야 합니다"}
+        elif side == "sell" and not reason:
+            result = {
+                "error": "trade_log sell 시 reason 필드 필수",
+                "missing_field": "reason",
+                "hint": "예: 'thesis 훼손', 'TP 도달', '손절', 'Path 1 발동', '리밸런싱'",
+                "example": f"set_alert(log_type='trade', side='sell', ticker='{ticker}', qty={qty}, price={price}, reason='이유')",
+            }
         else:
             trades = load_trade_log()
             trade_id = f"T{len(trades) + 1:03d}"
