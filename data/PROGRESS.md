@@ -1,3 +1,37 @@
+## 🚨 2026-05-29 전체 회귀 테스트 — 분할 회귀 25건 발견·수정 (사용자 "전체 테스트" 지시)
+
+### 발견 경위
+사용자 "전체적으로 문제없는지 테스트" → 봇 로그 스캔에서 NameError 다수 발견. main.py→main_pkg(5/27) + kis_api(5/27) 분할 시 **모듈전역이 타 모듈로 안 넘어가 런타임 NameError**. 모듈 import는 통과해 기존 AST import 테스트(test_module_imports)가 못 잡음. 다수는 try/except에 삼켜져 로그에도 안 떠 숨어있었음.
+
+### 데이터 영향 (실측)
+- DB daily_snapshot 최신 **5/26** — daily_collect_job이 `_HAS_DB_COLLECTOR` NameError로 즉사 → **5/27·5/28 시장데이터(~2864종목/일) 미수집**. 자가진단 잡도 동일 버그라 자동복구 실패.
+- `fetch_polymarket()` → `NameError: POLYMARKET_API` 실증. get_macro_external/get_polymarket 응답 `{"error":...}` 확인.
+
+### 수정 — 2 wave, 25건
+**Wave1 (14건, commit a072451)** main_pkg 분할 회귀:
+- `_HAS_DB_COLLECTOR`+collect_daily/collect_financial_weekly (collect/financial/dart_inc)
+- `_REPORT_AVAILABLE`+collect_reports/get_collection_tickers/collect_market_reports/REPORT_DB_PATH (reports/dart_inc/events/consensus/pension)
+- load_krx_db (sunday/watch_change), CHANGE_SCAN_SENT_FILE (change_scan), INSIDER_* 3종 (insider)
+- SILENT_FAILURE_LOG (_ctx), import sys (_entry), _refresh_ws+regime_cur+manual_summary import (telegram_bot)
+
+**Wave2 (11건, commit 7da09f9)** 바이트코드 LOAD_GLOBAL 검출기로 발견:
+- GroupA(3): anomaly/momentum `global` dict 모듈레벨 미초기화 → `={}` 추가
+- GroupB(7): kis_api 상수 분산 cross-import — polymarket←fmp(POLYMARKET_API/FRED_BASE/_POLY_NOISE_TAGS), pension←polymarket(NPS 3종), fmp←regime(_YT_URL_RE)
+- dashboard _GRADE_ORDER 로컬 정의
+
+### 재발 방지 (commit 83e754d)
+- **tests/test_undefined_names.py** 신규 — 바이트코드 LOAD_GLOBAL을 모듈 실제 namespace+builtins에 대조. import-only 테스트가 못 잡던 NameError 클래스 영구 차단. comprehension/lambda FP 없음.
+- 폐기된 pdf_collectors 테스트 2개 제거(ModuleNotFoundError로 suite 수집 차단하던 stale). 나머지 suite **161 passed**.
+- 전 작업 developer→reviewer→critic→verifier. 검출기 6패키지 0건.
+
+### ⚠️ 미해결 — 사용자 결정/후속 필요
+1. **5/27·28 daily_snapshot 백필** — 누락 2일. naive `collect_daily(과거날짜)`는 KIS 현재가를 과거종가로 덮어써 **데이터 오염**(critic CRITICAL). KRX-historical-only 백필 경로 별도 필요 or 2일 갭 수용. 사용자 결정 대기.
+2. **2개 1회성 로그 에러** — `_exec_us_ratings() ticker`(현 코드엔 default 있어 stale 추정), `KeyError auto_watched`(data-edge). 현 코드 재현 안 됨 → 비수정.
+3. **코딩규칙 권고** — kis_api submodule 역방향 의존 금지(fmp/regime → polymarket/pension). 현재 선형 무순환이나 명문화 시 순환 회귀 사전차단.
+4. **telegram regime_cur 점수** — `combined_score`가 `current`에 없고 `history[*]`에만 존재 → 점수 영구 미표시(legacy도 동일, crash만 해소). 표시 원하면 history 소스 수정 필요.
+
+---
+
 ## 🛠 2026-05-29 작업 — 컨센서스 not_rated 수정 + PDF 폴백 실증
 
 ### Task 1: get_consensus opinion not_rated 분류 (✅ 완료·배포)
