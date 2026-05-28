@@ -22,6 +22,11 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+try:
+    from report_crawler import DB_PATH as REPORT_DB_PATH
+except ImportError:
+    REPORT_DB_PATH = os.path.join(os.environ.get("DATA_DIR", "data"), "stock.db")
+
 # ── weekly_consensus_update, daily_consensus_check ──
 
 async def weekly_consensus_update(context: ContextTypes.DEFAULT_TYPE):

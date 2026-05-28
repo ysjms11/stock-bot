@@ -22,6 +22,13 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+try:
+    from report_crawler import (collect_reports, get_collection_tickers,
+                                  collect_market_reports)
+    _REPORT_AVAILABLE = True
+except ImportError:
+    _REPORT_AVAILABLE = False
+
 # ── collect_reports_daily ──
 
 async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):

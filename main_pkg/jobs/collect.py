@@ -22,6 +22,12 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+try:
+    from db_collector import collect_daily
+    _HAS_DB_COLLECTOR = True
+except ImportError:
+    _HAS_DB_COLLECTOR = False
+
 # ── daily_collect_job, daily_collect_sanity_check ──
 
 async def daily_collect_job(context):

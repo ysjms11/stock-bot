@@ -22,6 +22,19 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+try:
+    import db_collector as _db_collector_mod  # noqa: F401
+    _HAS_DB_COLLECTOR = True
+except ImportError:
+    _HAS_DB_COLLECTOR = False
+
+try:
+    from report_crawler import (collect_reports, get_collection_tickers,
+                                  collect_market_reports)
+    _REPORT_AVAILABLE = True
+except ImportError:
+    _REPORT_AVAILABLE = False
+
 # ── daily_dart_incremental, daily_dart_disclosure_collect ──
 
 async def daily_dart_incremental(context):

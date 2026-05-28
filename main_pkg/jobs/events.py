@@ -22,6 +22,15 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+try:
+    from report_crawler import DB_PATH as REPORT_DB_PATH
+    _REPORT_AVAILABLE = True
+except ImportError:
+    _REPORT_AVAILABLE = False
+    REPORT_DB_PATH = os.path.join(os.environ.get("DATA_DIR", "data"), "stock.db")
+
+from main_pkg.jobs.macro_job import _format_external_signals
+
 # ── daily_event_d1_alert, weekly_*_notify ──
 
 async def daily_event_d1_alert(context: ContextTypes.DEFAULT_TYPE):

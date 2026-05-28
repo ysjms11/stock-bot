@@ -22,6 +22,8 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+from db_collector import load_krx_db
+
 # ── watch_change_detect ──
 
 async def watch_change_detect(context: ContextTypes.DEFAULT_TYPE):

@@ -22,6 +22,8 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+CHANGE_SCAN_SENT_FILE = f"{_DATA_DIR}/change_scan_sent.json"
+
 # ── daily_change_scan_alert, auto_backup ──
 
 async def daily_change_scan_alert(context: ContextTypes.DEFAULT_TYPE):

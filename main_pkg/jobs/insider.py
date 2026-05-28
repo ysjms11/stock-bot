@@ -22,6 +22,10 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+INSIDER_SENT_FILE = f"{_DATA_DIR}/insider_sent.json"
+INSIDER_CLUSTER_MIN_BUYERS = 3   # 30일 내 매수자 3명+ 시 플래그
+INSIDER_COOLDOWN_DAYS = 7        # 종목당 알림 재발송 쿨다운
+
 # ── check_insider_cluster ──
 
 async def check_insider_cluster(context: ContextTypes.DEFAULT_TYPE):

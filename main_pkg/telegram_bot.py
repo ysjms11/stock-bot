@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from main_pkg._ctx import (
     _KR_SECTORS, _SECTOR_LIMIT, _STOCK_LIMIT,
     _is_kr_trading_time, _read_regime, _safe_send,
-    _extract_grade, _grade_arrow,
+    _extract_grade, _grade_arrow, _refresh_ws,
 )
 from kis_api import *
 from kis_api import (
@@ -883,6 +883,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── 레짐 ──
     regime_name, regime_emoji = _read_regime()
     regime_kr = {"offensive": "공격", "neutral": "중립", "crisis": "위기"}.get(regime_name, "미정")
+    regime_cur = load_json(REGIME_STATE_FILE, {}).get("current", {})
 
     # ── 메시지 조립 ──
     msg = "📊 *전체현황*\n\n"
@@ -945,6 +946,8 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ 요약 생성 중...")
+    from main_pkg.jobs.kr_summary import daily_kr_summary
+    from main_pkg.jobs.us_summary import daily_us_summary
     await daily_kr_summary(context)
     await daily_us_summary(context, force=True)
 

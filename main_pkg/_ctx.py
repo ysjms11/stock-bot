@@ -11,6 +11,7 @@ from kis_api import (
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
+from kis_api._config import SILENT_FAILURE_LOG
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TELEGRAM 설정
@@ -145,3 +146,8 @@ def _refresh_ws_coro():
         except Exception as e:
             print(f"[WS] refresh 오류: {e}")
     return _do()
+
+
+async def _refresh_ws():
+    """WebSocket 구독 목록 갱신 — `await _refresh_ws()` 로 호출."""
+    await _refresh_ws_coro()

@@ -22,6 +22,12 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+try:
+    from db_collector import collect_financial_weekly
+    _HAS_DB_COLLECTOR = True
+except ImportError:
+    _HAS_DB_COLLECTOR = False
+
 # ── weekly_financial_job ──
 
 async def weekly_financial_job(context):

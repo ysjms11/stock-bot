@@ -22,6 +22,8 @@ from kis_api import (
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
 
+from db_collector import load_krx_db
+
 # ── sunday_30_reminder ──
 
 async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
