@@ -107,10 +107,7 @@ async def handle_manage_report(arguments: dict) -> dict | list:
                             "title": r.get("title"),
                             "extraction_status": r.get("extraction_status", "unknown"),
                             "source_used": r.get("source_used", ""),
-                            "pdf_readable": (
-                                r.get("extraction_status") == "success"
-                                and bool(r.get("pdf_path", ""))
-                            ),
+                            "pdf_readable": bool(r.get("pdf_path", "")),
                             "pdf_size_kb": _compute_pdf_size_kb(r.get("pdf_path"))} for r in reports]
             else:
                 # full_text 3000자 제한 + extraction_status 하위호환 + pdf_readable 플래그
@@ -120,10 +117,7 @@ async def handle_manage_report(arguments: dict) -> dict | list:
                         r["extraction_status"] = "unknown"
                     if r.get("full_text") and len(r["full_text"]) > 3000:
                         r["full_text"] = r["full_text"][:3000] + "...(truncated)"
-                    r["pdf_readable"] = (
-                        r.get("extraction_status") == "success"
-                        and bool(r.get("pdf_path", ""))
-                    )
+                    r["pdf_readable"] = bool(r.get("pdf_path", ""))
                     if not r.get("source_used"):
                         r["source_used"] = ""
                     r["pdf_size_kb"] = _compute_pdf_size_kb(r.get("pdf_path"))

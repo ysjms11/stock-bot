@@ -166,7 +166,7 @@
 | | `log_type=compare` | 종목 비교 기록 |
 | | `log_type=delete, ticker` | 알림 완전 삭제 |
 | **manage_watch** | `action=add/remove, ticker` | 워치리스트 추가/제거 |
-| **manage_report** | `action=collect/list, ticker, brief=true` | 브로커 리포트 수집/열람. list 응답에 `report_id` 포함 → `read_report_pdf(report_id=N, ticker=X)` 재사용. `pdf_size_kb`로 큰 PDF 식별 후 pages 파라미터로 범위 지정 권장. |
+| **manage_report** | `action=collect/list, ticker, brief=true` | 브로커 리포트 수집/열람. list 응답에 `report_id` 포함 → `read_report_pdf(report_id=N, ticker=X)` 재사용. `pdf_size_kb`로 큰 PDF 식별 후 pages 파라미터로 범위 지정 권장. pages 예시: `pages="1-5"` (1~5페이지), `pages="3,7,10"` (개별 페이지). `pdf_readable=true` 이면 extraction_status 무관하게 read_report_pdf 렌더링 가능. |
 
 ---
 
