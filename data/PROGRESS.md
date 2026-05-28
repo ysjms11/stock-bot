@@ -1,3 +1,46 @@
+## 🛠 2026-05-29 작업 — 컨센서스 not_rated 수정 + PDF 폴백 실증
+
+### Task 1: get_consensus opinion not_rated 분류 (✅ 완료·배포)
+- **버그**: `kis_api/consensus.py fetch_fnguide_consensus` 가 목표주가 TP=0 / RECOM_CD 공란인 "Not Rated" 증권사를 `else→sell_cnt` 로 오분류.
+- **수정**: 집계 루프에 `tp<=0 or recom_cd in ("","0","0.0")` → not_rated 가드 추가. opinion dict 에 `not_rated` 필드 신설. high/low/avg 는 이미 prices(tp>0)만 반영해 무변경.
+- **검증**(라이브, developer→reviewer→verifier 전부 통과): 042520 한스 `{buy:1,hold:0,sell:3}`→`{buy:1,hold:0,sell:0,not_rated:4}` avg=55000. 005930 `{buy:25,...,not_rated:0}` / 000660 `{buy:24,hold:1,...,not_rated:0}` 회귀 OK. MCP handle_get_consensus 통과 확인.
+- **커밋** `882dfb9`, push + 봇 재시작 health 200.
+- reviewer 권고(미적용, 범위밖): `detect_consensus_changes._dominant()` 가 전량 not_rated 종목을 "중립"으로 반환(미평가≠중립). 알림은 target 위주라 영향 작음. 필요 시 cache+DB에 not_rated 저장 후 분기 추가.
+
+### Task 2: PDF 폴백 소스 추가 (✅ 실증 종결 — 코드 변경 없음, 사용자 "현 상태 유지" 선택)
+- **요청 전제가 이미 어긋남**: "무료 소스 samsung/eugene 2개뿐"은 폐기된 pdf_collectors.py 기준. 실제 `report_crawler.collect_reports` 는 한경(`crawl_hankyung_reports`)+naver(`crawl_naver_reports`) 폴백 내장 + 매일 08:30 `force_retry_meta_only=True`(jobs/reports.py:49) 이미 가동.
+- **실측**: PDF 확보율 전체 48.4%, 최근60일 57.0% (목표 20% 2.4배 초과). 검증 5종목 한경/naver 최신 2026-05-08~26 커버.
+- **042520 예외**: thin-coverage 소형주, 5월 상상인/DB 리포트 무료 애그리게이터 미신디케이트 → wisereport_paid 386건 잔여 갭. broker-direct(req#3)는 5/27 0% 폐기 이력.
+- **결정**: 현 상태 유지. 메모만 갱신 — ARCHITECTURE.md PENDING #6(목표초과달성), PDF_INFRA_UPGRADE.md(실측 종결), bot_guide.md(폴백 우선순위 명시).
+- **잔여 유일 lever**: wisereport 유료 구독 cost/benefit (다음 세션 의사결정 옵션).
+
+---
+
+## 📋 2026-05-28 세션 종료 핸드오프 (컴팩트 직전)
+
+### 이번 세션 성과 (37 커밋, 5/27~28)
+1. **KR 68종 풀딥서치 v4 10STEP** — 7 wave 병렬. [A] 등급 11종 (알테오젠 RR8.30 톱, 오스코텍/기아/KAI/롯데관광/서진시스템/달바/KB금융/GS리테일/LG씨엔에스 + RFHIC/호텔신라/풍산). 바이오 ADC/CMO 클러스터 최강, K-content 시기상조 (NPS 매도). **봇 코드 아님 — 투자 리서치 산출물.**
+2. **봇 진단 16건 → 13건 수정**. KRX는 false problem (stock.db 마이그레이션 완료). PDF/SEC 실제.
+3. **Full 리팩토링** — kis_api.py(9187줄)→20모듈, mcp_tools.py(4861줄)→24모듈, main.py(5582줄)→29모듈+7줄 shim. 총 73 모듈. 100% 하위호환.
+4. **최적화** — PRAGMA 57곳, schedule stagger, PDF txt OFF, DB 인덱스, Gist If-Match 제거, manage_report report_id+pdf_size_kb 노출.
+5. **전 작업 팀 검증** (reviewer+verifier) + 실제 MCP 프로토콜 end-to-end (PDF 렌더링 확인).
+
+### 미커밋 파일 처리 (의도적 보류 — 모두 untracked)
+- `.lock` 11개, `data/dart_disclosures/` — 런타임 아티팩트. **커밋 X** (gitignore `data/*.json`이 .lock 미포착, 무해).
+- `_split_kis_api.py` — 리팩토링 1회용 스크립트. 다음 세션에 삭제 검토.
+- `data/events.json` — gitignore `!data/events.json` 예외로 추적 가능하나 미추가. 런타임 갱신 파일이라 보류.
+- `.claude/settings.json`, `data/US_EXIT.md`, `data/research_log.md`, `data/archive/*.backup` — 로컬/리서치 파일. 커밋 불필요.
+
+### 다음 세션에서 할 일 (우선순위)
+1. **SEC EDGAR Phase 2** — main_pkg/jobs/sec_polling.py (10분 폴링) + 8-K/EFFECT 텔레그램 알림 + events.json 자동등록
+2. `_split_kis_api.py` 삭제 검토 (리팩토링 완료된 1회용 스크립트)
+3. backtest.py US 캔들 동일 버그 (#6, 이번 세션 out-of-scope)
+4. wisereport 구독 cost/benefit 결정 (PDF 수집률 개선용)
+5. get_db_conn() helper 채택 검토 (현재 dead code)
+6. Ralph 산출물 기반 포트 실행 (5/26 ACTION_MATRIX) — **사용자 직접 결정 영역**
+
+---
+
 ## 2026-05-28 결정 — PDF 텍스트 추출 OFF (report_crawler.py)
 
 사용자 결정: "텍스트만 보면 쓸모 없다, 원본 PDF가 중요 (그림 자료 많음)"

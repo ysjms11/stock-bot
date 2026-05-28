@@ -168,6 +168,15 @@
 | **manage_watch** | `action=add/remove, ticker` | 워치리스트 추가/제거 |
 | **manage_report** | `action=collect/list, ticker, brief=true` | 브로커 리포트 수집/열람. list 응답에 `report_id` 포함 → `read_report_pdf(report_id=N, ticker=X)` 재사용. `pdf_size_kb`로 큰 PDF 식별 후 pages 파라미터로 범위 지정 권장. pages 예시: `pages="1-5"` (1~5페이지), `pages="3,7,10"` (개별 페이지). `pdf_readable=true` 이면 extraction_status 무관하게 read_report_pdf 렌더링 가능. |
 
+**PDF 게이트 폴백 소스 우선순위** (`report_crawler.collect_reports`, 자동):
+1. **한경컨센서스** (`consensus.hankyung.com`) — 다수 증권사 무료 PDF
+2. **naver finance 리서치** (`finance.naver.com/research`, pstatic CDN) — naver_pdf_cache 30일 TTL
+3. **wisereport** (`wisereport.co.kr`, 유료) — 메타만(`source_used=wisereport_paid`, `pdf_readable=false`)
+
+- 매일 08:30 `report_collect` 잡이 `force_retry_meta_only=True`로 meta_only 행을 한경/naver에 **재시도** → 나중에 신디케이트되면 자동 PDF 회수.
+- 측정 PDF 확보율 (2026-05-29): 전체 **48.4%**, 최근 60일 **57.0%** (목표 20% 초과 달성).
+- ⚠️ thin-coverage 소형주(예: 042520 한스바이오메드)는 최신 소형 증권사 리포트가 무료 애그리게이터에 신디케이트되지 않아 wisereport 의존. 무료 소스로는 회수 불가(broker-direct 스크래핑은 5/27 0% 실측 후 폐기 — `data/PDF_INFRA_UPGRADE.md`).
+
 ---
 
 ## 🔧 공시/파일 관리

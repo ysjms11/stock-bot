@@ -122,4 +122,5 @@ https://file.hanaw.com/download/research/FileServer/WEB/strategy/market/2026/04/
 
 ## 변경 이력
 
+- 2026-05-29: PENDING #6 실측 종결. report_crawler.py 의 한경+naver+일일 force_retry 체계로 **PDF 확보율 전체 48.4%(4,242/8,760), 최근60일 57.0%(1,624/2,850)** 측정 — 본 문서 목표(20%+)의 2.4배 초과달성. 검증 5종목(009540/267260/064350/483650/032350) 모두 한경 10~24건·naver 19~29건, 최신 2026-05-08~26 커버 확인. 042520 한스바이오메드만 예외(thin-coverage 소형주, 5월 상상인/DB 리포트가 무료 애그리게이터 미신디케이트 → wisereport_paid 386건 잔여 갭). 무료 회수 불가, 유료 wisereport 구독만이 lever. broker-direct 재시도는 5/27 0% 입증으로 비권장. → 본 문서 INVALID 유지(학습자료).
 - 2026-05-04: 058610 에스피지 딥서치 중 PDF 게이트 한계 발견 → 폴백 시스템 PENDING 등록

@@ -248,7 +248,7 @@ set_alert(log_type="trade", side="buy", ticker="058610", qty=33, price=99000)
 | 3 | Gist 백업 PATCH 409 에러 | 🟡 중간 | 데이터 백업 불안정 |
 | 4 | ~~bot_architecture.md 생성~~ | ✅ 완료 | 이 문서 (5/4 v2) |
 | 5 | Railway 완전 삭제 | 🟢 낮음 | Procfile/runtime.txt/data_backup_before_railway/ |
-| 6 | PDF 다운로드 인프라 폴백 시스템 | ✅ 완료 (폐기) | 5/27: pdf_collectors.py 구현 시도 후 폐기 (외부 broker 직접 URL 호환 한계). 대신 한경컨센서스 365일 확장 + naver 매핑 캐시(data/naver_pdf_cache.json, 30일 TTL)로 대체. data/PDF_INFRA_UPGRADE.md → INVALID 마킹됨. |
+| 6 | PDF 다운로드 인프라 폴백 시스템 | ✅ 완료 (목표 초과달성) | 5/27: pdf_collectors.py(broker-direct) 폐기 — 외부 broker 직접 URL 5/27 0% 실측. 대신 한경컨센서스 + naver pstatic 캐시(naver_pdf_cache.json 30일 TTL) + 매일 08:30 force_retry_meta_only 재시도로 대체. **5/29 실측: PDF 확보율 전체 48.4%, 최근60일 57.0% (목표 20% 2.4배 초과).** 잔여 갭=386 wisereport_paid(thin-coverage 소형주 비신디케이트 리포트, 예 042520 한스). 무료 회수 불가, wisereport 유료 구독만이 유일 lever. data/PDF_INFRA_UPGRADE.md → INVALID(학습자료). |
 | 7 | git push 미완료 커밋 일괄 처리 | ✅ 완료 | 5/4 dcae76d까지 push 완료 |
 
 ---
@@ -266,6 +266,7 @@ set_alert(log_type="trade", side="buy", ticker="058610", qty=33, price=99000)
 
 ## 변경 이력
 
+- **2026-05-29 v5**: PENDING #6 실측 업데이트 — PDF 확보율 48.4%/57.0%(60일) 측정, 목표 20% 초과달성 확정. 잔여 386건 wisereport_paid 갭은 유료 구독만이 lever.
 - **2026-05-27 v4**: PENDING #6 정정 — pdf_collectors.py 폐기, 한경 365일 + naver 캐시로 대체
 - **2026-05-26 v3**: KRX 데이터 상태 정정 (SQLite 마이그레이션 완료 반영), supply_history.json 역할 추가
 - **2026-05-04 v2**: 인프라 섹션 (맥미니/Cloudflare Tunnel/MCP URL) 추가, 데이터 흐름 사례 3개 추가, PENDING 표 신설, 운영 문서 목록 추가
