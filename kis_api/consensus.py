@@ -65,7 +65,7 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
     empty = {
         "ticker": ticker, "name": "", "error": "데이터 없음",
         "consensus_target": {"avg": 0, "high": 0, "low": 0},
-        "opinion": {"buy": 0, "hold": 0, "sell": 0},
+        "opinion": {"buy": 0, "hold": 0, "sell": 0, "not_rated": 0},
         "reports": [], "updated": "",
     }
 
@@ -135,7 +135,7 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
         # 4. 증권사별 최신 목표주가 집계 (03_ 기반)
         inst_reports = []
         prices = []
-        buy_cnt = hold_cnt = sell_cnt = 0
+        buy_cnt = hold_cnt = sell_cnt = not_rated_cnt = 0
         avg_prc = 0
         updated = ""
 
@@ -150,11 +150,17 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
                     avg_prc = int(row.get("AVG_PRC", "0").replace(",", ""))
                 except Exception:
                     pass
-            recom = _recom_label(row.get("RECOM_CD", ""))
-            if recom == "매수":       buy_cnt  += 1
-            elif recom == "중립매수": hold_cnt += 1
-            elif recom == "중립":     hold_cnt += 1
-            else:                     sell_cnt += 1
+            recom_cd = str(row.get("RECOM_CD", "")).strip()
+            # Not Rated 판정: TP=0 이거나 RECOM_CD 가 공란/0/"0.0"
+            if tp <= 0 or recom_cd in ("", "0", "0.0"):
+                not_rated_cnt += 1
+                recom = "Not Rated"
+            else:
+                recom = _recom_label(recom_cd)
+                if recom == "매수":       buy_cnt  += 1
+                elif recom == "중립매수": hold_cnt += 1
+                elif recom == "중립":     hold_cnt += 1
+                else:                     sell_cnt += 1
             dt = row.get("EST_DT", "").replace("/", "-")
             if not updated or dt > updated:
                 updated = dt
@@ -175,7 +181,7 @@ def fetch_fnguide_consensus(ticker: str) -> dict:
             "ticker":           ticker,
             "name":             stock_name,
             "consensus_target": {"avg": avg, "high": high, "low": low},
-            "opinion":          {"buy": buy_cnt, "hold": hold_cnt, "sell": sell_cnt},
+            "opinion":          {"buy": buy_cnt, "hold": hold_cnt, "sell": sell_cnt, "not_rated": not_rated_cnt},
             "reports":          reports,          # 04_: 최근 리포트 (제목+요약 포함)
             "broker_targets":   inst_reports,     # 03_: 증권사별 최신 목표가
             "updated":          updated,
