@@ -52,6 +52,16 @@ except ImportError:
     REPORT_DB_PATH = ""
 
 
+def _compute_pdf_size_kb(pdf_path: str | None) -> float | None:
+    """PDF 파일 크기 KB. 파일 없거나 경로 없으면 None."""
+    if not pdf_path:
+        return None
+    try:
+        return round(os.path.getsize(pdf_path) / 1024, 1)
+    except (OSError, FileNotFoundError):
+        return None
+
+
 async def handle_manage_report(arguments: dict) -> dict | list:
     result = None
     if not _REPORT_AVAILABLE:
@@ -91,7 +101,8 @@ async def handle_manage_report(arguments: dict) -> dict | list:
                 print(f"[manage_report list] SQLite 오류: {_e}")
 
             if brief:
-                reports = [{"date": r.get("date"), "ticker": r.get("ticker"),
+                reports = [{"report_id": r.get("id"),
+                            "date": r.get("date"), "ticker": r.get("ticker"),
                             "name": r.get("name"), "source": r.get("source"),
                             "title": r.get("title"),
                             "extraction_status": r.get("extraction_status", "unknown"),
@@ -99,10 +110,12 @@ async def handle_manage_report(arguments: dict) -> dict | list:
                             "pdf_readable": (
                                 r.get("extraction_status") == "success"
                                 and bool(r.get("pdf_path", ""))
-                            )} for r in reports]
+                            ),
+                            "pdf_size_kb": _compute_pdf_size_kb(r.get("pdf_path"))} for r in reports]
             else:
                 # full_text 3000자 제한 + extraction_status 하위호환 + pdf_readable 플래그
                 for r in reports:
+                    r["report_id"] = r.get("id")  # alias for read_report_pdf
                     if not r.get("extraction_status"):
                         r["extraction_status"] = "unknown"
                     if r.get("full_text") and len(r["full_text"]) > 3000:
@@ -113,6 +126,7 @@ async def handle_manage_report(arguments: dict) -> dict | list:
                     )
                     if not r.get("source_used"):
                         r["source_used"] = ""
+                    r["pdf_size_kb"] = _compute_pdf_size_kb(r.get("pdf_path"))
 
             result = {
                 "count": len(reports),
