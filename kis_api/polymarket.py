@@ -36,6 +36,7 @@ from ._files import (
     load_consensus_cache, load_sector_flow_cache, save_sector_flow_cache,
     load_compare_log, load_watchlist_log, append_watchlist_log, load_events,
 )
+from .fmp import POLYMARKET_API, FRED_BASE, _POLY_NOISE_TAGS
 
 
 async def fetch_polymarket(top: int = 10, min_volume: float = 500_000,

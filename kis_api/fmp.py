@@ -36,6 +36,7 @@ from ._files import (
     load_consensus_cache, load_sector_flow_cache, save_sector_flow_cache,
     load_compare_log, load_watchlist_log, append_watchlist_log, load_events,
 )
+from .regime import _YT_URL_RE
 
 
 def _extract_youtube_id(url_or_id: str) -> str:

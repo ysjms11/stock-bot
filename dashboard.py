@@ -34,6 +34,9 @@ except ImportError:
     _REPORT_AVAILABLE = False
     REPORT_DB_PATH = os.path.join(os.environ.get("DATA_DIR", "data"), "stock.db")
 
+# telegram_bot._GRADE_ORDER 와 동일 (단방향 규칙: dashboard는 main_pkg import 금지)
+_GRADE_ORDER = {"A": 0, "B+": 1, "B": 2, "B-": 3, "C+": 4, "C": 5, "D": 6, "": 7}
+
 # 웹 대시보드 (/dash)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _DASH_CSS = """

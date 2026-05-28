@@ -24,6 +24,9 @@ from kis_api import (
 
 # ── check_supply_drain, momentum_exit_check ──
 
+_drain_sent_today: dict = {}
+_momentum_sent_today: dict = {}
+
 async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if not _is_kr_trading_time(now):

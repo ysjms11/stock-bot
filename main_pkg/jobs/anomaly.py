@@ -24,6 +24,9 @@ from kis_api import (
 
 # ── check_anomaly ──
 
+_anomaly_fired: dict = {}
+
+
 async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(KST)
     if not _is_kr_trading_time(now):
