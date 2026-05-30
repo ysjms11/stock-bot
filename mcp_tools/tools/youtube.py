@@ -59,6 +59,10 @@ async def handle_get_youtube_transcript(arguments: dict) -> dict | list:
     max_chars = int(arguments.get("max_chars") or 0)
     if not url:
         result = {"error": "url 파라미터 필수"}
+    else:
+        result = await asyncio.to_thread(
+            fetch_youtube_transcript, url, languages, max_chars
+        )
     return result
 
 
