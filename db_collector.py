@@ -857,6 +857,344 @@ async def backfill_day_via_chart(date: str, tickers: list) -> dict:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 과거 날짜 안전 백필 (KIS 현재가 API 미사용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+async def collect_daily_backfill(date_str: str, *, _limit: int = 0, kis_history: bool = True) -> dict:
+    """과거 영업일 daily_snapshot 백필.
+
+    안전 원칙 (절대 위반 금지):
+      - KIS 현재가 API (FHKST01010100 / kis_stock_price) 호출 금지.
+        → 오늘 가격이 과거 날짜 행에 박히는 데이터 오염 방지.
+      - PER/PBR/EPS/BPS/w52/div_yield/foreign_own_pct 등 시점 특정 불가 컬럼 → 0.
+      - 소스별 시점 정합: KRX 데이터는 date_str 당일, KIS 히스토리는 date_str 행 필터.
+
+    Sources:
+      Phase A — KRX OPEN API: close, chg_pct, volume, trade_value, market_cap
+      Phase B — KIS FHKST03010100 일봉 차트: open, high, low (OHLCV 히스토리, 안전)
+      Phase C — KIS FHPTJ04160001 히스토리: foreign_net, institution_net, individual_net
+      Phase D — KIS FHPST04830000 히스토리: short_vol, short_ratio
+      Phase E — KIS FHPST04760000 히스토리: loan_balance_rate (credit_ratio)
+
+    Args:
+        date_str:    "YYYYMMDD" 형식 (예: "20260527")
+        _limit:      0 = 전종목, N>0 = N종목만 처리 (dry-run용)
+        kis_history: False 이면 Phase C/D/E (수급/공매도/신용잔고) 스킵.
+                     KIS 서버 500 오류 등 장애 시 Phase A+B만 빠르게 백필할 때 사용.
+                     스킵된 컬럼은 모두 0으로 저장됨.
+
+    Returns:
+        {"date": str, "inserted": N, "skipped": M, "errors": E, "elapsed_sec": float}
+    """
+    import time as _time
+    t0 = _time.monotonic()
+
+    # 주말 가드
+    dt = datetime.strptime(date_str, "%Y%m%d")
+    if dt.weekday() >= 5:
+        return {"date": date_str, "skipped": 0, "inserted": 0, "errors": 0,
+                "elapsed_sec": 0.0, "reason": "weekend"}
+
+    # ── Phase A: KRX 전종목 시세 ──────────────────────────────────────
+    krx_by_ticker: dict = {}
+    for mkt in ("STK", "KSQ"):
+        try:
+            rows = await fetch_krx_market_data(date_str, mkt)
+            for r in rows:
+                krx_by_ticker[r["ticker"]] = r
+        except Exception as e:
+            print(f"[backfill] KRX {mkt} 실패: {e}")
+        await asyncio.sleep(0.5)
+
+    if not krx_by_ticker:
+        # fallback: stock_master
+        conn = _get_db()
+        ms_rows = conn.execute(
+            "SELECT symbol, name, market FROM stock_master"
+        ).fetchall()
+        conn.close()
+        for r in ms_rows:
+            krx_by_ticker[r["symbol"]] = {
+                "ticker": r["symbol"], "name": r["name"], "market": r["market"],
+                "close": 0, "chg_pct": 0.0, "volume": 0,
+                "trade_value": 0, "market_cap": 0,
+            }
+        if not krx_by_ticker:
+            return {"date": date_str, "inserted": 0, "skipped": 0, "errors": 1,
+                    "elapsed_sec": _time.monotonic() - t0,
+                    "reason": "KRX 응답 없음 + stock_master 비어있음"}
+        print(f"[backfill] KRX 빈 응답 → stock_master fallback ({len(krx_by_ticker)}종목)")
+
+    tickers = list(krx_by_ticker.keys())
+    if _limit > 0:
+        tickers = tickers[:_limit]
+        print(f"[backfill] dry-run: {_limit}종목만 처리")
+    print(f"[backfill] {date_str} — {len(tickers)}종목 백필 시작")
+
+    # ── Phase B: KIS 일봉 차트 → open/high/low ───────────────────────
+    # FHKST03010100 output2 — 역사적 OHLCV. 현재가 API 아님 → 안전.
+    from kis_api import get_kis_token, _kis_get
+    token = await get_kis_token()
+
+    chart_map: dict = {}  # ticker → {open, high, low}
+    start_dt = (dt - timedelta(days=5)).strftime("%Y%m%d")
+    end_dt   = (dt + timedelta(days=1)).strftime("%Y%m%d")
+
+    # ── 청크 헬퍼: N개씩 나눠 gather (KIS 429/500 방지) ──────────────
+    _BF_CHUNK = 50  # 한 번에 최대 50 동시 요청 (KIS 초당 10건 × 5초)
+
+    async def _chunked_gather(coros):
+        """코루틴 리스트를 _BF_CHUNK 개씩 묶어 순차 gather."""
+        results = []
+        coro_list = list(coros)
+        for i in range(0, len(coro_list), _BF_CHUNK):
+            chunk = coro_list[i:i + _BF_CHUNK]
+            chunk_results = await asyncio.gather(*chunk)
+            results.extend(chunk_results)
+            if i + _BF_CHUNK < len(coro_list):
+                await asyncio.sleep(0.5)  # chunk 간 0.5초 쉬어서 burst 완화
+        return results
+
+    async def _fetch_chart(ticker: str):
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as s:
+                _, d = await _kis_get(
+                    s,
+                    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                    "FHKST03010100", token,
+                    {
+                        "FID_COND_MRKT_DIV_CODE": "J",
+                        "FID_INPUT_ISCD":         ticker,
+                        "FID_INPUT_DATE_1":       start_dt,
+                        "FID_INPUT_DATE_2":       end_dt,
+                        "FID_PERIOD_DIV_CODE":    "D",
+                        "FID_ORG_ADJ_PRC":        "0",
+                    },
+                )
+            row = next(
+                (c for c in (d.get("output2") or [])
+                 if c.get("stck_bsop_date") == date_str),
+                None,
+            )
+            if row:
+                return ticker, {
+                    "open":  int(row.get("stck_oprc", 0) or 0),
+                    "high":  int(row.get("stck_hgpr", 0) or 0),
+                    "low":   int(row.get("stck_lwpr", 0) or 0),
+                }
+        except Exception:
+            pass
+        await asyncio.sleep(0.1)
+        return ticker, {}
+
+    print(f"[backfill] Phase B — 일봉 차트 {len(tickers)}종목 (chunk={_BF_CHUNK})")
+    chart_results = await _chunked_gather(_fetch_chart(t) for t in tickers)
+    chart_ok = sum(1 for _, d in chart_results if d)
+    for tk, data in chart_results:
+        chart_map[tk] = data
+    print(f"[backfill] Phase B 완료 — open/high/low 확보 {chart_ok}/{len(tickers)}종목")
+
+    # ── Phases C/D/E: KIS 히스토리 (수급/공매도/신용잔고) ─────────────
+    supply_map:  dict = {}  # ticker → {foreign_net, institution_net, individual_net}
+    short_map:   dict = {}  # ticker → {short_vol, short_ratio}
+    credit_map:  dict = {}  # ticker → {credit_ratio}
+
+    if not kis_history:
+        print(f"[backfill] Phase C/D/E 스킵 (supply/short/credit = 0)")
+    else:
+        from kis_api.kr_stock import (
+            kis_investor_trend_history,
+            kis_daily_short_sale,
+            kis_daily_credit_balance,
+        )
+        from kis_api import _get_session as _ks
+
+        async def _fetch_supply(ticker: str):
+            try:
+                sess = _ks()
+                rows = await kis_investor_trend_history(ticker, token, n_days=10, session=sess)
+                row = next((r for r in rows if r.get("date") == date_str), None)
+                if row:
+                    return ticker, {
+                        "foreign_net":     int(row.get("foreign_net",     0) or 0),
+                        "institution_net": int(row.get("institution_net", 0) or 0),
+                        "individual_net":  int(row.get("individual_net",  0) or 0),
+                    }
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
+            return ticker, {}
+
+        async def _fetch_short(ticker: str):
+            try:
+                sess = _ks()
+                rows = await kis_daily_short_sale(ticker, token, n=10, session=sess)
+                row = next((r for r in rows if r.get("date") == date_str), None)
+                if row:
+                    return ticker, {
+                        "short_vol":   int(row.get("short_vol",   0) or 0),
+                        "short_ratio": float(row.get("short_ratio", 0) or 0),
+                    }
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
+            return ticker, {}
+
+        async def _fetch_credit(ticker: str):
+            try:
+                rows = await kis_daily_credit_balance(ticker, token, n=10)
+                row = next((r for r in rows if r.get("date") == date_str), None)
+                if row:
+                    return ticker, {
+                        "credit_ratio": float(row.get("credit_ratio", 0) or 0),
+                    }
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
+            return ticker, {}
+
+        print(f"[backfill] Phase C — 수급 히스토리 {len(tickers)}종목")
+        supply_results = await _chunked_gather(_fetch_supply(t) for t in tickers)
+        supply_ok = sum(1 for _, d in supply_results if d)
+        for tk, data in supply_results:
+            supply_map[tk] = data
+        print(f"[backfill] Phase C 완료 — 수급 확보 {supply_ok}/{len(tickers)}종목")
+
+        print(f"[backfill] Phase D — 공매도 히스토리 {len(tickers)}종목")
+        short_results = await _chunked_gather(_fetch_short(t) for t in tickers)
+        short_ok = sum(1 for _, d in short_results if d)
+        for tk, data in short_results:
+            short_map[tk] = data
+        print(f"[backfill] Phase D 완료 — 공매도 확보 {short_ok}/{len(tickers)}종목")
+
+        print(f"[backfill] Phase E — 신용잔고 히스토리 {len(tickers)}종목")
+        credit_results = await _chunked_gather(_fetch_credit(t) for t in tickers)
+        credit_ok = sum(1 for _, d in credit_results if d)
+        for tk, data in credit_results:
+            credit_map[tk] = data
+        print(f"[backfill] Phase E 완료 — 신용잔고 확보 {credit_ok}/{len(tickers)}종목")
+
+    # ── INSERT OR REPLACE ────────────────────────────────────────────
+    conn = _get_db()
+    inserted = 0
+    errors = 0
+
+    for ticker in tickers:
+        try:
+            krx  = krx_by_ticker.get(ticker, {})
+            ch   = chart_map.get(ticker, {})
+            sup  = supply_map.get(ticker, {})
+            sht  = short_map.get(ticker, {})
+            crd  = credit_map.get(ticker, {})
+
+            close = int(krx.get("close", 0) or 0)
+
+            conn.execute("""
+                INSERT OR REPLACE INTO daily_snapshot (
+                    trade_date, symbol,
+                    close, open, high, low, change_pct,
+                    volume, trade_value, market_cap,
+                    per, pbr, eps, bps, div_yield,
+                    w52_high, w52_low, foreign_own_pct, listing_shares, turnover,
+                    loan_balance_rate,
+                    foreign_net_qty, foreign_net_amt, inst_net_qty, inst_net_amt,
+                    indiv_net_qty, indiv_net_amt,
+                    short_volume, short_ratio,
+                    ovtm_close, ovtm_change_pct, ovtm_volume,
+                    collected_at
+                ) VALUES (
+                    ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?,
+                    ?, ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    datetime('now')
+                )
+            """, (
+                date_str, ticker,
+                # OHLCV — KRX close, KIS chart open/high/low
+                close,
+                int(ch.get("open", 0) or 0),
+                int(ch.get("high", 0) or 0),
+                int(ch.get("low",  0) or 0),
+                float(krx.get("chg_pct", 0) or 0),
+                int(krx.get("volume",     0) or 0),
+                int(krx.get("trade_value", 0) or 0),
+                int(krx.get("market_cap",  0) or 0) // 100_000_000,  # KRW → 억원
+                # 시점 특정 불가 컬럼 → 0 (KIS 현재가 API 미사용 원칙)
+                0.0,  # per
+                0.0,  # pbr
+                0.0,  # eps
+                0.0,  # bps
+                0.0,  # div_yield
+                0,    # w52_high
+                0,    # w52_low
+                0.0,  # foreign_own_pct
+                0,    # listing_shares
+                0.0,  # turnover
+                # 신용잔고비율 (당일 시점)
+                float(crd.get("credit_ratio", 0) or 0),
+                # 수급 (KIS FHPTJ04160001 히스토리 — 당일 행 필터)
+                int(sup.get("foreign_net",     0) or 0),
+                0,  # foreign_net_amt (히스토리 API 미제공)
+                int(sup.get("institution_net", 0) or 0),
+                0,  # inst_net_amt
+                int(sup.get("individual_net",  0) or 0),
+                0,  # indiv_net_amt
+                # 공매도 (KIS FHPST04830000 히스토리 — 당일 행 필터)
+                int(sht.get("short_vol",   0) or 0),
+                float(sht.get("short_ratio", 0) or 0),
+                # 시간외 — 히스토리 없음 → 0
+                0, 0.0, 0,
+            ))
+            inserted += 1
+        except Exception as e:
+            print(f"[backfill] {ticker} INSERT 실패: {e}")
+            errors += 1
+
+    conn.commit()
+
+    # 기술지표 계산 (collect_daily와 동일)
+    try:
+        _compute_and_update(conn, date_str)
+    except Exception as e:
+        print(f"[backfill] 기술지표 계산 실패: {e}")
+
+    # 컨센서스 UPDATE (consensus_history → daily_snapshot.consensus_target/count/gap)
+    try:
+        _update_consensus_in_snapshot(conn, date_str)
+    except Exception as e:
+        print(f"[backfill] 컨센서스 갱신 실패: {e}")
+
+    conn.close()
+
+    # F/M/FCF 알파 메트릭
+    try:
+        update_all_alpha_metrics(trade_date=date_str)
+    except Exception as e:
+        print(f"[backfill] 알파 메트릭 실패: {e}")
+
+    elapsed = _time.monotonic() - t0
+    print(
+        f"[backfill] {date_str} 완료 — inserted={inserted}, "
+        f"errors={errors}, elapsed={elapsed:.1f}s"
+    )
+    return {
+        "date":        date_str,
+        "inserted":    inserted,
+        "skipped":     len(krx_by_ticker) - len(tickers),
+        "errors":      errors,
+        "elapsed_sec": round(elapsed, 1),
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Part 2 — 기술지표 계산 + 하위호환 심볼 + 재무
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
