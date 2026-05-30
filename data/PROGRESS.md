@@ -25,7 +25,7 @@
 - 전 작업 developer→reviewer→critic→verifier. 검출기 6패키지 0건.
 
 ### ⚠️ 미해결 — 사용자 결정/후속 필요
-1. **5/27·28 daily_snapshot 백필** — 누락 2일. naive `collect_daily(과거날짜)`는 KIS 현재가를 과거종가로 덮어써 **데이터 오염**(critic CRITICAL). KRX-historical-only 백필 경로 별도 필요 or 2일 갭 수용. 사용자 결정 대기.
+1. **5/27·28 daily_snapshot 백필** — **결정(5/30): 2일 갭 수용 (옵션 A)**. 이유: 누락 2일은 최근 267일 윈도우 <1%로 영향 미미, 시간외 필드 복구 불가, naive 백필은 corruption 위험, KRX API 간헐장애로 백필 코드 유지비용 증가. 향후 실제 분석 영향 확인 시 안전 KRX-historical-only 백필 별도 구축 검토.
 2. **2개 1회성 로그 에러** — `_exec_us_ratings() ticker`(현 코드엔 default 있어 stale 추정), `KeyError auto_watched`(data-edge). 현 코드 재현 안 됨 → 비수정.
 3. **코딩규칙 권고** — kis_api submodule 역방향 의존 금지(fmp/regime → polymarket/pension). 현재 선형 무순환이나 명문화 시 순환 회귀 사전차단.
 4. **telegram regime_cur 점수** — `combined_score`가 `current`에 없고 `history[*]`에만 존재 → 점수 영구 미표시(legacy도 동일, crash만 해소). 표시 원하면 history 소스 수정 필요.
