@@ -1,3 +1,18 @@
+## 🐛 2026-05-30~31 MCP 도구 점검 — youtube stub 수정 + 47도구 전수검사
+
+### youtube stub (실버그, commit aca69cc)
+`handle_get_youtube_transcript` 가 mcp_tools.py→패키지 분할(904fe12, 5/27) 때 URL 파싱만 하고 `fetch_youtube_transcript()` 호출 `else:` 분기가 통째로 누락 → 항상 `null` 반환. 클라이언트에서 "유튜브 요약 안 됨". 원본 mcp_tools.py:4667 `asyncio.to_thread` 로직 복구. 라이브 MCP 재호출로 721줄/13042자 자막 정상 확인.
+
+### 47도구 전수검사 결과: 다른 stub 없음
+`_test_all_tools.py` (repo루트, tracked) — 47개 도구를 실제 `_execute_tool(name, args)` 로 전수 호출. **OK=38 / ERROR=8 / NULL_STUB=0 / EXCEPTION=0 / SKIP=1(git_push)**.
+- NULL_STUB=0 → youtube 같은 stub 핸들러 더 없음 (사용자 "다른 애들도 되는거 맞아?" 답: 전부 정상)
+- ERROR=8 전부 정상 방어: 무인자 호출(set_alert/write_file/git_commit/manage_watch/simulate_trade/read_report_pdf/watch_analyst) + FMP 402(FMP_API_KEY 미설정, 코드버그 아님)
+
+### ⚠️ 내 오진 1건 (기록 — 같은 실수 방지)
+처음에 하니스가 `_execute_tool(name, args, **token**)` 3인자로 호출 → 47개 전부 TypeError → "pension/sec 버그"로 오진하고 팀 호출. **reviewer 가 차단**: "_fetch_watchlist_flows/SEC_DB_PATH 심볼 자체가 코드에 없음, 변경 대상 부재". 실제 원인은 `_execute_tool` 가 2인자(token 자동감지, 어제 수정됨)인데 하니스가 구 시그니처 사용. 하니스 token 인자 제거로 해결. **pension/sec 코드는 멀쩡, 커밋된 가짜 수정 없음.** → 교훈: 전수검사 도구 자체의 시그니처부터 1개 도구로 검증 후 전체 돌릴 것.
+
+---
+
 ## 🚨 2026-05-29 전체 회귀 테스트 — 분할 회귀 25건 발견·수정 (사용자 "전체 테스트" 지시)
 
 ### 발견 경위
