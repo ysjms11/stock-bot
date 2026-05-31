@@ -188,6 +188,57 @@ def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
     return images, meta
 
 
+def _extract_pdf_text(pdf_path: str, page_indices: list | None = None):
+    """PDF 텍스트 추출 → (text_blocks_list, meta). 페이지 제한 없음.
+    반환 text_blocks: [{"type":"text","text":...}] (페이지 마커 포함)."""
+    import fitz as _fitz
+    doc = _fitz.open(pdf_path)
+    total = len(doc)
+    idxs = page_indices if page_indices is not None else list(range(total))
+    parts = []
+    char_total = 0
+    for _i in idxs:
+        if _i < 0 or _i >= total:
+            continue
+        t = doc[_i].get_text("text") or ""
+        char_total += len(t)
+        parts.append(f"[Page {_i + 1}/{total}]\n{t}")
+    doc.close()
+    full = "\n\n".join(parts)
+    return (
+        [{"type": "text", "text": full}],
+        {
+            "total_pages":      total,
+            "pages_extracted":  len(parts),
+            "char_count":       char_total,
+        },
+    )
+
+
+def _embed_pdf_resource(pdf_path: str):
+    """PDF 원본 → EmbeddedResource 1블록 (base64 application/pdf). 반환 (blocks, meta)."""
+    import base64 as _b64
+    with open(pdf_path, "rb") as _f:
+        raw = _f.read()
+    b64 = _b64.standard_b64encode(raw).decode()
+    uri = "file://" + os.path.realpath(pdf_path)
+    block = {
+        "type": "resource",
+        "resource": {
+            "uri":      uri,
+            "mimeType": "application/pdf",
+            "blob":     b64,
+        },
+    }
+    return (
+        [block],
+        {
+            "pdf_bytes":   len(raw),
+            "encoded_kb":  len(b64) // 1024,
+        },
+    )
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 스크리너 내부 함수
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

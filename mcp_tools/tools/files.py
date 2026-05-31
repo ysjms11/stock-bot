@@ -40,7 +40,7 @@ from kis_api import (
     DECISION_LOG_FILE, COMPARE_LOG_FILE, WATCHALERT_FILE,
 )
 from db_collector import load_krx_db, scan_stocks, _load_history
-from mcp_tools._helpers import _parse_page_range, _render_pdf_pages
+from mcp_tools._helpers import _parse_page_range, _render_pdf_pages, _extract_pdf_text, _embed_pdf_resource
 
 try:
     from report_crawler import (
@@ -195,6 +195,10 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
         _ticker    = arguments.get("ticker", "").strip()
         _report_id = arguments.get("report_id")
         _pages_str = arguments.get("pages", "").strip() or None
+        _mode      = (arguments.get("mode") or "image").strip().lower()
+
+        if _mode not in ("image", "text", "pdf"):
+            return {"error": "mode는 image|text|pdf 중 하나입니다"}
 
         if not _ticker:
             result = {"error": "ticker는 필수입니다"}
@@ -235,7 +239,7 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
             elif not _row["pdf_path"]:
                 result = {"error": "PDF 경로 없음 (pdf_path가 비어 있음)"}
             else:
-                # 보안: path traversal 차단
+                # 보안: path traversal 차단 (세 모드 공통)
                 _pdf_path = os.path.realpath(_row["pdf_path"])
                 _data_base = os.path.realpath(_DATA_DIR) if _DATA_DIR else ""
                 _bot_base  = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -245,45 +249,84 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
                 elif not os.path.isfile(_pdf_path):
                     result = {"error": f"PDF 파일 없음: {_pdf_path}"}
                 else:
-                    # fitz로 페이지 수 파악 후 범위 파싱
-                    try:
-                        import fitz as _fitz_tmp
-                        _doc_tmp = _fitz_tmp.open(_pdf_path)
-                        _total_pages = len(_doc_tmp)
-                        _doc_tmp.close()
-                    except Exception as _fe:
-                        result = {"error": f"PDF 열기 실패: {_fe}"}
-                        _total_pages = -1
+                    # pdf 모드: 페이지 파싱 불필요, 원본 통째 임베드
+                    if _mode == "pdf":
+                        try:
+                            _blocks, _meta = _embed_pdf_resource(_pdf_path)
+                            _meta_text = {
+                                "mode":           "pdf",
+                                "ticker":         _ticker,
+                                "report_id":      _row["id"] if "id" in _row.keys() else _report_id,
+                                "title":          _row["title"],
+                                "source":         _row["source"],
+                                "date":           _row["date"],
+                                "pdf_size_kb":    os.path.getsize(_pdf_path) // 1024,
+                                **_meta,
+                            }
+                            result = _blocks + [
+                                {"type": "text", "text": json.dumps(_meta_text, ensure_ascii=False)}
+                            ]
+                        except Exception as _pe:
+                            result = {"error": f"PDF 임베드 실패: {_pe}"}
+                    else:
+                        # image/text 모드: fitz로 페이지 수 파악 후 범위 파싱
+                        try:
+                            import fitz as _fitz_tmp
+                            _doc_tmp = _fitz_tmp.open(_pdf_path)
+                            _total_pages = len(_doc_tmp)
+                            _doc_tmp.close()
+                        except Exception as _fe:
+                            result = {"error": f"PDF 열기 실패: {_fe}"}
+                            _total_pages = -1
 
-                    if _total_pages >= 0:
-                        _page_indices = _parse_page_range(_pages_str, _total_pages)
-                        if isinstance(_page_indices, str):
-                            # 오류 문자열 반환
-                            result = {"error": _page_indices}
-                        else:
-                            # PNG 렌더링
-                            try:
-                                _images, _meta = _render_pdf_pages(_pdf_path, _page_indices)
-                            except Exception as _re:
-                                result = {"error": f"PDF 렌더링 실패: {_re}"}
-                                _images = None
+                        if _total_pages >= 0:
+                            _page_indices = _parse_page_range(_pages_str, _total_pages)
+                            if isinstance(_page_indices, str):
+                                result = {"error": _page_indices}
+                            elif _mode == "text":
+                                try:
+                                    _blocks, _meta = _extract_pdf_text(_pdf_path, _page_indices)
+                                except Exception as _te:
+                                    result = {"error": f"PDF 텍스트 추출 실패: {_te}"}
+                                    _blocks = None
+                                if _blocks is not None:
+                                    _meta_text = {
+                                        "mode":            "text",
+                                        "ticker":          _ticker,
+                                        "report_id":       _row["id"] if "id" in _row.keys() else _report_id,
+                                        "title":           _row["title"],
+                                        "source":          _row["source"],
+                                        "date":            _row["date"],
+                                        "pdf_size_kb":     os.path.getsize(_pdf_path) // 1024,
+                                        "pages_requested": _pages_str or "전체",
+                                        **_meta,
+                                    }
+                                    result = _blocks + [
+                                        {"type": "text", "text": json.dumps(_meta_text, ensure_ascii=False)}
+                                    ]
+                            else:
+                                # image 모드 (기존 동작 그대로)
+                                try:
+                                    _images, _meta = _render_pdf_pages(_pdf_path, _page_indices)
+                                except Exception as _re:
+                                    result = {"error": f"PDF 렌더링 실패: {_re}"}
+                                    _images = None
 
-                            if _images is not None:
-                                # 메타 텍스트 content
-                                _meta_text = {
-                                    "ticker":         _ticker,
-                                    "report_id":      _row["id"] if "id" in _row.keys() else _report_id,
-                                    "title":          _row["title"],
-                                    "source":         _row["source"],
-                                    "date":           _row["date"],
-                                    "pdf_size_kb":    os.path.getsize(_pdf_path) // 1024,
-                                    "pages_requested": _pages_str or "전체",
-                                    **_meta,
-                                }
-                                # result를 list로 반환 → _handle_jsonrpc에서 직접 content로 사용
-                                result = _images + [
-                                    {"type": "text", "text": json.dumps(_meta_text, ensure_ascii=False)}
-                                ]
+                                if _images is not None:
+                                    _meta_text = {
+                                        "mode":            "image",
+                                        "ticker":          _ticker,
+                                        "report_id":       _row["id"] if "id" in _row.keys() else _report_id,
+                                        "title":           _row["title"],
+                                        "source":          _row["source"],
+                                        "date":            _row["date"],
+                                        "pdf_size_kb":     os.path.getsize(_pdf_path) // 1024,
+                                        "pages_requested": _pages_str or "전체",
+                                        **_meta,
+                                    }
+                                    result = _images + [
+                                        {"type": "text", "text": json.dumps(_meta_text, ensure_ascii=False)}
+                                    ]
 
     return result
 
