@@ -1,3 +1,28 @@
+## 📄 2026-05-31 read_report_pdf — text/pdf 모드 추가 (사용자 "PDF 100장 제한·원본 전송 가능?")
+
+### 문제
+claude.ai 클라이언트가 **채팅당 이미지 100개 하드 제한**. read_report_pdf 가 PDF를 페이지마다 PNG로 변환 → 100p+ 리포트는 "이미지 100개 도달" 에러.
+
+### 조사 결론 (1차 출처)
+- MCP 스펙: tool result content = text/image/audio/resource(embedded)/resource_link. PDF는 EmbeddedResource(application/pdf base64)로 담을 수 있음.
+- **그러나 claude.ai 가 PDF EmbeddedResource 를 문서로 렌더 안 함** (GitHub modelcontextprotocol/csharp-sdk#1261 "BAD IMAGE", 미해결). MCP→claude.ai 로 PDF 원본 직접 전송은 현재 불가.
+- arxiv-mcp/pdf-mcp 등 **잘 되는 실전 패턴은 전부 "텍스트 추출 후 text 블록 반환"** (read_paper=markdown). → text 모드가 현실적 정답.
+
+### 구현 (commit ce0c3f1)
+read_report_pdf 에 mode 파라미터:
+- `mode=image` (기본, 하위호환 100%): 기존 페이지→PNG. meta.mode 키만 추가.
+- `mode=text` (신규·권장): fitz 텍스트 전페이지 추출 → text 블록. **이미지 0, 페이지 무제한.** 라이브 확인: 005930 11p 텍스트 정상.
+- `mode=pdf` (신규·실험): PDF 원본 EmbeddedResource(application/pdf). 25MB 상한 가드. claude.ai 렌더 여부 사용자 검증 필요(미지원 가능성 높음).
+- 신규 헬퍼 `_extract_pdf_text`/`_embed_pdf_resource` (_helpers.py). 스키마 mode enum 추가.
+
+### ⚠️ text 모드 한계 (중요)
+삼성전자류 리포트는 **차트·표를 이미지로 박아** 텍스트 추출 시 페이지당 80~110자뿐(11217: 총1062자). 반면 산업/전략 리포트는 텍스트 풍부(9천~1만7천자, 샘플30개중 28개 1500자+). meta.char_count 로 "이 PDF는 text로 안 잡힘(차트형)" 판별 가능 → 그런 경우만 image 모드 폴백. **종목별 리포트 성격에 따라 mode 선택 필요.**
+
+### reviewer/verifier
+verifier 8/8 APPROVE, reviewer 권고(pdf 25MB 가드) 반영 후 커밋. 봇 재시작 health 200, 라이브 MCP text 모드 작동 확인.
+
+---
+
 ## 🐛 2026-05-30~31 MCP 도구 점검 — youtube stub 수정 + 47도구 전수검사
 
 ### youtube stub (실버그, commit aca69cc)
