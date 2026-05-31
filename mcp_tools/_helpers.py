@@ -141,11 +141,27 @@ def _parse_page_range(pages_str: str | None, total_pages: int) -> list[int] | No
 
 
 def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
-    """PDF 페이지를 PNG ImageContent 리스트로 변환."""
+    """PDF 페이지를 PNG ImageContent 리스트로 변환.
+
+    페이지 수에 따라 적응형 합치기 적용:
+      - ≤50p   : 1페이지/이미지, DPI 150  (최대 50장)
+      - 51~100p : 2페이지/이미지, DPI 110  (최대 50장)
+      - 101p+  : 4페이지/이미지, DPI 90   (최대 50장)
+
+    합친 이미지의 long-edge가 _MAX_EDGE(2200px)를 초과하면 pre-render scale로 다운샘플.
+    claude.ai가 ~1568px 초과 시 어차피 다운스케일하므로 DPI 인플레이션은 역효과.
+
+    트렁케이션 기준:
+      1차(주): 이미지 개수 ≥ _MAX_IMAGES (50장) → image_limit
+      2차(백스톱): 누적 바이트 ≥ _MAX_BYTES (30MB) → size_limit
+    truncated=True 시 meta에 truncation_reason + next_pages 힌트 추가.
+    """
     import fitz as _fitz
     import base64 as _b64
 
-    _MAX_BYTES = 5 * 1024 * 1024
+    _MAX_IMAGES = 50                  # claude.ai 실측 28장 통과, 50장 한도
+    _MAX_BYTES  = 30 * 1024 * 1024   # 30MB 백스톱 (50장 × ~500KB)
+    _MAX_EDGE   = 2200                # claude auto-downscale ~1568px → 2200이면 충분
 
     doc = _fitz.open(pdf_path)
     total_pages = len(doc)
@@ -153,20 +169,94 @@ def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
     if page_indices is None:
         page_indices = list(range(total_pages))
 
+    # 유효 인덱스만 추려서 실제 렌더 대상 결정
+    target_indices = [i for i in page_indices if 0 <= i < total_pages]
+
+    # 적응형 파라미터 결정 (대상 페이지 수 기준)
+    n = len(target_indices)
+    if n <= 50:
+        ppi, dpi = 1, 150
+    elif n <= 100:
+        ppi, dpi = 2, 110
+    else:
+        ppi, dpi = 4, 90
+
+    # target_indices 를 ppi개씩 청크로 분리
+    chunks = [target_indices[i:i + ppi] for i in range(0, len(target_indices), ppi)]
+
+    def _merge_chunk(chunk: list[int]) -> bytes:
+        """chunk의 페이지들을 세로로 이어붙인 PNG bytes 반환.
+
+        page.rect(pt 단위)로 합친 크기를 미리 예측해 _MAX_EDGE 초과 시
+        pre-render scale을 적용하므로 다운스케일 없이 단 한 번만 렌더한다.
+        """
+        # 1) 합친 크기 예측 (pt 단위)
+        page_rects = [doc[i].rect for i in chunk]
+        W_pt = max(r.width  for r in page_rects)
+        H_pt = sum(r.height for r in page_rects)
+        W_px_pred = W_pt / 72.0 * dpi
+        H_px_pred = H_pt / 72.0 * dpi
+        long_edge_pred = max(W_px_pred, H_px_pred)
+
+        # 2) _MAX_EDGE 초과 시 scale 계산
+        scale = min(1.0, _MAX_EDGE / long_edge_pred) if long_edge_pred > _MAX_EDGE else 1.0
+        eff_scale = scale * dpi / 72.0  # fitz Matrix에 전달할 실효 배율
+
+        # 3) 각 페이지 렌더 (한 번만)
+        pixmaps = []
+        for idx in chunk:
+            m = _fitz.Matrix(eff_scale, eff_scale)
+            px = doc[idx].get_pixmap(matrix=m)
+            # RGBA / CMYK → RGB 변환 (alpha 채널 제거, 흰 배경 블렌드)
+            if px.alpha or px.n > 3:
+                px = _fitz.Pixmap(_fitz.csRGB, px)
+            pixmaps.append(px)
+
+        if len(pixmaps) == 1:
+            return pixmaps[0].tobytes("png"), scale < 1.0
+
+        W = max(p.width  for p in pixmaps)
+        H = sum(p.height for p in pixmaps)
+        canvas = _fitz.Pixmap(_fitz.csRGB, _fitz.IRect(0, 0, W, H), False)
+        canvas.clear_with(255)  # 흰 배경
+
+        y = 0
+        for p in pixmaps:
+            # set_origin으로 소스 Pixmap의 좌표 원점을 이동시켜
+            # canvas.copy(src, bbox) 가 canvas 좌표계에서 정확한 위치에 복사되게 함
+            p.set_origin(0, y)
+            canvas.copy(p, _fitz.IRect(0, y, p.width, y + p.height))
+            y += p.height
+
+        return canvas.tobytes("png"), scale < 1.0
+
     images: list[dict] = []
     cumulative = 0
     truncated = False
-    rendered = 0
+    truncation_reason: str | None = None
+    rendered_orig: list[int] = []   # 실제 렌더된 원본 0-based 인덱스 목록
+    any_downscaled = False
 
-    for idx in page_indices:
-        if idx < 0 or idx >= total_pages:
+    for chunk in chunks:
+        # 1차 트렁케이션 게이트: 이미지 개수
+        if len(images) >= _MAX_IMAGES:
+            truncated = True
+            truncation_reason = "image_limit"
+            break
+
+        try:
+            png_bytes, was_downscaled = _merge_chunk(chunk)
+        except Exception as _e:
+            # 청크 렌더 실패 시 해당 청크만 건너뜀
+            print(f"[render_pdf] chunk {chunk} 렌더 실패 (건너뜀): {_e}")
             continue
-        page = doc[idx]
-        pix  = page.get_pixmap(dpi=100)
-        png_bytes = pix.tobytes("png")
+
+        # 2차 트렁케이션 게이트: 누적 바이트 (백스톱)
         if cumulative + len(png_bytes) > _MAX_BYTES:
             truncated = True
+            truncation_reason = "size_limit"
             break
+
         b64 = _b64.b64encode(png_bytes).decode("ascii")
         images.append({
             "type":     "image",
@@ -174,17 +264,52 @@ def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
             "mimeType": "image/png",
         })
         cumulative += len(png_bytes)
-        rendered   += 1
+        rendered_orig.extend(chunk)
+        if was_downscaled:
+            any_downscaled = True
 
     doc.close()
 
-    meta = {
-        "total_pages":    total_pages,
-        "rendered_pages": rendered,
-        "requested_pages": len(page_indices),
-        "size_kb":        cumulative // 1024,
-        "truncated":      truncated,
+    # next_pages 힌트 계산 (truncated일 때만)
+    # 실제 렌더된 인덱스 집합으로 정확한 remaining 산출
+    next_pages: str | None = None
+    if truncated and rendered_orig:
+        rendered_set = set(rendered_orig)
+        remaining_0based = [p for p in target_indices if p not in rendered_set]
+        if remaining_0based:
+            # 1-based 변환 후 콤마 리스트 (연속 구간은 A-B로 압축)
+            pages_1 = [p + 1 for p in remaining_0based]
+            parts: list[str] = []
+            start = end = pages_1[0]
+            for pg in pages_1[1:]:
+                if pg == end + 1:
+                    end = pg
+                else:
+                    parts.append(f"{start}-{end}" if end > start else str(start))
+                    start = end = pg
+            parts.append(f"{start}-{end}" if end > start else str(start))
+            hint = ",".join(parts)
+            # 너무 길면 첫 항목 + "..."
+            if len(hint) > 80:
+                hint = parts[0] + ",..."
+            next_pages = hint
+
+    meta: dict = {
+        "total_pages":        total_pages,
+        "rendered_pages":     len(rendered_orig),
+        "requested_pages":    len(page_indices),
+        "size_kb":            cumulative // 1024,
+        "truncated":          truncated,
+        "pages_per_image":    ppi,
+        "dpi":                dpi,
+        "merged_image_count": len(images),
     }
+    if any_downscaled:
+        meta["downscaled"] = True
+    if truncated:
+        meta["truncation_reason"] = truncation_reason
+        meta["next_pages"]        = next_pages
+
     return images, meta
 
 
