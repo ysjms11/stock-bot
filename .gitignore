@@ -18,3 +18,7 @@ data/.DS_Store
 .DS_Store
 .claude/worktrees/
 data/cookies/
+
+# 모든 .db (stock.db 외 잔여 sqlite 방지)
+data/*.db
+data/*.db-*

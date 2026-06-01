@@ -1,3 +1,30 @@
+## 📋 2026-06-01 세션 종료 핸드오프 (컴팩트 직전)
+
+### 이번 세션(5/29~6/1) 성과 — 분할 회귀 소탕 + PDF 가독성
+1. **분할 회귀 25건 수정** (main.py→main_pkg, kis_api 5/27 분할 잔재): 1차 NameError 14건(a072451) + 2차 11건(7da09f9). `tests/test_undefined_names.py` 바이트코드 LOAD_GLOBAL 가드 신설(83e754d).
+2. **MCP 도구 전수검사 하니스** `_test_all_tools.py` (tracked): 47도구 실호출 → NULL_STUB=0, EXCEPTION=0 확정. youtube stub 발견·수정(aca69cc).
+3. **pension/sec 2버그** — 오진이었음(하니스 시그니처 착오), reviewer가 차단. 코드 멀쩡, 가짜 수정 미커밋.
+4. **5/27·28 daily_snapshot 백필** — `collect_daily_backfill()` (d5354f2). KRX historical+KIS history-with-date. 2766/2766행. KIS 현재가 미사용으로 corruption 회피.
+5. **consensus not_rated** 분류(9963258): TP=0 Not Rated를 sell 오분류 → not_rated 신설.
+6. **read_report_pdf 대수술** (핵심):
+   - mode=text/pdf 추가(ce0c3f1). PDF 원본 전송은 claude.ai 미지원 확정(실측 -32602 거부 + GitHub csharp-sdk#1261).
+   - image 모드 적응형 합치기 → 최종 **최대 2합치기**(2aa99c2): ≤50p=1p/img, 51p+=2p/img, dpi150, _MAX_EDGE=3000, _MAX_IMAGES=50(=100p 커버), _MAX_BYTES=33MB. 페이지당 550→1075px(2배). **육안+Claude 판독으로 표 숫자 읽힘 확인**(4합치기는 못 읽었음).
+
+### git 상태
+- 코드 전부 커밋·push 완료. 최신 c6924e8(KR_EXIT 리서치) / 봇 코드 최신 2aa99c2.
+- untracked = 런타임 .lock/아티팩트 + 리서치 .md(US_EXIT/research_log) + `_split_kis_api.py`(1회용)뿐. **커밋 불필요.**
+- `data/reports.db`(0바이트 고아) 삭제 + .gitignore에 `data/*.db` 패턴 추가.
+- 봇 health 200, launchd 정상.
+
+### 다음 세션 할 일 (우선순위)
+1. **SEC EDGAR Phase 2** — sec_polling 잡(10분) + 8-K/EFFECT 텔레그램 알림 (Phase 1만 완료됨)
+2. `_split_kis_api.py` 삭제 검토(리팩토링 끝난 1회용)
+3. backtest.py US 캔들 동일 버그(#6, out-of-scope로 남음)
+4. read_report_pdf: 100p+ 리포트는 next_pages로 2회 호출 필요 — 자주 쓰면 UX 개선 검토
+5. KR_EXIT/US_EXIT 리서치 산출물 기반 실행은 **사용자 직접 결정 영역**
+
+---
+
 ## 📄 2026-05-31 read_report_pdf — text/pdf 모드 추가 (사용자 "PDF 100장 제한·원본 전송 가능?")
 
 ### 문제
