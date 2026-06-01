@@ -143,25 +143,30 @@ def _parse_page_range(pages_str: str | None, total_pages: int) -> list[int] | No
 def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
     """PDF 페이지를 PNG ImageContent 리스트로 변환.
 
-    페이지 수에 따라 적응형 합치기 적용:
-      - ≤50p   : 1페이지/이미지, DPI 150  (최대 50장)
-      - 51~100p : 2페이지/이미지, DPI 110  (최대 50장)
-      - 101p+  : 4페이지/이미지, DPI 90   (최대 50장)
+    페이지 수에 따라 적응형 합치기 적용 (최대 2합치기):
+      - ≤50p : 1페이지/이미지, DPI 150  (최대 50장=50p)
+      - 51p+ : 2페이지/이미지, DPI 150  (최대 50장=100p, 초과 시 next_pages 안내)
 
-    합친 이미지의 long-edge가 _MAX_EDGE(2200px)를 초과하면 pre-render scale로 다운샘플.
-    claude.ai가 ~1568px 초과 시 어차피 다운스케일하므로 DPI 인플레이션은 역효과.
+    4합치기 제거 이유: claude.ai가 이미지 long-edge를 ~1568px로 다운스케일하므로
+    4합치기(합친 세로/4=페이지당 ~550px)는 표 숫자·작은 불릿을 읽지 못함.
+    2합치기(합친 세로/2=페이지당 ~1500px)는 3000px 캡에서 claude.ai 손실 최소.
+
+    합친 이미지의 long-edge가 _MAX_EDGE(3000px)를 초과하면 pre-render scale로 다운샘플.
 
     트렁케이션 기준:
       1차(주): 이미지 개수 ≥ _MAX_IMAGES (50장) → image_limit
-      2차(백스톱): 누적 바이트 ≥ _MAX_BYTES (30MB) → size_limit
+      2차(백스톱): 누적 바이트 ≥ _MAX_BYTES (45MB) → size_limit
     truncated=True 시 meta에 truncation_reason + next_pages 힌트 추가.
     """
     import fitz as _fitz
     import base64 as _b64
 
-    _MAX_IMAGES = 50                  # claude.ai 실측 28장 통과, 50장 한도
-    _MAX_BYTES  = 30 * 1024 * 1024   # 30MB 백스톱 (50장 × ~500KB)
-    _MAX_EDGE   = 2200                # claude auto-downscale ~1568px → 2200이면 충분
+    _MAX_IMAGES = 50                  # claude.ai 50장 한도 (2합치기 → 최대 100p 커버)
+    _MAX_BYTES  = 33 * 1024 * 1024   # 33MB raw 백스톱 (base64 ~4/3배 → 전송 ~45MB).
+                                     # 전형 리포트는 50장=18~27MB라 image_limit(50장)이
+                                     # 주 게이트; 차트밀집 극단만 size_limit 백스톱.
+    _MAX_EDGE   = 3000                # 2합치기 세로 ~3100 → 3000 캡 → 페이지당 ~1500px
+                                     # claude.ai 1568 다운스케일 후에도 글자 판독 가능
 
     doc = _fitz.open(pdf_path)
     total_pages = len(doc)
@@ -172,14 +177,12 @@ def _render_pdf_pages(pdf_path: str, page_indices: list[int] | None = None):
     # 유효 인덱스만 추려서 실제 렌더 대상 결정
     target_indices = [i for i in page_indices if 0 <= i < total_pages]
 
-    # 적응형 파라미터 결정 (대상 페이지 수 기준)
+    # 적응형 파라미터 결정 (대상 페이지 수 기준, 최대 2합치기)
     n = len(target_indices)
     if n <= 50:
         ppi, dpi = 1, 150
-    elif n <= 100:
-        ppi, dpi = 2, 110
     else:
-        ppi, dpi = 4, 90
+        ppi, dpi = 2, 150   # 51p+ 전부 2합치기, dpi 통일 150
 
     # target_indices 를 ppi개씩 청크로 분리
     chunks = [target_indices[i:i + ppi] for i in range(0, len(target_indices), ppi)]

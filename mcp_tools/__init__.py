@@ -331,7 +331,7 @@ MCP_TOOLS = [
                      },
                      "required": []}},
     {"name": "read_report_pdf",
-     "description": "리포트 PDF 읽기. mode=image(기본, 페이지 수에 따라 자동 합치기: ≤50p 1p/img, 51-100p 2p/img, 101p+ 4p/img, 최대 50장, 초과 시 next_pages 안내), text(텍스트 전페이지 추출·차트는 글자만), pdf(PDF 원본 임베드·실험적). pages 파라미터로 범위 지정 가능(예 '1-3' 또는 '1-3,10,20-25' 비연속). 종목코드만으로 최신 리포트 자동 조회.",
+     "description": "리포트 PDF 읽기. mode=image(기본, 자동 합치기: ≤50p 1p/img, 51p+ 2p/img, 최대 50장=100p, 초과 시 next_pages 안내), text(텍스트 전페이지 추출·차트는 글자만), pdf(PDF 원본 임베드·실험적). pages 파라미터로 범위 지정 가능(예 '1-3' 또는 '1-3,10,20-25' 비연속). 종목코드만으로 최신 리포트 자동 조회.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "ticker":    {"type": "string",  "description": "종목코드"},
