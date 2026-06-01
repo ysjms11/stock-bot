@@ -770,6 +770,17 @@ tbody tr:hover{background:rgba(255,255,255,0.03)}
 .doc-icon{font-size:1.5em;margin-bottom:4px}
 .doc-name{font-size:0.85em;font-weight:600}
 .doc-desc{font-size:0.75em;color:var(--fg2)}
+.rpt-seg-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.rpt-seg-btn{padding:5px 12px;border-radius:16px;border:1px solid var(--border);background:transparent;color:var(--fg2);cursor:pointer;font-size:0.8em;transition:background 0.2s,color 0.2s,border-color 0.2s}
+.rpt-seg-btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
+.rpt-seg{display:none}.rpt-seg.active{display:block}
+.rpt-list-date{font-size:0.85em;font-weight:700;color:var(--accent);margin:14px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--border)}
+.rpt-list-row{display:flex;align-items:baseline;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:0.85em;flex-wrap:wrap}
+.rpt-cat-tag{font-size:0.7em;padding:1px 6px;border-radius:8px;background:rgba(79,195,247,0.15);color:var(--accent);white-space:nowrap;flex-shrink:0}
+.rpt-sec-tag{font-size:0.7em;padding:1px 6px;border-radius:8px;background:rgba(102,187,106,0.15);color:var(--green);white-space:nowrap;flex-shrink:0}
+.rpt-list-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rpt-list-src{font-size:0.75em;color:var(--fg2);white-space:nowrap;flex-shrink:0}
+.rpt-cap-note{font-size:0.78em;color:var(--fg2);margin-top:6px;font-style:italic}
 .search-box{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--fg);font-size:0.9em;margin-bottom:8px}
 .search-box:focus{outline:none;border-color:var(--accent)}
 .filter-bar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center}
@@ -962,6 +973,18 @@ document.addEventListener('change', async (e) => {
     cb.checked = !cb.checked;
     alert('네트워크 오류: ' + err.message);
   }
+});
+
+// 5b. 리포트 세그먼트 토글
+document.querySelectorAll('.rpt-seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.seg;
+    document.querySelectorAll('.rpt-seg-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.rpt-seg').forEach(s => s.classList.remove('active'));
+    btn.classList.add('active');
+    const seg = document.getElementById(target);
+    if (seg) seg.classList.add('active');
+  });
 });
 
 // 6. TODO 항목 추가 폼
@@ -2075,30 +2098,190 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
     # 7. 리포트
     try:
         import sqlite3 as _sqlite3_rpt
+        _RPT_LIST_CAP = 200  # 날짜 리스트 세그먼트 최대 행 수
+
         rpt_conn = _sqlite3_rpt.connect(REPORT_DB_PATH, timeout=10)
         rpt_conn.execute("PRAGMA cache_size = -65536;")
         rpt_conn.execute("PRAGMA temp_store = MEMORY;")
         rpt_conn.execute("PRAGMA mmap_size = 268435456;")
         rpt_conn.execute("PRAGMA busy_timeout = 30000;")
         rpt_conn.row_factory = _sqlite3_rpt.Row
-        ticker_counts = rpt_conn.execute("""
-            SELECT ticker, name, COUNT(*) as cnt, MAX(date) as latest
-            FROM reports GROUP BY ticker ORDER BY cnt DESC
-        """).fetchall()
-        rpt_conn.close()
+
+        try:
+            # ── 세그먼트 1: 한국 종목 (company + 숫자 ticker) ──
+            # 수정 A: stock_master 정식명 우선 (GROUP BY r.name 비결정성 제거)
+            kr_rows = rpt_conn.execute("""
+                SELECT r.ticker,
+                       COALESCE(sm.name, NULLIF(r.name,''), r.ticker) AS display_name,
+                       COUNT(*) AS cnt, MAX(r.date) AS latest
+                FROM reports r
+                LEFT JOIN stock_master sm ON sm.symbol = r.ticker
+                WHERE r.category='company' AND r.ticker GLOB '[0-9]*'
+                GROUP BY r.ticker ORDER BY cnt DESC
+            """).fetchall()
+
+            # ── 세그먼트 2: 미국 종목 (company + 알파벳 ticker) ──
+            # 수정 A: stock_master 정식명 우선
+            us_rows = rpt_conn.execute("""
+                SELECT r.ticker,
+                       COALESCE(sm.name, NULLIF(r.name,''), r.ticker) AS display_name,
+                       COUNT(*) AS cnt, MAX(r.date) AS latest
+                FROM reports r
+                LEFT JOIN stock_master sm ON sm.symbol = r.ticker
+                WHERE r.category='company' AND r.ticker GLOB '[A-Za-z]*'
+                GROUP BY r.ticker ORDER BY cnt DESC
+            """).fetchall()
+
+            # ── 세그먼트 3: 산업 (industry) — 최근 _RPT_LIST_CAP행 ──
+            ind_total = rpt_conn.execute(
+                "SELECT COUNT(*) FROM reports WHERE category='industry'"
+            ).fetchone()[0]
+            # 수정 B: tiebreak id DESC / 수정 D: LIMIT ? 바인딩
+            ind_rows = rpt_conn.execute("""
+                SELECT date, name, title, source, ticker, pdf_path
+                FROM reports WHERE category='industry'
+                ORDER BY date DESC, id DESC LIMIT ?
+            """, (_RPT_LIST_CAP,)).fetchall()
+
+            # ── 세그먼트 4: 시황·전략 (market/strategy/economy/bond) — 최근 _RPT_LIST_CAP행 ──
+            mse_total = rpt_conn.execute(
+                "SELECT COUNT(*) FROM reports WHERE category IN ('market','strategy','economy','bond')"
+            ).fetchone()[0]
+            # 수정 B: tiebreak id DESC / 수정 D: LIMIT ? 바인딩
+            mse_rows = rpt_conn.execute("""
+                SELECT date, category, title, source, ticker, pdf_path
+                FROM reports WHERE category IN ('market','strategy','economy','bond')
+                ORDER BY date DESC, id DESC LIMIT ?
+            """, (_RPT_LIST_CAP,)).fetchall()
+        finally:
+            # 수정 C: 쿼리 예외 발생 시에도 커넥션 반드시 닫음
+            rpt_conn.close()
+
+        # ── 세그먼트 건수 레이블 ──
+        _n_kr  = len(kr_rows)
+        _n_us  = len(us_rows)
+        _n_ind = ind_total
+        _n_mse = mse_total
+
         html += '<div class="section" id="reports"><h2>📄 리포트</h2>'
-        if ticker_counts:
+        html += (
+            f'<div class="rpt-seg-bar">'
+            f'<button class="rpt-seg-btn active" data-seg="rpt-kr">🇰🇷 한국 종목 ({_n_kr})</button>'
+            f'<button class="rpt-seg-btn" data-seg="rpt-us">🇺🇸 미국 종목 ({_n_us})</button>'
+            f'<button class="rpt-seg-btn" data-seg="rpt-ind">🏭 산업 ({_n_ind})</button>'
+            f'<button class="rpt-seg-btn" data-seg="rpt-mse">🌐 시황·전략 ({_n_mse})</button>'
+            f'</div>'
+        )
+
+        # ── 세그먼트 1 HTML: 한국 종목 doc-card ──
+        html += '<div class="rpt-seg active" id="rpt-kr">'
+        if kr_rows:
             html += '<div class="doc-grid">'
-            for tc in ticker_counts:
-                html += (f'<a href="/dash/reports/{_html.escape(tc["ticker"])}" class="doc-card">'
-                         f'<div class="doc-icon">📄</div>'
-                         f'<div class="doc-name">{_html.escape(tc["name"])}</div>'
-                         f'<div class="doc-desc">{tc["cnt"]}건 | 최신 {_html.escape(tc["latest"])}</div>'
-                         f'</a>')
+            for tc in kr_rows:
+                dname = _html.escape(tc["display_name"] or tc["ticker"])
+                html += (
+                    f'<a href="/dash/reports/{_html.escape(tc["ticker"])}" class="doc-card">'
+                    f'<div class="doc-icon">📄</div>'
+                    f'<div class="doc-name">{dname}</div>'
+                    f'<div class="doc-desc">{tc["cnt"]}건 | 최신 {_html.escape(tc["latest"])}</div>'
+                    f'</a>'
+                )
             html += '</div>'
         else:
             html += '<p style="color:var(--fg2)">리포트 없음</p>'
         html += '</div>'
+
+        # ── 세그먼트 2 HTML: 미국 종목 doc-card ──
+        html += '<div class="rpt-seg" id="rpt-us">'
+        if us_rows:
+            html += '<div class="doc-grid">'
+            for tc in us_rows:
+                dname = _html.escape(tc["display_name"] or tc["ticker"])
+                html += (
+                    f'<a href="/dash/reports/{_html.escape(tc["ticker"])}" class="doc-card">'
+                    f'<div class="doc-icon">📄</div>'
+                    f'<div class="doc-name">{dname}</div>'
+                    f'<div class="doc-desc">{tc["cnt"]}건 | 최신 {_html.escape(tc["latest"])}</div>'
+                    f'</a>'
+                )
+            html += '</div>'
+        else:
+            html += '<p style="color:var(--fg2)">아직 수집된 미국 리포트가 없습니다.</p>'
+        html += '</div>'
+
+        # ── 세그먼트 3 HTML: 산업 날짜 그룹 리스트 ──
+        html += '<div class="rpt-seg" id="rpt-ind">'
+        if ind_rows:
+            if ind_total > _RPT_LIST_CAP:
+                html += f'<p class="rpt-cap-note">총 {ind_total}건 중 최근 {_RPT_LIST_CAP}건</p>'
+            cur_date = None
+            for r in ind_rows:
+                row_date = r["date"] or ""
+                if row_date != cur_date:
+                    cur_date = row_date
+                    html += f'<div class="rpt-list-date">{_html.escape(row_date)}</div>'
+                sec_name = (r["name"] or "").strip()
+                title    = _html.escape((r["title"] or "").strip())
+                source   = _html.escape((r["source"] or "").strip())
+                pdf_path = r["pdf_path"] or ""
+                ticker   = r["ticker"] or ""
+                sec_tag  = (f'<span class="rpt-sec-tag">{_html.escape(sec_name)}</span>'
+                            if sec_name else "")
+                if pdf_path and ticker:
+                    fname    = os.path.basename(pdf_path)
+                    pdf_link = (f'<a href="/dash/pdf/{_html.escape(ticker)}/{_html.escape(fname)}" '
+                                f'target="_blank" style="color:var(--accent);flex-shrink:0">PDF</a>')
+                else:
+                    pdf_link = ""
+                html += (
+                    f'<div class="rpt-list-row">'
+                    f'{sec_tag}'
+                    f'<span class="rpt-list-title" title="{title}">{title}</span>'
+                    f'<span class="rpt-list-src">{source}</span>'
+                    f'{pdf_link}'
+                    f'</div>'
+                )
+        else:
+            html += '<p style="color:var(--fg2)">산업 리포트 없음</p>'
+        html += '</div>'
+
+        # ── 세그먼트 4 HTML: 시황·전략 날짜 그룹 리스트 ──
+        _CAT_LABEL = {"market": "시황", "strategy": "전략", "economy": "경제", "bond": "채권"}
+        html += '<div class="rpt-seg" id="rpt-mse">'
+        if mse_rows:
+            if mse_total > _RPT_LIST_CAP:
+                html += f'<p class="rpt-cap-note">총 {mse_total}건 중 최근 {_RPT_LIST_CAP}건</p>'
+            cur_date = None
+            for r in mse_rows:
+                row_date = r["date"] or ""
+                if row_date != cur_date:
+                    cur_date = row_date
+                    html += f'<div class="rpt-list-date">{_html.escape(row_date)}</div>'
+                cat_label = _CAT_LABEL.get(r["category"] or "", r["category"] or "")
+                title     = _html.escape((r["title"] or "").strip())
+                source    = _html.escape((r["source"] or "").strip())
+                pdf_path  = r["pdf_path"] or ""
+                ticker    = r["ticker"] or ""
+                cat_tag   = f'<span class="rpt-cat-tag">{_html.escape(cat_label)}</span>'
+                if pdf_path and ticker:
+                    fname    = os.path.basename(pdf_path)
+                    pdf_link = (f'<a href="/dash/pdf/{_html.escape(ticker)}/{_html.escape(fname)}" '
+                                f'target="_blank" style="color:var(--accent);flex-shrink:0">PDF</a>')
+                else:
+                    pdf_link = ""
+                html += (
+                    f'<div class="rpt-list-row">'
+                    f'{cat_tag}'
+                    f'<span class="rpt-list-title" title="{title}">{title}</span>'
+                    f'<span class="rpt-list-src">{source}</span>'
+                    f'{pdf_link}'
+                    f'</div>'
+                )
+        else:
+            html += '<p style="color:var(--fg2)">시황·전략 리포트 없음</p>'
+        html += '</div>'
+
+        html += '</div>'  # #reports section end
     except Exception:
         pass
 

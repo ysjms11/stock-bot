@@ -25,6 +25,33 @@
 
 ---
 
+## 📄 2026-06-02 리포트 탭 재구조화 (사용자 "이러면 뭐가뭔지 어케알아")
+
+### 문제
+`/dash#reports` 가 `GROUP BY ticker` 단일 doc-card 그리드 → **카드 1,863개(빈 카드 1,455개)**. 원인 3겹:
+1. 비종목 리포트(industry/market/strategy/economy 1,762건)가 PDF URL당 `_IND_<sha1>`/`_MKT_`/`_STR_`/`_ECO_` 합성 ticker라 PDF 1건=카드 1개. market/strategy/economy는 name='' → 빈 카드.
+2. company KR 101 ticker가 GROUP BY 비결정성으로 메모성 name(`삼성전자 추매`, `LS ELECTRIC Bear Case`)이 라벨로 샐 위험.
+3. 미국 종목 리포트는 0건(수집 안 됨).
+
+### 구현 (dashboard.py만 수정, 새 라우트/스케줄/MCP 없음)
+`#reports` 섹션을 **세그먼트 4개**로 분리(JS show/hide 토글, `location.reload` 전체 리로드라 바인딩 재부착 안전):
+- 🇰🇷 한국 종목: `category='company' AND ticker GLOB '[0-9]*'`, GROUP BY ticker, doc-card. 카드명 `COALESCE(sm.name, NULLIF(r.name,''), r.ticker)` (stock_master LEFT JOIN) → 정식 종목명 결정화.
+- 🇺🇸 미국 종목: `ticker GLOB '[A-Za-z]*'`, 동일. 현재 0건 → 안내문.
+- 🏭 산업: `category='industry'`, 날짜그룹 리스트(섹터태그+제목+증권사+PDF), `ORDER BY date DESC, id DESC LIMIT 200`.
+- 🌐 시황·전략: `category IN ('market','strategy','economy','bond')`, 동일 날짜 리스트(카테고리태그).
+- PDF: `pdf_path` 있을 때 기존 `/dash/pdf/{ticker}/{basename}` 재사용(합성 ticker도 `report_pdfs/{ticker}/` 실존 확인, 표본 20/20).
+- CSS 11줄(`.rpt-seg*`/`.rpt-list*`), JS 11줄(세그 토글) 추가.
+
+### reviewer(Opus)/verifier(Opus)
+- reviewer: blocker 0. 권고 A(카드명 COALESCE)+B(tiebreak)+C(try/finally close 보장)+D(LIMIT ? 바인딩) 전부 반영.
+- verifier: 8/8 기준 증거 기반 PASS. ast OK, venv import OK, 4쿼리 실측(KR101/US0/IND861→200/MSE901→200), 카드명 정식명 확정, PDF 20/20 실존, escape 전수, `/dash/reports`·`/dash/pdf` 핸들러·라우트 무회귀 확인. **배포 가능.**
+
+### 비고
+- 산업 861건 중 554건이 섹터 빈칸 → "섹터 폴더"보다 날짜별이 실제로 나음(사용자 직관 적중).
+- 후속 후보: 미국 종목 리포트 수집 파이프라인(현재 0건), 날짜 리스트 페이지네이션(현재 최근 200건 캡).
+
+---
+
 ## 📄 2026-05-31 read_report_pdf — text/pdf 모드 추가 (사용자 "PDF 100장 제한·원본 전송 가능?")
 
 ### 문제
