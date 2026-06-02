@@ -53,6 +53,30 @@
 ### 후속 — 4주 잠복 JS SyntaxError 발견·수정 (사용자 "글릭이 안대")
 세그먼트 클릭이 안 된다는 제보 → 라이브 콘솔 진단 결과 `dash:613 SyntaxError: Invalid or unexpected token`. 근본원인: `_dash_v2_js()`가 파이썬 삼중따옴표 문자열인데 951행 `confirm('...했습니다.\n페이지...')`의 `\n`이 **실제 개행**으로 렌더 → JS 작은따옴표 문자열이 줄바꿈을 넘겨 `<script>` 블록 **전체 파싱 실패**. **5/5 분리 커밋(f93abb6)부터 ~4주간 대시보드 v2 JS 전부 사망**(탭 하이라이트/자동갱신("갱신: -" 고정)/워치필터/포트정렬/TODO토글/투자판단폼/리포트 세그먼트토글 전부). 수정: `\n`→`\\n` 1글자(630b40a). `node --check`로 렌더 JS 전수 검증 에러 0, 라이브 재확인(토글 동작 + refresh-time 갱신 + 콘솔 0). **교훈: 파이썬 삼중따옴표로 JS 생성 시 JS 문자열 리터럴 안 `\n`/`\t` 등은 `\\n`으로 이스케이프 필수.**
 
+### 후속 — 대시보드 전체 점검 (사용자 "점검 빡세게") → Pass1+2
+라이브 진단(브라우저 JS 프로브) + 정적감사(코드, 백그라운드) + 라우트 헬스 병렬 수행.
+
+**Pass1 — 기능 버그 7건 (커밋 a9bd7cf):**
+1. 감시종목 섹션 사망 — `_render_row`의 `escape(info.get("grade",""))`가 watchalert.json의 `grade:null`(달바글로벌 483650·LG 003550)에 `escape(None)` → AttributeError → 섹션 전체 "로드 실패". `info.get("grade") or ""` 가드. → **99종목 부활**.
+2. Whale kr_5pct 카드 NaN/undefined — JS가 dict에 없는 필드 4개(stkqy/stkqy_irds/repror/report_resn) 참조 → UI 줄 제거.
+3. 레짐 뱃지 항상 neutral — 판별이 강세/약세만 봐서 폼값 공격/경계/위기 미매칭. 공격→bull, 위기→bear 매핑(메인 1941 + decisions 3856).
+4. items_json `</script>` breakout(whale 2곳) — `json.dumps`가 `/` 미이스케이프 → `<>&`→유니코드. (951행 \n버그와 동일 클래스 잠복폭탄.)
+5. reports 섹션 예외 시 `<div>` 미닫힘 → 본문을 지역변수 조립 후 무조건 균형 div emit.
+6. decision/trade/invest/dev 섹션 except에 "로드 실패" placeholder 통일.
+7. research 파일뷰 `<title>/<h1>` filename XSS escape.
+
+**Pass2 — 구조 리팩토링 555줄↓ (커밋 a986464, 동작불변 byte 증명):**
+- 죽은 함수 `_build_whale_section_html`(371줄, 호출 0) 삭제, 미사용 `lang` 변수 제거.
+- `_md_to_html`/`_md_to_html_editable` 통합(`file_key=None`, shim 유지). SQLite 보일러플레이트→`_open_dash_db()` 헬퍼로 whale 9곳 dedup. (4197→3701줄)
+
+**오탐 정정 2건 (코드만 본 감사의 한계):**
+- `/v40` 탭은 404 아님 — cloudflared가 `^/v40`을 **localhost:8765(forward_bot=v40/v988 자동투자봇)**로 라우팅. dashboard.py 라우트에 없을 뿐 공개 URL 정상.
+- "죽은 import 3개"는 substring grep이 `_sqlite3`/`_sqlite3_rpt` 매칭한 오탐 — 전부 사용 중.
+
+**미적용(판단):** whale 26곳 `로드 실패: {e}` 예외 노출은 Cloudflare Access 뒤 1인봇이라 본인 디버깅에 유용 → 유지.
+
+각 Pass reviewer(Opus)+verifier(Opus) APPROVE(blocker 0). md SHA 일치·whale byte 동일·node --check 전수·강제예외 div균형 검증. 라이브 재확인: 10섹션 전부 정상, watch 12296자/99행, 4세그먼트, 콘솔 0.
+
 ---
 
 ## 📄 2026-05-31 read_report_pdf — text/pdf 모드 추가 (사용자 "PDF 100장 제한·원본 전송 가능?")
