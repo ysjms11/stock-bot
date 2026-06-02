@@ -948,7 +948,7 @@ document.addEventListener('change', async (e) => {
       cb.checked = !cb.checked;  // rollback
       const d = await r.json().catch(() => ({}));
       if (r.status === 409) {
-        if (confirm('다른 세션이 이 파일을 편집했습니다.\n페이지를 새로고침하고 다시 시도할까요?')) {
+        if (confirm('다른 세션이 이 파일을 편집했습니다.\\n페이지를 새로고침하고 다시 시도할까요?')) {
           location.reload();
         }
       } else {
