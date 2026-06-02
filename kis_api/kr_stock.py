@@ -392,6 +392,11 @@ async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5, s
             "individual_net":  int(row.get("prsn_ntby_qty",  0) or 0),
             "foreign_buy":     int(row.get("frgn_shnu_vol",  0) or 0),
             "foreign_sell":    int(row.get("frgn_seln_vol",  0) or 0),
+            # 순매수 금액: KIS `*_ntby_tr_pbmn` 단위 백만원 → 원 (×1e6). 음수 가능.
+            # (히스토리 API에 금액이 "없다"는 종전 가정은 오류 — output2에 존재함)
+            "foreign_net_amt":     int(row.get("frgn_ntby_tr_pbmn", 0) or 0) * 1_000_000,
+            "institution_net_amt": int(row.get("orgn_ntby_tr_pbmn", 0) or 0) * 1_000_000,
+            "individual_net_amt":  int(row.get("prsn_ntby_tr_pbmn", 0) or 0) * 1_000_000,
         })
     return result
 

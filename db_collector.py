@@ -523,6 +523,16 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
             supply = supply_raw[0] if isinstance(supply_raw, list) and supply_raw else {}
             short = short_raw[0] if isinstance(short_raw, list) and short_raw else {}
 
+            # 수급(Phase 3) 데이터 부재 → 0이 아니라 NULL로 기록해 실패를 가시화한다.
+            # (종전: 모두 0 → fetch 실패와 "실제 0" 구분 불가, 침묵 회귀의 원인)
+            _has_supply = bool(supply)
+            f_qty = int(supply.get("foreign_net",         0) or 0) if _has_supply else None
+            f_amt = int(supply.get("foreign_net_amt",     0) or 0) if _has_supply else None
+            i_qty = int(supply.get("institution_net",     0) or 0) if _has_supply else None
+            i_amt = int(supply.get("institution_net_amt", 0) or 0) if _has_supply else None
+            d_qty = int(supply.get("individual_net",      0) or 0) if _has_supply else None
+            d_amt = int(supply.get("individual_net_amt",  0) or 0) if _has_supply else None
+
             # KIS 기본시세 필드 → KRX fallback
             close = int(basic.get("stck_prpr", 0) or 0)
             if close == 0:
@@ -576,20 +586,21 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                 float(basic.get("pbr", 0) or 0),
                 float(basic.get("eps", 0) or 0),
                 float(basic.get("bps", 0) or 0),
-                0.0,  # div_yield — 별도 계산
+                None,  # div_yield — 별도 supplement(_update_dividend_in_snapshot)가 채움. NULL=미수집(실패 가시화)
                 int(basic.get("w52_hgpr", 0) or 0),
                 int(basic.get("w52_lwpr", 0) or 0),
                 float(basic.get("hts_frgn_ehrt", 0) or 0),
                 int(basic.get("lstn_stcn", 0) or 0),
                 float(basic.get("vol_tnrt", 0) or 0),
                 float(basic.get("whol_loan_rmnd_rate", 0) or 0),  # 신용잔고비율
-                # 수급 (kis_investor_trend_history 변환 키)
-                int(supply.get("foreign_net", 0) or 0),
-                0,  # foreign_net_amt — 히스토리 API에 금액 없음
-                int(supply.get("institution_net", 0) or 0),
-                0,  # inst_net_amt
-                int(supply.get("individual_net", 0) or 0),
-                0,  # indiv_net_amt
+                # 수급 (kis_investor_trend_history 변환 키). 금액은 KIS output2 `*_ntby_tr_pbmn`(원).
+                # 부재 시 NULL(위에서 계산). pykrx refiner(_update_supply_in_snapshot)가 가용 시 정밀화.
+                f_qty,
+                f_amt,
+                i_qty,
+                i_amt,
+                d_qty,
+                d_amt,
                 # 공매도 (FHPST04830000 응답 필드)
                 int(short.get("short_vol", 0) or 0),
                 float(short.get("short_ratio", 0) or 0),
@@ -765,14 +776,24 @@ async def collect_daily(date: str = None) -> dict:
         print(f"[collect_daily] 컨센서스 갱신 실패: {e}")
         report["consensus"] = {"error": str(e)}
 
-    # 6b. 외인/기관 수급 UPDATE (pykrx 종목별 매매)
-    # 5/8 fix: KIS FHPTJ04160001는 종목별 금액 0 → pykrx 사용 (PROGRESS 4/15 한계 해소)
+    # 6b. 외인/기관 수급 금액 정밀화 (pykrx refiner).
+    # 1차값은 _store_daily_snapshot이 KIS FHPTJ04160001(`*_ntby_tr_pbmn`)로 이미 기록.
+    # 여기서는 KRX 가용 시 정확한 원(KRW)으로 덮어쓰기만 한다(실패해도 1차값 보존).
     try:
         s_res = _update_supply_in_snapshot(conn, date)
         report["supply"] = s_res
     except Exception as e:
-        print(f"[collect_daily] 수급 갱신 실패: {e}")
+        print(f"[collect_daily] 수급 정밀화 실패: {e}")
         report["supply"] = {"error": str(e)}
+
+    # 6c. 배당수익률 UPDATE (div_yield) — pykrx 1차 + KIS 예탁원 폴백.
+    # 종전: v2 수집기가 div_yield=0.0 하드코딩 → 04-08 이후 전종목 영구 0 (별도 보강 미구현).
+    try:
+        dv_res = _update_dividend_in_snapshot(conn, date)
+        report["dividend"] = dv_res
+    except Exception as e:
+        print(f"[collect_daily] 배당수익률 갱신 실패: {e}")
+        report["dividend"] = {"error": str(e)}
 
     conn.close()
 
@@ -2578,12 +2599,16 @@ async def collect_financial_on_disclosure(days: int = 2,
 
 
 def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
-    """pykrx 종목별 외인/기관 매매 → daily_snapshot.foreign_net_qty/amt + inst_net_qty/amt UPDATE.
+    """pykrx 종목별 외인/기관 매매로 daily_snapshot 수급 금액을 '정밀화(refine)'한다.
 
-    5/8 신규 (PROGRESS 4/15 메모 "KOSDAQ 수급 제거 — KIS API 0 응답" 해소).
-    KIS FHPTJ04160001 히스토리 API는 종목별 금액 미제공 → pykrx 사용.
+    ⚠️ 더 이상 유일 소스가 아니다. 1차 소스는 KIS FHPTJ04160001(`*_ntby_tr_pbmn`,
+    `_store_daily_snapshot`에서 기록). 이 함수는 KRX가 가용할 때만 정확한 원(KRW) 값으로
+    덮어쓰는 보강(refiner)이다. KRX/pykrx는 간헐적으로 빈 응답(soft-block)을 주므로:
+      - 호출은 retry+backoff 한다.
+      - 빈 응답/실패 시 절대 0/NULL로 덮어쓰지 않는다 (KIS 1차값 보존).
+      - 전부 실패하면 ⚠️ 경보를 출력해 가시화한다 (침묵 금지).
 
-    Returns: {tickers, updated, foreign_count, inst_count, errors}
+    Returns: {foreign_count, inst_count, empty, errors, ok}
     """
     if not date:
         return {"error": "date 누락"}
@@ -2593,8 +2618,26 @@ def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
     except ImportError:
         return {"error": "pykrx 미설치"}
 
+    import time as _time
+
+    def _net_purchases_retry(mkt: str, inv_name: str, tries: int = 3):
+        """pykrx 호출 + retry. 성공 시 비어있지 않은 df, 실패/빈응답 시 None."""
+        last = None
+        for attempt in range(1, tries + 1):
+            try:
+                df = stock.get_market_net_purchases_of_equities(date, date, mkt, inv_name)
+                if df is not None and len(df) > 0:
+                    return df, None
+                last = "빈 응답(KRX soft-block 가능)"
+            except Exception as e:
+                last = f"{type(e).__name__}: {str(e)[:80]}"
+            if attempt < tries:
+                _time.sleep(1.5 * attempt)  # backoff
+        return None, last
+
     foreign_n = 0
     inst_n = 0
+    empty = 0
     errors = []
 
     # 외국인 (foreign_net_qty/amt) + 기관합계 (inst_net_qty/amt)
@@ -2603,40 +2646,118 @@ def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
         ("기관합계", "inst_net_qty", "inst_net_amt"),
     ]:
         for mkt in ("KOSPI", "KOSDAQ"):
-            try:
-                df = stock.get_market_net_purchases_of_equities(date, date, mkt, inv_name)
-                for ticker, row in df.iterrows():
-                    try:
-                        qty = int(row.get("순매수거래량", 0) or 0)
-                        amt = int(row.get("순매수거래대금", 0) or 0)
-                        if qty == 0 and amt == 0:
-                            continue
-                        cur = conn.execute(
-                            f"UPDATE daily_snapshot SET {col_qty}=?, {col_amt}=? "
-                            f"WHERE trade_date=? AND symbol=?",
-                            (qty, amt, date, ticker)
-                        )
-                        if cur.rowcount > 0:
-                            if inv_name == "외국인":
-                                foreign_n += 1
-                            else:
-                                inst_n += 1
-                    except Exception:
-                        continue
-            except Exception as e:
-                errors.append(f"{mkt} {inv_name}: {type(e).__name__}: {str(e)[:80]}")
+            df, err = _net_purchases_retry(mkt, inv_name)
+            if df is None:
+                empty += 1
+                errors.append(f"{mkt} {inv_name}: {err}")
+                continue  # 실패: 덮어쓰지 않음 → KIS 1차값 보존
+            for ticker, row in df.iterrows():
+                try:
+                    qty = int(row.get("순매수거래량", 0) or 0)
+                    amt = int(row.get("순매수거래대금", 0) or 0)
+                    if qty == 0 and amt == 0:
+                        continue  # 0은 절대 기록하지 않음 (refiner 원칙)
+                    cur = conn.execute(
+                        f"UPDATE daily_snapshot SET {col_qty}=?, {col_amt}=? "
+                        f"WHERE trade_date=? AND symbol=?",
+                        (qty, amt, date, ticker)
+                    )
+                    if cur.rowcount > 0:
+                        if inv_name == "외국인":
+                            foreign_n += 1
+                        else:
+                            inst_n += 1
+                except Exception:
+                    continue
 
     conn.commit()
-    print(f"[Supply] daily_snapshot UPDATE 완료: 외인 {foreign_n}, 기관 {inst_n}, 에러 {len(errors)}")
+    ok = foreign_n > 0
+    print(f"[Supply] pykrx refine: 외인 {foreign_n}, 기관 {inst_n}, 빈응답/실패 {empty}/4")
     if errors:
         for e in errors:
             print(f"  - {e}")
+    if not ok:
+        # KIS 1차값은 보존되므로 데이터 손실은 아니지만, KRX 경로가 죽었음을 가시화.
+        print(f"⚠️ [Supply] pykrx 정밀화 전부 실패 ({date}) — KIS 1차 수급값 유지 (원 단위 근사).")
     return {
-        "tickers": foreign_n + inst_n,
         "foreign_count": foreign_n,
         "inst_count": inst_n,
+        "empty": empty,
         "errors": errors,
+        "ok": ok,
     }
+
+
+def _fetch_div_pykrx(date: str):
+    """[1차] pykrx 전종목 배당수익률(DIV %). 성공 시 {ticker: yield%}(무배당 0 포함), 실패 시 None.
+
+    KRX 원천(DVD_YLD)과 동일 정의 — 종전(~04-07) 1282종목 소스와 일치. 포괄적(전종목).
+    """
+    try:
+        from pykrx import stock
+    except ImportError:
+        return None
+    import time as _time
+    for attempt in range(1, 3):  # 2회 (KRX soft-block 시 과도한 지연 방지)
+        try:
+            df = stock.get_market_fundamental(date, market="ALL")
+            if df is not None and len(df) > 0 and "DIV" in df.columns:
+                out = {}
+                for ticker, row in df.iterrows():
+                    try:
+                        out[str(ticker).zfill(6)] = float(row["DIV"])
+                    except (ValueError, TypeError, KeyError):
+                        continue
+                if out:
+                    return out
+        except Exception:
+            pass
+        if attempt < 2:
+            _time.sleep(1.5)
+    return None
+
+
+def _update_dividend_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
+    """daily_snapshot.div_yield 보강. insert default=NULL(미수집) → 실측값으로 채움.
+
+    소스: pykrx get_market_fundamental(DIV %) = KRX 원천 DVD_YLD.
+    종전(~04-07) 1282종목을 채우던 소스와 '동일 정의'라 시계열 일관성이 보장된다.
+    KRX는 간헐적 soft-block → _fetch_div_pykrx에서 retry. 실패 시:
+      div_yield를 NULL로 남겨 미수집을 가시화(침묵 0 금지) + ⚠️ 경보 → 다음 수집서 자동 재시도(self-heal).
+
+    KIS 예탁원 폴백은 의도적으로 미채택:
+      (1) 페이지네이션 한계로 종목별 직전12M DPS가 불완전 → 잘못된(과소) 수익률,
+      (2) DPS/close 정의가 KRX DVD_YLD와 달라 소스 추적 컬럼이 없는 현 스키마에선
+          source 혼합이 시계열 정의 불일치(알파 연구 오염)를 유발.
+      → '틀린 값'보다 '정직한 NULL'이 안전.
+
+    종전 버그: v2 수집기가 div_yield=0.0 하드코딩 + 별도 보강 미구현 → 04-08 이후 전종목 영구 0.
+    """
+    if not date:
+        return {"error": "date 누락"}
+
+    div_map = _fetch_div_pykrx(date)
+    if div_map is None:
+        print(f"⚠️ [Dividend] KRX(pykrx) 배당 소스 실패 ({date}) — div_yield NULL 유지 "
+              f"(미수집 가시화, 다음 수집서 재시도).")
+        return {"source": None, "updated": 0, "ok": False, "error": "pykrx dividend source down"}
+
+    # 포괄 소스 성공 → 미수집(NULL) 종목을 '실제 0(무배당)'으로 확정.
+    zeroed = conn.execute(
+        "UPDATE daily_snapshot SET div_yield=0 WHERE trade_date=? AND div_yield IS NULL",
+        (date,)).rowcount
+    # 배당 종목(DIV>0)만 실수익률로 갱신.
+    updated = 0
+    for ticker, y in div_map.items():
+        if y and y > 0:
+            updated += conn.execute(
+                "UPDATE daily_snapshot SET div_yield=? WHERE trade_date=? AND symbol=?",
+                (round(float(y), 4), date, ticker)).rowcount
+    conn.commit()
+
+    payers = sum(1 for y in div_map.values() if y and y > 0)
+    print(f"[Dividend] div_yield 갱신: source=pykrx, payers={payers}, updated={updated}, zeroed={zeroed}")
+    return {"source": "pykrx", "updated": updated, "payers": payers, "zeroed": zeroed, "ok": True}
 
 
 def _update_consensus_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
