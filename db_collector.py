@@ -616,6 +616,38 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# KR 시장 휴장일 가드
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 평일 휴장일(예: 어린이날·부처님오신날 대체)에 collect_daily가 돌면, KIS 현재가 API가
+# 직전 영업일 시세를 돌려줘 spurious 행(qty≠0/amt=0 불일치 등)이 쌓인다. 이를 차단한다.
+# 출처: KRX 휴장일(매년 1월 갱신 — main_pkg/telegram_bot.weekly_sanity_check가 갱신 알림).
+# ⚠️ main_pkg/telegram_bot.py:_KRX_HOLIDAYS와 중복. 추후 단일화 권장(현재는 수집기 자급용).
+_KR_MARKET_HOLIDAYS = frozenset({
+    # 2026
+    "20260101", "20260216", "20260217", "20260218", "20260302", "20260501",
+    "20260505", "20260525", "20260603", "20260817", "20260924", "20260925",
+    "20261009", "20261225",
+    # 2027 (1월 갱신 시 보강)
+    "20270101",
+})
+
+
+def _is_kr_trading_day(date: str) -> bool:
+    """KR 거래일(개장일) 판정. 주말 또는 KRX 휴장일이면 False. 오프라인·즉시·결정적.
+
+    하드코딩 집합 기반이라 네트워크 불필요(KRX/pykrx 다운에도 견고). 미등록 신규 휴장일은
+    weekly_sanity_check 갱신 알림으로 보강한다.
+    """
+    try:
+        dt = datetime.strptime(date, "%Y%m%d")
+    except (ValueError, TypeError):
+        return True  # 형식 불명 → 보수적으로 수집 허용
+    if dt.weekday() >= 5:  # 토(5)/일(6)
+        return False
+    return date not in _KR_MARKET_HOLIDAYS
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 메인 수집 함수
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 async def collect_daily(date: str = None) -> dict:
@@ -637,6 +669,11 @@ async def collect_daily(date: str = None) -> dict:
     if dt.weekday() >= 5:  # 토(5), 일(6)
         print(f"[collect_daily] {date} 주말 → 스킵")
         return {"skipped": True, "reason": "weekend", "date": date}
+
+    # 휴장일 가드 — 평일 공휴일에 KIS가 직전 영업일 시세를 반환해 spurious 행이 쌓이는 것을 차단
+    if not _is_kr_trading_day(date):
+        print(f"[collect_daily] {date} 휴장일 → 스킵")
+        return {"skipped": True, "reason": "holiday", "date": date}
 
     report: dict = {"date": date, "phases": {}, "total": 0, "duration": 0.0}
     start = datetime.now()
@@ -914,6 +951,11 @@ async def collect_daily_backfill(date_str: str, *, _limit: int = 0, kis_history:
     if dt.weekday() >= 5:
         return {"date": date_str, "skipped": 0, "inserted": 0, "errors": 0,
                 "elapsed_sec": 0.0, "reason": "weekend"}
+
+    # 휴장일 가드 — 공휴일 백필 시 spurious 행 방지
+    if not _is_kr_trading_day(date_str):
+        return {"date": date_str, "skipped": 0, "inserted": 0, "errors": 0,
+                "elapsed_sec": 0.0, "reason": "holiday"}
 
     # ── Phase A: KRX 전종목 시세 ──────────────────────────────────────
     krx_by_ticker: dict = {}
