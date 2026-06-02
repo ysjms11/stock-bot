@@ -1186,9 +1186,9 @@ def _build_watchalert_v2_html() -> str:
     html += '</div>'
 
     def _render_row(ticker: str, info: dict) -> str:
-        name = _html.escape(info.get("name", ticker))
+        name = _html.escape(info.get("name") or ticker)
         bp = float(info.get("buy_price", 0) or 0)
-        grade = _html.escape(info.get("grade", ""))
+        grade = _html.escape(info.get("grade") or "")
         memo = _html.escape(str(info.get("memo", ""))[:60])
         ticker_esc = _html.escape(ticker)
         is_us = not ticker.isdigit()
@@ -1938,9 +1938,9 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                 regime_raw = str(entry.get("regime", "?"))
                 regime_esc = _html.escape(regime_raw)
                 # 레짐 뱃지 클래스
-                if "강세" in regime_raw or "bull" in regime_raw.lower():
+                if "공격" in regime_raw or "강세" in regime_raw or "bull" in regime_raw.lower():
                     badge_cls = "badge-bull"
-                elif "약세" in regime_raw or "bear" in regime_raw.lower():
+                elif "위기" in regime_raw or "약세" in regime_raw or "bear" in regime_raw.lower():
                     badge_cls = "badge-bear"
                 else:
                     badge_cls = "badge-neutral"
@@ -2028,7 +2028,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                  f'{cards_html}'
                  f'</div>')
     except Exception:
-        pass
+        html += '<div class="section" id="decision"><h2>📝 최근 투자판단</h2><p style="color:var(--fg2)">로드 실패</p></div>'
 
     # 5. 매매기록
     try:
@@ -2049,7 +2049,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                      f'{trade_cards}'
                      f'</div>')
     except Exception:
-        pass
+        html += '<div class="section" id="trade"><h2>💼 최근 매매</h2><p style="color:var(--fg2)">로드 실패</p></div>'
 
     # 6. 투자 TODO (체크박스 토글 + 항목 추가)
     try:
@@ -2071,7 +2071,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                 f'</div>'
             )
     except Exception:
-        pass
+        html += '<div class="section" id="invest"><h2>📈 투자</h2><p style="color:var(--fg2)">로드 실패</p></div>'
 
     # 6b. 봇개발 TODO (체크박스 토글 + 항목 추가)
     try:
@@ -2093,9 +2093,10 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                 f'</div>'
             )
     except Exception:
-        pass
+        html += '<div class="section" id="dev"><h2>🔧 봇개발</h2><p style="color:var(--fg2)">로드 실패</p></div>'
 
     # 7. 리포트
+    reports_inner = '<p style="color:var(--fg2)">로드 실패</p>'
     try:
         import sqlite3 as _sqlite3_rpt
         _RPT_LIST_CAP = 200  # 날짜 리스트 세그먼트 최대 행 수
@@ -2163,8 +2164,8 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
         _n_ind = ind_total
         _n_mse = mse_total
 
-        html += '<div class="section" id="reports"><h2>📄 리포트</h2>'
-        html += (
+        _rpt_inner = ''
+        _rpt_inner += (
             f'<div class="rpt-seg-bar">'
             f'<button class="rpt-seg-btn active" data-seg="rpt-kr">🇰🇷 한국 종목 ({_n_kr})</button>'
             f'<button class="rpt-seg-btn" data-seg="rpt-us">🇺🇸 미국 종목 ({_n_us})</button>'
@@ -2174,52 +2175,52 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
         )
 
         # ── 세그먼트 1 HTML: 한국 종목 doc-card ──
-        html += '<div class="rpt-seg active" id="rpt-kr">'
+        _rpt_inner += '<div class="rpt-seg active" id="rpt-kr">'
         if kr_rows:
-            html += '<div class="doc-grid">'
+            _rpt_inner += '<div class="doc-grid">'
             for tc in kr_rows:
                 dname = _html.escape(tc["display_name"] or tc["ticker"])
-                html += (
+                _rpt_inner += (
                     f'<a href="/dash/reports/{_html.escape(tc["ticker"])}" class="doc-card">'
                     f'<div class="doc-icon">📄</div>'
                     f'<div class="doc-name">{dname}</div>'
                     f'<div class="doc-desc">{tc["cnt"]}건 | 최신 {_html.escape(tc["latest"])}</div>'
                     f'</a>'
                 )
-            html += '</div>'
+            _rpt_inner += '</div>'
         else:
-            html += '<p style="color:var(--fg2)">리포트 없음</p>'
-        html += '</div>'
+            _rpt_inner += '<p style="color:var(--fg2)">리포트 없음</p>'
+        _rpt_inner += '</div>'
 
         # ── 세그먼트 2 HTML: 미국 종목 doc-card ──
-        html += '<div class="rpt-seg" id="rpt-us">'
+        _rpt_inner += '<div class="rpt-seg" id="rpt-us">'
         if us_rows:
-            html += '<div class="doc-grid">'
+            _rpt_inner += '<div class="doc-grid">'
             for tc in us_rows:
                 dname = _html.escape(tc["display_name"] or tc["ticker"])
-                html += (
+                _rpt_inner += (
                     f'<a href="/dash/reports/{_html.escape(tc["ticker"])}" class="doc-card">'
                     f'<div class="doc-icon">📄</div>'
                     f'<div class="doc-name">{dname}</div>'
                     f'<div class="doc-desc">{tc["cnt"]}건 | 최신 {_html.escape(tc["latest"])}</div>'
                     f'</a>'
                 )
-            html += '</div>'
+            _rpt_inner += '</div>'
         else:
-            html += '<p style="color:var(--fg2)">아직 수집된 미국 리포트가 없습니다.</p>'
-        html += '</div>'
+            _rpt_inner += '<p style="color:var(--fg2)">아직 수집된 미국 리포트가 없습니다.</p>'
+        _rpt_inner += '</div>'
 
         # ── 세그먼트 3 HTML: 산업 날짜 그룹 리스트 ──
-        html += '<div class="rpt-seg" id="rpt-ind">'
+        _rpt_inner += '<div class="rpt-seg" id="rpt-ind">'
         if ind_rows:
             if ind_total > _RPT_LIST_CAP:
-                html += f'<p class="rpt-cap-note">총 {ind_total}건 중 최근 {_RPT_LIST_CAP}건</p>'
+                _rpt_inner += f'<p class="rpt-cap-note">총 {ind_total}건 중 최근 {_RPT_LIST_CAP}건</p>'
             cur_date = None
             for r in ind_rows:
                 row_date = r["date"] or ""
                 if row_date != cur_date:
                     cur_date = row_date
-                    html += f'<div class="rpt-list-date">{_html.escape(row_date)}</div>'
+                    _rpt_inner += f'<div class="rpt-list-date">{_html.escape(row_date)}</div>'
                 sec_name = (r["name"] or "").strip()
                 title    = _html.escape((r["title"] or "").strip())
                 source   = _html.escape((r["source"] or "").strip())
@@ -2233,7 +2234,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                                 f'target="_blank" style="color:var(--accent);flex-shrink:0">PDF</a>')
                 else:
                     pdf_link = ""
-                html += (
+                _rpt_inner += (
                     f'<div class="rpt-list-row">'
                     f'{sec_tag}'
                     f'<span class="rpt-list-title" title="{title}">{title}</span>'
@@ -2242,21 +2243,21 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                     f'</div>'
                 )
         else:
-            html += '<p style="color:var(--fg2)">산업 리포트 없음</p>'
-        html += '</div>'
+            _rpt_inner += '<p style="color:var(--fg2)">산업 리포트 없음</p>'
+        _rpt_inner += '</div>'
 
         # ── 세그먼트 4 HTML: 시황·전략 날짜 그룹 리스트 ──
         _CAT_LABEL = {"market": "시황", "strategy": "전략", "economy": "경제", "bond": "채권"}
-        html += '<div class="rpt-seg" id="rpt-mse">'
+        _rpt_inner += '<div class="rpt-seg" id="rpt-mse">'
         if mse_rows:
             if mse_total > _RPT_LIST_CAP:
-                html += f'<p class="rpt-cap-note">총 {mse_total}건 중 최근 {_RPT_LIST_CAP}건</p>'
+                _rpt_inner += f'<p class="rpt-cap-note">총 {mse_total}건 중 최근 {_RPT_LIST_CAP}건</p>'
             cur_date = None
             for r in mse_rows:
                 row_date = r["date"] or ""
                 if row_date != cur_date:
                     cur_date = row_date
-                    html += f'<div class="rpt-list-date">{_html.escape(row_date)}</div>'
+                    _rpt_inner += f'<div class="rpt-list-date">{_html.escape(row_date)}</div>'
                 cat_label = _CAT_LABEL.get(r["category"] or "", r["category"] or "")
                 title     = _html.escape((r["title"] or "").strip())
                 source    = _html.escape((r["source"] or "").strip())
@@ -2269,7 +2270,7 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                                 f'target="_blank" style="color:var(--accent);flex-shrink:0">PDF</a>')
                 else:
                     pdf_link = ""
-                html += (
+                _rpt_inner += (
                     f'<div class="rpt-list-row">'
                     f'{cat_tag}'
                     f'<span class="rpt-list-title" title="{title}">{title}</span>'
@@ -2278,12 +2279,13 @@ async def _handle_dash_v2(request: web.Request) -> web.Response:
                     f'</div>'
                 )
         else:
-            html += '<p style="color:var(--fg2)">시황·전략 리포트 없음</p>'
-        html += '</div>'
+            _rpt_inner += '<p style="color:var(--fg2)">시황·전략 리포트 없음</p>'
+        _rpt_inner += '</div>'
 
-        html += '</div>'  # #reports section end
+        reports_inner = _rpt_inner
     except Exception:
         pass
+    html += f'<div class="section" id="reports"><h2>📄 리포트</h2>{reports_inner}</div>'
 
     # 8. 문서
     try:
@@ -2325,11 +2327,12 @@ async def _handle_dash_research_file(request: web.Request) -> web.Response:
         with open(filepath, encoding="utf-8") as f:
             content = f.read()
 
+        _filename_esc = _html.escape(filename)
         html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-                f'<title>{filename}</title>{_DASH_CSS}</head><body>'
+                f'<title>{_filename_esc}</title>{_DASH_CSS}</head><body>'
                 f'<div class="nav"><a href="/dash-v2">← 대시보드 v2</a></div>'
-                f'<h1>{filename}</h1>')
+                f'<h1>{_filename_esc}</h1>')
 
         if filename.endswith(".md") or filename.endswith(".txt"):
             html += _md_to_html(content)
@@ -2997,6 +3000,7 @@ def _whale_render_kr_5pct() -> str:
             new_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)
+    items_json = items_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     period_label = f"{latest_q} 분기" + (f" · 비교: {prev_q}" if prev_q else "")
 
     return f'''
@@ -3085,8 +3089,6 @@ def _whale_render_kr_5pct() -> str:
                 const arrow = isBuy ? '▲' : '▼';
                 const ratio10 = x.ratio >= 10 ? 'text-red-600' : 'text-slate-700';
                 const symHtml = x.symbol ? `<span class="text-[10px] text-slate-400 font-bold ml-1">${{x.symbol}}</span>` : '';
-                const qty = Math.abs(x.stkqy).toLocaleString();
-                const qtyIrds = (x.stkqy_irds >= 0 ? '+' : '-') + Math.abs(x.stkqy_irds).toLocaleString();
                 return `<div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
                     <div class="flex justify-between items-start mb-3">
                         <div class="flex-1 min-w-0 pr-2">
@@ -3099,21 +3101,6 @@ def _whale_render_kr_5pct() -> str:
                         <div class="text-right flex-shrink-0">
                             <span class="${{rateCls}} text-lg font-black"><span class="text-xs">${{arrow}}</span> ${{Math.abs(x.change).toFixed(2)}}%p</span>
                             <p class="text-[10px] text-slate-400 font-bold mt-0.5">최종지분 <span class="${{ratio10}} font-black">${{x.ratio.toFixed(2)}}%</span></p>
-                        </div>
-                    </div>
-                    <div class="bg-slate-50 p-2 rounded-xl mb-2">
-                        <p class="text-[9px] text-slate-400 font-bold mb-0.5">보고자</p>
-                        <p class="text-xs font-bold text-slate-700">${{x.repror}}</p>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-50">
-                        <div class="bg-slate-50 p-2 rounded-xl">
-                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">보유주식수</p>
-                            <p class="text-xs font-bold text-slate-700">${{qty}}주</p>
-                            <p class="text-[10px] ${{rateCls}} font-bold">${{qtyIrds}}</p>
-                        </div>
-                        <div class="bg-slate-50 p-2 rounded-xl">
-                            <p class="text-[9px] text-slate-400 font-bold mb-0.5">변동사유</p>
-                            <p class="text-xs font-bold text-slate-700 line-clamp-2">${{x.report_resn}}</p>
                         </div>
                     </div>
                 </div>`;
@@ -3334,6 +3321,7 @@ def _whale_render_insider() -> str:
             sell_cnt += 1
 
     items_json = _json.dumps(items, ensure_ascii=False)
+    items_json = items_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 
     return f'''
     <div class="bg-indigo-950 text-white -mx-4 -mt-4 px-6 py-6 rounded-b-3xl shadow-inner mb-4">
@@ -3865,9 +3853,9 @@ async def _handle_dash_decisions(request: web.Request) -> web.Response:
             regime_raw = str(entry.get("regime", "?"))
             regime_esc = _html.escape(regime_raw)
 
-            if "강세" in regime_raw or "bull" in regime_raw.lower():
+            if "공격" in regime_raw or "강세" in regime_raw or "bull" in regime_raw.lower():
                 badge_cls = "badge-bull"
-            elif "약세" in regime_raw or "bear" in regime_raw.lower():
+            elif "위기" in regime_raw or "약세" in regime_raw or "bear" in regime_raw.lower():
                 badge_cls = "badge-bear"
             else:
                 badge_cls = "badge-neutral"
