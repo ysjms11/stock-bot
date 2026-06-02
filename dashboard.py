@@ -11,6 +11,7 @@ import json
 import re
 import hashlib
 import html as _html
+import sqlite3 as _sqlite3
 import asyncio
 from datetime import datetime, timedelta
 from aiohttp import web
@@ -67,22 +68,27 @@ ul,ol{margin:8px 0 8px 20px}li{margin:2px 0}
 """
 
 
-def _md_to_html(md: str) -> str:
-    """Markdown → HTML (정규식 기반 경량 변환)."""
+def _md_to_html(md: str, file_key: str | None = None) -> str:
+    """Markdown → HTML (정규식 기반 경량 변환).
+
+    file_key: None → 읽기 전용 체크박스 (disabled).
+              "dev" | "invest" | "todo" → 클릭 가능 체크박스 (data-todo-* 속성 추가).
+    """
     lines = md.split("\n")
     html_lines = []
     in_code = False
     in_table = False
     in_list = False
 
-    for line in lines:
+    for idx, line in enumerate(lines):
+        line_num = idx + 1  # 1-indexed (used only when file_key is set)
+
         # code block
         if line.strip().startswith("```"):
             if in_code:
                 html_lines.append("</code></pre>")
                 in_code = False
             else:
-                lang = line.strip()[3:].strip()
                 html_lines.append(f"<pre><code>")
                 in_code = True
             continue
@@ -121,9 +127,33 @@ def _md_to_html(md: str) -> str:
             html_lines.append(f"<blockquote style='border-left:3px solid var(--accent);padding-left:12px;color:var(--fg2)'>{_inline(stripped[2:])}</blockquote>")
         # checkbox
         elif stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
-            html_lines.append(f"<div class='check'><input type='checkbox' checked disabled><span style='text-decoration:line-through;color:var(--fg2)'>{_inline(stripped[6:])}</span></div>")
+            if file_key is not None:
+                line_hash = hashlib.sha1(line.encode("utf-8")).hexdigest()[:12]
+                html_lines.append(
+                    f"<div class='check'>"
+                    f"<input type='checkbox' checked "
+                    f"data-todo-file='{_html.escape(file_key)}' "
+                    f"data-todo-line='{line_num}' "
+                    f"data-todo-hash='{line_hash}'>"
+                    f"<span style='text-decoration:line-through;color:var(--fg2)'>{_inline(stripped[6:])}</span>"
+                    f"</div>"
+                )
+            else:
+                html_lines.append(f"<div class='check'><input type='checkbox' checked disabled><span style='text-decoration:line-through;color:var(--fg2)'>{_inline(stripped[6:])}</span></div>")
         elif stripped.startswith("- [ ] "):
-            html_lines.append(f"<div class='check'><input type='checkbox' disabled><span>{_inline(stripped[6:])}</span></div>")
+            if file_key is not None:
+                line_hash = hashlib.sha1(line.encode("utf-8")).hexdigest()[:12]
+                html_lines.append(
+                    f"<div class='check'>"
+                    f"<input type='checkbox' "
+                    f"data-todo-file='{_html.escape(file_key)}' "
+                    f"data-todo-line='{line_num}' "
+                    f"data-todo-hash='{line_hash}'>"
+                    f"<span>{_inline(stripped[6:])}</span>"
+                    f"</div>"
+                )
+            else:
+                html_lines.append(f"<div class='check'><input type='checkbox' disabled><span>{_inline(stripped[6:])}</span></div>")
         # table
         elif stripped.startswith("|"):
             cells = [c.strip() for c in stripped.split("|")[1:-1]]
@@ -156,116 +186,8 @@ def _md_to_html(md: str) -> str:
 
 
 def _md_to_html_editable(md: str, file_key: str) -> str:
-    """Markdown → HTML (체크박스 클릭 가능 버전, data-* 속성 추가).
-
-    file_key: "dev" | "invest" | "todo" — POST /dash/todo/toggle 에서 파일 식별용.
-    각 체크박스 라인에 data-todo-file/line/hash 속성 부여.
-    라인 번호는 원본 md 의 1-indexed (요청 시 그대로 수정).
-    """
-    lines = md.split("\n")
-    html_lines = []
-    in_code = False
-    in_table = False
-    in_list = False
-
-    for idx, line in enumerate(lines):
-        line_num = idx + 1  # 1-indexed
-
-        # code block
-        if line.strip().startswith("```"):
-            if in_code:
-                html_lines.append("</code></pre>")
-                in_code = False
-            else:
-                lang = line.strip()[3:].strip()
-                html_lines.append(f"<pre><code>")
-                in_code = True
-            continue
-        if in_code:
-            html_lines.append(line.replace("<", "&lt;").replace(">", "&gt;"))
-            continue
-
-        stripped = line.strip()
-
-        # close table
-        if in_table and not stripped.startswith("|"):
-            html_lines.append("</tbody></table>")
-            in_table = False
-
-        # close list
-        if in_list and not stripped.startswith("- ") and not stripped.startswith("* ") and stripped:
-            html_lines.append("</ul>")
-            in_list = False
-
-        # empty line
-        if not stripped:
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append("")
-            continue
-
-        # headers
-        if stripped.startswith("### "):
-            html_lines.append(f"<h3>{_inline(stripped[4:])}</h3>")
-        elif stripped.startswith("## "):
-            html_lines.append(f"<h2>{_inline(stripped[3:])}</h2>")
-        elif stripped.startswith("# "):
-            html_lines.append(f"<h1>{_inline(stripped[2:])}</h1>")
-        elif stripped.startswith("> "):
-            html_lines.append(f"<blockquote style='border-left:3px solid var(--accent);padding-left:12px;color:var(--fg2)'>{_inline(stripped[2:])}</blockquote>")
-        # checkbox (editable)
-        elif stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
-            line_hash = hashlib.sha1(line.encode("utf-8")).hexdigest()[:12]
-            html_lines.append(
-                f"<div class='check'>"
-                f"<input type='checkbox' checked "
-                f"data-todo-file='{_html.escape(file_key)}' "
-                f"data-todo-line='{line_num}' "
-                f"data-todo-hash='{line_hash}'>"
-                f"<span style='text-decoration:line-through;color:var(--fg2)'>{_inline(stripped[6:])}</span>"
-                f"</div>"
-            )
-        elif stripped.startswith("- [ ] "):
-            line_hash = hashlib.sha1(line.encode("utf-8")).hexdigest()[:12]
-            html_lines.append(
-                f"<div class='check'>"
-                f"<input type='checkbox' "
-                f"data-todo-file='{_html.escape(file_key)}' "
-                f"data-todo-line='{line_num}' "
-                f"data-todo-hash='{line_hash}'>"
-                f"<span>{_inline(stripped[6:])}</span>"
-                f"</div>"
-            )
-        # table
-        elif stripped.startswith("|"):
-            cells = [c.strip() for c in stripped.split("|")[1:-1]]
-            if all(set(c) <= {"-", ":", " "} for c in cells):
-                continue  # separator row
-            if not in_table:
-                html_lines.append("<table><thead><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in cells) + "</tr></thead><tbody>")
-                in_table = True
-            else:
-                html_lines.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells) + "</tr>")
-        # list
-        elif stripped.startswith("- ") or stripped.startswith("* "):
-            if not in_list:
-                html_lines.append("<ul>")
-                in_list = True
-            html_lines.append(f"<li>{_inline(stripped[2:])}</li>")
-        # hr
-        elif stripped.startswith("---"):
-            html_lines.append("<hr style='border-color:var(--border);margin:16px 0'>")
-        else:
-            html_lines.append(f"<p>{_inline(stripped)}</p>")
-
-    if in_code:
-        html_lines.append("</code></pre>")
-    if in_table:
-        html_lines.append("</tbody></table>")
-    if in_list:
-        html_lines.append("</ul>")
-    return "\n".join(html_lines)
+    """Compat shim → delegates to _md_to_html(md, file_key)."""
+    return _md_to_html(md, file_key)
 
 
 def _atomic_write(filepath: str, content: str) -> None:
@@ -1316,9 +1238,20 @@ def _build_docs_v2_html() -> str:
     return html
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _open_dash_db(db_path: str) -> _sqlite3.Connection:
+    """SQLite 연결 + 대시보드 공통 PRAGMA 설정. 호출자가 close() 책임."""
+    conn = _sqlite3.connect(db_path, timeout=10)
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
+    conn.row_factory = _sqlite3.Row
+    return conn
+
+
 def _build_whale_summary_html() -> str:
     """메인 대시보드 — Whale 섹션 요약 박스 (TOP 3씩 + 전용 페이지 링크)."""
-    import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
     summary_cards = []
 
@@ -1389,12 +1322,7 @@ def _build_whale_summary_html() -> str:
 
     # 3) 연기금 5일 매수 TOP 3 (시총%)
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         dates = [r["trade_date"] for r in conn.execute(
             "SELECT DISTINCT trade_date FROM pension_flow_daily ORDER BY trade_date DESC LIMIT 5"
         ).fetchall()]
@@ -1444,12 +1372,7 @@ def _build_whale_summary_html() -> str:
 
     # 4) 임원·5%↑ 최근 매매 TOP 3
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         cutoff = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
         rows = conn.execute(
             """SELECT it.rcept_dt, sm.name, it.repror,
@@ -1498,385 +1421,6 @@ def _build_whale_summary_html() -> str:
     )
 
 
-def _build_whale_section_html() -> str:
-    """🐋 Whale Watch 섹션 — NPS 5%룰 + 연기금 5일 + 10%룰 (insider 大주주).
-
-    4개 카드:
-      Card 1: NPS 5%룰 (분기 보고) — 최근 90일 report_date, 지분율↓ 정렬
-      Card 2: 연기금 5일 매수 TOP — 시총% 정규화
-      Card 3: 연기금 5일 매도 TOP — 시총% 정규화
-      Card 4: 10%룰 임원·주요주주 매매 — 최근 30일, |stock_irds_cnt × stock_rate| 큰 순
-    """
-    import sqlite3 as _s
-    db_path = f"{_DATA_DIR}/stock.db"
-    parts = []
-
-    # ── Card 1: NPS 5%룰 ──────────────────────────────────────
-    try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
-        # 최신 분기 자동 식별
-        latest_q_row = conn.execute(
-            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
-            "ORDER BY quarter DESC LIMIT 1"
-        ).fetchone()
-        latest_q = latest_q_row["quarter"] if latest_q_row else ""
-        # 직전 분기도 조회해서 비중 변화 ▲/▼ 산정
-        prev_q_row = conn.execute(
-            "SELECT DISTINCT quarter FROM nps_holdings_disclosed "
-            "WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
-            (latest_q,),
-        ).fetchone() if latest_q else None
-        prev_q = prev_q_row["quarter"] if prev_q_row else ""
-        # 직전 분기 데이터: 동일 종목의 max 지분율 (한 분기 내 여러 보고 있을 수 있음)
-        prev_map = {}  # symbol → max ratio_pct
-        if prev_q:
-            for pr in conn.execute(
-                """SELECT symbol, MAX(ratio_pct) AS max_r
-                   FROM nps_holdings_disclosed WHERE quarter = ? AND symbol != ''
-                   GROUP BY symbol""",
-                (prev_q,),
-            ).fetchall():
-                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
-        rows = conn.execute(
-            """SELECT report_date, company_name, symbol, ratio_pct
-               FROM nps_holdings_disclosed
-               WHERE quarter = ?
-               ORDER BY ratio_pct DESC, report_date DESC
-               LIMIT 30""",
-            (latest_q,),
-        ).fetchall() if latest_q else []
-        conn.close()
-        body = ''
-        if rows:
-            body = ('<table class="whale-tbl"><tr><th>일자</th><th>종목</th>'
-                    '<th>지분%</th><th>전분기</th></tr>')
-            for r in rows:
-                bgs = ''
-                if r["ratio_pct"] >= 10:
-                    bgs = ' style="color:#e57373;font-weight:600"'  # 10%룰
-                # 변화 분석
-                cur_r = float(r["ratio_pct"] or 0)
-                prev_r = prev_map.get(r["symbol"]) if r["symbol"] else None
-                if prev_q and r["symbol"]:
-                    if prev_r is None:
-                        chg_html = '<span style="color:#4caf50;font-weight:600">🆕 NEW</span>'
-                    elif cur_r > prev_r + 0.05:
-                        chg_html = (f'<span style="color:#4caf50">▲ '
-                                    f'{cur_r - prev_r:+.2f}p</span>')
-                    elif cur_r < prev_r - 0.05:
-                        chg_html = (f'<span style="color:#e57373">▼ '
-                                    f'{cur_r - prev_r:+.2f}p</span>')
-                    else:
-                        chg_html = '<span style="color:var(--fg2)">—</span>'
-                else:
-                    chg_html = '<span style="color:var(--fg2)">—</span>'
-                body += (f'<tr><td>{_html.escape(r["report_date"])}</td>'
-                         f'<td>{_html.escape(r["company_name"])}'
-                         f'{(f" ({r["symbol"]})") if r["symbol"] else ""}</td>'
-                         f'<td{bgs}>{r["ratio_pct"]:.2f}</td>'
-                         f'<td>{chg_html}</td></tr>')
-            body += '</table>'
-        else:
-            body = '<p style="color:var(--fg2)">데이터 없음</p>'
-        prev_note = f' | 비교: {prev_q}' if prev_q else ''
-        parts.append(
-            f'<div class="whale-card"><h3>🏛 NPS 5%룰 ({latest_q or "-"})</h3>'
-            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">data.go.kr 분기 갱신, 빨강=10%룰{prev_note}</p>'
-            f'{body}</div>'
-        )
-    except Exception as e:
-        parts.append(f'<div class="whale-card"><h3>🏛 NPS 5%룰</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
-
-    # ── Card 2 & 3: 연기금 5일 매수/매도 TOP (시총% 정규화) ──
-    try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
-        # 최근 5 영업일 산정
-        dates = [r["trade_date"] for r in conn.execute(
-            "SELECT DISTINCT trade_date FROM pension_flow_daily "
-            "ORDER BY trade_date DESC LIMIT 5"
-        ).fetchall()]
-        if dates:
-            placeholders = ",".join("?" for _ in dates)
-            agg_rows = conn.execute(
-                f"""SELECT pf.symbol, pf.name, pf.market,
-                          SUM(pf.net_amount_won) AS net_total,
-                          SUM(pf.buy_amount_won) AS buy_total,
-                          SUM(pf.sell_amount_won) AS sell_total
-                   FROM pension_flow_daily pf
-                   WHERE pf.trade_date IN ({placeholders})
-                   GROUP BY pf.symbol
-                   HAVING net_total != 0""",
-                dates,
-            ).fetchall()
-            # 시총 조회 — 최신 daily_snapshot에서
-            symbols = [r["symbol"] for r in agg_rows]
-            cap_map = {}
-            if symbols:
-                ph = ",".join("?" for _ in symbols)
-                cap_rows = conn.execute(
-                    f"""SELECT symbol, MAX(trade_date) AS d
-                        FROM daily_snapshot WHERE symbol IN ({ph})
-                        GROUP BY symbol""", symbols
-                ).fetchall()
-                for cr in cap_rows:
-                    cap = conn.execute(
-                        "SELECT market_cap FROM daily_snapshot WHERE symbol=? AND trade_date=?",
-                        (cr["symbol"], cr["d"])
-                    ).fetchone()
-                    if cap and cap["market_cap"]:
-                        # market_cap 단위 = 억원, net_total = 원
-                        cap_map[cr["symbol"]] = int(cap["market_cap"]) * 100_000_000
-        else:
-            agg_rows = []
-            cap_map = {}
-        conn.close()
-
-        enriched = []
-        for r in agg_rows:
-            cap = cap_map.get(r["symbol"], 0)
-            pct = (r["net_total"] * 100.0 / cap) if cap > 0 else 0
-            enriched.append({
-                "symbol": r["symbol"],
-                "name": r["name"],
-                "market": r["market"],
-                "net_won": r["net_total"],
-                "cap_won": cap,
-                "pct": pct,
-            })
-
-        def _row(e):
-            sign = '🟢' if e["net_won"] > 0 else '🔴'
-            net_eok = e["net_won"] / 100_000_000
-            pct_str = f'{e["pct"]:+.2f}%' if e["cap_won"] else '—'
-            color = '#4caf50' if e["net_won"] > 0 else '#e57373'
-            return (f'<tr><td>{sign} {_html.escape(e["name"])} '
-                    f'<span style="color:var(--fg2);font-size:0.8em">{e["symbol"]}</span></td>'
-                    f'<td style="color:{color}">{net_eok:+,.0f}억</td>'
-                    f'<td style="color:{color};font-weight:600">{pct_str}</td></tr>')
-
-        # 시총% 기준 정렬, 절대% 큰 순. 시총 모르는건 절대금액 fallback
-        buy_top = sorted(
-            [e for e in enriched if e["net_won"] > 0],
-            key=lambda x: (-x["pct"] if x["cap_won"] else 0, -x["net_won"]),
-        )[:20]
-        sell_top = sorted(
-            [e for e in enriched if e["net_won"] < 0],
-            key=lambda x: (x["pct"] if x["cap_won"] else 0, x["net_won"]),
-        )[:20]
-
-        period = (f"{dates[-1][:4]}-{dates[-1][4:6]}-{dates[-1][6:]} ~ "
-                  f"{dates[0][:4]}-{dates[0][4:6]}-{dates[0][6:]}") if dates else "-"
-
-        buy_body = '<table class="whale-tbl"><tr><th>종목</th><th>순매수</th><th>시총%</th></tr>'
-        for e in buy_top:
-            buy_body += _row(e)
-        buy_body += '</table>' if buy_top else '<p style="color:var(--fg2)">매수 없음</p>'
-        parts.append(
-            f'<div class="whale-card"><h3>🟢 연기금 5일 매수 TOP</h3>'
-            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">{period} | 시총% 정렬</p>'
-            f'{buy_body if buy_top else ""}</div>'
-        )
-        sell_body = '<table class="whale-tbl"><tr><th>종목</th><th>순매도</th><th>시총%</th></tr>'
-        for e in sell_top:
-            sell_body += _row(e)
-        sell_body += '</table>' if sell_top else '<p style="color:var(--fg2)">매도 없음</p>'
-        parts.append(
-            f'<div class="whale-card"><h3>🔴 연기금 5일 매도 TOP</h3>'
-            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">{period} | 시총% 정렬</p>'
-            f'{sell_body if sell_top else ""}</div>'
-        )
-    except Exception as e:
-        parts.append(f'<div class="whale-card"><h3>🟢 연기금 5일</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
-
-    # ── Card 4: 10%룰 임원·주요주주 (insider_transactions) ──
-    try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
-        cutoff = (datetime.now(KST) - timedelta(days=30)).strftime("%Y-%m-%d")
-        rows = conn.execute(
-            """SELECT it.rcept_dt, it.symbol, sm.name,
-                      it.repror, it.ofcps, it.main_shrholdr,
-                      it.stock_irds_cnt, it.stock_rate, it.stock_irds_rate
-               FROM insider_transactions it
-               LEFT JOIN stock_master sm ON sm.symbol = it.symbol
-               WHERE it.rcept_dt >= ?
-                 AND it.stock_irds_cnt != 0
-                 AND it.stock_rate >= 5  -- 5%룰 이상 보유자만
-               ORDER BY it.rcept_dt DESC, ABS(it.stock_irds_rate) DESC
-               LIMIT 30""",
-            (cutoff,),
-        ).fetchall()
-        conn.close()
-        body = ''
-        if rows:
-            body = ('<table class="whale-tbl"><tr><th>일자</th><th>종목</th>'
-                    '<th>보고자</th><th>증감</th><th>지분%</th></tr>')
-            for r in rows:
-                irds = r["stock_irds_cnt"] or 0
-                sign = '🟢' if irds > 0 else '🔴'
-                color = '#4caf50' if irds > 0 else '#e57373'
-                rate10 = ' style="color:#e57373;font-weight:600"' if (r["stock_rate"] or 0) >= 10 else ''
-                role = (r["main_shrholdr"] or '') or (r["ofcps"] or '')
-                body += (f'<tr><td>{_html.escape(r["rcept_dt"])}</td>'
-                         f'<td>{_html.escape(r["name"] or "")}'
-                         f' <span style="color:var(--fg2);font-size:0.8em">{r["symbol"]}</span></td>'
-                         f'<td>{_html.escape(r["repror"] or "")}'
-                         f' <span style="color:var(--fg2);font-size:0.78em">{_html.escape(role)}</span></td>'
-                         f'<td style="color:{color}">{sign} {irds:+,}</td>'
-                         f'<td{rate10}>{(r["stock_rate"] or 0):.2f}%</td></tr>')
-            body += '</table>'
-        else:
-            body = '<p style="color:var(--fg2)">최근 30일 5%↑ 보유자 매매 없음</p>'
-        parts.append(
-            f'<div class="whale-card"><h3>👤 임원·5%↑ 주주 매매</h3>'
-            f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">DART insider, 30일 / 빨강=10%룰</p>'
-            f'{body}</div>'
-        )
-    except Exception as e:
-        parts.append(f'<div class="whale-card"><h3>👤 10%룰</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
-
-    # ── Card 5: NPS 미국 13F 보유 TOP (가치 + 비중 변화 ▲/▼) ──
-    try:
-        from kis_api import fetch_nps_us_holdings
-        us_data = fetch_nps_us_holdings(top=30, include_changes=True)
-        if us_data.get("error"):
-            parts.append(
-                f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F</h3>'
-                f'<p style="color:var(--fg2)">{_html.escape(us_data["error"])}</p></div>'
-            )
-        else:
-            quarter = us_data.get("quarter", "?")
-            period_end = us_data.get("period_end", "?")
-            total_v = us_data.get("total_value_usd", 0)
-            total_b = total_v / 1e9 if total_v else 0
-            n_total = us_data.get("total_holdings", 0)
-
-            body = ('<table class="whale-tbl"><tr><th>종목</th><th>가치</th>'
-                    '<th>비중</th><th>주식변화</th></tr>')
-            for x in us_data.get("rows", []):
-                name = _html.escape((x.get("name_of_issuer") or "")[:28])
-                val = x.get("value_usd", 0)
-                val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
-                weight = x.get("weight_pct", 0)
-                status = x.get("status", "")
-                sc = x.get("share_change_pct")
-                if status == "NEW":
-                    sc_html = '<span style="color:#4caf50;font-weight:600">🆕 NEW</span>'
-                elif status == "UP":
-                    sc_html = f'<span style="color:#4caf50">▲ {sc:+.1f}%</span>' if sc is not None else "▲"
-                elif status == "DOWN":
-                    sc_html = f'<span style="color:#e57373">▼ {sc:+.1f}%</span>' if sc is not None else "▼"
-                else:
-                    sc_html = '<span style="color:var(--fg2)">—</span>'
-                body += (f'<tr><td>{name}</td>'
-                         f'<td>{val_str}</td>'
-                         f'<td>{weight:.2f}%</td>'
-                         f'<td>{sc_html}</td></tr>')
-            body += '</table>'
-
-            # EXIT 종목 표시
-            exits_html = ''
-            exits = us_data.get("exits_top10", [])
-            if exits:
-                exits_html = '<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--fg2);font-size:0.85em">전 분기 EXIT TOP 10 ▼</summary><table class="whale-tbl" style="margin-top:6px">'
-                exits_html += '<tr><th>종목</th><th>직전 가치</th></tr>'
-                for e in exits:
-                    val = e.get("prev_value_usd", 0)
-                    val_str = f'${val/1e9:.2f}B' if val >= 1e9 else f'${val/1e6:.0f}M'
-                    exits_html += (f'<tr><td style="color:#e57373">'
-                                   f'{_html.escape((e.get("name_of_issuer") or "")[:28])}</td>'
-                                   f'<td>{val_str}</td></tr>')
-                exits_html += '</table></details>'
-
-            parts.append(
-                f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F ({quarter})</h3>'
-                f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
-                f'분기말 {period_end} | 총 ${total_b:.1f}B | {n_total}종목 | TOP 30, ▲▼=주식수 변화</p>'
-                f'{body}{exits_html}</div>'
-            )
-    except Exception as e:
-        parts.append(f'<div class="whale-card"><h3>🇺🇸 NPS 미국 13F</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
-
-    # ── Card 6: NPS 한국 풀 포트 TOP 30 (whale-insight 미러, 200종목) ──
-    try:
-        from kis_api import fetch_nps_kr_full_holdings
-        kr_full = fetch_nps_kr_full_holdings(top=30)
-        if kr_full.get("error"):
-            parts.append(
-                f'<div class="whale-card"><h3>🇰🇷 NPS 한국 풀 포트</h3>'
-                f'<p style="color:var(--fg2)">{_html.escape(kr_full["error"])}</p></div>'
-            )
-        else:
-            quarter_lbl = kr_full.get("quarter_label", "?")
-            snap = kr_full.get("snapshot_date", "?")
-            n_tot = kr_full.get("total_holdings", 0)
-            tot_eok = kr_full.get("total_valuation_eok", 0)
-            body = ('<table class="whale-tbl"><tr><th>종목</th><th>비중</th>'
-                    '<th>평가액</th><th>지분%</th><th>전년대비</th></tr>')
-            for x in kr_full.get("rows", []):
-                name = _html.escape((x.get("name") or "")[:18])
-                sym = x.get("symbol") or ""
-                sym_html = (f' <span style="color:var(--fg2);font-size:0.78em">{sym}</span>'
-                            if sym else '')
-                w = x.get("weight_pct", 0)
-                eok = x.get("valuation_eok", 0)
-                cur_share = x.get("share_curr_pct", 0)
-                # 10%룰 빨강
-                share_style = ' style="color:#e57373;font-weight:600"' if cur_share >= 10 else ''
-                sc_p = x.get("share_change_p")
-                if x.get("data_missing"):
-                    sc_html = '<span style="color:var(--fg2)">—</span>'
-                elif sc_p is None:
-                    sc_html = '<span style="color:var(--fg2)">—</span>'
-                elif sc_p > 0.05:
-                    sc_html = f'<span style="color:#4caf50">▲ {sc_p:+.2f}p</span>'
-                elif sc_p < -0.05:
-                    sc_html = f'<span style="color:#e57373">▼ {sc_p:+.2f}p</span>'
-                else:
-                    sc_html = '<span style="color:var(--fg2)">—</span>'
-                body += (f'<tr><td>{name}{sym_html}</td>'
-                         f'<td>{w:.2f}%</td>'
-                         f'<td>{eok:,}억</td>'
-                         f'<td{share_style}>{cur_share:.2f}%</td>'
-                         f'<td>{sc_html}</td></tr>')
-            body += '</table>'
-            parts.append(
-                f'<div class="whale-card"><h3>🇰🇷 NPS 한국 풀 포트 ({quarter_lbl})</h3>'
-                f'<p style="color:var(--fg2);font-size:0.85em;margin:0 0 8px">'
-                f'스냅샷 {snap} | 총 {tot_eok:,}억 | {n_tot}종목 | TOP 30, ▲▼=지분율 전년 대비, '
-                f'출처: <a href="https://whale-insight.com" target="_blank" '
-                f'style="color:var(--accent)">whale-insight.com</a></p>'
-                f'{body}</div>'
-            )
-    except Exception as e:
-        parts.append(f'<div class="whale-card"><h3>🇰🇷 NPS 한국 풀 포트</h3><p>로드 실패: {_html.escape(str(e))}</p></div>')
-
-    return (
-        '<style>'
-        '.whale-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px;margin-top:8px}'
-        '.whale-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px}'
-        '.whale-card h3{margin:0 0 6px;font-size:1em}'
-        '.whale-tbl{width:100%;border-collapse:collapse;font-size:0.85em}'
-        '.whale-tbl th{text-align:left;color:var(--fg2);font-weight:500;border-bottom:1px solid var(--border);padding:4px 6px}'
-        '.whale-tbl td{padding:4px 6px;border-bottom:1px solid var(--border)}'
-        '.whale-tbl tr:last-child td{border-bottom:none}'
-        '</style>'
-        '<div class="whale-grid">' + ''.join(parts) + '</div>'
-    )
 
 
 async def _handle_dash_v2(request: web.Request) -> web.Response:
@@ -2610,19 +2154,13 @@ section{{scroll-margin-top:80px;}}
 
 def _whale_render_home() -> str:
     """Whale 홈 — whale-insight 메인 페이지 미러 (NPS 카드 2개 + 최근 알림 2개 + 5%룰)."""
-    import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
 
     # NPS 5%룰 / 10%↑ 카운트 (NPS 단독, 최신 분기)
     total_5pct = 0
     total_10pct = 0
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
             "ORDER BY quarter DESC LIMIT 1"
@@ -2935,16 +2473,10 @@ def _whale_render_kr_5pct() -> str:
     데이터: nps_holdings_disclosed (data.go.kr 공공데이터, NPS 보고만).
     전 분기 대비 ▲/▼ 변동 표시.
     """
-    import sqlite3 as _s
     import json as _json
     db_path = f"{_DATA_DIR}/stock.db"
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
             "ORDER BY quarter DESC LIMIT 1"
@@ -3125,15 +2657,9 @@ def _whale_render_kr_5pct() -> str:
 
 def _whale_render_pension_flow() -> str:
     """연기금 5일 매수/매도 — 매수 + 매도 통합."""
-    import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         dates = [r["trade_date"] for r in conn.execute(
             "SELECT DISTINCT trade_date FROM pension_flow_daily ORDER BY trade_date DESC LIMIT 5"
         ).fetchall()]
@@ -3252,16 +2778,10 @@ def _whale_render_insider() -> str:
     NPS는 임원·주요주주 보고 안 함 (기관투자자라 D002 적용 X).
     "핵심 주주 거래" 의미를 NPS 10% 이상 보유 종목으로 재정의.
     """
-    import sqlite3 as _s
     import json as _json
     db_path = f"{_DATA_DIR}/stock.db"
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
             "ORDER BY quarter DESC LIMIT 1"
@@ -3456,7 +2976,6 @@ def _whale_render_insider() -> str:
 
 def _build_whale_full_html() -> str:
     """Whale 전용 페이지 — 카드별 풀 데이터 (TOP 30 → 100), anchor 추가."""
-    import sqlite3 as _s
     db_path = f"{_DATA_DIR}/stock.db"
     parts = []
 
@@ -3583,12 +3102,7 @@ def _build_whale_full_html() -> str:
 
     # ── 3) NPS KR 5%룰 (현 분기 전체) ──
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         latest_q_row = conn.execute(
             "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != '' "
             "ORDER BY quarter DESC LIMIT 1"
@@ -3662,12 +3176,7 @@ def _build_whale_full_html() -> str:
 
     # ── 4) 연기금 5일 매수+매도 (한 카드 통합) ──
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         dates = [r["trade_date"] for r in conn.execute(
             "SELECT DISTINCT trade_date FROM pension_flow_daily "
             "ORDER BY trade_date DESC LIMIT 5"
@@ -3757,12 +3266,7 @@ def _build_whale_full_html() -> str:
 
     # ── 5) 임원·5%↑ 주주 매매 (전체, 90일) ──
     try:
-        conn = _s.connect(db_path, timeout=10)
-        conn.execute("PRAGMA cache_size = -65536;")
-        conn.execute("PRAGMA temp_store = MEMORY;")
-        conn.execute("PRAGMA mmap_size = 268435456;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = _s.Row
+        conn = _open_dash_db(db_path)
         cutoff = (datetime.now(KST) - timedelta(days=90)).strftime("%Y-%m-%d")
         rows = conn.execute(
             """SELECT it.rcept_dt, it.symbol, sm.name,
