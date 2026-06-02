@@ -253,6 +253,8 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     # 대시보드 라우트 (5/5 리팩토링으로 dashboard.py 분리)
     dashboard.register_routes(mcp_app)
+    import dashboard_home
+    dashboard_home.register_home_routes(mcp_app)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port, reuse_address=True)
