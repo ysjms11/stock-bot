@@ -13,11 +13,16 @@
 
 **7탭 전부 라이브 OK**: 홈/포트폴리오/워치·알림/시그널/기록/Whale/리포트. 콘솔 0.
 
-**알려진 이슈/폴리시 후보**:
-- 콜드 로드 ~30s: 홈/포트/워치가 get_alerts·get_portfolio 직렬 KIS 프라이싱(99종목×0.3s). TTL240s+SWR로 완화했으나 첫 로드/캐시만료시 느림. → DB snapshot 가격 사용 또는 WS캐시 확대 검토(MCP핸들러 수정 필요=격리원칙 충돌, 보류).
-- 기록 탭 투자판단 55건 전체 렌더 → 페이지네이션 검토. DART 카드 "500건 처리됨"(누적카운트, 당일 아님) 개선 여지.
+**시세 차원 추가 (4e53b72/69251f2, "현재가 관련이 하나도 없냐" 지적)**: 홈 지수 띠(KOSPI/KOSDAQ/S&P/나스닥) + 📈시세 탭(지수·등락률 상하위·거래량·종목 시세조회). KR 등락은 KIS 장중 미제공이라 daily_snapshot 종가 기준. 현재가 "-" 시 종가 폴백+"종가" 뱃지. **탭 8개**(홈/시세/포트/워치/시그널/기록/Whale/리포트).
 
-**남은 단계 P5(미완, 사용자 평가 대기)**: 평가 OK면 `/dash→/home` 미들웨어 리다이렉트 + `/dash-classic` 보존 + CLAUDE.md URL 갱신. 1줄 플립이라 승인 즉시.
+**P5 컷오버 완료 (242a2c7)**: `/dash`·`/dash-v2`→302 `/home`, `/dash-classic`→옛 `_handle_dash_v2` 보존. **미들웨어 아닌 라우트 교체**(register_routes 국소, 전역영향 회피). /dash 서브패스(whale/reports/pdf/file/decisions/trades/todo)·/api/*·/mcp·/health 전부 보존 라이브 확인. 롤백=3줄 revert.
+
+**폴리시 완료 (b98dba8)**: 기록 탭 페이지네이션(최근20+더보기) + 홈 DART 카드 누적라벨 정리. 탭키 단/복수 버그(signals→signal) 픽스.
+
+**🟡 남은 것 (사용자 결정 필요 — 내가 안 함)**:
+1. **브랜치 → main 머지**: 대시보드는 `fix/collector-div-yield-foreign-amt` 작업트리로 돌고 있으나 main(`8c9f70b`)엔 없음. 머지 시 사용자 collector/US_EXIT WIP도 같이 올라감 → 타이밍 사용자 판단.
+2. **CLAUDE.md 인프라표 URL `/dash`→`/home`**: 보호 파일, 명시 동의 후.
+3. **콜드로드 ~30s 단축**: 라이브 vs DB종가 트레이드오프 결정 필요(보류).
 
 ---
 
