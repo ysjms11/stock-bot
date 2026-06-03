@@ -832,6 +832,15 @@ async def collect_daily(date: str = None) -> dict:
         print(f"[collect_daily] 배당수익률 갱신 실패: {e}")
         report["dividend"] = {"error": str(e)}
 
+    # 6d. div_yield 과거 공백 소급 — KRX(pykrx) 복구 시 04-08~ 미수집 거래일을 자동으로 메운다.
+    # KRX 다운이면 즉시 no-op. 실데이터(KRX DVD_YLD)라 시계열 정의 일관성 유지(합성 아님).
+    try:
+        bf_res = _backfill_dividend_gap(conn)
+        report["dividend_backfill"] = bf_res
+    except Exception as e:
+        print(f"[collect_daily] div_yield 소급 실패: {e}")
+        report["dividend_backfill"] = {"error": str(e)}
+
     conn.close()
 
     # 7. F/M/FCF 알파 메트릭 일괄 업데이트 (실패해도 collect_daily는 성공 취급)
@@ -2800,6 +2809,46 @@ def _update_dividend_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
     payers = sum(1 for y in div_map.values() if y and y > 0)
     print(f"[Dividend] div_yield 갱신: source=pykrx, payers={payers}, updated={updated}, zeroed={zeroed}")
     return {"source": "pykrx", "updated": updated, "payers": payers, "zeroed": zeroed, "ok": True}
+
+
+def _backfill_dividend_gap(conn: sqlite3.Connection, lookback_days: int = 90) -> dict:
+    """최근 구간에서 div_yield가 전부 0/NULL인 거래일(=미수집)을 pykrx로 소급 채운다.
+
+    KRX(pykrx) 다운 동안 쌓인 과거 공백(예: 04-08~)을, KRX 복구 후 첫 collect_daily가
+    자동으로 메우게 하는 self-heal 훅. pykrx get_market_fundamental(과거일자)는 그날의
+    실제 KRX DVD_YLD를 주므로 합성이 아니라 '실데이터·동일 정의'다.
+      - KRX 다운: 첫 fetch가 None → 즉시 중단(no-op).
+      - 공백 없음: GROUP BY 한 번으로 즉시 반환(저비용).
+      - 멱등: 채워진 날짜는 다음 실행 때 대상에서 빠진다.
+    """
+    cutoff = (datetime.now(KST) - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    rows = conn.execute(
+        "SELECT trade_date, SUM(CASE WHEN div_yield > 0 THEN 1 ELSE 0 END) payers "
+        "FROM daily_snapshot WHERE trade_date >= ? GROUP BY trade_date",
+        (cutoff,)).fetchall()
+    # 배당 페이어가 0인 거래일 = 미수집(휴장일 제외)
+    broken = sorted(r["trade_date"] for r in rows
+                    if (r["payers"] or 0) == 0 and _is_kr_trading_day(r["trade_date"]))
+    if not broken:
+        return {"backfilled": 0, "pending": 0}
+
+    filled = 0
+    for d in broken:
+        div_map = _fetch_div_pykrx(d)
+        if div_map is None:  # KRX 다운 → 더 시도 무의미
+            print(f"[DivBackfill] KRX 다운 — div_yield 소급 보류 (대기 {len(broken) - filled}일)")
+            break
+        conn.execute("UPDATE daily_snapshot SET div_yield=0 WHERE trade_date=? AND div_yield IS NULL", (d,))
+        for ticker, y in div_map.items():
+            if y and y > 0:
+                conn.execute("UPDATE daily_snapshot SET div_yield=? WHERE trade_date=? AND symbol=?",
+                             (round(float(y), 4), d, ticker))
+        conn.commit()
+        filled += 1
+        print(f"[DivBackfill] {d} div_yield 소급 완료")
+    if filled:
+        print(f"[DivBackfill] 소급 {filled}일 완료, 잔여 {len(broken) - filled}일")
+    return {"backfilled": filled, "pending": len(broken) - filled}
 
 
 def _update_consensus_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
