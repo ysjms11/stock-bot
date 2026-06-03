@@ -1,18 +1,24 @@
-"""dashboard_home — 새 대시보드 P0/P1.
+"""dashboard_home — 새 대시보드 P0/P1/P2/P3a/P3b.
 
 /home 경로에 서빙. /dash(dashboard.py)는 무수정.
 P0: HTML 쉘 + Alpine 탭 네비 + 빈 패널.
 P1: JSON API (/api/home, /api/regime, /api/alerts, /api/portfolio) + 홈 화면 실데이터 바인딩.
+P2: 포트폴리오 + 워치·알림 탭.
+P3a: Whale 탭 — /api/whale?p=<preset> + Alpine 서브탭 5개.
+P3b: 리포트 탭 — /api/reports + /api/reports/{ticker}, 기록 탭 — /api/decisions + /api/trades + /api/invest_todo.
 """
 
 import re
 import time
 import asyncio
+import sqlite3 as _sqlite3
 from datetime import datetime, timezone, timedelta
 
 from aiohttp import web
 
 import json
+
+import os
 
 from kis_api import (
     load_json,
@@ -20,10 +26,13 @@ from kis_api import (
     load_watchalert,
     load_dart_seen,
     load_events,
+    load_decision_log,
     get_yahoo_quote,
+    get_trade_stats,
     CONSENSUS_CACHE_FILE,
     DART_SEEN_FILE,
     EVENTS_FILE,
+    DECISION_LOG_FILE,
     _DATA_DIR,
     KST,
 )
@@ -274,6 +283,19 @@ function dashApp() {
 
     /* P2: portfolio tab */
     portfolio: null,
+
+    /* P3b: report tab */
+    report: null,
+    reportSeg: 'kr',
+    reportModal: null,
+    reportModalList: null,
+    reportModalLoading: false,
+
+    /* P3b: record tab */
+    record: null,
+    recordSection: 'decisions',
+    decisionForm: { show: false, date: '', regime: '', memo: '' },
+    recordToast: '',
     portSort: 'eval',
     portModal: null,
     portModalLoading: false,
@@ -392,7 +414,88 @@ function dashApp() {
       this.activeTab = t;
       if (t === 'portfolio') this.loadPortfolio();
       if (t === 'watch') this.loadWatch();
+      if (t === 'report') this.loadReport();
+      if (t === 'record') this.loadRecord();
       this.$nextTick(() => this.refreshIcons());
+    },
+
+    /* ── report tab ── */
+    async loadReport() {
+      if (this.report) return;
+      const data = await this.api('/api/reports');
+      if (!data.error) this.report = data;
+    },
+
+    async openReportModal(ticker) {
+      this.reportModal = { ticker, loading: true };
+      this.reportModalList = null;
+      this.reportModalLoading = true;
+      this.$nextTick(() => this.refreshIcons());
+      const data = await this.api('/api/reports/' + ticker);
+      this.reportModalLoading = false;
+      if (data.error) {
+        this.reportModal = { ticker, error: data.error };
+      } else {
+        this.reportModal = { ticker };
+        this.reportModalList = Array.isArray(data) ? data : (data.list || []);
+      }
+      this.$nextTick(() => this.refreshIcons());
+    },
+
+    closeReportModal() {
+      this.reportModal = null;
+      this.reportModalList = null;
+    },
+
+    pdfUrl(ticker, basename) {
+      if (!basename) return '';
+      return '/dash/pdf/' + encodeURIComponent(ticker) + '/' + encodeURIComponent(basename);
+    },
+
+    /* ── record tab ── */
+    async loadRecord() {
+      if (this.record) return;
+      const [decisions, trades, todo] = await Promise.all([
+        this.api('/api/decisions'),
+        this.api('/api/trades'),
+        this.api('/api/invest_todo'),
+      ]);
+      this.record = {
+        decisions: decisions.error ? [] : (decisions.items || []),
+        trades: trades.error ? {} : trades,
+        todo: todo.error ? '' : (todo.text || ''),
+      };
+    },
+
+    regimeColor(regime) {
+      if (!regime) return 'bg-slate-100 text-slate-600';
+      const r = regime.toLowerCase();
+      if (r.includes('공격') || r === 'offensive') return 'bg-green-100 text-green-700';
+      if (r.includes('위기') || r === 'crisis') return 'bg-red-100 text-red-700';
+      return 'bg-amber-100 text-amber-700';
+    },
+
+    async submitDecision() {
+      const f = this.decisionForm;
+      if (!f.regime) { this.showRecordToast('레짐을 선택하세요'); return; }
+      const body = JSON.stringify({
+        log_type: 'decision',
+        date: f.date || new Date().toISOString().slice(0,10),
+        regime: f.regime,
+        notes: f.memo,
+      });
+      const r = await fetch('/api/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const d = await r.json();
+      if (d.error) { this.showRecordToast('오류: ' + d.error); return; }
+      this.showRecordToast(d.message || '저장됨');
+      this.decisionForm = { show: false, date: '', regime: '', memo: '' };
+      this.record = null;
+      await this.loadRecord();
+    },
+
+    showRecordToast(msg) {
+      this.recordToast = msg;
+      setTimeout(() => { this.recordToast = ''; }, 3000);
     },
 
     refreshIcons() {
@@ -845,6 +948,802 @@ _WATCH_PANEL = (
 )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P3b: 리포트 탭 패널 HTML
+# JS 문자열 안 개행은 \\n, raw 문자열 사용.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_REPORT_PANEL = r"""
+    <!-- 리포트 탭 -->
+    <section x-show="activeTab==='report'" x-cloak>
+
+      <!-- 로딩 -->
+      <template x-if="!report">
+        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>
+      </template>
+
+      <template x-if="report">
+        <div>
+
+          <!-- 에러 -->
+          <template x-if="report._error">
+            <div class="bg-red-50 text-red-600 text-sm rounded-xl p-4 mb-4" x-text="report._error"></div>
+          </template>
+
+          <!-- 세그먼트 서브탭 -->
+          <div class="flex gap-1 mb-5 flex-wrap">
+            <button @click="reportSeg='kr'"
+              :class="reportSeg==='kr' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              KR 한국 종목
+              <span class="ml-1 text-[10px]" x-text="'(' + (report.kr_total || 0) + ')'"></span>
+            </button>
+            <button @click="reportSeg='us'"
+              :class="reportSeg==='us' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              US 미국 종목
+              <span class="ml-1 text-[10px]" x-text="'(' + (report.us_total || 0) + ')'"></span>
+            </button>
+            <button @click="reportSeg='industry'"
+              :class="reportSeg==='industry' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              산업
+              <span class="ml-1 text-[10px]" x-text="report.industry_total > 200 ? '최근200/' + report.industry_total : '(' + (report.industry_total || 0) + ')'"></span>
+            </button>
+            <button @click="reportSeg='macro'"
+              :class="reportSeg==='macro' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              시황·전략
+              <span class="ml-1 text-[10px]" x-text="report.macro_total > 200 ? '최근200/' + report.macro_total : '(' + (report.macro_total || 0) + ')'"></span>
+            </button>
+          </div>
+
+          <!-- KR 종목 카드 그리드 -->
+          <template x-if="reportSeg==='kr'">
+            <div>
+              <template x-if="!report.kr || !report.kr.length">
+                <div class="text-slate-400 text-center py-16">리포트 없음</div>
+              </template>
+              <template x-if="report.kr && report.kr.length">
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <template x-for="c in report.kr" :key="c.ticker">
+                    <div @click="openReportModal(c.ticker)"
+                         class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
+                      <div class="text-sm font-semibold text-slate-800 truncate" x-text="c.name"></div>
+                      <div class="text-xs text-slate-400 mb-2" x-text="c.ticker"></div>
+                      <div class="flex items-center justify-between">
+                        <span class="text-xs text-blue-600 font-bold" x-text="c.cnt + '건'"></span>
+                        <span class="text-[10px] text-slate-400" x-text="c.latest"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- US 종목 카드 그리드 -->
+          <template x-if="reportSeg==='us'">
+            <div>
+              <template x-if="!report.us || !report.us.length">
+                <div class="text-slate-400 text-center py-16">수집된 미국 종목 리포트 없음</div>
+              </template>
+              <template x-if="report.us && report.us.length">
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <template x-for="c in report.us" :key="c.ticker">
+                    <div @click="openReportModal(c.ticker)"
+                         class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
+                      <div class="text-sm font-semibold text-slate-800 truncate" x-text="c.name"></div>
+                      <div class="text-xs text-slate-400 mb-2" x-text="c.ticker"></div>
+                      <div class="flex items-center justify-between">
+                        <span class="text-xs text-blue-600 font-bold" x-text="c.cnt + '건'"></span>
+                        <span class="text-[10px] text-slate-400" x-text="c.latest"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- 산업 리포트 리스트 -->
+          <template x-if="reportSeg==='industry'">
+            <div>
+              <template x-if="!report.industry || !report.industry.length">
+                <div class="text-slate-400 text-center py-16">산업 리포트 없음</div>
+              </template>
+              <template x-if="report.industry && report.industry.length">
+                <div class="space-y-2">
+                  <template x-for="(r, idx) in report.industry" :key="r.ticker + idx">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-start gap-3">
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-1 flex-wrap">
+                          <span class="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100" x-text="r.sector || '-'"></span>
+                          <span class="text-[10px] text-slate-400" x-text="r.source"></span>
+                          <span class="text-[10px] text-slate-300" x-text="r.date"></span>
+                        </div>
+                        <div class="text-sm text-slate-800 font-medium truncate" x-text="r.title"></div>
+                      </div>
+                      <template x-if="r.pdf_basename">
+                        <a :href="pdfUrl(r.ticker, r.pdf_basename)" target="_blank"
+                           class="flex-shrink-0 text-[10px] text-blue-600 font-semibold hover:underline flex items-center gap-0.5">
+                          <i data-lucide="file-down" class="w-3 h-3"></i>PDF
+                        </a>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- 시황·전략·경제·채권 리스트 -->
+          <template x-if="reportSeg==='macro'">
+            <div>
+              <template x-if="!report.macro || !report.macro.length">
+                <div class="text-slate-400 text-center py-16">시황·전략 리포트 없음</div>
+              </template>
+              <template x-if="report.macro && report.macro.length">
+                <div class="space-y-2">
+                  <template x-for="(r, idx) in report.macro" :key="r.ticker + idx">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-start gap-3">
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-1 flex-wrap">
+                          <span class="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100" x-text="r.category"></span>
+                          <span class="text-[10px] text-slate-400" x-text="r.source"></span>
+                          <span class="text-[10px] text-slate-300" x-text="r.date"></span>
+                        </div>
+                        <div class="text-sm text-slate-800 font-medium truncate" x-text="r.title"></div>
+                      </div>
+                      <template x-if="r.pdf_basename">
+                        <a :href="pdfUrl(r.ticker, r.pdf_basename)" target="_blank"
+                           class="flex-shrink-0 text-[10px] text-blue-600 font-semibold hover:underline flex items-center gap-0.5">
+                          <i data-lucide="file-down" class="w-3 h-3"></i>PDF
+                        </a>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+        </div>
+      </template>
+
+      <!-- 종목 리포트 목록 모달 -->
+      <template x-if="reportModal">
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="closeReportModal()">
+          <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6 relative max-h-[80vh] flex flex-col">
+            <button @click="closeReportModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+            <div class="text-sm font-bold text-slate-700 mb-3" x-text="reportModal.ticker + ' 리포트 목록'"></div>
+            <template x-if="reportModalLoading">
+              <div class="text-slate-400 text-center py-10">로딩 중...</div>
+            </template>
+            <template x-if="!reportModalLoading && reportModal.error">
+              <div class="text-red-500 text-sm" x-text="reportModal.error"></div>
+            </template>
+            <template x-if="!reportModalLoading && reportModalList">
+              <div class="overflow-y-auto flex-1 space-y-2 pr-1">
+                <template x-if="!reportModalList.length">
+                  <div class="text-slate-400 text-sm py-4 text-center">리포트 없음</div>
+                </template>
+                <template x-for="(r, idx) in reportModalList" :key="idx">
+                  <div class="border border-slate-100 rounded-lg p-3">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm text-slate-800 font-medium truncate" x-text="r.title"></div>
+                        <div class="flex gap-2 mt-0.5 text-[10px] text-slate-400 flex-wrap">
+                          <span x-text="r.date"></span>
+                          <span x-text="r.source"></span>
+                          <template x-if="r.analyst">
+                            <span x-text="r.analyst"></span>
+                          </template>
+                          <template x-if="r.target_price">
+                            <span class="text-blue-600 font-semibold" x-text="'TP ' + Number(r.target_price).toLocaleString('ko-KR') + '원'"></span>
+                          </template>
+                          <template x-if="r.opinion">
+                            <span class="text-slate-600" x-text="r.opinion"></span>
+                          </template>
+                        </div>
+                      </div>
+                      <template x-if="r.pdf_basename">
+                        <a :href="pdfUrl(reportModal.ticker, r.pdf_basename)" target="_blank"
+                           class="flex-shrink-0 text-[10px] text-blue-600 font-semibold hover:underline flex items-center gap-0.5 mt-0.5">
+                          <i data-lucide="file-down" class="w-3 h-3"></i>PDF
+                        </a>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+    </section>
+"""
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P3b: 기록 탭 패널 HTML
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_RECORD_PANEL = r"""
+    <!-- 기록 탭 -->
+    <section x-show="activeTab==='record'" x-cloak>
+
+      <!-- 로딩 -->
+      <template x-if="!record">
+        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>
+      </template>
+
+      <template x-if="record">
+        <div>
+
+          <!-- 토스트 -->
+          <template x-if="recordToast">
+            <div class="fixed top-20 right-4 z-50 bg-slate-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg" x-text="recordToast"></div>
+          </template>
+
+          <!-- 섹션 서브탭 -->
+          <div class="flex gap-1 mb-5">
+            <button @click="recordSection='decisions'"
+              :class="recordSection==='decisions' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              투자판단
+            </button>
+            <button @click="recordSection='trades'"
+              :class="recordSection==='trades' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              매매 성과
+            </button>
+            <button @click="recordSection='todo'"
+              :class="recordSection==='todo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              투자 TODO
+            </button>
+          </div>
+
+          <!-- 투자판단 섹션 -->
+          <template x-if="recordSection==='decisions'">
+            <div>
+              <!-- 새 투자판단 폼 토글 -->
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-base font-semibold text-slate-700">투자판단 기록</h2>
+                <button @click="decisionForm.show = !decisionForm.show"
+                  :class="decisionForm.show ? 'bg-slate-600' : 'bg-blue-600'"
+                  class="text-xs text-white px-3 py-1.5 rounded-lg font-medium">
+                  <span x-text="decisionForm.show ? '닫기' : '+ 새 판단'"></span>
+                </button>
+              </div>
+
+              <!-- 폼 -->
+              <template x-if="decisionForm.show">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-5">
+                  <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                    <div>
+                      <label class="text-xs text-slate-500 block mb-1">날짜</label>
+                      <input type="date" x-model="decisionForm.date"
+                        class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    </div>
+                    <div>
+                      <label class="text-xs text-slate-500 block mb-1">레짐 *</label>
+                      <select x-model="decisionForm.regime"
+                        class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <option value="">선택</option>
+                        <option value="공격">공격</option>
+                        <option value="경계">경계</option>
+                        <option value="위기">위기</option>
+                      </select>
+                    </div>
+                    <div class="col-span-2 md:col-span-1">
+                      <label class="text-xs text-slate-500 block mb-1">메모</label>
+                      <input x-model="decisionForm.memo" placeholder="간단 메모 (선택)"
+                        class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    </div>
+                  </div>
+                  <button @click="submitDecision()"
+                    class="bg-blue-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">저장</button>
+                </div>
+              </template>
+
+              <!-- 판단 카드 목록 -->
+              <template x-if="record.decisions && record.decisions.length">
+                <div class="space-y-3">
+                  <template x-for="d in record.decisions" :key="d.date">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                      <div class="flex items-start justify-between gap-2 mb-2">
+                        <div>
+                          <span class="text-sm font-bold text-slate-800" x-text="d.date"></span>
+                          <template x-if="d.saved_at">
+                            <span class="text-[10px] text-slate-400 ml-2" x-text="'저장 ' + d.saved_at"></span>
+                          </template>
+                        </div>
+                        <span :class="regimeColor(d.regime)"
+                              class="text-xs font-bold px-2 py-0.5 rounded-full"
+                              x-text="d.regime || '-'"></span>
+                      </div>
+                      <template x-if="d.notes">
+                        <p class="text-sm text-slate-600" x-text="d.notes"></p>
+                      </template>
+                      <template x-if="d.actions && d.actions.length">
+                        <ul class="mt-2 space-y-0.5">
+                          <template x-for="(a, ai) in d.actions" :key="ai">
+                            <li class="text-xs text-slate-500 flex gap-1">
+                              <span class="text-slate-300">&#183;</span>
+                              <span x-text="typeof a === 'string' ? a : JSON.stringify(a)"></span>
+                            </li>
+                          </template>
+                        </ul>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <template x-if="!record.decisions || !record.decisions.length">
+                <div class="text-slate-400 text-center py-16">기록된 투자판단 없음</div>
+              </template>
+            </div>
+          </template>
+
+          <!-- 매매 성과 섹션 -->
+          <template x-if="recordSection==='trades'">
+            <div>
+              <h2 class="text-base font-semibold text-slate-700 mb-4">매매 성과</h2>
+              <template x-if="record.trades && record.trades.total_trades != null">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-5">
+                  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-0.5">총 매매건수</div>
+                      <div class="text-xl font-bold text-slate-800" x-text="record.trades.total_trades || 0"></div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-slate-400 mb-0.5">승률</div>
+                      <div class="text-xl font-bold text-slate-800"
+                           x-text="record.trades.win_rate_pct != null ? record.trades.win_rate_pct.toFixed(1) + '%' : '-'"></div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-slate-400 mb-0.5">평균 손익/건</div>
+                      <div :class="pnlClass(record.trades.avg_pnl_per_trade)" class="text-xl font-bold"
+                           x-text="record.trades.avg_pnl_per_trade != null ? (record.trades.avg_pnl_per_trade >= 0 ? '+' : '') + Number(record.trades.avg_pnl_per_trade).toLocaleString('ko-KR') : '-'"></div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-slate-400 mb-0.5">평균 보유</div>
+                      <div class="text-xl font-bold text-slate-800"
+                           x-text="record.trades.avg_holding_days != null ? Math.abs(record.trades.avg_holding_days).toFixed(0) + '일' : '-'"></div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <template x-if="record.trades && record.trades.trades && record.trades.trades.length">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div class="px-4 py-3 border-b border-slate-100">
+                    <h3 class="text-sm font-semibold text-slate-700">최근 매매 기록</h3>
+                  </div>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-xs text-slate-400 border-b border-slate-100">
+                          <th class="text-left py-2 px-4 font-medium">날짜</th>
+                          <th class="text-left py-2 px-2 font-medium">종목</th>
+                          <th class="text-center py-2 px-2 font-medium">구분</th>
+                          <th class="text-right py-2 px-4 font-medium">이유</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="(t, ti) in record.trades.trades.slice(0,20)" :key="ti">
+                          <tr class="border-b border-slate-50 hover:bg-slate-50">
+                            <td class="py-2 px-4 text-xs text-slate-500" x-text="t.date || '-'"></td>
+                            <td class="py-2 px-2">
+                              <span class="font-medium text-slate-800" x-text="t.name || t.ticker || '-'"></span>
+                              <span class="text-xs text-slate-400 ml-1" x-text="t.ticker || ''"></span>
+                            </td>
+                            <td class="py-2 px-2 text-center">
+                              <span :class="t.side === 'buy' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'"
+                                    class="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                    x-text="t.side === 'buy' ? '매수' : '매도'"></span>
+                            </td>
+                            <td class="py-2 px-4 text-right text-xs text-slate-500 truncate max-w-[120px]"
+                                x-text="t.reason || '-'"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
+              <template x-if="!record.trades || record.trades.total_trades == null">
+                <div class="text-slate-400 text-center py-16">매매 기록 없음</div>
+              </template>
+            </div>
+          </template>
+
+          <!-- 투자 TODO 섹션 -->
+          <template x-if="recordSection==='todo'">
+            <div>
+              <h2 class="text-base font-semibold text-slate-700 mb-4">투자 TODO</h2>
+              <template x-if="record.todo">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                  <pre class="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed" x-text="record.todo"></pre>
+                </div>
+              </template>
+              <template x-if="!record.todo">
+                <div class="text-slate-400 text-center py-16">TODO 파일 없음</div>
+              </template>
+            </div>
+          </template>
+
+        </div>
+      </template>
+
+    </section>
+"""
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P3a: Whale 탭 패널 HTML (반드시 _HOME_SHELL 이전 정의)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# NOTE: 모든 JS 문자열 리터럴 안 개행은 \\n 사용. 표현식은 중괄호 이스케이프 불필요(raw 문자열).
+_WHALE_PANEL = r"""
+    <!-- Whale 탭 -->
+    <section x-show="activeTab==='whale'" x-cloak
+             x-data="{
+               wTab: 'pension',
+               wCache: {},
+               wData: null,
+               wLoading: false,
+               async wLoad(p) {
+                 if (this.wCache[p]) { this.wData = this.wCache[p]; return; }
+                 this.wLoading = true;
+                 this.wData = null;
+                 const d = await (async path => {
+                   try { const r = await fetch(path); return await r.json(); }
+                   catch(e) { return {error: String(e)}; }
+                 })('/api/whale?p=' + p);
+                 this.wCache[p] = d;
+                 this.wData = d;
+                 this.wLoading = false;
+                 this.$nextTick(() => { if (window.lucide) lucide.createIcons(); });
+               },
+               setWTab(p) {
+                 this.wTab = p;
+                 this.wLoad(p);
+               }
+             }"
+             x-init="wLoad(wTab)">
+
+      <!-- 서브탭 바 -->
+      <div class="flex flex-wrap gap-2 mb-5">
+        <template x-for="tab in [
+          {key:'pension', label:'연기금 흐름'},
+          {key:'kr_5pct', label:'KR 5%룰'},
+          {key:'kr_full', label:'KR 풀포트'},
+          {key:'us_13f',  label:'US 13F'},
+          {key:'insider', label:'내부자'}
+        ]" :key="tab.key">
+          <button @click="setWTab(tab.key)"
+                  :class="wTab===tab.key ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'"
+                  class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                  x-text="tab.label">
+          </button>
+        </template>
+      </div>
+
+      <!-- 로딩 -->
+      <template x-if="wLoading">
+        <div class="text-slate-400 text-center py-20">로딩 중...</div>
+      </template>
+
+      <!-- 연기금 흐름 -->
+      <template x-if="!wLoading && wTab==='pension' && wData">
+        <div>
+          <template x-if="wData.error">
+            <div class="text-red-500 text-sm py-4" x-text="'오류: ' + wData.error"></div>
+          </template>
+          <template x-if="!wData.error">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="'기간: ' + (wData.period || '-') + ' | 5일 누적 순매매 시총% 정규화'"></p>
+              <h3 class="text-sm font-semibold text-green-600 mb-2">매수 TOP 50</h3>
+              <template x-if="!wData.buy_top || !wData.buy_top.length">
+                <div class="text-slate-400 text-sm py-2">매수 없음</div>
+              </template>
+              <template x-if="wData.buy_top && wData.buy_top.length">
+                <div class="overflow-x-auto mb-6">
+                  <table class="w-full text-sm border-collapse">
+                    <thead><tr class="text-xs text-slate-400 border-b border-slate-200">
+                      <th class="text-left pb-2 font-medium">#</th>
+                      <th class="text-left pb-2 font-medium">종목</th>
+                      <th class="text-right pb-2 font-medium">순매수</th>
+                      <th class="text-right pb-2 font-medium">시총%</th>
+                    </tr></thead>
+                    <tbody>
+                      <template x-for="(e, idx) in wData.buy_top" :key="e.symbol + idx">
+                        <tr class="border-b border-slate-100 hover:bg-slate-50">
+                          <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                          <td class="py-1.5">
+                            <span class="font-medium text-slate-800" x-text="e.name"></span>
+                            <span class="text-xs text-slate-400 ml-1" x-text="e.symbol"></span>
+                          </td>
+                          <td class="py-1.5 text-right text-green-600 font-semibold"
+                              x-text="e.net_eok != null ? '+' + e.net_eok.toFixed(0) + '억' : '-'"></td>
+                          <td class="py-1.5 text-right text-green-600"
+                              x-text="e.cap_pct != null ? '+' + e.cap_pct.toFixed(2) + '%' : '-'"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+              <h3 class="text-sm font-semibold text-red-600 mb-2">매도 TOP 50</h3>
+              <template x-if="!wData.sell_top || !wData.sell_top.length">
+                <div class="text-slate-400 text-sm py-2">매도 없음</div>
+              </template>
+              <template x-if="wData.sell_top && wData.sell_top.length">
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm border-collapse">
+                    <thead><tr class="text-xs text-slate-400 border-b border-slate-200">
+                      <th class="text-left pb-2 font-medium">#</th>
+                      <th class="text-left pb-2 font-medium">종목</th>
+                      <th class="text-right pb-2 font-medium">순매도</th>
+                      <th class="text-right pb-2 font-medium">시총%</th>
+                    </tr></thead>
+                    <tbody>
+                      <template x-for="(e, idx) in wData.sell_top" :key="e.symbol + idx">
+                        <tr class="border-b border-slate-100 hover:bg-slate-50">
+                          <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                          <td class="py-1.5">
+                            <span class="font-medium text-slate-800" x-text="e.name"></span>
+                            <span class="text-xs text-slate-400 ml-1" x-text="e.symbol"></span>
+                          </td>
+                          <td class="py-1.5 text-right text-red-600 font-semibold"
+                              x-text="e.net_eok != null ? e.net_eok.toFixed(0) + '억' : '-'"></td>
+                          <td class="py-1.5 text-right text-red-600"
+                              x-text="e.cap_pct != null ? e.cap_pct.toFixed(2) + '%' : '-'"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- KR 5%룰 -->
+      <template x-if="!wLoading && wTab==='kr_5pct' && wData">
+        <div>
+          <template x-if="wData[0] && wData[0].error">
+            <div class="text-red-500 text-sm" x-text="wData[0].error"></div>
+          </template>
+          <template x-if="wData.length && !(wData[0] && wData[0].error)">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="wData[0] ? wData[0].quarter + ' | 총 ' + wData.length + '건 | 10%+ 빨강' : ''"></p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead><tr class="text-xs text-slate-400 border-b border-slate-200">
+                    <th class="text-left pb-2 font-medium">#</th>
+                    <th class="text-left pb-2 font-medium">보고일</th>
+                    <th class="text-left pb-2 font-medium">종목</th>
+                    <th class="text-right pb-2 font-medium">지분%</th>
+                    <th class="text-right pb-2 font-medium">전분기</th>
+                  </tr></thead>
+                  <tbody>
+                    <template x-for="(r, idx) in wData" :key="r.symbol + r.report_date + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5 text-xs text-slate-500" x-text="r.report_date"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="r.company_name"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="r.symbol"></span>
+                        </td>
+                        <td class="py-1.5 text-right"
+                            :class="r.ratio_pct >= 10 ? 'text-red-600 font-bold' : 'text-slate-700'"
+                            x-text="r.ratio_pct != null ? r.ratio_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-xs">
+                          <template x-if="r.change_label === 'NEW'">
+                            <span class="text-green-600 font-semibold">NEW</span>
+                          </template>
+                          <template x-if="r.change_label === 'UP' && r.change != null">
+                            <span class="text-green-600">+<span x-text="r.change.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="r.change_label === 'DOWN' && r.change != null">
+                            <span class="text-red-500"><span x-text="r.change.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="r.change_label === 'FLAT' || r.change_label === ''">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+          <template x-if="!wData.length">
+            <div class="text-slate-400 text-sm py-4">데이터 없음</div>
+          </template>
+        </div>
+      </template>
+
+      <!-- KR 풀포트 -->
+      <template x-if="!wLoading && wTab==='kr_full' && wData">
+        <div>
+          <template x-if="wData.error">
+            <div class="text-red-500 text-sm py-4" x-text="'오류: ' + wData.error"></div>
+          </template>
+          <template x-if="!wData.error">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="(wData.quarter_label || '-') + ' | 스냅샷 ' + (wData.snapshot_date || '-') + ' | 총 ' + (wData.total_holdings || 0) + '종목'"></p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead><tr class="text-xs text-slate-400 border-b border-slate-200">
+                    <th class="text-left pb-2 font-medium">#</th>
+                    <th class="text-left pb-2 font-medium">종목</th>
+                    <th class="text-right pb-2 font-medium">비중%</th>
+                    <th class="text-right pb-2 font-medium">평가액</th>
+                    <th class="text-right pb-2 font-medium">지분%</th>
+                    <th class="text-right pb-2 font-medium">전년대비</th>
+                  </tr></thead>
+                  <tbody>
+                    <template x-for="(x, idx) in (wData.rows || [])" :key="(x.symbol || x.name) + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="x.name"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="x.symbol"></span>
+                        </td>
+                        <td class="py-1.5 text-right text-slate-700"
+                            x-text="x.weight_pct != null ? x.weight_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-slate-600 text-xs"
+                            x-text="x.valuation_eok != null ? x.valuation_eok.toLocaleString('ko-KR') + '억' : '-'"></td>
+                        <td class="py-1.5 text-right"
+                            :class="x.share_curr_pct >= 10 ? 'text-red-600 font-bold' : 'text-slate-600'"
+                            x-text="x.share_curr_pct != null ? x.share_curr_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-xs">
+                          <template x-if="x.data_missing || x.share_change_p == null">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                          <template x-if="!x.data_missing && x.share_change_p != null && x.share_change_p > 0.05">
+                            <span class="text-green-600">+<span x-text="x.share_change_p.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="!x.data_missing && x.share_change_p != null && x.share_change_p < -0.05">
+                            <span class="text-red-500"><span x-text="x.share_change_p.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="!x.data_missing && x.share_change_p != null && x.share_change_p >= -0.05 && x.share_change_p <= 0.05">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- US 13F -->
+      <template x-if="!wLoading && wTab==='us_13f' && wData">
+        <div>
+          <template x-if="wData.error">
+            <div class="text-red-500 text-sm py-4" x-text="'오류: ' + wData.error"></div>
+          </template>
+          <template x-if="!wData.error">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="(wData.quarter || '-') + ' | 분기말 ' + (wData.period_end || '-') + ' | TOP 100 / ' + (wData.total_holdings || 0) + '종목'"></p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead><tr class="text-xs text-slate-400 border-b border-slate-200">
+                    <th class="text-left pb-2 font-medium">#</th>
+                    <th class="text-left pb-2 font-medium">종목</th>
+                    <th class="text-right pb-2 font-medium">가치</th>
+                    <th class="text-right pb-2 font-medium">비중%</th>
+                    <th class="text-right pb-2 font-medium">주식변화</th>
+                  </tr></thead>
+                  <tbody>
+                    <template x-for="(x, idx) in (wData.rows || [])" :key="(x.cusip || x.name_of_issuer) + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="x.name_of_issuer || '-'"></span>
+                          <template x-if="x.ticker">
+                            <span class="text-xs text-slate-400 ml-1" x-text="x.ticker"></span>
+                          </template>
+                        </td>
+                        <td class="py-1.5 text-right text-slate-700 text-xs"
+                            x-text="x.value_usd != null ? (x.value_usd >= 1e9 ? '$' + (x.value_usd/1e9).toFixed(2) + 'B' : '$' + (x.value_usd/1e6).toFixed(0) + 'M') : '-'"></td>
+                        <td class="py-1.5 text-right text-slate-600 text-xs"
+                            x-text="x.weight_pct != null ? x.weight_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-xs">
+                          <template x-if="x.status === 'NEW'">
+                            <span class="text-green-600 font-semibold">NEW</span>
+                          </template>
+                          <template x-if="x.status === 'UP' && x.share_change_pct != null">
+                            <span class="text-green-600">+<span x-text="x.share_change_pct.toFixed(1)"></span>%</span>
+                          </template>
+                          <template x-if="x.status === 'DOWN' && x.share_change_pct != null">
+                            <span class="text-red-500"><span x-text="x.share_change_pct.toFixed(1)"></span>%</span>
+                          </template>
+                          <template x-if="!x.status || (x.status !== 'NEW' && x.status !== 'UP' && x.status !== 'DOWN')">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- 내부자 -->
+      <template x-if="!wLoading && wTab==='insider' && wData">
+        <div>
+          <template x-if="wData[0] && wData[0].error">
+            <div class="text-red-500 text-sm py-4" x-text="wData[0].error"></div>
+          </template>
+          <template x-if="wData.length && !(wData[0] && wData[0].error)">
+            <div>
+              <p class="text-xs text-slate-400 mb-4">
+                최근 90일 | 5%+ 주요주주·임원 | <span x-text="wData.length + '건'"></span>
+              </p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead><tr class="text-xs text-slate-400 border-b border-slate-200">
+                    <th class="text-left pb-2 font-medium">#</th>
+                    <th class="text-left pb-2 font-medium">보고일</th>
+                    <th class="text-left pb-2 font-medium">종목</th>
+                    <th class="text-left pb-2 font-medium">보고자</th>
+                    <th class="text-right pb-2 font-medium">증감</th>
+                    <th class="text-right pb-2 font-medium">지분%</th>
+                  </tr></thead>
+                  <tbody>
+                    <template x-for="(r, idx) in wData" :key="(r.rcept_dt || '') + (r.symbol || '') + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5 text-xs text-slate-500" x-text="r.rcept_dt"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="r.company_name || ''"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="r.symbol"></span>
+                        </td>
+                        <td class="py-1.5 text-xs">
+                          <span class="text-slate-700" x-text="r.repror"></span>
+                          <span class="text-slate-400 ml-1" x-text="r.role"></span>
+                        </td>
+                        <td class="py-1.5 text-right font-semibold"
+                            :class="r.direction === 'buy' ? 'text-green-600' : 'text-red-500'"
+                            x-text="r.irds_cnt != null ? (r.irds_cnt > 0 ? '+' : '') + r.irds_cnt.toLocaleString('ko-KR') : '-'"></td>
+                        <td class="py-1.5 text-right text-xs"
+                            :class="r.stock_rate >= 10 ? 'text-red-600 font-bold' : 'text-slate-600'"
+                            x-text="r.stock_rate != null ? r.stock_rate.toFixed(2) + '%' : '-'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+          <template x-if="!wData.length">
+            <div class="text-slate-400 text-sm py-4">최근 90일 5%+ 보유자 매매 없음</div>
+          </template>
+        </div>
+      </template>
+
+    </section>
+"""
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 홈 패널 HTML (Alpine 템플릿)
 # 완전히 별도 문자열로 분리 — JS 중괄호와 충돌 없음.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1163,21 +2062,10 @@ _HOME_SHELL = (
     '      <div class="text-slate-400 text-center py-20">시그널 (P1에서 구현)</div>\n'
     '    </section>\n'
     '\n'
-    '    <!-- 기록 -->\n'
-    '    <section x-show="activeTab===\'record\'">\n'
-    '      <div class="text-slate-400 text-center py-20">기록 (P3에서 구현)</div>\n'
-    '    </section>\n'
-    '\n'
-    '    <!-- Whale -->\n'
-    '    <section x-show="activeTab===\'whale\'">\n'
-    '      <div class="text-slate-400 text-center py-20">Whale (P3에서 구현)</div>\n'
-    '    </section>\n'
-    '\n'
-    '    <!-- 리포트 -->\n'
-    '    <section x-show="activeTab===\'report\'">\n'
-    '      <div class="text-slate-400 text-center py-20">리포트 (P3에서 구현)</div>\n'
-    '    </section>\n'
-    '\n'
+    + _RECORD_PANEL
+    + _WHALE_PANEL
+    + _REPORT_PANEL
+    + '\n'
     '  </main>\n'
     '\n'
     '</div><!-- /Alpine 루트 -->\n'
@@ -1189,6 +2077,793 @@ _HOME_SHELL = (
     "</body>\n"
     "</html>\n"
 )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P3a: Whale — DB 헬퍼 + build_whale_payload
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _open_db() -> _sqlite3.Connection:
+    """stock.db 읽기전용 연결 (Row factory). Whale + Reports 공용."""
+    conn = _sqlite3.connect(f"{_DATA_DIR}/stock.db", timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size = -32768;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA busy_timeout = 20000;")
+    conn.row_factory = _sqlite3.Row
+    return conn
+
+
+# 레거시 alias (P3a 코드에서 _open_whale_db() 호출됨)
+_open_whale_db = _open_db
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P3b: 리포트 탭 — build_reports_payload
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _sync_reports_payload() -> dict:
+    """reports 테이블에서 4세그먼트 집계 (동기 본체).
+
+    kr: category='company' AND ticker GLOB '[0-9]*'  — 종목 카드 그리드
+    us: category='company' AND ticker GLOB '[A-Za-z]*' — 종목 카드 그리드
+    industry: category='industry' — 날짜 내림차순 LIMIT 200
+    macro: category IN ('market','strategy','economy','bond') — 날짜 내림차순 LIMIT 200
+
+    stock_master 조인으로 종목명 보강 (symbol 컬럼).
+    """
+    result: dict = {
+        "kr": [], "us": [], "industry": [], "macro": [],
+        "kr_total": 0, "us_total": 0,
+        "industry_total": 0, "macro_total": 0,
+    }
+    try:
+        conn = _open_db()
+
+        # KR 종목 — 티커별 집계 + stock_master 이름 보강
+        rows = conn.execute(
+            "SELECT r.ticker,"
+            " COALESCE(NULLIF(sm.name,''), NULLIF(r.name,''), r.ticker) AS rname,"
+            " COUNT(*) AS cnt, MAX(r.date) AS latest"
+            " FROM reports r"
+            " LEFT JOIN stock_master sm ON sm.symbol = r.ticker"
+            " WHERE r.category = 'company' AND r.ticker GLOB '[0-9]*'"
+            " GROUP BY r.ticker ORDER BY cnt DESC"
+        ).fetchall()
+        result["kr_total"] = len(rows)
+        result["kr"] = [
+            {"ticker": r["ticker"], "name": r["rname"], "cnt": r["cnt"], "latest": r["latest"]}
+            for r in rows
+        ]
+
+        # US 종목
+        rows = conn.execute(
+            "SELECT r.ticker,"
+            " COALESCE(NULLIF(sm.name,''), NULLIF(r.name,''), r.ticker) AS rname,"
+            " COUNT(*) AS cnt, MAX(r.date) AS latest"
+            " FROM reports r"
+            " LEFT JOIN stock_master sm ON sm.symbol = r.ticker"
+            " WHERE r.category = 'company' AND r.ticker GLOB '[A-Za-z]*'"
+            " GROUP BY r.ticker ORDER BY cnt DESC"
+        ).fetchall()
+        result["us_total"] = len(rows)
+        result["us"] = [
+            {"ticker": r["ticker"], "name": r["rname"], "cnt": r["cnt"], "latest": r["latest"]}
+            for r in rows
+        ]
+
+        # 산업 리포트
+        rows = conn.execute(
+            "SELECT date, name AS sector, title, source, ticker, pdf_path"
+            " FROM reports WHERE category = 'industry'"
+            " ORDER BY date DESC LIMIT 200"
+        ).fetchall()
+        cnt_q = conn.execute(
+            "SELECT COUNT(*) AS n FROM reports WHERE category = 'industry'"
+        ).fetchone()
+        result["industry_total"] = cnt_q["n"] if cnt_q else 0
+        result["industry"] = [
+            {
+                "date": r["date"], "sector": r["sector"],
+                "title": r["title"], "source": r["source"],
+                "ticker": r["ticker"],
+                "pdf_basename": os.path.basename(r["pdf_path"]) if r["pdf_path"] else "",
+            }
+            for r in rows
+        ]
+
+        # 시황·전략·경제·채권
+        rows = conn.execute(
+            "SELECT date, category, name AS label, title, source, ticker, pdf_path"
+            " FROM reports"
+            " WHERE category IN ('market','strategy','economy','bond')"
+            " ORDER BY date DESC LIMIT 200"
+        ).fetchall()
+        cnt_q = conn.execute(
+            "SELECT COUNT(*) AS n FROM reports"
+            " WHERE category IN ('market','strategy','economy','bond')"
+        ).fetchone()
+        result["macro_total"] = cnt_q["n"] if cnt_q else 0
+        result["macro"] = [
+            {
+                "date": r["date"], "category": r["category"],
+                "label": r["label"],
+                "title": r["title"], "source": r["source"],
+                "ticker": r["ticker"],
+                "pdf_basename": os.path.basename(r["pdf_path"]) if r["pdf_path"] else "",
+            }
+            for r in rows
+        ]
+
+        conn.close()
+    except Exception as exc:
+        result["_error"] = str(exc)
+    return result
+
+
+async def build_reports_payload() -> dict:
+    """_sync_reports_payload를 executor에서 실행 (whale과 동일 패턴)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_reports_payload)
+
+
+def _sync_reports_by_ticker(ticker: str) -> list:
+    """종목별 리포트 목록 — 날짜 내림차순."""
+    try:
+        conn = _open_db()
+        rows = conn.execute(
+            "SELECT date, source, analyst, title, target_price, opinion, pdf_path"
+            " FROM reports WHERE ticker = ? ORDER BY date DESC",
+            (ticker,),
+        ).fetchall()
+        conn.close()
+        return [
+            {
+                "date": r["date"], "source": r["source"],
+                "analyst": r["analyst"], "title": r["title"],
+                "target_price": r["target_price"], "opinion": r["opinion"],
+                "pdf_basename": os.path.basename(r["pdf_path"]) if r["pdf_path"] else "",
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        return [{"error": str(exc)}]
+
+
+async def _reports_by_ticker(ticker: str) -> list:
+    """_sync_reports_by_ticker를 executor에서 실행 (whale과 동일 패턴)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_reports_by_ticker, ticker)
+
+
+def _whale_home() -> dict:
+    """home 프리셋 — 각 소스별 최신 날짜 + 건수 요약."""
+    result: dict = {}
+    try:
+        conn = _open_whale_db()
+        # kr_full
+        r = conn.execute(
+            "SELECT snapshot_date, COUNT(*) AS cnt FROM nps_kr_full_holdings"
+            " GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 1"
+        ).fetchone()
+        result["kr_full"] = {"snapshot_date": r["snapshot_date"], "count": r["cnt"]} if r else {}
+
+        # us_13f
+        r = conn.execute(
+            "SELECT quarter, period_end, COUNT(*) AS cnt FROM nps_us_holdings"
+            " GROUP BY quarter ORDER BY period_end DESC LIMIT 1"
+        ).fetchone()
+        result["us_13f"] = {"quarter": r["quarter"], "period_end": r["period_end"], "count": r["cnt"]} if r else {}
+
+        # kr_5pct
+        r = conn.execute(
+            "SELECT quarter, COUNT(*) AS cnt FROM nps_holdings_disclosed"
+            " WHERE quarter != '' GROUP BY quarter ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        result["kr_5pct"] = {"quarter": r["quarter"], "count": r["cnt"]} if r else {}
+
+        # pension
+        r = conn.execute(
+            "SELECT trade_date, COUNT(DISTINCT symbol) AS cnt"
+            " FROM pension_flow_daily GROUP BY trade_date ORDER BY trade_date DESC LIMIT 1"
+        ).fetchone()
+        result["pension"] = {"latest_date": r["trade_date"], "symbols": r["cnt"]} if r else {}
+
+        # insider
+        r = conn.execute(
+            "SELECT COUNT(*) AS cnt, MAX(rcept_dt) AS latest FROM insider_transactions"
+            " WHERE stock_irds_cnt != 0"
+        ).fetchone()
+        result["insider"] = {"latest_date": r["latest"] or "", "count": r["cnt"]} if r else {}
+
+        conn.close()
+    except Exception as exc:
+        result["_error"] = str(exc)
+    return result
+
+
+def _whale_kr_5pct() -> list:
+    """NPS 5%룰 최신 분기 전체 — 실제 컬럼만 사용."""
+    try:
+        conn = _open_whale_db()
+        latest_q_row = conn.execute(
+            "SELECT quarter FROM nps_holdings_disclosed WHERE quarter != ''"
+            " ORDER BY quarter DESC LIMIT 1"
+        ).fetchone()
+        if not latest_q_row:
+            conn.close()
+            return []
+        latest_q = latest_q_row["quarter"]
+
+        prev_q_row = conn.execute(
+            "SELECT DISTINCT quarter FROM nps_holdings_disclosed"
+            " WHERE quarter != '' AND quarter < ? ORDER BY quarter DESC LIMIT 1",
+            (latest_q,),
+        ).fetchone()
+        prev_q = prev_q_row["quarter"] if prev_q_row else None
+
+        prev_map: dict = {}
+        if prev_q:
+            for pr in conn.execute(
+                "SELECT symbol, MAX(ratio_pct) AS max_r FROM nps_holdings_disclosed"
+                " WHERE quarter = ? AND symbol != '' GROUP BY symbol",
+                (prev_q,),
+            ).fetchall():
+                prev_map[pr["symbol"]] = float(pr["max_r"] or 0)
+
+        rows = conn.execute(
+            "SELECT report_date, company_name, symbol, ratio_pct"
+            " FROM nps_holdings_disclosed WHERE quarter = ?"
+            " ORDER BY ratio_pct DESC, report_date DESC",
+            (latest_q,),
+        ).fetchall()
+        conn.close()
+
+        out = []
+        for r in rows:
+            cur_r = float(r["ratio_pct"] or 0)
+            sym = r["symbol"] or ""
+            prev_r = prev_map.get(sym) if sym and prev_q else None
+            if prev_q and sym:
+                if prev_r is None:
+                    change_label = "NEW"
+                    change_val = None
+                else:
+                    change_val = round(cur_r - prev_r, 4)
+                    change_label = "UP" if change_val > 0.05 else ("DOWN" if change_val < -0.05 else "FLAT")
+            else:
+                change_label = ""
+                change_val = None
+            out.append({
+                "report_date": r["report_date"],
+                "company_name": r["company_name"],
+                "symbol": sym,
+                "ratio_pct": cur_r,
+                "prev_ratio": prev_map.get(sym),
+                "change": change_val,
+                "change_label": change_label,
+                "is_new": change_label == "NEW",
+                "quarter": latest_q,
+                "prev_quarter": prev_q,
+            })
+        return out
+    except Exception as exc:
+        return [{"error": str(exc)}]
+
+
+def _whale_kr_full() -> dict:
+    """NPS KR 풀포트 — fetch_nps_kr_full_holdings 래핑."""
+    try:
+        from kis_api import fetch_nps_kr_full_holdings
+        return fetch_nps_kr_full_holdings(top=200)
+    except Exception as exc:
+        return {"error": str(exc), "rows": []}
+
+
+def _whale_us_13f() -> dict:
+    """NPS US 13F — fetch_nps_us_holdings 래핑."""
+    try:
+        from kis_api import fetch_nps_us_holdings
+        return fetch_nps_us_holdings(top=100, include_changes=True)
+    except Exception as exc:
+        return {"error": str(exc), "rows": []}
+
+
+def _whale_pension() -> list:
+    """연기금 5일 누적 순매매 — 직접 SQL (시총% 포함)."""
+    try:
+        conn = _open_whale_db()
+        dates = [r["trade_date"] for r in conn.execute(
+            "SELECT DISTINCT trade_date FROM pension_flow_daily"
+            " ORDER BY trade_date DESC LIMIT 5"
+        ).fetchall()]
+        if not dates:
+            conn.close()
+            return []
+        ph = ",".join("?" for _ in dates)
+        agg_rows = conn.execute(
+            f"SELECT pf.symbol, pf.name, pf.market,"
+            f" SUM(pf.net_amount_won) AS net_total"
+            f" FROM pension_flow_daily pf"
+            f" WHERE pf.trade_date IN ({ph})"
+            f" GROUP BY pf.symbol HAVING net_total != 0",
+            dates,
+        ).fetchall()
+        symbols = [r["symbol"] for r in agg_rows]
+        cap_map: dict = {}
+        if symbols:
+            sph = ",".join("?" for _ in symbols)
+            cap_rows = conn.execute(
+                f"SELECT symbol, MAX(trade_date) AS d FROM daily_snapshot"
+                f" WHERE symbol IN ({sph}) GROUP BY symbol",
+                symbols,
+            ).fetchall()
+            for cr in cap_rows:
+                cap = conn.execute(
+                    "SELECT market_cap FROM daily_snapshot WHERE symbol=? AND trade_date=?",
+                    (cr["symbol"], cr["d"]),
+                ).fetchone()
+                if cap and cap["market_cap"]:
+                    cap_map[cr["symbol"]] = int(cap["market_cap"]) * 100_000_000
+        conn.close()
+
+        period = ""
+        if dates:
+            d0, d1 = dates[-1], dates[0]
+            period = (f"{d0[:4]}-{d0[4:6]}-{d0[6:]} ~ {d1[:4]}-{d1[4:6]}-{d1[6:]}")
+
+        out = []
+        for r in agg_rows:
+            cap = cap_map.get(r["symbol"], 0)
+            pct = round(r["net_total"] * 100.0 / cap, 4) if cap > 0 else None
+            out.append({
+                "symbol": r["symbol"],
+                "name": r["name"],
+                "market": r["market"],
+                "net_won": r["net_total"],
+                "net_eok": round(r["net_total"] / 100_000_000, 2),
+                "cap_won": cap,
+                "cap_pct": pct,
+            })
+        # 매수/매도 분리 정렬 후 재합산
+        buy = sorted([e for e in out if e["net_won"] > 0],
+                     key=lambda x: (-(x["cap_pct"] or 0) if x["cap_won"] else 0, -x["net_won"]))[:50]
+        sell = sorted([e for e in out if e["net_won"] < 0],
+                      key=lambda x: ((x["cap_pct"] or 0) if x["cap_won"] else 0, x["net_won"]))[:50]
+        return {"period": period, "buy_top": buy, "sell_top": sell}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _whale_insider() -> list:
+    """임원·5%↑ 주주 최근 90일 매매 — stock_master JOIN."""
+    try:
+        conn = _open_whale_db()
+        cutoff = (datetime.now(KST) - timedelta(days=90)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT it.rcept_dt, it.symbol, sm.name AS company_name,"
+            " it.repror, it.ofcps, it.main_shrholdr,"
+            " it.stock_irds_cnt, it.stock_rate, it.stock_irds_rate"
+            " FROM insider_transactions it"
+            " LEFT JOIN stock_master sm ON sm.symbol = it.symbol"
+            " WHERE it.rcept_dt >= ? AND it.stock_irds_cnt != 0 AND it.stock_rate >= 5"
+            " ORDER BY it.rcept_dt DESC, ABS(it.stock_irds_rate) DESC",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+        out = []
+        for r in rows:
+            irds = r["stock_irds_cnt"] or 0
+            role = (r["main_shrholdr"] or "") or (r["ofcps"] or "")
+            out.append({
+                "rcept_dt": r["rcept_dt"],
+                "symbol": r["symbol"],
+                "company_name": r["company_name"] or "",
+                "repror": r["repror"] or "",
+                "role": role,
+                "irds_cnt": irds,
+                "direction": "buy" if irds > 0 else "sell",
+                "stock_rate": float(r["stock_rate"] or 0),
+                "stock_irds_rate": float(r["stock_irds_rate"] or 0),
+            })
+        return out
+    except Exception as exc:
+        return [{"error": str(exc)}]
+
+
+async def build_whale_payload(preset: str) -> dict | list:
+    """preset ∈ home|kr_5pct|kr_full|us_13f|pension|insider — 구조화 데이터 반환."""
+    loop = asyncio.get_event_loop()
+    if preset == "home":
+        return await loop.run_in_executor(None, _whale_home)
+    elif preset == "kr_5pct":
+        return await loop.run_in_executor(None, _whale_kr_5pct)
+    elif preset == "kr_full":
+        return await loop.run_in_executor(None, _whale_kr_full)
+    elif preset == "us_13f":
+        return await loop.run_in_executor(None, _whale_us_13f)
+    elif preset == "pension":
+        return await loop.run_in_executor(None, _whale_pension)
+    elif preset == "insider":
+        return await loop.run_in_executor(None, _whale_insider)
+    else:
+        return {"error": f"unknown preset: {preset}"}
+
+
+_WHALE_PANEL_REMOVED = r"""  # (삭제됨 — 이 변수 사용 안 함)
+    <!-- Whale 탭 -->
+    <section x-show="activeTab==='whale'" x-cloak
+             x-data="{
+               wTab: 'pension',
+               wCache: {},
+               wData: null,
+               wLoading: false,
+               async wLoad(p) {
+                 if (this.wCache[p]) { this.wData = this.wCache[p]; return; }
+                 this.wLoading = true;
+                 this.wData = null;
+                 const d = await this.$root.__proto__.constructor.prototype.api
+                   ? await this.$root.api('/api/whale?p=' + p)
+                   : await (async path => {
+                       try { const r = await fetch(path); return await r.json(); }
+                       catch(e) { return {error: String(e)}; }
+                     })('/api/whale?p=' + p);
+                 this.wCache[p] = d;
+                 this.wData = d;
+                 this.wLoading = false;
+                 this.$nextTick(() => { if (window.lucide) lucide.createIcons(); });
+               },
+               setWTab(p) {
+                 this.wTab = p;
+                 this.wLoad(p);
+               }
+             }"
+             x-init="wLoad(wTab)">
+
+      <!-- 서브탭 바 -->
+      <div class="flex flex-wrap gap-2 mb-5">
+        <template x-for="tab in [
+          {key:'pension', label:'연기금 흐름'},
+          {key:'kr_5pct', label:'KR 5%룰'},
+          {key:'kr_full', label:'KR 풀포트'},
+          {key:'us_13f',  label:'US 13F'},
+          {key:'insider', label:'내부자'}
+        ]" :key="tab.key">
+          <button @click="setWTab(tab.key)"
+                  :class="wTab===tab.key ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'"
+                  class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                  x-text="tab.label">
+          </button>
+        </template>
+      </div>
+
+      <!-- 로딩 -->
+      <template x-if="wLoading">
+        <div class="text-slate-400 text-center py-20">로딩 중...</div>
+      </template>
+
+      <!-- ── 연기금 흐름 ── -->
+      <template x-if="!wLoading && wTab==='pension' && wData">
+        <div>
+          <template x-if="wData.error">
+            <div class="text-red-500 text-sm py-4" x-text="'오류: ' + wData.error"></div>
+          </template>
+          <template x-if="!wData.error">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="'기간: ' + (wData.period || '-') + ' | 5일 누적 순매매 · 시총% 정규화'"></p>
+
+              <!-- 매수 -->
+              <h3 class="text-sm font-semibold text-green-600 mb-2">매수 TOP 50</h3>
+              <template x-if="!wData.buy_top || !wData.buy_top.length">
+                <div class="text-slate-400 text-sm py-2">매수 없음</div>
+              </template>
+              <template x-if="wData.buy_top && wData.buy_top.length">
+                <div class="overflow-x-auto mb-6">
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="text-xs text-slate-400 border-b border-slate-200">
+                        <th class="text-left pb-2 font-medium">#</th>
+                        <th class="text-left pb-2 font-medium">종목</th>
+                        <th class="text-right pb-2 font-medium">순매수</th>
+                        <th class="text-right pb-2 font-medium">시총%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="(e, idx) in wData.buy_top" :key="e.symbol + idx">
+                        <tr class="border-b border-slate-100 hover:bg-slate-50">
+                          <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                          <td class="py-1.5">
+                            <span class="font-medium text-slate-800" x-text="e.name"></span>
+                            <span class="text-xs text-slate-400 ml-1" x-text="e.symbol"></span>
+                          </td>
+                          <td class="py-1.5 text-right text-green-600 font-semibold"
+                              x-text="(e.net_eok != null ? '+' + e.net_eok.toFixed(0) + '억' : '-')"></td>
+                          <td class="py-1.5 text-right text-green-600"
+                              x-text="(e.cap_pct != null ? '+' + e.cap_pct.toFixed(2) + '%' : '-')"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+
+              <!-- 매도 -->
+              <h3 class="text-sm font-semibold text-red-600 mb-2">매도 TOP 50</h3>
+              <template x-if="!wData.sell_top || !wData.sell_top.length">
+                <div class="text-slate-400 text-sm py-2">매도 없음</div>
+              </template>
+              <template x-if="wData.sell_top && wData.sell_top.length">
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="text-xs text-slate-400 border-b border-slate-200">
+                        <th class="text-left pb-2 font-medium">#</th>
+                        <th class="text-left pb-2 font-medium">종목</th>
+                        <th class="text-right pb-2 font-medium">순매도</th>
+                        <th class="text-right pb-2 font-medium">시총%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="(e, idx) in wData.sell_top" :key="e.symbol + idx">
+                        <tr class="border-b border-slate-100 hover:bg-slate-50">
+                          <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                          <td class="py-1.5">
+                            <span class="font-medium text-slate-800" x-text="e.name"></span>
+                            <span class="text-xs text-slate-400 ml-1" x-text="e.symbol"></span>
+                          </td>
+                          <td class="py-1.5 text-right text-red-600 font-semibold"
+                              x-text="(e.net_eok != null ? e.net_eok.toFixed(0) + '억' : '-')"></td>
+                          <td class="py-1.5 text-right text-red-600"
+                              x-text="(e.cap_pct != null ? e.cap_pct.toFixed(2) + '%' : '-')"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── KR 5%룰 ── -->
+      <template x-if="!wLoading && wTab==='kr_5pct' && wData">
+        <div>
+          <template x-if="wData[0] && wData[0].error">
+            <div class="text-red-500 text-sm" x-text="wData[0].error"></div>
+          </template>
+          <template x-if="wData.length && !(wData[0] && wData[0].error)">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="wData[0] ? wData[0].quarter + ' | 총 ' + wData.length + '건 | 10%↑ 빨강' : ''"></p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead>
+                    <tr class="text-xs text-slate-400 border-b border-slate-200">
+                      <th class="text-left pb-2 font-medium">#</th>
+                      <th class="text-left pb-2 font-medium">보고일</th>
+                      <th class="text-left pb-2 font-medium">종목</th>
+                      <th class="text-right pb-2 font-medium">지분%</th>
+                      <th class="text-right pb-2 font-medium">전분기</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="(r, idx) in wData" :key="r.symbol + r.report_date + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5 text-xs text-slate-500" x-text="r.report_date"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="r.company_name"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="r.symbol"></span>
+                        </td>
+                        <td class="py-1.5 text-right"
+                            :class="r.ratio_pct >= 10 ? 'text-red-600 font-bold' : 'text-slate-700'"
+                            x-text="r.ratio_pct != null ? r.ratio_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-xs">
+                          <template x-if="r.change_label === 'NEW'">
+                            <span class="text-green-600 font-semibold">NEW</span>
+                          </template>
+                          <template x-if="r.change_label === 'UP' && r.change != null">
+                            <span class="text-green-600">+<span x-text="r.change.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="r.change_label === 'DOWN' && r.change != null">
+                            <span class="text-red-500"><span x-text="r.change.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="r.change_label === 'FLAT' || r.change_label === ''">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+          <template x-if="!wData.length">
+            <div class="text-slate-400 text-sm py-4">데이터 없음</div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── KR 풀포트 ── -->
+      <template x-if="!wLoading && wTab==='kr_full' && wData">
+        <div>
+          <template x-if="wData.error">
+            <div class="text-red-500 text-sm py-4" x-text="'오류: ' + wData.error"></div>
+          </template>
+          <template x-if="!wData.error">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="(wData.quarter_label || '-') + ' | 스냅샷 ' + (wData.snapshot_date || '-') + ' | 총 ' + (wData.total_holdings || 0) + '종목 | 지분 10%↑ 빨강'"></p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead>
+                    <tr class="text-xs text-slate-400 border-b border-slate-200">
+                      <th class="text-left pb-2 font-medium">#</th>
+                      <th class="text-left pb-2 font-medium">종목</th>
+                      <th class="text-right pb-2 font-medium">비중%</th>
+                      <th class="text-right pb-2 font-medium">평가액</th>
+                      <th class="text-right pb-2 font-medium">지분%</th>
+                      <th class="text-right pb-2 font-medium">전년대비</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="(x, idx) in (wData.rows || [])" :key="(x.symbol || x.name) + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="x.name"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="x.symbol"></span>
+                        </td>
+                        <td class="py-1.5 text-right text-slate-700"
+                            x-text="x.weight_pct != null ? x.weight_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-slate-600 text-xs"
+                            x-text="x.valuation_eok != null ? x.valuation_eok.toLocaleString('ko-KR') + '억' : '-'"></td>
+                        <td class="py-1.5 text-right"
+                            :class="x.share_curr_pct >= 10 ? 'text-red-600 font-bold' : 'text-slate-600'"
+                            x-text="x.share_curr_pct != null ? x.share_curr_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-xs">
+                          <template x-if="x.data_missing || x.share_change_p == null">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                          <template x-if="!x.data_missing && x.share_change_p != null && x.share_change_p > 0.05">
+                            <span class="text-green-600">+<span x-text="x.share_change_p.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="!x.data_missing && x.share_change_p != null && x.share_change_p < -0.05">
+                            <span class="text-red-500"><span x-text="x.share_change_p.toFixed(2)"></span>p</span>
+                          </template>
+                          <template x-if="!x.data_missing && x.share_change_p != null && x.share_change_p >= -0.05 && x.share_change_p <= 0.05">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── US 13F ── -->
+      <template x-if="!wLoading && wTab==='us_13f' && wData">
+        <div>
+          <template x-if="wData.error">
+            <div class="text-red-500 text-sm py-4" x-text="'오류: ' + wData.error"></div>
+          </template>
+          <template x-if="!wData.error">
+            <div>
+              <p class="text-xs text-slate-400 mb-4"
+                 x-text="(wData.quarter || '-') + ' | 분기말 ' + (wData.period_end || '-') + ' | TOP 100 / ' + (wData.total_holdings || 0) + '종목'"></p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead>
+                    <tr class="text-xs text-slate-400 border-b border-slate-200">
+                      <th class="text-left pb-2 font-medium">#</th>
+                      <th class="text-left pb-2 font-medium">종목</th>
+                      <th class="text-right pb-2 font-medium">가치</th>
+                      <th class="text-right pb-2 font-medium">비중%</th>
+                      <th class="text-right pb-2 font-medium">주식변화</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="(x, idx) in (wData.rows || [])" :key="(x.cusip || x.name_of_issuer) + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="x.name_of_issuer || '-'"></span>
+                          <template x-if="x.ticker">
+                            <span class="text-xs text-slate-400 ml-1" x-text="x.ticker"></span>
+                          </template>
+                        </td>
+                        <td class="py-1.5 text-right text-slate-700 text-xs"
+                            x-text="x.value_usd != null ? (x.value_usd >= 1e9 ? '$' + (x.value_usd/1e9).toFixed(2) + 'B' : '$' + (x.value_usd/1e6).toFixed(0) + 'M') : '-'"></td>
+                        <td class="py-1.5 text-right text-slate-600 text-xs"
+                            x-text="x.weight_pct != null ? x.weight_pct.toFixed(2) + '%' : '-'"></td>
+                        <td class="py-1.5 text-right text-xs">
+                          <template x-if="x.status === 'NEW'">
+                            <span class="text-green-600 font-semibold">NEW</span>
+                          </template>
+                          <template x-if="x.status === 'UP' && x.share_change_pct != null">
+                            <span class="text-green-600">+<span x-text="x.share_change_pct.toFixed(1)"></span>%</span>
+                          </template>
+                          <template x-if="x.status === 'DOWN' && x.share_change_pct != null">
+                            <span class="text-red-500"><span x-text="x.share_change_pct.toFixed(1)"></span>%</span>
+                          </template>
+                          <template x-if="!x.status || (x.status !== 'NEW' && x.status !== 'UP' && x.status !== 'DOWN')">
+                            <span class="text-slate-400">—</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── 내부자 ── -->
+      <template x-if="!wLoading && wTab==='insider' && wData">
+        <div>
+          <template x-if="wData[0] && wData[0].error">
+            <div class="text-red-500 text-sm py-4" x-text="wData[0].error"></div>
+          </template>
+          <template x-if="wData.length && !(wData[0] && wData[0].error)">
+            <div>
+              <p class="text-xs text-slate-400 mb-4">
+                최근 90일 | 5%↑ 주요주주·임원 | <span x-text="wData.length + '건'"></span> | 10%↑ 빨강
+              </p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead>
+                    <tr class="text-xs text-slate-400 border-b border-slate-200">
+                      <th class="text-left pb-2 font-medium">#</th>
+                      <th class="text-left pb-2 font-medium">보고일</th>
+                      <th class="text-left pb-2 font-medium">종목</th>
+                      <th class="text-left pb-2 font-medium">보고자</th>
+                      <th class="text-right pb-2 font-medium">증감</th>
+                      <th class="text-right pb-2 font-medium">지분%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="(r, idx) in wData" :key="(r.rcept_dt || '') + (r.symbol || '') + idx">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50">
+                        <td class="py-1.5 text-slate-400 text-xs" x-text="idx+1"></td>
+                        <td class="py-1.5 text-xs text-slate-500" x-text="r.rcept_dt"></td>
+                        <td class="py-1.5">
+                          <span class="font-medium text-slate-800" x-text="r.company_name || ''"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="r.symbol"></span>
+                        </td>
+                        <td class="py-1.5 text-xs">
+                          <span class="text-slate-700" x-text="r.repror"></span>
+                          <span class="text-slate-400 ml-1" x-text="r.role"></span>
+                        </td>
+                        <td class="py-1.5 text-right font-semibold"
+                            :class="r.direction === 'buy' ? 'text-green-600' : 'text-red-500'"
+                            x-text="r.irds_cnt != null ? (r.irds_cnt > 0 ? '+' : '') + r.irds_cnt.toLocaleString('ko-KR') : '-'"></td>
+                        <td class="py-1.5 text-right text-xs"
+                            :class="r.stock_rate >= 10 ? 'text-red-600 font-bold' : 'text-slate-600'"
+                            x-text="r.stock_rate != null ? r.stock_rate.toFixed(2) + '%' : '-'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+          <template x-if="!wData.length">
+            <div class="text-slate-400 text-sm py-4">최근 90일 5%↑ 보유자 매매 없음</div>
+          </template>
+        </div>
+      </template>
+
+    </section>
+"""
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1406,6 +3081,98 @@ async def _handle_api_watch_post(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def _handle_api_whale(request: web.Request) -> web.Response:
+    """GET /api/whale?p=<preset> — 240s TTL 캐시."""
+    preset = request.rel_url.query.get("p", "home").strip()
+    valid = {"home", "kr_5pct", "kr_full", "us_13f", "pension", "insider"}
+    if preset not in valid:
+        return web.json_response({"error": f"unknown preset: {preset}"}, status=400)
+    return await _api(_cached(f"whale_{preset}", 240.0, lambda: build_whale_payload(preset)))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P3b: 리포트·기록 탭 API 핸들러
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _handle_api_reports(request: web.Request) -> web.Response:
+    """GET /api/reports — 4세그먼트 집계 (240s TTL)."""
+    return await _api(_cached("reports", 240.0, lambda: build_reports_payload()))
+
+
+async def _handle_api_reports_ticker(request: web.Request) -> web.Response:
+    """GET /api/reports/{ticker} — 종목별 리포트 목록 (60s TTL)."""
+    ticker = request.match_info.get("ticker", "").strip().upper()
+    if not ticker:
+        return web.json_response({"error": "ticker required"}, status=200)
+    return await _api(_cached(f"reports_{ticker}", 60.0, lambda: _reports_by_ticker(ticker)))
+
+
+async def _build_decisions_payload() -> dict:
+    """decision_log.json → 날짜 내림차순 목록."""
+    log = load_decision_log()
+    items = sorted(log.values(), key=lambda x: x.get("date", ""), reverse=True)
+    return {"items": items}
+
+
+async def _handle_api_decisions_get(request: web.Request) -> web.Response:
+    """GET /api/decisions — 투자판단 목록 (120s TTL)."""
+    return await _api(_cached("decisions", 120.0, _build_decisions_payload))
+
+
+async def _handle_api_decisions_post(request: web.Request) -> web.Response:
+    """POST /api/decisions — 투자판단 저장 (set_alert log_type=decision 위임).
+
+    body: {date?, regime, notes?}
+    set_alert decision 인자: log_type, date, regime, notes
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=200)
+    args = {
+        "log_type": "decision",
+        "date": body.get("date", "").strip() or datetime.now(KST).strftime("%Y-%m-%d"),
+        "regime": body.get("regime", "").strip(),
+        "notes": body.get("notes", body.get("memo", "")).strip(),
+    }
+    if not args["regime"]:
+        return web.json_response({"error": "regime 필드가 필요합니다"}, status=200)
+    result = await execute_tool("set_alert", args)
+    # 캐시 무효화
+    _cache.pop("decisions", None)
+    if _tool_err(result):
+        return web.json_response(result, status=200)
+    return web.json_response(result)
+
+
+async def _build_trades_payload() -> dict:
+    """get_trade_stats 동기 함수 → 비동기 래퍼."""
+    return get_trade_stats("all")
+
+
+async def _handle_api_trades(request: web.Request) -> web.Response:
+    """GET /api/trades — 매매 성과 (240s TTL)."""
+    return await _api(_cached("trades", 240.0, _build_trades_payload))
+
+
+async def _build_invest_todo() -> dict:
+    """data/TODO_invest.md 읽어 텍스트 반환."""
+    todo_path = os.path.join(_DATA_DIR, "TODO_invest.md")
+    try:
+        with open(todo_path, encoding="utf-8") as f:
+            text = f.read()
+        return {"text": text}
+    except FileNotFoundError:
+        return {"text": ""}
+    except Exception as exc:
+        return {"error": str(exc), "text": ""}
+
+
+async def _handle_api_invest_todo(request: web.Request) -> web.Response:
+    """GET /api/invest_todo — TODO_invest.md 텍스트 (120s TTL)."""
+    return await _api(_cached("invest_todo", 120.0, _build_invest_todo))
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라우트 등록
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1420,3 +3187,12 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/watch", _handle_api_watch_get)
     app.router.add_get("/api/stock/{ticker}", _handle_api_stock_detail)
     app.router.add_post("/api/watch", _handle_api_watch_post)
+    # P3a 추가
+    app.router.add_get("/api/whale", _handle_api_whale)
+    # P3b 추가
+    app.router.add_get("/api/reports", _handle_api_reports)
+    app.router.add_get("/api/reports/{ticker}", _handle_api_reports_ticker)
+    app.router.add_get("/api/decisions", _handle_api_decisions_get)
+    app.router.add_post("/api/decisions", _handle_api_decisions_post)
+    app.router.add_get("/api/trades", _handle_api_trades)
+    app.router.add_get("/api/invest_todo", _handle_api_invest_todo)
