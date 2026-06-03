@@ -1,3 +1,26 @@
+## 📄 2026-06-03 대시보드 바닥부터 재구축 (사용자 "데쉬보드 너무 별로지 않냐")
+
+기존 `/dash`(dashboard.py 3700줄 string-concat 누적물, 10섹션·11탭 오버플로·데스크탑 여백·조용히 썩음)를 비판 → **새 `/home` 대시보드를 나란히 신축**. **브랜치 `fix/collector-div-yield-foreign-amt`** 에서 작업(세션 중 사용자가 collector/US_EXIT 작업으로 이 브랜치 사용 중인 것 발견 — [[deploy-main-직행]] 참고, 커밋 전 git branch 확인 교훈).
+
+**스택**: 무빌드 — Tailwind+Alpine+Lucide+Pretendard CDN, 서버는 JSON API만(`dashboard_home.py`), 표현은 Alpine 클라 렌더. **핵심 축**: MCP 핸들러(`execute_tool`)가 곧 데이터 계층(90% 래핑). `dashboard.py` **0줄 수정**(회귀 안전장치, /dash 그대로 fallback).
+
+**완성 (P0~P4 + 시그널, 전부 라이브 검증·커밋·브랜치 푸시):**
+- P0 골격(aa4318b): 셸+탭7+Alpine. P1 홈(4518ba7): /api/home 집계(부분실패 허용·TTL), 레짐배지+자산요약+신호카드. reviewer 지적 반영(W1 가짜 neutral 금지/W4 이벤트 regex/I1 손절 부호/W2 캐시누수/W3 컨센서스 노이즈).
+- P2 포트·워치(6e6f4d2): /api/portfolio(원화환산 grand)·/api/watch(stoploss_alerts 실값)·POST. 정렬 pill·종목 모달. TTL240s+stale-while-revalidate.
+- P3 Whale·리포트·기록(ec25f74): build_whale_payload(5서브탭)·build_reports_payload(4세그 KR101/US0/산업898/시황934)·기록(투자판단 레짐배지/매매/투자TODO). reports async await 버그 수정.
+- P4 신호 영속화(59468d0): kis_api append_signal/load_signal_feed(SIGNAL_FEED_FILE), momentum.py/anomaly.py에 **추가-only 훅**(dedup·텔레그램 발송 불변, try/except 래핑). /api/signals.
+- 시그널 탭(7dc4ff0): 5서브탭(신호피드/임박이벤트/발굴/DART/컨센서스). 라이브 이상급등 3건 영속화 end-to-end 확인.
+
+**7탭 전부 라이브 OK**: 홈/포트폴리오/워치·알림/시그널/기록/Whale/리포트. 콘솔 0.
+
+**알려진 이슈/폴리시 후보**:
+- 콜드 로드 ~30s: 홈/포트/워치가 get_alerts·get_portfolio 직렬 KIS 프라이싱(99종목×0.3s). TTL240s+SWR로 완화했으나 첫 로드/캐시만료시 느림. → DB snapshot 가격 사용 또는 WS캐시 확대 검토(MCP핸들러 수정 필요=격리원칙 충돌, 보류).
+- 기록 탭 투자판단 55건 전체 렌더 → 페이지네이션 검토. DART 카드 "500건 처리됨"(누적카운트, 당일 아님) 개선 여지.
+
+**남은 단계 P5(미완, 사용자 평가 대기)**: 평가 OK면 `/dash→/home` 미들웨어 리다이렉트 + `/dash-classic` 보존 + CLAUDE.md URL 갱신. 1줄 플립이라 승인 즉시.
+
+---
+
 ## 📋 2026-06-01 세션 종료 핸드오프 (컴팩트 직전)
 
 ### 이번 세션(5/29~6/1) 성과 — 분할 회귀 소탕 + PDF 가독성
