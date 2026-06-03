@@ -3677,15 +3677,21 @@ async def _handle_dash_decision_add(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _redirect_to_home(request: web.Request) -> web.Response:
+    """GET /dash, /dash-v2 — /home 으로 302 리다이렉트 (컷오버 P5)."""
+    raise web.HTTPFound("/home")
+
+
 def register_routes(app: web.Application) -> None:
     """대시보드 라우트를 aiohttp Application 에 등록.
 
     main.py 의 _run_all() 에서 1줄로 호출.
-    호출 후 app.router 에 14개 엔드포인트가 등록된다.
+    호출 후 app.router 에 15개 엔드포인트가 등록된다.
     """
-    app.router.add_get("/dash", _handle_dash_v2)
+    app.router.add_get("/dash", _redirect_to_home)
     app.router.add_get("/dash/file/{filename}", _handle_dash_file)
-    app.router.add_get("/dash-v2", _handle_dash_v2)
+    app.router.add_get("/dash-v2", _redirect_to_home)
+    app.router.add_get("/dash-classic", _handle_dash_v2)
     app.router.add_get("/dash/decisions", _handle_dash_decisions)
     app.router.add_get("/dash/trades", _handle_dash_trades)
     app.router.add_get("/dash/whale", _handle_dash_whale)
