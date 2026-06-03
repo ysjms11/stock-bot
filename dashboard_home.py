@@ -300,6 +300,10 @@ function dashApp() {
     reportModalList: null,
     reportModalLoading: false,
 
+    /* P4: signal tab */
+    signals: null,
+    signalSeg: 'feed',
+
     /* P3b: record tab */
     record: null,
     recordSection: 'decisions',
@@ -423,9 +427,47 @@ function dashApp() {
       this.activeTab = t;
       if (t === 'portfolio') this.loadPortfolio();
       if (t === 'watch') this.loadWatch();
+      if (t === 'signal') this.loadSignal();
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
       this.$nextTick(() => this.refreshIcons());
+    },
+
+    /* ── signal tab ── */
+    async loadSignal() {
+      const data = await this.api('/api/signals');
+      if (!data.error) this.signals = data;
+    },
+
+    signalKindIcon(kind) {
+      if (kind === 'supply_drain') return '🔵';
+      if (kind === 'momentum_exit') return '🔴';
+      return '⚡';
+    },
+
+    signalKindLabel(kind) {
+      if (kind === 'supply_drain') return '수급이탈';
+      if (kind === 'momentum_exit') return '모멘텀이탈';
+      return '이상급등';
+    },
+
+    signalKindClass(kind) {
+      if (kind === 'supply_drain') return 'bg-blue-100 text-blue-700';
+      if (kind === 'momentum_exit') return 'bg-red-100 text-red-700';
+      return 'bg-amber-100 text-amber-700';
+    },
+
+    dDayLabel(dday) {
+      if (dday === 0) return 'D-day';
+      if (dday < 0) return 'D' + dday;
+      return 'D-' + dday;
+    },
+
+    dDayClass(dday) {
+      if (dday === 0) return 'text-red-600 font-bold';
+      if (dday <= 3) return 'text-orange-500 font-semibold';
+      if (dday <= 7) return 'text-amber-600';
+      return 'text-slate-500';
     },
 
     /* ── report tab ── */
@@ -1175,6 +1217,226 @@ _REPORT_PANEL = r"""
 """
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 시그널 탭 패널 HTML
+# 섹션: 임박이벤트 / 신호피드 / 발굴스캔 / DART / 컨센서스
+# Alpine 서브탭(signalSeg) 으로 전환
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_SIGNAL_PANEL = r"""
+    <!-- 시그널 탭 -->
+    <section x-show="activeTab==='signal'" x-cloak>
+
+      <!-- 로딩 -->
+      <template x-if="!signals">
+        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>
+      </template>
+
+      <template x-if="signals">
+        <div>
+
+          <!-- 서브탭 pill -->
+          <div class="flex flex-wrap gap-2 mb-5">
+            <button @click="signalSeg='feed'"
+              :class="signalSeg==='feed' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              ⚡ 신호 피드
+            </button>
+            <button @click="signalSeg='events'"
+              :class="signalSeg==='events' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              🚨 임박 이벤트
+            </button>
+            <button @click="signalSeg='scan'"
+              :class="signalSeg==='scan' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              🔍 발굴 스캔
+            </button>
+            <button @click="signalSeg='dart'"
+              :class="signalSeg==='dart' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              📑 DART
+            </button>
+            <button @click="signalSeg='consensus'"
+              :class="signalSeg==='consensus' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
+              📈 컨센서스
+            </button>
+          </div>
+
+          <!-- ── ⚡ 신호 피드 ── -->
+          <template x-if="signalSeg==='feed'">
+            <div>
+              <template x-if="signals.feed && signals.feed.length">
+                <div class="space-y-2">
+                  <template x-for="(item, idx) in signals.feed" :key="idx">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-start gap-3">
+                      <span class="text-lg mt-0.5" x-text="signalKindIcon(item.kind)"></span>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap mb-1">
+                          <span class="text-xs px-1.5 py-0.5 rounded font-medium"
+                            :class="signalKindClass(item.kind)"
+                            x-text="signalKindLabel(item.kind)"></span>
+                          <span class="text-sm font-semibold text-slate-800" x-text="item.name || item.ticker"></span>
+                          <span class="text-xs text-slate-400" x-text="item.ticker"></span>
+                        </div>
+                        <div class="text-xs text-slate-600 truncate" x-text="item.detail"></div>
+                        <div class="text-xs text-slate-400 mt-1" x-text="item.ts"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!signals.feed || !signals.feed.length">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">최근 발화 신호 없음</div>
+              </template>
+            </div>
+          </template>
+
+          <!-- ── 🚨 임박 이벤트 ── -->
+          <template x-if="signalSeg==='events'">
+            <div>
+              <template x-if="signals.events && signals.events.length">
+                <div class="space-y-2">
+                  <template x-for="(ev, idx) in signals.events" :key="idx">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-4">
+                      <div class="text-center w-14 shrink-0">
+                        <div class="text-lg font-bold" :class="dDayClass(ev.dday)" x-text="dDayLabel(ev.dday)"></div>
+                        <div class="text-xs text-slate-400 mt-0.5" x-text="ev.date"></div>
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium text-slate-800 truncate">
+                          <span x-text="ev.dday <= 3 ? '🚨 ' : ''"></span>
+                          <span x-text="ev.name"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!signals.events || !signals.events.length">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">임박 이벤트 없음</div>
+              </template>
+            </div>
+          </template>
+
+          <!-- ── 🔍 발굴 스캔 ── -->
+          <template x-if="signalSeg==='scan'">
+            <div>
+              <template x-if="signals.scan && signals.scan.results && signals.scan.results.length">
+                <div>
+                  <div class="text-xs text-slate-400 mb-3"
+                    x-text="(signals.scan.preset_description || signals.scan.preset || '') + ' · ' + (signals.scan.total_matched || 0) + '종목 매칭 · ' + (signals.scan.date || '')">
+                  </div>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <template x-for="(s, idx) in signals.scan.results" :key="idx">
+                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                        <div class="flex items-start justify-between mb-2">
+                          <div>
+                            <div class="text-sm font-semibold text-slate-800" x-text="s.name || s.ticker"></div>
+                            <div class="text-xs text-slate-400" x-text="s.ticker + (s.market ? ' · ' + s.market : '')"></div>
+                          </div>
+                          <div :class="s.chg_pct >= 0 ? 'text-green-600' : 'text-red-600'"
+                            class="text-sm font-bold"
+                            x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? '+' : '') + s.chg_pct.toFixed(1) + '%' : '-'"></div>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5 text-xs">
+                          <template x-if="s.op_profit_delta != null">
+                            <span class="bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
+                              적자→흑자 Δ<span x-text="s.op_profit_delta.toFixed(0)"></span>억
+                            </span>
+                          </template>
+                          <template x-if="s.fscore_delta != null">
+                            <span class="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                              F-Score +<span x-text="s.fscore_delta"></span>
+                            </span>
+                          </template>
+                          <template x-if="s.insider_reprors != null">
+                            <span class="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded">
+                              내부자 <span x-text="s.insider_reprors"></span>명 순매수
+                            </span>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <template x-if="signals.scan && signals.scan.error">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="signals.scan.error"></div>
+              </template>
+              <template x-if="!signals.scan || (!signals.scan.results || !signals.scan.results.length) && !signals.scan.error">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">발굴된 종목 없음</div>
+              </template>
+            </div>
+          </template>
+
+          <!-- ── 📑 DART ── -->
+          <template x-if="signalSeg==='dart'">
+            <div>
+              <template x-if="signals.dart && signals.dart.length">
+                <div class="space-y-2">
+                  <template x-for="(d, idx) in signals.dart" :key="idx">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-start gap-3">
+                      <div class="text-slate-400 text-xs w-20 shrink-0 mt-0.5" x-text="d.date"></div>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-xs font-semibold text-slate-700 mb-0.5" x-text="d.corp"></div>
+                        <div class="text-xs text-slate-600 leading-snug" x-text="d.title"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!signals.dart || !signals.dart.length">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">최근 DART 공시 없음</div>
+              </template>
+            </div>
+          </template>
+
+          <!-- ── 📈 컨센서스 ── -->
+          <template x-if="signalSeg==='consensus'">
+            <div>
+              <template x-if="signals.consensus && signals.consensus.length">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">
+                        <th class="text-left px-4 py-2.5 font-medium">종목</th>
+                        <th class="text-right px-4 py-2.5 font-medium">현재 TP</th>
+                        <th class="text-right px-4 py-2.5 font-medium">이전 TP</th>
+                        <th class="text-right px-4 py-2.5 font-medium">변동</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="(c, idx) in signals.consensus" :key="idx">
+                        <tr class="border-b border-slate-50 hover:bg-slate-50">
+                          <td class="px-4 py-2.5">
+                            <div class="font-medium text-slate-800" x-text="c.name"></div>
+                            <div class="text-xs text-slate-400" x-text="c.ticker"></div>
+                          </td>
+                          <td class="px-4 py-2.5 text-right text-slate-700" x-text="c.avg ? c.avg.toLocaleString('ko-KR') + '원' : '-'"></td>
+                          <td class="px-4 py-2.5 text-right text-slate-500" x-text="c.prev_avg ? c.prev_avg.toLocaleString('ko-KR') + '원' : '-'"></td>
+                          <td class="px-4 py-2.5 text-right font-semibold"
+                            :class="c.chg_pct >= 0 ? 'text-green-600' : 'text-red-600'"
+                            x-text="c.chg_pct != null ? (c.chg_pct >= 0 ? '+' : '') + c.chg_pct.toFixed(1) + '%' : '-'">
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+              <template x-if="!signals.consensus || !signals.consensus.length">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">컨센서스 변동 없음</div>
+              </template>
+            </div>
+          </template>
+
+        </div>
+      </template>
+
+    </section>
+"""
+
 # P3b: 기록 탭 패널 HTML
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _RECORD_PANEL = r"""
@@ -2065,12 +2327,7 @@ _HOME_SHELL = (
     + _HOME_PANEL
     + _PORTFOLIO_PANEL
     + _WATCH_PANEL
-    + '\n'
-    '    <!-- 시그널 -->\n'
-    '    <section x-show="activeTab===\'signal\'">\n'
-    '      <div class="text-slate-400 text-center py-20">시그널 (P1에서 구현)</div>\n'
-    '    </section>\n'
-    '\n'
+    + _SIGNAL_PANEL
     + _RECORD_PANEL
     + _WHALE_PANEL
     + _REPORT_PANEL
@@ -3187,33 +3444,111 @@ async def _handle_api_invest_todo(request: web.Request) -> web.Response:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def _build_signals_payload() -> dict:
-    """signal_feed.json + change_scan_sent.json + dart_seen.json 통합 반환."""
+    """시그널 탭 통합 payload — 부분 실패 허용.
+
+    keys:
+      events  — 오늘 이후 임박 이벤트 최대 20건 (dday 오름차순)
+      feed    — signal_feed.json 최근 50건 (최신 먼저)
+      scan    — get_change_scan turnaround/fscore_jump/insider_cluster_buy 결과
+      dart    — 최근 워치리스트 DART 공시 10건
+      consensus — consensus_cache.json 변동 상위 15건 (|chg|<=30 필터)
+    """
     result: dict = {}
+    errors: list = []
+
+    # 1. events — 오늘 이후 임박 이벤트 최대 20건
+    try:
+        events = load_events()
+        result["events"] = _parse_events_upcoming(events, max_items=20)
+    except Exception as e:
+        errors.append({"source": "events", "msg": str(e)})
+        result["events"] = []
+
+    # 2. feed — signal_feed.json 최근 50건 (최신 먼저)
     try:
         result["feed"] = list(reversed(load_signal_feed(limit=50)))
-    except Exception:
+    except Exception as e:
+        errors.append({"source": "feed", "msg": str(e)})
         result["feed"] = []
+
+    # 3. scan — 발굴 스캔 3개 프리셋 (무거우므로 빈 결과면 요약만)
     try:
-        scan_file = f"{_DATA_DIR}/change_scan_sent.json"
-        scan_data = load_json(scan_file, {})
-        dates = [v for v in scan_data.values() if isinstance(v, str)]
-        result["scan"] = {
-            "date": max(dates) if dates else None,
-            "count": len(scan_data),
-        }
-    except Exception:
-        result["scan"] = {"date": None, "count": 0}
+        scan_r = await execute_tool(
+            "get_change_scan",
+            {"preset": "turnaround,fscore_jump,insider_cluster_buy", "n": 20},
+        )
+        if _tool_err(scan_r):
+            result["scan"] = {"error": scan_r["error"], "results": []}
+        else:
+            result["scan"] = {
+                "date": scan_r.get("date"),
+                "preset": scan_r.get("preset"),
+                "preset_description": scan_r.get("preset_description"),
+                "total_matched": scan_r.get("total_matched", 0),
+                "count": scan_r.get("count", 0),
+                "results": [
+                    {
+                        "ticker": s.get("ticker"),
+                        "name": s.get("name"),
+                        "market": s.get("market"),
+                        "close": s.get("close"),
+                        "chg_pct": s.get("chg_pct"),
+                        "op_profit_delta": s.get("op_profit_delta"),
+                        "fscore_delta": s.get("fscore_delta"),
+                        "insider_reprors": s.get("insider_reprors"),
+                        "insider_net_qty": s.get("insider_net_qty"),
+                    }
+                    for s in (scan_r.get("results") or [])
+                ],
+            }
+    except Exception as e:
+        errors.append({"source": "scan", "msg": str(e)})
+        result["scan"] = {"results": []}
+
+    # 4. dart — 워치리스트 최근 3일 DART 공시 (기본 모드)
     try:
-        dart_data = load_json(DART_SEEN_FILE, {"ids": []})
-        result["dart"] = {"count": len(dart_data.get("ids", []))}
-    except Exception:
-        result["dart"] = {"count": 0}
+        dart_r = await execute_tool("get_dart", {})
+        if _tool_err(dart_r):
+            result["dart"] = []
+        elif isinstance(dart_r, list):
+            result["dart"] = dart_r[:10]
+        else:
+            result["dart"] = []
+    except Exception as e:
+        errors.append({"source": "dart", "msg": str(e)})
+        result["dart"] = []
+
+    # 5. consensus — consensus_cache.json 변동 상위 15건 (|chg|<=30 필터)
+    try:
+        cc = load_json(CONSENSUS_CACHE_FILE, {})
+        kr = cc.get("kr", {})
+        changed = []
+        for ticker, info in kr.items():
+            avg = info.get("avg", 0) or 0
+            prev = info.get("prev_avg", 0) or 0
+            if prev > 0 and avg > 0 and avg != prev:
+                chg_pct = round((avg - prev) / prev * 100, 1)
+                if abs(chg_pct) >= 1.0 and abs(chg_pct) <= 30:
+                    changed.append({
+                        "ticker": ticker,
+                        "name": info.get("name", ticker),
+                        "avg": avg,
+                        "prev_avg": prev,
+                        "chg_pct": chg_pct,
+                    })
+        changed.sort(key=lambda x: abs(x["chg_pct"]), reverse=True)
+        result["consensus"] = changed[:15]
+    except Exception as e:
+        errors.append({"source": "consensus", "msg": str(e)})
+        result["consensus"] = []
+
+    result["_errors"] = errors
     return result
 
 
 async def _handle_api_signals(request: web.Request) -> web.Response:
     """GET /api/signals — 시그널 피드 (30s TTL, 실시간성 우선)."""
-    return await _api(_cached("signals", 30.0, _build_signals_payload))
+    return await _api(_cached("signals", 240.0, _build_signals_payload))
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
