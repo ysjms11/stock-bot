@@ -30,6 +30,7 @@ from kis_api import (
     get_yahoo_quote,
     get_trade_stats,
     load_signal_feed,
+    get_kis_index,
     CONSENSUS_CACHE_FILE,
     DART_SEEN_FILE,
     EVENTS_FILE,
@@ -271,6 +272,345 @@ async def build_home_payload() -> dict:
     except Exception as e:
         errors.append({"source": "signal_feed", "msg": str(e)})
 
+    # 9. indices — 홈 상단 지수 띠용 (KOSPI/KOSDAQ/S&P500/NASDAQ)
+    # 무거운 movers는 건너뛰고 지수 4개만 빠르게 가져옴
+    try:
+        macro_r2 = await execute_tool("get_macro", {})
+        home_indices = []
+        if not _tool_err(macro_r2):
+            def _hf(v):
+                try:
+                    return float(v) if v not in (None, "", "-") else None
+                except (TypeError, ValueError):
+                    return None
+            kp = macro_r2.get("kospi",  {})
+            kd = macro_r2.get("kosdaq", {})
+            kp_p = _hf(kp.get("index"))
+            kd_p = _hf(kd.get("index"))
+            if kp_p:
+                home_indices.append({"name": "KOSPI",  "price": kp_p, "change_pct": _hf(kp.get("chg")), "market": "KR"})
+            if kd_p:
+                home_indices.append({"name": "KOSDAQ", "price": kd_p, "change_pct": _hf(kd.get("chg")), "market": "KR"})
+        try:
+            sp_q2 = await get_yahoo_quote("^GSPC")
+            if sp_q2 and sp_q2.get("price"):
+                home_indices.append({"name": "S&P500", "price": round(float(sp_q2["price"]), 2), "change_pct": round(float(sp_q2.get("change_pct", 0)), 2), "market": "US"})
+        except Exception:
+            pass
+        try:
+            nq_q2 = await get_yahoo_quote("^IXIC")
+            if nq_q2 and nq_q2.get("price"):
+                home_indices.append({"name": "NASDAQ", "price": round(float(nq_q2["price"]), 2), "change_pct": round(float(nq_q2.get("change_pct", 0)), 2), "market": "US"})
+        except Exception:
+            pass
+        if home_indices:
+            payload["indices"] = home_indices
+    except Exception as e:
+        errors.append({"source": "indices", "msg": str(e)})
+
+    payload["_errors"] = errors
+    return payload
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# daily_snapshot DB 헬퍼 — KR 등락/거래량 + 가격 폴백
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 세션 수명 동안 캐시 (symbol → close). 장 마감 후 스냅샷은 하루 1회만 바뀜.
+_close_cache: dict[str, float | None] = {}
+# 최신 trade_date 캐시 (재조회 방지)
+_snapshot_date_cache: dict[str, str | None] = {}
+
+
+def _latest_close(ticker: str) -> float | None:
+    """daily_snapshot 최신 close를 반환. 없으면 None.
+
+    동기 함수 — asyncio 이벤트 루프에서 짧게 호출됨. sqlite3 read는
+    충분히 빠르므로 thread offload 없이 사용 (Whale 패턴과 동일).
+    결과는 세션 메모리 캐시에 저장해 반복 조회를 최소화.
+    """
+    if ticker in _close_cache:
+        return _close_cache[ticker]
+    try:
+        conn = _sqlite3.connect(f"{_DATA_DIR}/stock.db", timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        cur = conn.execute(
+            "SELECT close FROM daily_snapshot WHERE symbol=? ORDER BY trade_date DESC LIMIT 1",
+            (ticker,),
+        )
+        row = cur.fetchone()
+        conn.close()
+        val = float(row[0]) if row and row[0] else None
+        _close_cache[ticker] = val
+        return val
+    except Exception:
+        _close_cache[ticker] = None
+        return None
+
+
+def _kr_movers_from_db(sort: str, n: int = 10) -> tuple[list[dict], str]:
+    """daily_snapshot + stock_master JOIN으로 KR 등락 TOP N을 반환.
+
+    Args:
+        sort: "rise" (change_pct DESC) 또는 "fall" (change_pct ASC)
+        n: 반환 개수
+
+    Returns:
+        (items, as_of) — items: [{ticker, name, price, chg_pct}],
+                         as_of: "YYYYMMDD" 형식 최신 trade_date
+    """
+    order = "DESC" if sort == "rise" else "ASC"
+    try:
+        conn = _sqlite3.connect(f"{_DATA_DIR}/stock.db", timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        # 최신 trade_date 확정
+        dt_row = conn.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()
+        if not dt_row or not dt_row[0]:
+            conn.close()
+            return [], ""
+        as_of = dt_row[0]
+        rows = conn.execute(
+            f"""
+            SELECT ds.symbol, sm.name, ds.close, ds.change_pct
+            FROM daily_snapshot ds
+            JOIN stock_master sm ON ds.symbol = sm.symbol
+            WHERE ds.trade_date = ?
+              AND ds.close > 0
+              AND ABS(ds.change_pct) < 31
+              AND sm.name IS NOT NULL
+              AND sm.name != ''
+            ORDER BY ds.change_pct {order}
+            LIMIT ?
+            """,
+            (as_of, n),
+        ).fetchall()
+        conn.close()
+        items = [
+            {
+                "ticker": r[0],
+                "name": r[1],
+                "price": int(r[2]),
+                "chg_pct": round(float(r[3]), 2),
+                "as_of": as_of,
+            }
+            for r in rows
+        ]
+        return items, as_of
+    except Exception:
+        return [], ""
+
+
+def _kr_volume_from_db(n: int = 10) -> tuple[list[dict], str]:
+    """daily_snapshot 거래량 TOP N (KR). volume DESC."""
+    try:
+        conn = _sqlite3.connect(f"{_DATA_DIR}/stock.db", timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        dt_row = conn.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()
+        if not dt_row or not dt_row[0]:
+            conn.close()
+            return [], ""
+        as_of = dt_row[0]
+        rows = conn.execute(
+            """
+            SELECT ds.symbol, sm.name, ds.close, ds.change_pct, ds.volume
+            FROM daily_snapshot ds
+            JOIN stock_master sm ON ds.symbol = sm.symbol
+            WHERE ds.trade_date = ?
+              AND ds.close > 0
+              AND ds.volume > 0
+              AND sm.name IS NOT NULL
+              AND sm.name != ''
+            ORDER BY ds.volume DESC
+            LIMIT ?
+            """,
+            (as_of, n),
+        ).fetchall()
+        conn.close()
+        items = [
+            {
+                "ticker": r[0],
+                "name": r[1],
+                "price": int(r[2]),
+                "chg_pct": round(float(r[3]), 2),
+                "volume": int(r[4]),
+                "as_of": as_of,
+            }
+            for r in rows
+        ]
+        return items, as_of
+    except Exception:
+        return [], ""
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# build_market_payload — 시세 탭 집계 (TTL 240s)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def build_market_payload() -> dict:
+    """시세 탭용 집계 payload. 각 소스 개별 try/except — 부분 실패 허용.
+
+    반환:
+        indices: [{name, price, change_pct, market}]  — KOSPI/KOSDAQ/S&P500/나스닥
+        movers_kr_up:   KR 상승 TOP10 [{ticker, name, price, chg_pct}]
+        movers_kr_down: KR 하락 TOP10
+        movers_us_up:   US 상승 TOP10 [{ticker, name, price, chg_pct}]
+        movers_us_down: US 하락 TOP10
+        volume_top:     KR 거래량/체결강도 상위 10 [{ticker, name, price, chg_pct}]
+    """
+    payload: dict = {}
+    errors: list = []
+
+    # 1. 지수 — KOSPI/KOSDAQ: get_macro 기본 모드, S&P500/NASDAQ: Yahoo Finance
+    try:
+        macro_r = await execute_tool("get_macro", {})
+        indices = []
+        if not _tool_err(macro_r):
+            kospi_data  = macro_r.get("kospi", {})
+            kosdaq_data = macro_r.get("kosdaq", {})
+            def _safe_float(v):
+                try:
+                    return float(v) if v not in (None, "", "-") else None
+                except (TypeError, ValueError):
+                    return None
+            kospi_price  = _safe_float(kospi_data.get("index"))
+            kospi_chg    = _safe_float(kospi_data.get("chg"))
+            kosdaq_price = _safe_float(kosdaq_data.get("index"))
+            kosdaq_chg   = _safe_float(kosdaq_data.get("chg"))
+            if kospi_price:
+                indices.append({"name": "KOSPI",  "price": kospi_price,  "change_pct": kospi_chg,  "market": "KR"})
+            if kosdaq_price:
+                indices.append({"name": "KOSDAQ", "price": kosdaq_price, "change_pct": kosdaq_chg, "market": "KR"})
+        # S&P500 / 나스닥 — Yahoo Finance (별도 try/except)
+        try:
+            sp_q = await get_yahoo_quote("^GSPC")
+            if sp_q and sp_q.get("price"):
+                indices.append({
+                    "name": "S&P500",
+                    "price": round(float(sp_q["price"]), 2),
+                    "change_pct": round(float(sp_q.get("change_pct", 0)), 2),
+                    "market": "US",
+                })
+        except Exception:
+            pass
+        try:
+            nq_q = await get_yahoo_quote("^IXIC")
+            if nq_q and nq_q.get("price"):
+                indices.append({
+                    "name": "NASDAQ",
+                    "price": round(float(nq_q["price"]), 2),
+                    "change_pct": round(float(nq_q.get("change_pct", 0)), 2),
+                    "market": "US",
+                })
+        except Exception:
+            pass
+        payload["indices"] = indices
+    except Exception as e:
+        errors.append({"source": "indices", "msg": str(e)})
+        payload["indices"] = []
+
+    # 2. KR 상승 TOP10 — daily_snapshot DB 우선, 비면 get_rank 시도
+    try:
+        db_up, as_of_up = _kr_movers_from_db("rise", 10)
+        if db_up:
+            payload["movers_kr_up"] = db_up
+            payload["movers_kr_as_of"] = as_of_up
+        else:
+            r = await execute_tool("get_rank", {"type": "price", "market": "all", "sort": "rise", "n": 10})
+            if _tool_err(r):
+                payload["movers_kr_up"] = []
+            else:
+                payload["movers_kr_up"] = [
+                    {"ticker": x.get("ticker"), "name": x.get("name"), "price": x.get("price"), "chg_pct": x.get("chg_pct")}
+                    for x in (r.get("items") or [])
+                ]
+    except Exception as e:
+        errors.append({"source": "movers_kr_up", "msg": str(e)})
+        payload["movers_kr_up"] = []
+
+    # 3. KR 하락 TOP10 — daily_snapshot DB 우선, 비면 get_rank 시도
+    try:
+        db_dn, as_of_dn = _kr_movers_from_db("fall", 10)
+        if db_dn:
+            payload["movers_kr_down"] = db_dn
+            if not payload.get("movers_kr_as_of"):
+                payload["movers_kr_as_of"] = as_of_dn
+        else:
+            await asyncio.sleep(0.3)
+            r = await execute_tool("get_rank", {"type": "price", "market": "all", "sort": "fall", "n": 10})
+            if _tool_err(r):
+                payload["movers_kr_down"] = []
+            else:
+                payload["movers_kr_down"] = [
+                    {"ticker": x.get("ticker"), "name": x.get("name"), "price": x.get("price"), "chg_pct": x.get("chg_pct")}
+                    for x in (r.get("items") or [])
+                ]
+    except Exception as e:
+        errors.append({"source": "movers_kr_down", "msg": str(e)})
+        payload["movers_kr_down"] = []
+
+    await asyncio.sleep(0.3)
+
+    # 4. US 상승 TOP10 (NAS 기준)
+    try:
+        r = await execute_tool("get_rank", {"type": "us_price", "exchange": "NAS", "sort": "rise", "n": 10})
+        if _tool_err(r):
+            payload["movers_us_up"] = []
+        else:
+            payload["movers_us_up"] = [
+                {"ticker": x.get("ticker"), "name": x.get("name"), "price": x.get("price"), "chg_pct": x.get("chg_pct")}
+                for x in (r.get("items") or [])
+            ]
+    except Exception as e:
+        errors.append({"source": "movers_us_up", "msg": str(e)})
+        payload["movers_us_up"] = []
+
+    await asyncio.sleep(0.3)
+
+    # 5. US 하락 TOP10 (NAS 기준)
+    try:
+        r = await execute_tool("get_rank", {"type": "us_price", "exchange": "NAS", "sort": "fall", "n": 10})
+        if _tool_err(r):
+            payload["movers_us_down"] = []
+        else:
+            payload["movers_us_down"] = [
+                {"ticker": x.get("ticker"), "name": x.get("name"), "price": x.get("price"), "chg_pct": x.get("chg_pct")}
+                for x in (r.get("items") or [])
+            ]
+    except Exception as e:
+        errors.append({"source": "movers_us_down", "msg": str(e)})
+        payload["movers_us_down"] = []
+
+    await asyncio.sleep(0.3)
+
+    # 6. 거래량 상위 (체결강도 volume 모드; 장외이면 daily_snapshot DB 폴백)
+    try:
+        r = await execute_tool("get_rank", {"type": "volume", "n": 10})
+        if _tool_err(r):
+            items_raw = []
+        else:
+            items_raw = r.get("items") or []
+
+        if items_raw:
+            payload["volume_top"] = [
+                {
+                    "ticker":  x.get("ticker"),
+                    "name":    x.get("name"),
+                    "price":   x.get("price") or x.get("stck_prpr"),
+                    "chg_pct": x.get("chg_pct") or x.get("chg"),
+                    "volume":  x.get("vol") or x.get("volume"),
+                }
+                for x in items_raw
+            ]
+        else:
+            # 장외 폴백 — daily_snapshot 거래량 DESC
+            db_vol, as_of_vol = _kr_volume_from_db(10)
+            payload["volume_top"] = db_vol
+            if db_vol and not payload.get("movers_kr_as_of"):
+                payload["movers_kr_as_of"] = as_of_vol
+    except Exception as e:
+        errors.append({"source": "volume_top", "msg": str(e)})
+        payload["volume_top"] = []
+
     payload["_errors"] = errors
     return payload
 
@@ -292,6 +632,13 @@ function dashApp() {
 
     /* P2: portfolio tab */
     portfolio: null,
+
+    /* market tab */
+    market: null,
+    marketMoverSeg: 'kr',
+    marketStockQuery: '',
+    marketStockResult: null,
+    marketStockLoading: false,
 
     /* P3b: report tab */
     report: null,
@@ -430,6 +777,7 @@ function dashApp() {
       if (t === 'signal') this.loadSignal();
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
+      if (t === 'market') this.loadMarket();
       this.$nextTick(() => this.refreshIcons());
     },
 
@@ -586,6 +934,35 @@ function dashApp() {
       return 'bg-amber-100 text-amber-700';
     },
 
+    /* ── market tab ── */
+    async loadMarket() {
+      if (this.market) return;
+      const data = await this.api('/api/market');
+      if (!data.error) this.market = data;
+    },
+
+    chgClass(v) {
+      if (v == null || isNaN(Number(v))) return 'text-slate-500';
+      return Number(v) > 0 ? 'text-green-600' : (Number(v) < 0 ? 'text-red-500' : 'text-slate-500');
+    },
+
+    chgStr(v) {
+      if (v == null || isNaN(Number(v))) return '-';
+      const n = Number(v);
+      return (n > 0 ? '+' : '') + n.toFixed(2) + '%';
+    },
+
+    async searchMarketStock() {
+      const q = this.marketStockQuery.trim().toUpperCase();
+      if (!q) return;
+      this.marketStockLoading = true;
+      this.marketStockResult = null;
+      const data = await this.api('/api/stock/' + encodeURIComponent(q));
+      this.marketStockLoading = false;
+      this.marketStockResult = data;
+      this.$nextTick(() => this.refreshIcons());
+    },
+
     gapClass(gap) {
       if (gap === null || gap === undefined) return 'text-slate-500';
       if (gap >= 0) return 'text-red-600 font-bold';
@@ -605,6 +982,286 @@ function dashApp() {
   };
 }
 """
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 시세 탭 패널 HTML
+# 지수 4카드 / 급등락(KR+US) / 거래량 / 종목 직접 조회
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_MARKET_PANEL = (
+    '    <!-- 시세 탭 패널 -->\n'
+    '    <section x-show="activeTab===\'market\'" x-cloak>\n'
+    '\n'
+    '      <!-- 로딩 -->\n'
+    '      <template x-if="!market">\n'
+    '        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>\n'
+    '      </template>\n'
+    '\n'
+    '      <template x-if="market">\n'
+    '        <div>\n'
+    '\n'
+    '          <!-- 지수 4카드 -->\n'
+    '          <template x-if="market.indices && market.indices.length">\n'
+    '            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">\n'
+    '              <template x-for="idx in market.indices" :key="idx.name">\n'
+    '                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                  <div class="flex items-center justify-between mb-1">\n'
+    '                    <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide" x-text="idx.name"></span>\n'
+    '                    <span class="text-xs px-1.5 py-0.5 rounded"\n'
+    '                          :class="idx.market===\'US\' ? \'bg-blue-50 text-blue-500\' : \'bg-slate-100 text-slate-500\'"\n'
+    '                          x-text="idx.market"></span>\n'
+    '                  </div>\n'
+    '                  <div class="text-lg font-bold text-slate-800"\n'
+    '                       x-text="idx.price != null ? idx.price.toLocaleString(\'ko-KR\', {maximumFractionDigits: 2}) : \'-\'"></div>\n'
+    '                  <div :class="chgClass(idx.change_pct)" class="text-sm font-semibold mt-0.5"\n'
+    '                       x-text="chgStr(idx.change_pct)"></div>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '          </template>\n'
+    '\n'
+    '          <!-- 종목 시세 직접 조회 -->\n'
+    '          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">\n'
+    '            <h2 class="text-sm font-semibold text-slate-700 mb-3">종목 시세 조회</h2>\n'
+    '            <div class="flex gap-2">\n'
+    '              <input x-model="marketStockQuery"\n'
+    '                     @keyup.enter="searchMarketStock()"\n'
+    '                     placeholder="티커 입력 (예: 005930 / NVDA)"\n'
+    '                     class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">\n'
+    '              <button @click="searchMarketStock()"\n'
+    '                      class="bg-blue-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">\n'
+    '                조회\n'
+    '              </button>\n'
+    '            </div>\n'
+    '            <!-- 조회 결과 -->\n'
+    '            <template x-if="marketStockLoading">\n'
+    '              <div class="text-slate-400 text-sm mt-3">조회 중...</div>\n'
+    '            </template>\n'
+    '            <template x-if="!marketStockLoading && marketStockResult && marketStockResult.error">\n'
+    '              <div class="text-red-500 text-sm mt-3" x-text="\'오류: \' + marketStockResult.error"></div>\n'
+    '            </template>\n'
+    '            <template x-if="!marketStockLoading && marketStockResult && !marketStockResult.error && marketStockResult.ticker">\n'
+    '              <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">\n'
+    '                <div class="col-span-2 md:col-span-4 flex items-baseline gap-2 mb-1">\n'
+    '                  <span class="text-base font-bold text-slate-800" x-text="marketStockResult.name || marketStockResult.ticker"></span>\n'
+    '                  <span class="text-xs text-slate-400" x-text="marketStockResult.ticker"></span>\n'
+    '                  <span class="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500" x-text="marketStockResult.market || \'\'"></span>\n'
+    '                </div>\n'
+    '                <div class="bg-slate-50 rounded-lg p-3">\n'
+    '                  <div class="text-xs text-slate-400 mb-0.5">현재가</div>\n'
+    '                  <div class="font-semibold text-slate-800"\n'
+    '                       x-text="marketStockResult.cur_price != null ? (marketStockResult.market===\'US\' ? usd(marketStockResult.cur_price) : won(marketStockResult.cur_price)) : \'-\'"></div>\n'
+    '                  <div :class="pnlClass(marketStockResult.chg_rate)" class="text-xs"\n'
+    '                       x-text="marketStockResult.chg_rate != null ? chgStr(marketStockResult.chg_rate) : \'\'"></div>\n'
+    '                </div>\n'
+    '                <div class="bg-slate-50 rounded-lg p-3">\n'
+    '                  <div class="text-xs text-slate-400 mb-0.5">PER / PBR</div>\n'
+    '                  <div class="font-semibold text-slate-800"\n'
+    '                       x-text="(marketStockResult.per != null ? marketStockResult.per : \'-\') + \' / \' + (marketStockResult.pbr != null ? marketStockResult.pbr : \'-\')"></div>\n'
+    '                </div>\n'
+    '                <div class="bg-slate-50 rounded-lg p-3">\n'
+    '                  <div class="text-xs text-slate-400 mb-0.5">외인 순매수</div>\n'
+    '                  <div :class="pnlClass(marketStockResult.foreign_net)" class="font-semibold"\n'
+    '                       x-text="marketStockResult.foreign_net != null ? marketStockResult.foreign_net.toLocaleString(\'ko-KR\') : \'-\'"></div>\n'
+    '                </div>\n'
+    '                <div class="bg-slate-50 rounded-lg p-3">\n'
+    '                  <div class="text-xs text-slate-400 mb-0.5">기관 순매수</div>\n'
+    '                  <div :class="pnlClass(marketStockResult.inst_net)" class="font-semibold"\n'
+    '                       x-text="marketStockResult.inst_net != null ? marketStockResult.inst_net.toLocaleString(\'ko-KR\') : \'-\'"></div>\n'
+    '                </div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '\n'
+    '          <!-- 급등락 / 거래량 탭 -->\n'
+    '          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">\n'
+    '            <div class="flex gap-2 mb-4">\n'
+    '              <button @click="marketMoverSeg=\'kr\'"\n'
+    '                :class="marketMoverSeg===\'kr\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">KR 등락</button>\n'
+    '              <button @click="marketMoverSeg=\'us\'"\n'
+    '                :class="marketMoverSeg===\'us\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">US 등락</button>\n'
+    '              <button @click="marketMoverSeg=\'vol\'"\n'
+    '                :class="marketMoverSeg===\'vol\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">거래량</button>\n'
+    '            </div>\n'
+    '\n'
+    '            <!-- KR 등락 -->\n'
+    '            <template x-if="marketMoverSeg===\'kr\'">\n'
+    '              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\n'
+    '                <!-- KR 상승 -->\n'
+    '                <div>\n'
+    '                  <div class="flex items-center gap-2 mb-2">\n'
+    '                    <h3 class="text-xs font-semibold text-green-600 uppercase tracking-wider">KR 상승 TOP</h3>\n'
+    '                    <template x-if="market.movers_kr_as_of">\n'
+    '                      <span class="text-xs text-slate-400" x-text="market.movers_kr_as_of ? market.movers_kr_as_of.slice(0,4)+\'.\'+market.movers_kr_as_of.slice(4,6)+\'.\'+market.movers_kr_as_of.slice(6)+\' 종가 기준\' : \'\'"></span>\n'
+    '                    </template>\n'
+    '                  </div>\n'
+    '                  <template x-if="!market.movers_kr_up || !market.movers_kr_up.length">\n'
+    '                    <div class="text-slate-400 text-sm py-2">데이터 없음 (장 마감 시간 외)</div>\n'
+    '                  </template>\n'
+    '                  <template x-if="market.movers_kr_up && market.movers_kr_up.length">\n'
+    '                    <table class="w-full text-sm">\n'
+    '                      <thead><tr class="text-xs text-slate-400 border-b border-slate-100">\n'
+    '                        <th class="text-left py-1.5 font-medium">종목</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">현재가</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">등락</th>\n'
+    '                      </tr></thead>\n'
+    '                      <tbody>\n'
+    '                        <template x-for="s in market.movers_kr_up" :key="s.ticker">\n'
+    '                          <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                            <td class="py-1.5">\n'
+    '                              <span class="font-medium text-slate-800 text-sm" x-text="s.name"></span>\n'
+    '                              <span class="text-xs text-slate-400 ml-1" x-text="s.ticker"></span>\n'
+    '                            </td>\n'
+    '                            <td class="py-1.5 text-right text-slate-700 text-sm" x-text="s.price != null ? s.price.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                            <td class="py-1.5 text-right text-sm font-semibold" :class="chgClass(s.chg_pct)" x-text="chgStr(s.chg_pct)"></td>\n'
+    '                          </tr>\n'
+    '                        </template>\n'
+    '                      </tbody>\n'
+    '                    </table>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '                <!-- KR 하락 -->\n'
+    '                <div>\n'
+    '                  <div class="flex items-center gap-2 mb-2">\n'
+    '                    <h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider">KR 하락 TOP</h3>\n'
+    '                    <template x-if="market.movers_kr_as_of">\n'
+    '                      <span class="text-xs text-slate-400" x-text="market.movers_kr_as_of ? market.movers_kr_as_of.slice(0,4)+\'.\'+market.movers_kr_as_of.slice(4,6)+\'.\'+market.movers_kr_as_of.slice(6)+\' 종가 기준\' : \'\'"></span>\n'
+    '                    </template>\n'
+    '                  </div>\n'
+    '                  <template x-if="!market.movers_kr_down || !market.movers_kr_down.length">\n'
+    '                    <div class="text-slate-400 text-sm py-2">데이터 없음 (장 마감 시간 외)</div>\n'
+    '                  </template>\n'
+    '                  <template x-if="market.movers_kr_down && market.movers_kr_down.length">\n'
+    '                    <table class="w-full text-sm">\n'
+    '                      <thead><tr class="text-xs text-slate-400 border-b border-slate-100">\n'
+    '                        <th class="text-left py-1.5 font-medium">종목</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">현재가</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">등락</th>\n'
+    '                      </tr></thead>\n'
+    '                      <tbody>\n'
+    '                        <template x-for="s in market.movers_kr_down" :key="s.ticker">\n'
+    '                          <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                            <td class="py-1.5">\n'
+    '                              <span class="font-medium text-slate-800 text-sm" x-text="s.name"></span>\n'
+    '                              <span class="text-xs text-slate-400 ml-1" x-text="s.ticker"></span>\n'
+    '                            </td>\n'
+    '                            <td class="py-1.5 text-right text-slate-700 text-sm" x-text="s.price != null ? s.price.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                            <td class="py-1.5 text-right text-sm font-semibold" :class="chgClass(s.chg_pct)" x-text="chgStr(s.chg_pct)"></td>\n'
+    '                          </tr>\n'
+    '                        </template>\n'
+    '                      </tbody>\n'
+    '                    </table>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '\n'
+    '            <!-- US 등락 -->\n'
+    '            <template x-if="marketMoverSeg===\'us\'">\n'
+    '              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\n'
+    '                <!-- US 상승 -->\n'
+    '                <div>\n'
+    '                  <h3 class="text-xs font-semibold text-green-600 uppercase tracking-wider mb-2">US 상승 TOP (NAS)</h3>\n'
+    '                  <template x-if="!market.movers_us_up || !market.movers_us_up.length">\n'
+    '                    <div class="text-slate-400 text-sm py-2">데이터 없음 (미장 마감 시간 외)</div>\n'
+    '                  </template>\n'
+    '                  <template x-if="market.movers_us_up && market.movers_us_up.length">\n'
+    '                    <table class="w-full text-sm">\n'
+    '                      <thead><tr class="text-xs text-slate-400 border-b border-slate-100">\n'
+    '                        <th class="text-left py-1.5 font-medium">종목</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">가격</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">등락</th>\n'
+    '                      </tr></thead>\n'
+    '                      <tbody>\n'
+    '                        <template x-for="s in market.movers_us_up" :key="s.ticker">\n'
+    '                          <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                            <td class="py-1.5">\n'
+    '                              <span class="font-medium text-slate-800 text-sm" x-text="s.name || s.ticker"></span>\n'
+    '                              <span class="text-xs text-slate-400 ml-1" x-text="s.ticker"></span>\n'
+    '                            </td>\n'
+    '                            <td class="py-1.5 text-right text-slate-700 text-sm" x-text="s.price != null ? usd(s.price) : \'-\'"></td>\n'
+    '                            <td class="py-1.5 text-right text-sm font-semibold" :class="chgClass(s.chg_pct)" x-text="chgStr(s.chg_pct)"></td>\n'
+    '                          </tr>\n'
+    '                        </template>\n'
+    '                      </tbody>\n'
+    '                    </table>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '                <!-- US 하락 -->\n'
+    '                <div>\n'
+    '                  <h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2">US 하락 TOP (NAS)</h3>\n'
+    '                  <template x-if="!market.movers_us_down || !market.movers_us_down.length">\n'
+    '                    <div class="text-slate-400 text-sm py-2">데이터 없음 (미장 마감 시간 외)</div>\n'
+    '                  </template>\n'
+    '                  <template x-if="market.movers_us_down && market.movers_us_down.length">\n'
+    '                    <table class="w-full text-sm">\n'
+    '                      <thead><tr class="text-xs text-slate-400 border-b border-slate-100">\n'
+    '                        <th class="text-left py-1.5 font-medium">종목</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">가격</th>\n'
+    '                        <th class="text-right py-1.5 font-medium">등락</th>\n'
+    '                      </tr></thead>\n'
+    '                      <tbody>\n'
+    '                        <template x-for="s in market.movers_us_down" :key="s.ticker">\n'
+    '                          <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                            <td class="py-1.5">\n'
+    '                              <span class="font-medium text-slate-800 text-sm" x-text="s.name || s.ticker"></span>\n'
+    '                              <span class="text-xs text-slate-400 ml-1" x-text="s.ticker"></span>\n'
+    '                            </td>\n'
+    '                            <td class="py-1.5 text-right text-slate-700 text-sm" x-text="s.price != null ? usd(s.price) : \'-\'"></td>\n'
+    '                            <td class="py-1.5 text-right text-sm font-semibold" :class="chgClass(s.chg_pct)" x-text="chgStr(s.chg_pct)"></td>\n'
+    '                          </tr>\n'
+    '                        </template>\n'
+    '                      </tbody>\n'
+    '                    </table>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '\n'
+    '            <!-- 거래량 상위 -->\n'
+    '            <template x-if="marketMoverSeg===\'vol\'">\n'
+    '              <div>\n'
+    '                <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">KR 체결강도/거래량 상위</h3>\n'
+    '                <template x-if="!market.volume_top || !market.volume_top.length">\n'
+    '                  <div class="text-slate-400 text-sm py-2">데이터 없음 (장 마감 시간 외)</div>\n'
+    '                </template>\n'
+    '                <template x-if="market.volume_top && market.volume_top.length">\n'
+    '                  <table class="w-full text-sm">\n'
+    '                    <thead><tr class="text-xs text-slate-400 border-b border-slate-100">\n'
+    '                      <th class="text-left py-1.5 font-medium">종목</th>\n'
+    '                      <th class="text-right py-1.5 font-medium">현재가</th>\n'
+    '                      <th class="text-right py-1.5 font-medium">등락</th>\n'
+    '                      <th class="text-right py-1.5 font-medium">거래량</th>\n'
+    '                    </tr></thead>\n'
+    '                    <tbody>\n'
+    '                      <template x-for="s in market.volume_top" :key="s.ticker">\n'
+    '                        <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                          <td class="py-1.5">\n'
+    '                            <span class="font-medium text-slate-800 text-sm" x-text="s.name"></span>\n'
+    '                            <span class="text-xs text-slate-400 ml-1" x-text="s.ticker"></span>\n'
+    '                          </td>\n'
+    '                          <td class="py-1.5 text-right text-slate-700 text-sm" x-text="s.price != null ? s.price.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                          <td class="py-1.5 text-right text-sm font-semibold" :class="chgClass(s.chg_pct)" x-text="chgStr(s.chg_pct)"></td>\n'
+    '                          <td class="py-1.5 text-right text-xs text-slate-500"\n'
+    '                              x-text="s.volume != null ? Number(s.volume).toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                        </tr>\n'
+    '                      </template>\n'
+    '                    </tbody>\n'
+    '                  </table>\n'
+    '                </template>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '\n'
+    '          </div><!-- /급등락·거래량 카드 -->\n'
+    '\n'
+    '        </div>\n'
+    '      </template>\n'
+    '\n'
+    '    </section>\n'
+)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 포트폴리오 패널 HTML (P2)
@@ -682,7 +1339,7 @@ _PORTFOLIO_PANEL = (
     '                    <div class="grid grid-cols-3 gap-2 text-xs text-slate-500">\n'
     '                      <div><div class="text-slate-400">수량</div><div class="font-medium text-slate-700" x-text="h.qty.toLocaleString(\'ko-KR\')"></div></div>\n'
     '                      <div><div class="text-slate-400">평단</div><div class="font-medium text-slate-700" x-text="won(h.avg_price)"></div></div>\n'
-    '                      <div><div class="text-slate-400">현재가</div><div class="font-medium text-slate-700" x-text="won(h.cur_price)"></div></div>\n'
+    '                      <div><div class="text-slate-400">현재가</div><div class="font-medium text-slate-700 flex items-center gap-1"><span x-text="won(h.cur_price)"></span><template x-if="h.price_stale"><span class="text-xs text-amber-500 font-normal">종가</span></template></div></div>\n'
     '                    </div>\n'
     '                    <div class="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">\n'
     '                      <div class="text-xs text-slate-400">평가금액</div>\n'
@@ -890,7 +1547,7 @@ _WATCH_PANEL = (
     '                          <div class="font-medium text-slate-800" x-text="a.name"></div>\n'
     '                          <div class="text-xs text-slate-400" x-text="a.ticker"></div>\n'
     '                        </td>\n'
-    '                        <td class="text-right py-2 pr-3 text-slate-700" x-text="a.market===\'US\' ? usd(a.cur) : won(a.cur)"></td>\n'
+    '                        <td class="text-right py-2 pr-3 text-slate-700"><span x-text="a.market===\'US\' ? usd(a.cur) : won(a.cur)"></span><template x-if="a.price_stale"><span class="text-xs text-amber-500 ml-1">종가</span></template></td>\n'
     '                        <td class="text-right py-2 pr-3 text-slate-600" x-text="a.stop_price ? (a.market===\'US\' ? usd(a.stop_price) : won(a.stop_price)) : \'-\'"></td>\n'
     '                        <td class="text-right py-2 pr-3 text-slate-600" x-text="a.target_price ? (a.market===\'US\' ? usd(a.target_price) : won(a.target_price)) : \'-\'"></td>\n'
     '                        <td class="text-right py-2">\n'
@@ -938,7 +1595,7 @@ _WATCH_PANEL = (
     '                      </div>\n'
     '                      <div class="text-right">\n'
     '                        <div class="text-xs text-slate-400">현재가</div>\n'
-    '                        <div class="text-sm text-slate-700" x-text="bw.cur_price ? (bw.market===\'US\' ? usd(bw.cur_price) : won(bw.cur_price)) : \'가격없음\'"></div>\n'
+    '                        <div class="text-sm text-slate-700 flex items-center justify-end gap-1"><span x-text="bw.cur_price ? (bw.market===\'US\' ? usd(bw.cur_price) : won(bw.cur_price)) : \'가격없음\'"></span><template x-if="bw.price_stale"><span class="text-xs text-amber-500">종가</span></template></div>\n'
     '                      </div>\n'
     '                      <div class="text-right w-16">\n'
     '                        <div class="text-xs text-slate-400">gap</div>\n'
@@ -2030,6 +2687,21 @@ _HOME_PANEL = (
     '      <template x-if="home">\n'
     '        <div>\n'
     '\n'
+    '          <!-- 지수 띠 -->\n'
+    '          <template x-if="home.indices && home.indices.length">\n'
+    '            <div class="flex gap-3 overflow-x-auto pb-1 mb-5 scrollbar-hide">\n'
+    '              <template x-for="idx in home.indices" :key="idx.name">\n'
+    '                <div class="flex-shrink-0 bg-white rounded-xl shadow-sm border border-slate-200 px-4 py-3 flex flex-col min-w-[110px]">\n'
+    '                  <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-0.5" x-text="idx.name"></span>\n'
+    '                  <span class="text-base font-bold text-slate-800"\n'
+    '                        x-text="idx.price != null ? idx.price.toLocaleString(\'ko-KR\', {maximumFractionDigits:2}) : \'-\'"></span>\n'
+    '                  <span :class="chgClass(idx.change_pct)" class="text-xs font-semibold mt-0.5"\n'
+    '                        x-text="chgStr(idx.change_pct)"></span>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '          </template>\n'
+    '\n'
     '          <!-- 자산 요약 카드 -->\n'
     '          <template x-if="home.portfolio && !home.portfolio.empty">\n'
     '            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">\n'
@@ -2240,7 +2912,7 @@ _HOME_SHELL = (
     '    </div>\n'
     '  </header>\n'
     '\n'
-    '  <!-- 탭 네비 (7개) -->\n'
+    '  <!-- 탭 네비 (8개) -->\n'
     '  <nav class="bg-white border-b border-slate-200 sticky top-12 z-40">\n'
     '    <div class="max-w-6xl mx-auto px-4">\n'
     '      <div class="overflow-x-auto">\n'
@@ -2254,6 +2926,16 @@ _HOME_SHELL = (
     '          >\n'
     '            <i data-lucide="home" class="w-4 h-4"></i>\n'
     '            홈\n'
+    '          </button>\n'
+    '\n'
+    '          <!-- 시세 -->\n'
+    '          <button\n'
+    '            @click="setTab(\'market\')"\n'
+    '            :class="activeTab===\'market\' ? \'bg-blue-600 text-white\' : \'text-slate-600 hover:bg-slate-100\'"\n'
+    '            class="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors"\n'
+    '          >\n'
+    '            <i data-lucide="trending-up" class="w-4 h-4"></i>\n'
+    '            시세\n'
     '          </button>\n'
     '\n'
     '          <!-- 포트폴리오 -->\n'
@@ -2325,6 +3007,7 @@ _HOME_SHELL = (
     '  <main class="max-w-6xl mx-auto px-4 py-6">\n'
     '\n'
     + _HOME_PANEL
+    + _MARKET_PANEL
     + _PORTFOLIO_PANEL
     + _WATCH_PANEL
     + _SIGNAL_PANEL
@@ -3183,6 +3866,17 @@ async def _build_portfolio_with_grand() -> dict:
     pdata["grand_eval_krw"] = round(grand_eval_krw, 0)
     pdata["grand_pnl_krw"]  = round(grand_pnl_krw, 0)
     pdata["grand_pnl_pct"]  = grand_pnl_pct
+
+    # 현재가 폴백 — KR holdings cur_price가 None/0이면 daily_snapshot 종가로 대체
+    # (KIS API 장외 실패 시). price_stale=True 플래그로 프론트 "종가" 표기 가능.
+    for h in (pdata.get("kr", {}).get("holdings") or []):
+        cur = h.get("cur_price")
+        if not cur:  # None or 0
+            stale_close = _latest_close(h["ticker"]) if h.get("ticker") else None
+            if stale_close:
+                h["cur_price"] = stale_close
+                h["price_stale"] = True
+
     return pdata
 
 
@@ -3237,10 +3931,25 @@ async def _build_watch_payload() -> dict:
 
     # buy_watch: watch_alerts (현재가 포함)
     buy_watch = adata.get("watch_alerts", [])
-    # cur_price=0인 항목의 gap "-100%" → null로 교체 (오해 방지)
+    # cur_price=0/None → daily_snapshot 종가 폴백 (KR 한정)
     for bw in buy_watch:
+        bw_ticker = bw.get("ticker", "")
         if bw.get("cur_price") == 0 or bw.get("cur_price") is None:
-            bw["gap_pct"] = None
+            if bw_ticker and not _is_us_ticker_simple(bw_ticker):
+                stale = _latest_close(bw_ticker)
+                if stale:
+                    bw["cur_price"] = stale
+                    bw["price_stale"] = True
+                    # gap_pct 재계산 (buy_price 대비)
+                    buy_p = bw.get("buy_price") or 0
+                    if buy_p and buy_p > 0:
+                        bw["gap_pct"] = round((stale - buy_p) / buy_p * 100, 2)
+                    else:
+                        bw["gap_pct"] = None
+                else:
+                    bw["gap_pct"] = None
+            else:
+                bw["gap_pct"] = None
 
     # stoploss_alerts: get_alerts.alerts + load_stoploss() 절대가 병합
     raw_alerts = adata.get("alerts", [])
@@ -3269,10 +3978,26 @@ async def _build_watch_payload() -> dict:
         target_price = target_price_raw if target_price_raw else None
         cur_val = alert.get("cur")
         gap_val = alert.get("gap_pct")
-        # cur=0이면 프라이싱 실패 → gap_pct도 무의미, None으로 정규화
+        price_stale = False
+        # cur=0이면 프라이싱 실패 → KR이면 daily_snapshot 종가 폴백
         if not cur_val:
-            cur_val = None
-            gap_val = None
+            if not is_us:
+                stale = _latest_close(ticker)
+                if stale:
+                    cur_val = stale
+                    price_stale = True
+                    # gap_pct: stop_price 기준 재계산
+                    sp = stop_price_raw if stop_price_raw else None
+                    if sp and sp > 0:
+                        gap_val = round((stale - sp) / sp * 100, 2)
+                    else:
+                        gap_val = None
+                else:
+                    cur_val = None
+                    gap_val = None
+            else:
+                cur_val = None
+                gap_val = None
         stoploss_alerts.append({
             "ticker": ticker,
             "name": alert.get("name", sl_info.get("name", ticker)),
@@ -3282,6 +4007,7 @@ async def _build_watch_payload() -> dict:
             "target_price": target_price,
             "gap_pct": gap_val,
             "target_pct": alert.get("target_pct"),
+            "price_stale": price_stale,
         })
 
     return {"watchlist": watchlist, "buy_watch": buy_watch, "stoploss_alerts": stoploss_alerts}
@@ -3552,6 +4278,18 @@ async def _handle_api_signals(request: web.Request) -> web.Response:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 시세 탭 API 핸들러
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _handle_api_market(request: web.Request) -> web.Response:
+    """GET /api/market — 시세 집계 (240s TTL).
+
+    build_market_payload() 결과: indices/movers_kr_up/down/movers_us_up/down/volume_top
+    """
+    return await _api(_cached("market", 240.0, build_market_payload))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라우트 등록
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3576,3 +4314,5 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/invest_todo", _handle_api_invest_todo)
     # P4 추가
     app.router.add_get("/api/signals", _handle_api_signals)
+    # 시세 탭 추가
+    app.router.add_get("/api/market", _handle_api_market)
