@@ -10,5 +10,6 @@ pdfplumber>=0.10.0
 numpy>=1.24.0
 scipy>=1.10.0
 pykrx>=1.2.8  # 5/8 KRX 응답 구조 변경으로 1.2.4 호환 깨짐 → 1.2.8 minimum
+pyarrow>=14.0.0  # parquet 엔진 — div_yield 재구성 sidecar(auto-stock/RALPH/divyield_reconstruct) + probe 파이프라인. 누락 시 to_parquet/read_parquet 침묵 실패
 python-dotenv>=1.0.0
 youtube-transcript-api>=1.2.0
