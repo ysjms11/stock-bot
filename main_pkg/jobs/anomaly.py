@@ -20,6 +20,7 @@ from kis_api import (
     ws_manager, get_ws_tickers, close_session,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_and_cache_disclosure, parse_disclosure_summary,
+    append_signal,
 )
 
 # ── check_anomaly ──
@@ -96,6 +97,13 @@ async def check_anomaly(context: ContextTypes.DEFAULT_TYPE):
                 if dedup_key in fired:
                     continue
                 fired.add(dedup_key)
+                try:
+                    append_signal(
+                        "anomaly", ticker, name,
+                        f"{signal} — {price:,}원 ({change}%) 거래량 {vol_rate}%↑ 외국인 {fr:+.3f}%"
+                    )
+                except Exception:
+                    pass
 
                 alerts.append(
                     f"{icon} *{name}* ({ticker}) — {signal}\n"

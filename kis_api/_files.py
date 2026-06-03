@@ -13,7 +13,7 @@ from ._config import (
     WATCHLIST_LOG_FILE, EVENTS_FILE, WEEKLY_BASE_FILE, UNIVERSE_FILE,
     CONSENSUS_CACHE_FILE, PORTFOLIO_HISTORY_FILE, TRADE_LOG_FILE,
     SECTOR_FLOW_CACHE_FILE, SECTOR_ROTATION_FILE, SUPPLY_HISTORY_FILE,
-    REPORTS_FILE, REGIME_STATE_FILE, MACRO_SENT_FILE,
+    REPORTS_FILE, REGIME_STATE_FILE, MACRO_SENT_FILE, SIGNAL_FEED_FILE,
 )
 from ._helpers import _is_us_ticker
 
@@ -312,3 +312,50 @@ def append_watchlist_log(entry: dict):
 
 def load_events() -> dict:
     return load_json(EVENTS_FILE, {})
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 시그널 피드 (수급이탈 / 모멘텀이탈 / 이상급등 영속화)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_SIGNAL_FEED_CAP = 200  # 최대 보관 건수
+
+_SIGNAL_KINDS = frozenset(["supply_drain", "momentum_exit", "anomaly"])
+
+
+def append_signal(kind: str, ticker: str, name: str, detail: str) -> None:
+    """수급이탈/모멘텀이탈/이상급등 신호를 signal_feed.json에 append.
+
+    - 내부 전체 try/except: 절대 raise 안 함 (호출부 알림 경로 보호).
+    - 기존 save_json atomic write 패턴 재사용.
+    - 최근 _SIGNAL_FEED_CAP 건 cap.
+    """
+    try:
+        ts = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+        entry = {
+            "ts": ts,
+            "kind": kind if kind in _SIGNAL_KINDS else "anomaly",
+            "ticker": str(ticker),
+            "name": str(name),
+            "detail": str(detail),
+        }
+        feed: list = load_json(SIGNAL_FEED_FILE, [])
+        if not isinstance(feed, list):
+            feed = []
+        feed.append(entry)
+        if len(feed) > _SIGNAL_FEED_CAP:
+            feed = feed[-_SIGNAL_FEED_CAP:]
+        save_json(SIGNAL_FEED_FILE, feed)
+    except Exception:
+        pass  # 절대 raise 안 함
+
+
+def load_signal_feed(limit: int = 50) -> list:
+    """signal_feed.json에서 최근 limit건 반환. 없으면 []."""
+    try:
+        feed = load_json(SIGNAL_FEED_FILE, [])
+        if not isinstance(feed, list):
+            return []
+        return feed[-limit:] if len(feed) > limit else feed
+    except Exception:
+        return []

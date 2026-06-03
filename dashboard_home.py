@@ -29,6 +29,7 @@ from kis_api import (
     load_decision_log,
     get_yahoo_quote,
     get_trade_stats,
+    load_signal_feed,
     CONSENSUS_CACHE_FILE,
     DART_SEEN_FILE,
     EVENTS_FILE,
@@ -261,6 +262,14 @@ async def build_home_payload() -> dict:
         payload["dart"] = {"count": len(ids)}
     except Exception as e:
         errors.append({"source": "dart", "msg": str(e)})
+
+    # 8. signal_feed — 최근 5건 (수급이탈/모멘텀이탈/이상급등 피드)
+    try:
+        feed = load_signal_feed(limit=5)
+        if feed:
+            payload["signal_feed"] = list(reversed(feed))
+    except Exception as e:
+        errors.append({"source": "signal_feed", "msg": str(e)})
 
     payload["_errors"] = errors
     return payload
@@ -3174,6 +3183,40 @@ async def _handle_api_invest_todo(request: web.Request) -> web.Response:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# P4: /api/signals — 시그널 피드 + scan + dart 통합
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _build_signals_payload() -> dict:
+    """signal_feed.json + change_scan_sent.json + dart_seen.json 통합 반환."""
+    result: dict = {}
+    try:
+        result["feed"] = list(reversed(load_signal_feed(limit=50)))
+    except Exception:
+        result["feed"] = []
+    try:
+        scan_file = f"{_DATA_DIR}/change_scan_sent.json"
+        scan_data = load_json(scan_file, {})
+        dates = [v for v in scan_data.values() if isinstance(v, str)]
+        result["scan"] = {
+            "date": max(dates) if dates else None,
+            "count": len(scan_data),
+        }
+    except Exception:
+        result["scan"] = {"date": None, "count": 0}
+    try:
+        dart_data = load_json(DART_SEEN_FILE, {"ids": []})
+        result["dart"] = {"count": len(dart_data.get("ids", []))}
+    except Exception:
+        result["dart"] = {"count": 0}
+    return result
+
+
+async def _handle_api_signals(request: web.Request) -> web.Response:
+    """GET /api/signals — 시그널 피드 (30s TTL, 실시간성 우선)."""
+    return await _api(_cached("signals", 30.0, _build_signals_payload))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라우트 등록
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3196,3 +3239,5 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_post("/api/decisions", _handle_api_decisions_post)
     app.router.add_get("/api/trades", _handle_api_trades)
     app.router.add_get("/api/invest_todo", _handle_api_invest_todo)
+    # P4 추가
+    app.router.add_get("/api/signals", _handle_api_signals)

@@ -20,6 +20,7 @@ from kis_api import (
     ws_manager, get_ws_tickers, close_session,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_and_cache_disclosure, parse_disclosure_summary,
+    append_signal,
 )
 
 # ── check_supply_drain, momentum_exit_check ──
@@ -59,6 +60,13 @@ async def check_supply_drain(context: ContextTypes.DEFAULT_TYPE):
                     name = info.get("name", ticker)
                     qty_3 = [int(rows[i].get("frgn_ntby_qty", 0) or 0) for i in range(3)]
                     drain_sent.add(ticker)
+                    try:
+                        append_signal(
+                            "supply_drain", ticker, name,
+                            f"외인 3일 연속 순매도: {qty_3[0]:+,}/{qty_3[1]:+,}/{qty_3[2]:+,}주"
+                        )
+                    except Exception:
+                        pass
                     alerts.append(
                         f"📉 *{name}* ({ticker}) 외인 3일 연속 순매도\n"
                         f"  최근: {qty_3[0]:+,} / {qty_3[1]:+,} / {qty_3[2]:+,}주"
@@ -109,6 +117,13 @@ async def momentum_exit_check(context: ContextTypes.DEFAULT_TYPE):
                 name = info.get("name", ticker)
                 total = len(result["conditions"])
                 count = result["count"]
+                try:
+                    append_signal(
+                        "momentum_exit", ticker, name,
+                        f"모멘텀 이탈 {count}/{total} 신호"
+                    )
+                except Exception:
+                    pass
                 lines = [f"🔴 *{name}* ({ticker}) — {count}/{total} 신호\n"]
                 for c in result["conditions"]:
                     icon = "✅" if c["triggered"] else "❌"

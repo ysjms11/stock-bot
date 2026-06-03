@@ -38,6 +38,7 @@ from ._config import (
     CONSENSUS_CACHE_FILE, PORTFOLIO_HISTORY_FILE, TRADE_LOG_FILE,
     SECTOR_FLOW_CACHE_FILE, SECTOR_ROTATION_FILE, SUPPLY_HISTORY_FILE,
     REPORTS_FILE, REGIME_STATE_FILE, MACRO_SENT_FILE, TOKEN_CACHE_FILE,
+    SIGNAL_FEED_FILE,
     GITHUB_TOKEN, _BACKUP_GIST_ENV, _BACKUP_FILES_LIST, MACRO_SYMBOLS,
 )
 
@@ -66,6 +67,7 @@ from ._files import (
     load_decision_log, load_trade_log, save_trade_log, get_trade_stats,
     load_consensus_cache, load_sector_flow_cache, save_sector_flow_cache,
     load_compare_log, load_watchlist_log, append_watchlist_log, load_events,
+    append_signal, load_signal_feed,
 )
 
 # ━━ 컨센서스 ━━
