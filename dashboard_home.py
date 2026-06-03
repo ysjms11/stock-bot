@@ -936,7 +936,8 @@ function dashApp() {
 
     /* ── market tab ── */
     async loadMarket() {
-      if (this.market) return;
+      /* stale-while-revalidate: 데이터 이미 있으면 null로 비우지 않고
+         백그라운드로 fetch 후 도착 시 교체. 탭 최초 진입 시에만 로딩 표시. */
       const data = await this.api('/api/market');
       if (!data.error) this.market = data;
     },
