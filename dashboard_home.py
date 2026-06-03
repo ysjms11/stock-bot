@@ -256,11 +256,12 @@ async def build_home_payload() -> dict:
     except Exception as e:
         errors.append({"source": "scan", "msg": str(e)})
 
-    # 7. dart — dart_seen.json 건수
+    # 7. dart — dart_seen.json 누적 감지 건수 (라벨만, 상세는 시그널 탭)
+    # 무거운 get_dart 호출 없이 count만 집계해 홈 응답 속도 유지
     try:
         dart_data = load_json(DART_SEEN_FILE, {"ids": []})
         ids = dart_data.get("ids", [])
-        payload["dart"] = {"count": len(ids)}
+        payload["dart"] = {"count": len(ids), "label": f"공시 {len(ids):,}건 누적 감지"}
     except Exception as e:
         errors.append({"source": "dart", "msg": str(e)})
 
@@ -654,6 +655,7 @@ function dashApp() {
     /* P3b: record tab */
     record: null,
     recordSection: 'decisions',
+    decisionsLimit: 20,
     decisionForm: { show: false, date: '', regime: '', memo: '' },
     recordToast: '',
     portSort: 'eval',
@@ -2179,7 +2181,7 @@ _RECORD_PANEL = r"""
               <!-- 판단 카드 목록 -->
               <template x-if="record.decisions && record.decisions.length">
                 <div class="space-y-3">
-                  <template x-for="d in record.decisions" :key="d.date">
+                  <template x-for="d in record.decisions.slice(0, decisionsLimit)" :key="d.date">
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
                       <div class="flex items-start justify-between gap-2 mb-2">
                         <div>
@@ -2205,6 +2207,15 @@ _RECORD_PANEL = r"""
                           </template>
                         </ul>
                       </template>
+                    </div>
+                  </template>
+                  <!-- 더보기 버튼 — 전체 건수보다 limit이 작을 때만 표시 -->
+                  <template x-if="decisionsLimit < record.decisions.length">
+                    <div class="text-center pt-1">
+                      <button @click="decisionsLimit = record.decisions.length"
+                        class="text-sm text-blue-600 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"
+                        x-text="'더보기 (' + (record.decisions.length - decisionsLimit) + '건 더)'">
+                      </button>
                     </div>
                   </template>
                 </div>
@@ -2837,10 +2848,11 @@ _HOME_PANEL = (
     '                  <i data-lucide="file-text" class="w-4 h-4 text-orange-500"></i>\n'
     '                  <span class="text-sm font-semibold text-slate-700">DART 공시</span>\n'
     '                </div>\n'
-    '                <div class="text-slate-700">\n'
-    '                  <span class="text-2xl font-bold" x-text="home.dart.count"></span>\n'
-    '                  <span class="text-sm text-slate-400 ml-1">건 처리됨</span>\n'
-    '                </div>\n'
+    '                <div class="text-slate-700 mb-2" x-text="home.dart.label || (home.dart.count + \'건 누적 감지\')"></div>\n'
+    '                <button @click="setTab(\'signal\'); signalSeg=\'dart\'"\n'
+    '                  class="text-xs text-blue-600 hover:text-blue-700 hover:underline">\n'
+    '                  시그널 탭에서 보기\n'
+    '                </button>\n'
     '              </div>\n'
     '            </template>\n'
     '\n'
