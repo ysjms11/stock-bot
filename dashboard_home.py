@@ -790,6 +790,16 @@ function dashApp() {
     macroPanel: null,
     macroPanelLoading: false,
 
+    /* alpha screener (signal tab) */
+    alphaSeg: 'change',
+    alphaData: {},
+    alphaLoading: false,
+
+    /* supply panel (market tab) */
+    supplySeg: 'foreign_rank',
+    supplyData: {},
+    supplyLoading: false,
+
     /* P2: watch/alert tab */
     watch: null,
     watchForm: { show: false, ticker: '', name: '', stop: '', target: '', buy: '' },
@@ -1216,10 +1226,10 @@ function dashApp() {
         }
       }
       if (t === 'watch') this.loadWatch();
-      if (t === 'signal') this.loadSignal();
+      if (t === 'signal') { this.loadSignal(); this.loadAlpha(this.alphaSeg); }
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
-      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); this.loadMacroPanel(); }
+      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); this.loadMacroPanel(); this.loadSupply(this.supplySeg); }
       if (t === 'us') { this.loadUsCandidates(); this.loadUsScan(); }
       this.$nextTick(() => this.refreshIcons());
     },
@@ -1259,6 +1269,51 @@ function dashApp() {
       if (dday <= 3) return 'text-orange-500 font-semibold';
       if (dday <= 7) return 'text-amber-600';
       return 'text-slate-500';
+    },
+
+    /* ── alpha screener (signal tab sub) ── */
+    async loadAlpha(preset) {
+      this.alphaSeg = preset;
+      const cached = this.alphaData[preset];
+      if (cached) {
+        /* SWR: stale 즉시 반환 후 bg refresh */
+        this._bgRefreshAlpha(preset);
+        return;
+      }
+      this.alphaLoading = true;
+      const data = await this.api('/api/alpha?preset=' + preset);
+      this.alphaLoading = false;
+      if (!data.error) {
+        this.alphaData = Object.assign({}, this.alphaData, { [preset]: data });
+      }
+    },
+    async _bgRefreshAlpha(preset) {
+      const data = await this.api('/api/alpha?preset=' + preset);
+      if (!data.error) {
+        this.alphaData = Object.assign({}, this.alphaData, { [preset]: data });
+      }
+    },
+
+    /* ── supply panel (market tab sub) ── */
+    async loadSupply(mode) {
+      this.supplySeg = mode;
+      const cached = this.supplyData[mode];
+      if (cached) {
+        this._bgRefreshSupply(mode);
+        return;
+      }
+      this.supplyLoading = true;
+      const data = await this.api('/api/supply?mode=' + mode);
+      this.supplyLoading = false;
+      if (!data.error) {
+        this.supplyData = Object.assign({}, this.supplyData, { [mode]: data });
+      }
+    },
+    async _bgRefreshSupply(mode) {
+      const data = await this.api('/api/supply?mode=' + mode);
+      if (!data.error) {
+        this.supplyData = Object.assign({}, this.supplyData, { [mode]: data });
+      }
     },
 
     /* ── report tab ── */
@@ -1711,6 +1766,9 @@ _MARKET_PANEL = (
     '              <button @click="marketMoverSeg=\'macro\'; loadMacroPanel()"\n'
     '                :class="marketMoverSeg===\'macro\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
     '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">매크로</button>\n'
+    '              <button @click="marketMoverSeg=\'supply\'; loadSupply(supplySeg)"\n'
+    '                :class="marketMoverSeg===\'supply\' ? \'bg-teal-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">수급</button>\n'
     '            </div>\n'
     '\n'
     '            <!-- KR 등락 -->\n'
@@ -2045,6 +2103,282 @@ _MARKET_PANEL = (
     '            </div>\n'
     '          </template>\n'
     '          <!-- /매크로 패널 -->\n'
+    '\n'
+    '          <!-- ── 수급 패널 ── -->\n'
+    '          <template x-if="marketMoverSeg===\'supply\'">\n'
+    '            <div>\n'
+    '              <!-- 수급유형 필터 pill (가로스크롤, teal-600 선택) -->\n'
+    '              <div class="flex gap-2 mb-4 overflow-x-auto pb-1">\n'
+    '                <button @click="loadSupply(\'foreign_rank\')"\n'
+    '                  :class="supplySeg===\'foreign_rank\' ? \'bg-teal-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">외인순매수TOP</button>\n'
+    '                <button @click="loadSupply(\'combined_rank\')"\n'
+    '                  :class="supplySeg===\'combined_rank\' ? \'bg-teal-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">외인+기관합산</button>\n'
+    '                <button @click="loadSupply(\'short_sale\')"\n'
+    '                  :class="supplySeg===\'short_sale\' ? \'bg-teal-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">공매도</button>\n'
+    '                <button @click="loadSupply(\'credit\')"\n'
+    '                  :class="supplySeg===\'credit\' ? \'bg-teal-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">신용잔고</button>\n'
+    '                <button @click="loadSupply(\'lending\')"\n'
+    '                  :class="supplySeg===\'lending\' ? \'bg-teal-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">대차</button>\n'
+    '              </div>\n'
+    '\n'
+    '              <!-- 로딩 스켈레톤 -->\n'
+    '              <template x-if="supplyLoading && !supplyData[supplySeg]">\n'
+    '                <div class="animate-pulse space-y-2">\n'
+    '                  <template x-for="i in [1,2,3,4,5]" :key="i">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-100 p-4 h-14"></div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '              <!-- 외인순매수TOP (foreign_rank) -->\n'
+    '              <template x-if="supplySeg===\'foreign_rank\' && supplyData[\'foreign_rank\']">\n'
+    '                <div>\n'
+    '                  <template x-if="supplyData[\'foreign_rank\'].error">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400"\n'
+    '                      x-text="supplyData[\'foreign_rank\'].error"></div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'foreign_rank\'].error && supplyData[\'foreign_rank\'].items && supplyData[\'foreign_rank\'].items.length">\n'
+    '                    <div>\n'
+    '                      <div class="text-xs text-slate-400 mb-2"\n'
+    '                        x-text="(supplyData[\'foreign_rank\'].as_of ? supplyData[\'foreign_rank\'].as_of.slice(0,4)+\'.\'+supplyData[\'foreign_rank\'].as_of.slice(4,6)+\'.\'+supplyData[\'foreign_rank\'].as_of.slice(6) : \'\') + \' 외인 순매수 상위\'"></div>\n'
+    '                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">\n'
+    '                        <table class="w-full text-sm">\n'
+    '                          <thead><tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">#</th>\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">종목</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">순매수주</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">순매수금액</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">등락</th>\n'
+    '                          </tr></thead>\n'
+    '                          <tbody>\n'
+    '                            <template x-for="(s, idx) in supplyData[\'foreign_rank\'].items" :key="idx">\n'
+    '                              <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                                <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="idx+1"></td>\n'
+    '                                <td class="px-4 py-2.5">\n'
+    '                                  <div class="font-medium text-slate-800 text-sm" x-text="s.name"></div>\n'
+    '                                  <div class="text-xs text-slate-400" x-text="s.ticker"></div>\n'
+    '                                </td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-sm"\n'
+    '                                  :class="s.foreign_net_qty >= 0 ? \'text-green-600\' : \'text-red-600\'"\n'
+    '                                  x-text="s.foreign_net_qty != null ? s.foreign_net_qty.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-600 hidden sm:table-cell"\n'
+    '                                  x-text="s.foreign_net_amt != null ? (s.foreign_net_amt/100000000).toFixed(0)+\'억\' : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-sm font-semibold"\n'
+    '                                  :class="s.chg_pct >= 0 ? \'text-green-600\' : \'text-red-600\'"\n'
+    '                                  x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? \'+\' : \'\')+s.chg_pct.toFixed(1)+\'%\' : \'-\'"></td>\n'
+    '                              </tr>\n'
+    '                            </template>\n'
+    '                          </tbody>\n'
+    '                        </table>\n'
+    '                      </div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'foreign_rank\'].error && (!supplyData[\'foreign_rank\'].items || !supplyData[\'foreign_rank\'].items.length)">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400">수급 데이터 없음 (장중 반영)\n'
+    '                      <button @click="loadSupply(\'foreign_rank\')" class="ml-2 text-teal-600 underline text-xs">재시도</button>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '              <!-- 외인+기관합산 (combined_rank) -->\n'
+    '              <template x-if="supplySeg===\'combined_rank\' && supplyData[\'combined_rank\']">\n'
+    '                <div>\n'
+    '                  <template x-if="supplyData[\'combined_rank\'].error">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400"\n'
+    '                      x-text="supplyData[\'combined_rank\'].error"></div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'combined_rank\'].error && supplyData[\'combined_rank\'].items && supplyData[\'combined_rank\'].items.length">\n'
+    '                    <div>\n'
+    '                      <div class="text-xs text-slate-400 mb-2">외인+기관 합산 순매수 상위</div>\n'
+    '                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">\n'
+    '                        <table class="w-full text-sm">\n'
+    '                          <thead><tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">#</th>\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">종목</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">외인+기관(주)</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">비율%</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">등락</th>\n'
+    '                          </tr></thead>\n'
+    '                          <tbody>\n'
+    '                            <template x-for="(s, idx) in supplyData[\'combined_rank\'].items" :key="idx">\n'
+    '                              <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                                <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="idx+1"></td>\n'
+    '                                <td class="px-4 py-2.5">\n'
+    '                                  <div class="font-medium text-slate-800 text-sm" x-text="s.name"></div>\n'
+    '                                  <div class="text-xs text-slate-400" x-text="s.ticker"></div>\n'
+    '                                </td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-sm"\n'
+    '                                  :class="s.fi_total_net >= 0 ? \'text-green-600\' : \'text-red-600\'"\n'
+    '                                  x-text="s.fi_total_net != null ? s.fi_total_net.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-500 hidden sm:table-cell"\n'
+    '                                  x-text="s.fi_ratio_pct != null ? s.fi_ratio_pct.toFixed(2)+\'%\' : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-sm font-semibold"\n'
+    '                                  :class="s.chg_pct >= 0 ? \'text-green-600\' : \'text-red-600\'"\n'
+    '                                  x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? \'+\' : \'\')+s.chg_pct.toFixed(1)+\'%\' : \'-\'"></td>\n'
+    '                              </tr>\n'
+    '                            </template>\n'
+    '                          </tbody>\n'
+    '                        </table>\n'
+    '                      </div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'combined_rank\'].error && (!supplyData[\'combined_rank\'].items || !supplyData[\'combined_rank\'].items.length)">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400">수급 데이터 없음 (장중 반영)\n'
+    '                      <button @click="loadSupply(\'combined_rank\')" class="ml-2 text-teal-600 underline text-xs">재시도</button>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '              <!-- 공매도 (short_sale) -->\n'
+    '              <template x-if="supplySeg===\'short_sale\' && supplyData[\'short_sale\']">\n'
+    '                <div>\n'
+    '                  <template x-if="supplyData[\'short_sale\'].error">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400"\n'
+    '                      x-text="supplyData[\'short_sale\'].error"></div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'short_sale\'].error && supplyData[\'short_sale\'].items && supplyData[\'short_sale\'].items.length">\n'
+    '                    <div>\n'
+    '                      <div class="text-xs text-slate-400 mb-2" x-text="(supplyData[\'short_sale\'].ticker || \'\') + \' 공매도 추이 (최근 \' + supplyData[\'short_sale\'].items.length + \'일)\'"></div>\n'
+    '                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">\n'
+    '                        <table class="w-full text-sm">\n'
+    '                          <thead><tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">날짜</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">공매도량</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">비율%</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">종가</th>\n'
+    '                          </tr></thead>\n'
+    '                          <tbody>\n'
+    '                            <template x-for="(s, idx) in supplyData[\'short_sale\'].items" :key="idx">\n'
+    '                              <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                                <td class="px-4 py-2.5 text-xs text-slate-500"\n'
+    '                                  x-text="s.date ? s.date.slice(0,4)+\'.\'+s.date.slice(4,6)+\'.\'+s.date.slice(6) : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-700"\n'
+    '                                  x-text="s.short_vol != null ? s.short_vol.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs font-semibold"\n'
+    '                                  :class="s.short_ratio >= 5 ? \'text-red-600\' : s.short_ratio >= 3 ? \'text-amber-600\' : \'text-slate-600\'"\n'
+    '                                  x-text="s.short_ratio != null ? s.short_ratio.toFixed(2)+\'%\' : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-600 hidden sm:table-cell"\n'
+    '                                  x-text="s.close != null ? s.close.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                              </tr>\n'
+    '                            </template>\n'
+    '                          </tbody>\n'
+    '                        </table>\n'
+    '                      </div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'short_sale\'].error && (!supplyData[\'short_sale\'].items || !supplyData[\'short_sale\'].items.length)">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400">공매도 데이터 없음\n'
+    '                      <button @click="loadSupply(\'short_sale\')" class="ml-2 text-teal-600 underline text-xs">재시도</button>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '              <!-- 신용잔고 (credit) -->\n'
+    '              <template x-if="supplySeg===\'credit\' && supplyData[\'credit\']">\n'
+    '                <div>\n'
+    '                  <template x-if="supplyData[\'credit\'].error">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400"\n'
+    '                      x-text="supplyData[\'credit\'].error"></div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'credit\'].error && supplyData[\'credit\'].items && supplyData[\'credit\'].items.length">\n'
+    '                    <div>\n'
+    '                      <!-- 10% 초과 경고 배너 -->\n'
+    '                      <template x-if="supplyData[\'credit\'].warning">\n'
+    '                        <div class="mb-3 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-red-700 text-xs font-semibold"\n'
+    '                          x-text="\'⚠️ 신용잔고 과열 경고: \' + supplyData[\'credit\'].warning"></div>\n'
+    '                      </template>\n'
+    '                      <div class="text-xs text-slate-400 mb-2" x-text="(supplyData[\'credit\'].ticker || \'\') + \' 신용잔고 추이\'"></div>\n'
+    '                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">\n'
+    '                        <table class="w-full text-sm">\n'
+    '                          <thead><tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">날짜</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">신용잔고율%</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">신규</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">상환</th>\n'
+    '                          </tr></thead>\n'
+    '                          <tbody>\n'
+    '                            <template x-for="(s, idx) in supplyData[\'credit\'].items" :key="idx">\n'
+    '                              <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                                <td class="px-4 py-2.5 text-xs text-slate-500"\n'
+    '                                  x-text="s.date ? s.date.slice(0,4)+\'.\'+s.date.slice(4,6)+\'.\'+s.date.slice(6) : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs font-semibold"\n'
+    '                                  :class="s.credit_ratio >= 10 ? \'text-red-600\' : s.credit_ratio >= 5 ? \'text-amber-600\' : \'text-slate-600\'"\n'
+    '                                  x-text="s.credit_ratio != null ? s.credit_ratio.toFixed(2)+\'%\' : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-600 hidden sm:table-cell"\n'
+    '                                  x-text="s.credit_new != null ? s.credit_new.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-500 hidden sm:table-cell"\n'
+    '                                  x-text="s.credit_repay != null ? s.credit_repay.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                              </tr>\n'
+    '                            </template>\n'
+    '                          </tbody>\n'
+    '                        </table>\n'
+    '                      </div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'credit\'].error && (!supplyData[\'credit\'].items || !supplyData[\'credit\'].items.length)">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400">신용잔고 데이터 없음\n'
+    '                      <button @click="loadSupply(\'credit\')" class="ml-2 text-teal-600 underline text-xs">재시도</button>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '              <!-- 대차 (lending) -->\n'
+    '              <template x-if="supplySeg===\'lending\' && supplyData[\'lending\']">\n'
+    '                <div>\n'
+    '                  <template x-if="supplyData[\'lending\'].error">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400"\n'
+    '                      x-text="supplyData[\'lending\'].error"></div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'lending\'].error && supplyData[\'lending\'].items && supplyData[\'lending\'].items.length">\n'
+    '                    <div>\n'
+    '                      <div class="text-xs text-slate-400 mb-2" x-text="(supplyData[\'lending\'].ticker || \'\') + \' 대차잔고 추이\'"></div>\n'
+    '                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">\n'
+    '                        <table class="w-full text-sm">\n'
+    '                          <thead><tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">\n'
+    '                            <th class="text-left px-4 py-2.5 font-medium">날짜</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium">대차잔고(주)</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">전일대비</th>\n'
+    '                            <th class="text-right px-4 py-2.5 font-medium hidden sm:table-cell">잔고금액(백만)</th>\n'
+    '                          </tr></thead>\n'
+    '                          <tbody>\n'
+    '                            <template x-for="(s, idx) in supplyData[\'lending\'].items" :key="idx">\n'
+    '                              <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                                <td class="px-4 py-2.5 text-xs text-slate-500"\n'
+    '                                  x-text="s.date ? s.date.slice(0,4)+\'.\'+s.date.slice(4,6)+\'.\'+s.date.slice(6) : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-700"\n'
+    '                                  x-text="s.loan_balance != null ? s.loan_balance.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs hidden sm:table-cell"\n'
+    '                                  :class="s.change >= 0 ? \'text-red-500\' : \'text-green-500\'"\n'
+    '                                  x-text="s.change != null ? (s.change >= 0 ? \'+\' : \'\')+s.change.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                                <td class="px-4 py-2.5 text-right text-xs text-slate-600 hidden sm:table-cell"\n'
+    '                                  x-text="s.loan_balance_amt != null ? s.loan_balance_amt.toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                              </tr>\n'
+    '                            </template>\n'
+    '                          </tbody>\n'
+    '                        </table>\n'
+    '                      </div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                  <template x-if="!supplyData[\'lending\'].error && (!supplyData[\'lending\'].items || !supplyData[\'lending\'].items.length)">\n'
+    '                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-center text-slate-400">대차 데이터 없음\n'
+    '                      <button @click="loadSupply(\'lending\')" class="ml-2 text-teal-600 underline text-xs">재시도</button>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '            </div>\n'
+    '          </template>\n'
+    '          <!-- /수급 패널 -->\n'
     '\n'
     '        </div>\n'
     '      </template>\n'
@@ -2913,10 +3247,10 @@ _SIGNAL_PANEL = r"""
               class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
               🚨 임박 이벤트
             </button>
-            <button @click="signalSeg='scan'"
+            <button @click="signalSeg='scan'; loadAlpha(alphaSeg)"
               :class="signalSeg==='scan' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
               class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">
-              🔍 발굴 스캔
+              🔍 알파스크리너
             </button>
             <button @click="signalSeg='dart'"
               :class="signalSeg==='dart' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
@@ -2986,54 +3320,400 @@ _SIGNAL_PANEL = r"""
             </div>
           </template>
 
-          <!-- ── 🔍 발굴 스캔 ── -->
+          <!-- ── 🔍 알파스크리너 ── -->
           <template x-if="signalSeg==='scan'">
             <div>
-              <template x-if="signals.scan && signals.scan.results && signals.scan.results.length">
+              <!-- 전략 필터 pill row (가로스크롤) -->
+              <div class="flex gap-2 mb-4 overflow-x-auto pb-1">
+                <button @click="loadAlpha('change')"
+                  :class="alphaSeg==='change' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">
+                  변화감지
+                </button>
+                <button @click="loadAlpha('fscore')"
+                  :class="alphaSeg==='fscore' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">
+                  F-Score 우량
+                </button>
+                <button @click="loadAlpha('mscore')"
+                  :class="alphaSeg==='mscore' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">
+                  M-Score 안전
+                </button>
+                <button @click="loadAlpha('fcf')"
+                  :class="alphaSeg==='fcf' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">
+                  FCF 수익률
+                </button>
+                <button @click="loadAlpha('high52')"
+                  :class="alphaSeg==='high52' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">
+                  52주 신고가
+                </button>
+                <button @click="loadAlpha('low52')"
+                  :class="alphaSeg==='low52' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+                  class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap">
+                  52주 신저가
+                </button>
+              </div>
+
+              <!-- 로딩 스켈레톤 -->
+              <template x-if="alphaLoading && !alphaData[alphaSeg]">
+                <div class="animate-pulse space-y-2">
+                  <template x-for="i in [1,2,3,4,5]" :key="i">
+                    <div class="bg-white rounded-xl border border-slate-100 p-4 h-14"></div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- 변화감지 (change) — 기존 카드 그리드 유지 -->
+              <template x-if="alphaSeg==='change' && alphaData['change']">
                 <div>
-                  <div class="text-xs text-slate-400 mb-3"
-                    x-text="(signals.scan.preset_description || signals.scan.preset || '') + ' · ' + (signals.scan.total_matched || 0) + '종목 매칭 · ' + (signals.scan.date || '')">
-                  </div>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <template x-for="(s, idx) in signals.scan.results" :key="idx">
-                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                        <div class="flex items-start justify-between mb-2">
-                          <div>
-                            <div class="text-sm font-semibold text-slate-800" x-text="s.name || s.ticker"></div>
-                            <div class="text-xs text-slate-400" x-text="s.ticker + (s.market ? ' · ' + s.market : '')"></div>
+                  <template x-if="alphaData['change'].items && alphaData['change'].items.length">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-3"
+                        x-text="(alphaData['change'].meta && alphaData['change'].meta.as_of ? alphaData['change'].meta.as_of : '') + ' · ' + (alphaData['change'].meta && alphaData['change'].meta.count != null ? alphaData['change'].meta.count + '종목' : '')">
+                      </div>
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <template x-for="(s, idx) in alphaData['change'].items" :key="idx">
+                          <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                            <div class="flex items-start justify-between mb-2">
+                              <div>
+                                <div class="text-sm font-semibold text-slate-800" x-text="s.name || s.ticker"></div>
+                                <div class="text-xs text-slate-400" x-text="s.ticker + (s.market ? ' · ' + s.market : '')"></div>
+                              </div>
+                              <div :class="s.chg_pct >= 0 ? 'text-green-600' : 'text-red-600'"
+                                class="text-sm font-bold"
+                                x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? '+' : '') + s.chg_pct.toFixed(1) + '%' : '-'"></div>
+                            </div>
+                            <div class="flex flex-wrap gap-1.5 text-xs">
+                              <template x-if="s.op_profit_delta != null">
+                                <span class="bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
+                                  적자→흑자 Δ<span x-text="s.op_profit_delta.toFixed(0)"></span>억
+                                </span>
+                              </template>
+                              <template x-if="s.fscore_delta != null">
+                                <span class="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                                  F-Score +<span x-text="s.fscore_delta"></span>
+                                </span>
+                              </template>
+                              <template x-if="s.insider_reprors != null">
+                                <span class="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded">
+                                  내부자 <span x-text="s.insider_reprors"></span>명 순매수
+                                </span>
+                              </template>
+                            </div>
                           </div>
-                          <div :class="s.chg_pct >= 0 ? 'text-green-600' : 'text-red-600'"
-                            class="text-sm font-bold"
-                            x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? '+' : '') + s.chg_pct.toFixed(1) + '%' : '-'"></div>
-                        </div>
-                        <div class="flex flex-wrap gap-1.5 text-xs">
-                          <template x-if="s.op_profit_delta != null">
-                            <span class="bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
-                              적자→흑자 Δ<span x-text="s.op_profit_delta.toFixed(0)"></span>억
-                            </span>
-                          </template>
-                          <template x-if="s.fscore_delta != null">
-                            <span class="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
-                              F-Score +<span x-text="s.fscore_delta"></span>
-                            </span>
-                          </template>
-                          <template x-if="s.insider_reprors != null">
-                            <span class="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded">
-                              내부자 <span x-text="s.insider_reprors"></span>명 순매수
-                            </span>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="alphaData['change'].error">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="alphaData['change'].error"></div>
+                  </template>
+                  <template x-if="!alphaData['change'].error && (!alphaData['change'].items || !alphaData['change'].items.length)">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">
+                      발굴된 종목 없음
+                      <button @click="loadAlpha('change')" class="ml-2 text-indigo-600 underline text-xs">재시도</button>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- F-Score 우량 (fscore) — 테이블 -->
+              <template x-if="alphaSeg==='fscore' && alphaData['fscore']">
+                <div>
+                  <template x-if="alphaData['fscore'].error">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="alphaData['fscore'].error"></div>
+                  </template>
+                  <template x-if="!alphaData['fscore'].error && alphaData['fscore'].items && alphaData['fscore'].items.length">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-3"
+                        x-text="(alphaData['fscore'].meta && alphaData['fscore'].meta.as_of ? alphaData['fscore'].meta.as_of + ' · ' : '') + (alphaData['fscore'].meta && alphaData['fscore'].meta.count != null ? alphaData['fscore'].meta.count + '종목' : '')">
+                      </div>
+                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <!-- 데스크탑 테이블 -->
+                        <table class="w-full text-sm hidden sm:table">
+                          <thead>
+                            <tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">
+                              <th class="text-left px-4 py-2.5 font-medium">#</th>
+                              <th class="text-left px-4 py-2.5 font-medium">종목</th>
+                              <th class="text-center px-4 py-2.5 font-medium">F-Score</th>
+                              <th class="text-right px-4 py-2.5 font-medium hidden md:table-cell">시총(억)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="(s, idx) in alphaData['fscore'].items" :key="idx">
+                              <tr class="border-b border-slate-50 hover:bg-slate-50">
+                                <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="s.rank"></td>
+                                <td class="px-4 py-2.5">
+                                  <div class="font-medium text-slate-800" x-text="s.name"></div>
+                                  <div class="text-xs text-slate-400" x-text="s.ticker + ' · ' + (s.market || '')"></div>
+                                </td>
+                                <td class="px-4 py-2.5 text-center">
+                                  <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                    :class="s.fscore >= 8 ? 'bg-emerald-100 text-emerald-700' : 'bg-green-100 text-green-700'"
+                                    x-text="s.fscore"></span>
+                                </td>
+                                <td class="px-4 py-2.5 text-right text-slate-600 text-xs hidden md:table-cell"
+                                  x-text="s.market_cap != null ? s.market_cap.toLocaleString('ko-KR') : '-'"></td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                        <!-- 모바일 카드 -->
+                        <div class="sm:hidden divide-y divide-slate-100">
+                          <template x-for="(s, idx) in alphaData['fscore'].items" :key="idx">
+                            <div class="p-3 flex items-center gap-3">
+                              <span class="text-slate-400 text-xs w-5 text-right" x-text="s.rank"></span>
+                              <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium text-slate-800" x-text="s.name"></div>
+                                <div class="text-xs text-slate-400" x-text="s.ticker"></div>
+                              </div>
+                              <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                :class="s.fscore >= 8 ? 'bg-emerald-100 text-emerald-700' : 'bg-green-100 text-green-700'"
+                                x-text="'F' + s.fscore"></span>
+                            </div>
                           </template>
                         </div>
                       </div>
-                    </template>
-                  </div>
+                    </div>
+                  </template>
+                  <template x-if="!alphaData['fscore'].error && (!alphaData['fscore'].items || !alphaData['fscore'].items.length)">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">
+                      F-Score 데이터 없음
+                      <button @click="loadAlpha('fscore')" class="ml-2 text-indigo-600 underline text-xs">재시도</button>
+                    </div>
+                  </template>
                 </div>
               </template>
-              <template x-if="signals.scan && signals.scan.error">
-                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="signals.scan.error"></div>
+
+              <!-- M-Score 안전 (mscore) — 테이블 -->
+              <template x-if="alphaSeg==='mscore' && alphaData['mscore']">
+                <div>
+                  <template x-if="alphaData['mscore'].error">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-amber-600"
+                      x-text="alphaData['mscore'].error || 'M-Score 데이터 수집 대기 중'"></div>
+                  </template>
+                  <template x-if="!alphaData['mscore'].error && alphaData['mscore'].items && alphaData['mscore'].items.length">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-3"
+                        x-text="(alphaData['mscore'].meta && alphaData['mscore'].meta.as_of ? alphaData['mscore'].meta.as_of + ' · ' : '') + (alphaData['mscore'].meta && alphaData['mscore'].meta.count != null ? alphaData['mscore'].meta.count + '종목' : '')">
+                      </div>
+                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <table class="w-full text-sm hidden sm:table">
+                          <thead>
+                            <tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">
+                              <th class="text-left px-4 py-2.5 font-medium">#</th>
+                              <th class="text-left px-4 py-2.5 font-medium">종목</th>
+                              <th class="text-center px-4 py-2.5 font-medium">M-Score</th>
+                              <th class="text-right px-4 py-2.5 font-medium hidden md:table-cell">시총(억)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="(s, idx) in alphaData['mscore'].items" :key="idx">
+                              <tr class="border-b border-slate-50 hover:bg-slate-50">
+                                <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="s.rank"></td>
+                                <td class="px-4 py-2.5">
+                                  <div class="font-medium text-slate-800" x-text="s.name"></div>
+                                  <div class="text-xs text-slate-400" x-text="s.ticker + ' · ' + (s.market || '')"></div>
+                                </td>
+                                <td class="px-4 py-2.5 text-center">
+                                  <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                    :class="s.mscore <= -2.22 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'"
+                                    x-text="s.mscore != null ? s.mscore.toFixed(2) : '-'"></span>
+                                  <span class="ml-1 text-xs"
+                                    :class="s.mscore <= -2.22 ? 'text-green-600' : 'text-amber-600'"
+                                    x-text="s.mscore <= -2.22 ? '안전' : '주의'"></span>
+                                </td>
+                                <td class="px-4 py-2.5 text-right text-slate-600 text-xs hidden md:table-cell"
+                                  x-text="s.market_cap != null ? s.market_cap.toLocaleString('ko-KR') : '-'"></td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                        <div class="sm:hidden divide-y divide-slate-100">
+                          <template x-for="(s, idx) in alphaData['mscore'].items" :key="idx">
+                            <div class="p-3 flex items-center gap-3">
+                              <span class="text-slate-400 text-xs w-5 text-right" x-text="s.rank"></span>
+                              <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium text-slate-800" x-text="s.name"></div>
+                                <div class="text-xs text-slate-400" x-text="s.ticker"></div>
+                              </div>
+                              <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                :class="s.mscore <= -2.22 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'"
+                                x-text="s.mscore != null ? s.mscore.toFixed(2) : '-'"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!alphaData['mscore'].error && (!alphaData['mscore'].items || !alphaData['mscore'].items.length)">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">
+                      M-Score 데이터 없음
+                      <button @click="loadAlpha('mscore')" class="ml-2 text-indigo-600 underline text-xs">재시도</button>
+                    </div>
+                  </template>
+                </div>
               </template>
-              <template x-if="!signals.scan || (!signals.scan.results || !signals.scan.results.length) && !signals.scan.error">
-                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">발굴된 종목 없음</div>
+
+              <!-- FCF 수익률 (fcf) — 테이블 -->
+              <template x-if="alphaSeg==='fcf' && alphaData['fcf']">
+                <div>
+                  <template x-if="alphaData['fcf'].error">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="alphaData['fcf'].error"></div>
+                  </template>
+                  <template x-if="!alphaData['fcf'].error && alphaData['fcf'].items && alphaData['fcf'].items.length">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-3"
+                        x-text="(alphaData['fcf'].meta && alphaData['fcf'].meta.as_of ? alphaData['fcf'].meta.as_of + ' · ' : '') + (alphaData['fcf'].meta && alphaData['fcf'].meta.count != null ? alphaData['fcf'].meta.count + '종목' : '')">
+                      </div>
+                      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <table class="w-full text-sm hidden sm:table">
+                          <thead>
+                            <tr class="text-xs text-slate-400 border-b border-slate-100 bg-slate-50">
+                              <th class="text-left px-4 py-2.5 font-medium">#</th>
+                              <th class="text-left px-4 py-2.5 font-medium">종목</th>
+                              <th class="text-right px-4 py-2.5 font-medium">FCF/EV(%)</th>
+                              <th class="text-right px-4 py-2.5 font-medium hidden md:table-cell">시총(억)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="(s, idx) in alphaData['fcf'].items" :key="idx">
+                              <tr class="border-b border-slate-50 hover:bg-slate-50">
+                                <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="s.rank"></td>
+                                <td class="px-4 py-2.5">
+                                  <div class="font-medium text-slate-800" x-text="s.name"></div>
+                                  <div class="text-xs text-slate-400" x-text="s.ticker + ' · ' + (s.market || '')"></div>
+                                </td>
+                                <td class="px-4 py-2.5 text-right">
+                                  <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                    :class="s.fcf_yield >= 10 ? 'bg-emerald-100 text-emerald-700' : s.fcf_yield >= 5 ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'"
+                                    x-text="s.fcf_yield != null ? s.fcf_yield.toFixed(1) + '%' : '-'"></span>
+                                </td>
+                                <td class="px-4 py-2.5 text-right text-slate-600 text-xs hidden md:table-cell"
+                                  x-text="s.market_cap != null ? s.market_cap.toLocaleString('ko-KR') : '-'"></td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                        <div class="sm:hidden divide-y divide-slate-100">
+                          <template x-for="(s, idx) in alphaData['fcf'].items" :key="idx">
+                            <div class="p-3 flex items-center gap-3">
+                              <span class="text-slate-400 text-xs w-5 text-right" x-text="s.rank"></span>
+                              <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium text-slate-800" x-text="s.name"></div>
+                                <div class="text-xs text-slate-400" x-text="s.ticker"></div>
+                              </div>
+                              <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                :class="s.fcf_yield >= 10 ? 'bg-emerald-100 text-emerald-700' : s.fcf_yield >= 5 ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'"
+                                x-text="s.fcf_yield != null ? s.fcf_yield.toFixed(1) + '%' : '-'"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!alphaData['fcf'].error && (!alphaData['fcf'].items || !alphaData['fcf'].items.length)">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">
+                      FCF 데이터 없음
+                      <button @click="loadAlpha('fcf')" class="ml-2 text-indigo-600 underline text-xs">재시도</button>
+                    </div>
+                  </template>
+                </div>
               </template>
+
+              <!-- 52주 신고가 근접 (high52) — 카드그리드 -->
+              <template x-if="alphaSeg==='high52' && alphaData['high52']">
+                <div>
+                  <template x-if="alphaData['high52'].error">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="alphaData['high52'].error"></div>
+                  </template>
+                  <template x-if="!alphaData['high52'].error && alphaData['high52'].items && alphaData['high52'].items.length">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-3"
+                        x-text="(alphaData['high52'].meta && alphaData['high52'].meta.as_of ? alphaData['high52'].meta.as_of + ' · ' : '') + (alphaData['high52'].meta && alphaData['high52'].meta.count != null ? alphaData['high52'].meta.count + '종목' : '')">
+                      </div>
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <template x-for="(s, idx) in alphaData['high52'].items" :key="idx">
+                          <div class="bg-white rounded-xl border border-emerald-200 shadow-sm p-4">
+                            <div class="flex items-start justify-between mb-2">
+                              <div>
+                                <div class="text-sm font-semibold text-slate-800" x-text="s.name || s.ticker"></div>
+                                <div class="text-xs text-slate-400" x-text="s.ticker"></div>
+                              </div>
+                              <div :class="s.chg_pct >= 0 ? 'text-green-600' : 'text-red-600'"
+                                class="text-sm font-bold"
+                                x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? '+' : '') + s.chg_pct.toFixed(1) + '%' : '-'"></div>
+                            </div>
+                            <div class="flex gap-2 text-xs flex-wrap">
+                              <span class="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded"
+                                x-text="'52주고 ' + (s.new_high != null ? s.new_high.toLocaleString('ko-KR') : '-')"></span>
+                              <span class="text-slate-500"
+                                x-text="'현재 ' + (s.price != null ? s.price.toLocaleString('ko-KR') : '-')"></span>
+                              <span class="font-semibold text-emerald-600"
+                                x-text="'괴리 ' + (s.high_gap_pct != null ? s.high_gap_pct.toFixed(1) + '%' : '-')"></span>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!alphaData['high52'].error && (!alphaData['high52'].items || !alphaData['high52'].items.length)">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">
+                      신고가 근접 종목 없음
+                      <button @click="loadAlpha('high52')" class="ml-2 text-indigo-600 underline text-xs">재시도</button>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- 52주 신저가 근접 (low52) — 카드그리드 -->
+              <template x-if="alphaSeg==='low52' && alphaData['low52']">
+                <div>
+                  <template x-if="alphaData['low52'].error">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400" x-text="alphaData['low52'].error"></div>
+                  </template>
+                  <template x-if="!alphaData['low52'].error && alphaData['low52'].items && alphaData['low52'].items.length">
+                    <div>
+                      <div class="text-xs text-slate-400 mb-3"
+                        x-text="(alphaData['low52'].meta && alphaData['low52'].meta.as_of ? alphaData['low52'].meta.as_of + ' · ' : '') + (alphaData['low52'].meta && alphaData['low52'].meta.count != null ? alphaData['low52'].meta.count + '종목' : '')">
+                      </div>
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <template x-for="(s, idx) in alphaData['low52'].items" :key="idx">
+                          <div class="bg-white rounded-xl border border-red-200 shadow-sm p-4">
+                            <div class="flex items-start justify-between mb-2">
+                              <div>
+                                <div class="text-sm font-semibold text-slate-800" x-text="s.name || s.ticker"></div>
+                                <div class="text-xs text-slate-400" x-text="s.ticker"></div>
+                              </div>
+                              <div :class="s.chg_pct >= 0 ? 'text-green-600' : 'text-red-600'"
+                                class="text-sm font-bold"
+                                x-text="s.chg_pct != null ? (s.chg_pct >= 0 ? '+' : '') + s.chg_pct.toFixed(1) + '%' : '-'"></div>
+                            </div>
+                            <div class="flex gap-2 text-xs flex-wrap">
+                              <span class="bg-red-50 text-red-700 px-1.5 py-0.5 rounded"
+                                x-text="'52주저 ' + (s.new_low != null ? s.new_low.toLocaleString('ko-KR') : '-')"></span>
+                              <span class="text-slate-500"
+                                x-text="'현재 ' + (s.price != null ? s.price.toLocaleString('ko-KR') : '-')"></span>
+                              <span class="font-semibold text-red-600"
+                                x-text="'괴리 ' + (s.low_gap_pct != null ? s.low_gap_pct.toFixed(1) + '%' : '-')"></span>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!alphaData['low52'].error && (!alphaData['low52'].items || !alphaData['low52'].items.length)">
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center text-slate-400">
+                      신저가 근접 종목 없음
+                      <button @click="loadAlpha('low52')" class="ml-2 text-indigo-600 underline text-xs">재시도</button>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
             </div>
           </template>
 
@@ -6192,6 +6872,207 @@ async def _handle_api_us_analyst_research(request: web.Request) -> web.Response:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 알파스크리너 API  /api/alpha?preset=change|fscore|mscore|fcf|high52|low52
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _build_alpha_payload(preset: str) -> dict:
+    """알파스크리너 preset별 빌더. 부분 실패 허용.
+
+    preset:
+      change  — get_change_scan (turnaround,fscore_jump,insider_cluster_buy)
+      fscore  — get_finance_rank rank_type=fscore
+      mscore  — get_finance_rank rank_type=mscore_safe
+      fcf     — get_finance_rank rank_type=fcf_yield
+      high52  — get_highlow sort=high
+      low52   — get_highlow sort=low
+    """
+    from datetime import datetime as _dt
+
+    as_of = _dt.now().strftime("%Y-%m-%d %H:%M")
+
+    if preset == "change":
+        try:
+            r = await execute_tool(
+                "get_change_scan",
+                {"preset": "turnaround,fscore_jump,insider_cluster_buy", "n": 30},
+            )
+            if _tool_err(r):
+                return {"preset": preset, "error": r["error"], "items": [],
+                        "meta": {"as_of": as_of, "count": 0}}
+            items = [
+                {
+                    "ticker": s.get("ticker"),
+                    "name": s.get("name"),
+                    "market": s.get("market"),
+                    "close": s.get("close"),
+                    "chg_pct": s.get("chg_pct"),
+                    "op_profit_delta": s.get("op_profit_delta"),
+                    "fscore_delta": s.get("fscore_delta"),
+                    "insider_reprors": s.get("insider_reprors"),
+                }
+                for s in (r.get("results") or [])
+            ]
+            return {"preset": preset, "items": items,
+                    "meta": {"as_of": r.get("date") or as_of, "count": len(items)}}
+        except Exception as e:
+            return {"preset": preset, "error": str(e), "items": [],
+                    "meta": {"as_of": as_of, "count": 0}}
+
+    elif preset in ("fscore", "mscore", "fcf"):
+        rank_map = {"fscore": "fscore", "mscore": "mscore_safe", "fcf": "fcf_yield"}
+        try:
+            r = await execute_tool(
+                "get_finance_rank",
+                {"rank_type": rank_map[preset], "n": 30},
+            )
+            if _tool_err(r):
+                return {"preset": preset, "error": r["error"], "items": [],
+                        "meta": {"as_of": as_of, "count": 0}}
+            stocks = r.get("stocks") or []
+            items = []
+            for s in stocks:
+                item: dict = {
+                    "rank": s.get("rank"),
+                    "ticker": s.get("symbol"),
+                    "name": s.get("name"),
+                    "market": s.get("market"),
+                    "market_cap": s.get("market_cap"),
+                }
+                if preset == "fscore":
+                    item["fscore"] = s.get("metric")
+                elif preset == "mscore":
+                    item["mscore"] = s.get("metric")
+                elif preset == "fcf":
+                    item["fcf_yield"] = s.get("metric")
+                items.append(item)
+            return {"preset": preset, "items": items,
+                    "meta": {"as_of": r.get("trade_date") or as_of, "count": r.get("count", len(items))}}
+        except Exception as e:
+            return {"preset": preset, "error": str(e), "items": [],
+                    "meta": {"as_of": as_of, "count": 0}}
+
+    elif preset in ("high52", "low52"):
+        sort = "high" if preset == "high52" else "low"
+        try:
+            r = await execute_tool("get_highlow", {"sort": sort, "n": 30})
+            if _tool_err(r):
+                return {"preset": preset, "error": r["error"], "items": [],
+                        "meta": {"as_of": as_of, "count": 0}}
+            stocks = r.get("stocks") or []
+            items = [
+                {
+                    "rank": s.get("rank"),
+                    "ticker": s.get("ticker"),
+                    "name": s.get("name"),
+                    "price": s.get("price"),
+                    "chg_pct": s.get("chg_pct"),
+                    "new_high": s.get("new_high"),
+                    "new_low": s.get("new_low"),
+                    "high_gap_pct": s.get("high_gap_pct"),
+                    "low_gap_pct": s.get("low_gap_pct"),
+                }
+                for s in stocks
+            ]
+            return {"preset": preset, "items": items,
+                    "meta": {"as_of": as_of, "count": r.get("count", len(items))}}
+        except Exception as e:
+            return {"preset": preset, "error": str(e), "items": [],
+                    "meta": {"as_of": as_of, "count": 0}}
+
+    return {"preset": preset, "error": f"알 수 없는 preset: {preset}", "items": [],
+            "meta": {"as_of": as_of, "count": 0}}
+
+
+async def _handle_api_alpha(request: web.Request) -> web.Response:
+    """GET /api/alpha?preset=change|fscore|mscore|fcf|high52|low52."""
+    preset = request.rel_url.query.get("preset", "change").strip().lower()
+    valid = {"change", "fscore", "mscore", "fcf", "high52", "low52"}
+    if preset not in valid:
+        preset = "change"
+    # change: 600s TTL, 나머지: 300s
+    ttl = 600.0 if preset == "change" else 300.0
+    cache_key = f"alpha_{preset}"
+    return await _api(_cached(cache_key, ttl, lambda: _build_alpha_payload(preset)))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 수급 API  /api/supply?mode=foreign_rank|combined_rank|short_sale|credit|lending
+# short_sale/credit/lending 은 watchlist 첫 번째 종목 기준 (ticker 파라미터 지원)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _build_supply_payload(mode: str, ticker: str = "") -> dict:
+    """수급 mode별 빌더. 부분 실패 허용."""
+    from datetime import datetime as _dt
+    as_of = _dt.now().strftime("%Y-%m-%d %H:%M")
+
+    if mode == "foreign_rank":
+        try:
+            r = await execute_tool("get_supply", {"mode": "foreign_rank", "n": 20})
+            if _tool_err(r):
+                return {"mode": mode, "error": r["error"], "items": [], "as_of": as_of}
+            items = r.get("items") or []
+            return {"mode": mode, "items": items,
+                    "as_of": r.get("trade_date") or as_of}
+        except Exception as e:
+            return {"mode": mode, "error": str(e), "items": [], "as_of": as_of}
+
+    elif mode == "combined_rank":
+        try:
+            r = await execute_tool("get_supply", {"mode": "combined_rank", "n": 20})
+            if _tool_err(r):
+                return {"mode": mode, "error": r["error"], "items": [], "as_of": as_of}
+            return {"mode": mode, "items": r.get("items") or [],
+                    "as_of": as_of}
+        except Exception as e:
+            return {"mode": mode, "error": str(e), "items": [], "as_of": as_of}
+
+    elif mode in ("short_sale", "credit", "lending"):
+        # ticker 없으면 watchlist 첫 종목 사용
+        if not ticker:
+            try:
+                wl = load_watchlist()
+                ticker = next(iter(wl), "") if isinstance(wl, dict) else (wl[0] if wl else "")
+            except Exception:
+                ticker = "005930"
+        if not ticker:
+            ticker = "005930"  # 삼성전자 기본값
+        try:
+            r = await execute_tool("get_market_signal", {"mode": mode, "ticker": ticker})
+            if _tool_err(r):
+                return {"mode": mode, "error": r["error"], "items": [],
+                        "ticker": ticker, "warning": None, "as_of": as_of}
+            items = r.get("items") or []
+            warning = r.get("warning")
+            return {"mode": mode, "items": items, "ticker": ticker,
+                    "warning": warning, "as_of": as_of}
+        except Exception as e:
+            return {"mode": mode, "error": str(e), "items": [],
+                    "ticker": ticker, "warning": None, "as_of": as_of}
+
+    return {"mode": mode, "error": f"알 수 없는 mode: {mode}", "items": [], "as_of": as_of}
+
+
+async def _handle_api_supply(request: web.Request) -> web.Response:
+    """GET /api/supply?mode=foreign_rank|combined_rank|short_sale|credit|lending&ticker=XXX."""
+    mode = request.rel_url.query.get("mode", "foreign_rank").strip().lower()
+    valid = {"foreign_rank", "combined_rank", "short_sale", "credit", "lending"}
+    if mode not in valid:
+        mode = "foreign_rank"
+    ticker = request.rel_url.query.get("ticker", "").strip().upper()
+    # foreign_rank/combined_rank: 300~600s TTL, SWR
+    # short_sale/credit/lending: 종목별 캐시 180s
+    if mode in ("foreign_rank", "combined_rank"):
+        ttl = 300.0
+        cache_key = f"supply_{mode}"
+        return await _api(_cached(cache_key, ttl, lambda: _build_supply_payload(mode)))
+    else:
+        ttl = 180.0
+        cache_key = f"supply_{mode}_{ticker or 'default'}"
+        return await _api(_cached(cache_key, ttl,
+                                   lambda: _build_supply_payload(mode, ticker)))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라우트 등록
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -6224,6 +7105,9 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/sector_heatmap", _handle_api_sector_heatmap)
     # 매크로 패널 추가
     app.router.add_get("/api/macro_panel", _handle_api_macro_panel)
+    # 알파스크리너 + 수급 추가
+    app.router.add_get("/api/alpha", _handle_api_alpha)
+    app.router.add_get("/api/supply", _handle_api_supply)
     # US 애널리스트 탭 추가
     app.router.add_get("/api/us/candidates", _handle_api_us_candidates)
     app.router.add_get("/api/us/scan", _handle_api_us_scan)
