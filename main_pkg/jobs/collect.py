@@ -23,7 +23,7 @@ from kis_api import (
 )
 
 try:
-    from db_collector import collect_daily
+    from db_collector import collect_daily, collect_dividends
     _HAS_DB_COLLECTOR = True
 except ImportError:
     _HAS_DB_COLLECTOR = False
@@ -81,6 +81,20 @@ async def daily_collect_job(context):
         if cnt:
             await _alert_silent_failure(context, "daily_collect_error", cnt,
                 f"daily_collect_job 연속 {cnt}회 실패\n오류: {report['error']}")
+
+
+async def weekly_dividend_job(context):
+    """주간 배당 DPS 수집 (일요일). KIS 예탁원으로 종목별 현금배당 → dividend_events 저장
+    → div_yield 재계산. DPS는 sticky(연1회)라 주1회면 충분. ★KRX 불필요★."""
+    if not _HAS_DB_COLLECTOR:
+        return
+    try:
+        res = await asyncio.wait_for(collect_dividends(), timeout=1200)  # 20분
+        print(f"[weekly_dividend] {res}")
+    except asyncio.TimeoutError:
+        print("[weekly_dividend] 20분 타임아웃")
+    except Exception as e:
+        print(f"[weekly_dividend] 오류: {e}")
 
 
 async def daily_collect_sanity_check(context):

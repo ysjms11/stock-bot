@@ -1067,24 +1067,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 최근 영업일 5일 daily_snapshot 누락 시 텔레그램 경고
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# KRX 공휴일 (휴장일) — 매년 1월 갱신
-# 출처: https://open.krx.co.kr/contents/MKD/01/0110/01100305/MKD01100305.jsp
-_KRX_HOLIDAYS = frozenset({
-    # 2026년
-    "20260101",                                      # 신정
-    "20260216", "20260217", "20260218",              # 설 연휴
-    "20260302",                                      # 3.1절 대체 (3/1 일)
-    "20260501",                                      # 근로자의 날
-    "20260505",                                      # 어린이날
-    "20260525",                                      # 부처님오신날 대체 (5/24 일)
-    "20260603",                                      # 제21대 대통령 선거
-    "20260817",                                      # 광복절 대체 (8/15 토)
-    "20260924", "20260925",                          # 추석 (9/26 토)
-    "20261009",                                      # 한글날
-    "20261225",                                      # 성탄절
-    # 2027년 — 다음 해 1월 PROGRESS 알림 추가 시 보강
-    "20270101",
-})
+# KRX 공휴일 — db_collector._KR_MARKET_HOLIDAYS를 단일 소스로 사용(중복 제거).
+# 갱신은 거기 한 곳에서. collect_daily 휴장일 가드와 동일 집합 보장.
+from db_collector import _KR_MARKET_HOLIDAYS as _KRX_HOLIDAYS
 
 
 def _is_krx_business_day(d) -> bool:
@@ -1156,7 +1141,7 @@ async def weekly_sanity_check(context):
                 chat_id=CHAT_ID,
                 text=(f"📅 KRX 공휴일 list 갱신 필요\n"
                       f"{this_year_str}년 등록: {krx_cnt}건 (정상 13~16건)\n"
-                      f"main.py `_KRX_HOLIDAYS` frozenset 갱신\n"
+                      f"db_collector.py `_KR_MARKET_HOLIDAYS` frozenset 갱신 (단일 소스)\n"
                       f"https://open.krx.co.kr/contents/MKD/01/0110/01100305/MKD01100305.jsp")
             )
 

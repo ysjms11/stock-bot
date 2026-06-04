@@ -586,7 +586,7 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                 float(basic.get("pbr", 0) or 0),
                 float(basic.get("eps", 0) or 0),
                 float(basic.get("bps", 0) or 0),
-                None,  # div_yield — 별도 supplement(_update_dividend_in_snapshot)가 채움. NULL=미수집(실패 가시화)
+                None,  # div_yield — 6c _recompute_div_yield_from_events(KIS-DPS÷종가)가 채움. NULL=미수집
                 int(basic.get("w52_hgpr", 0) or 0),
                 int(basic.get("w52_lwpr", 0) or 0),
                 float(basic.get("hts_frgn_ehrt", 0) or 0),
@@ -823,23 +823,15 @@ async def collect_daily(date: str = None) -> dict:
         print(f"[collect_daily] 수급 정밀화 실패: {e}")
         report["supply"] = {"error": str(e)}
 
-    # 6c. 배당수익률 UPDATE (div_yield) — pykrx 1차 + KIS 예탁원 폴백.
-    # 종전: v2 수집기가 div_yield=0.0 하드코딩 → 04-08 이후 전종목 영구 0 (별도 보강 미구현).
+    # 6c. div_yield 재계산 — KIS 예탁원 DPS(dividend_events) ÷ 종가. ★KRX 불필요★.
+    # events는 주간 collect_dividends가 갱신(DPS는 sticky). 여기선 당일 셀만 재계산(무 API, 저비용).
+    # 종전: v2 수집기 div_yield=0.0 하드코딩 → 04-08~ 영구 0. 이제 KIS-DPS로 항상 산출.
     try:
-        dv_res = _update_dividend_in_snapshot(conn, date)
+        dv_res = _recompute_div_yield_from_events(conn, dates=[date])
         report["dividend"] = dv_res
     except Exception as e:
-        print(f"[collect_daily] 배당수익률 갱신 실패: {e}")
+        print(f"[collect_daily] div_yield 재계산 실패: {e}")
         report["dividend"] = {"error": str(e)}
-
-    # 6d. div_yield 과거 공백 소급 — KRX(pykrx) 복구 시 04-08~ 미수집 거래일을 자동으로 메운다.
-    # KRX 다운이면 즉시 no-op. 실데이터(KRX DVD_YLD)라 시계열 정의 일관성 유지(합성 아님).
-    try:
-        bf_res = _backfill_dividend_gap(conn)
-        report["dividend_backfill"] = bf_res
-    except Exception as e:
-        print(f"[collect_daily] div_yield 소급 실패: {e}")
-        report["dividend_backfill"] = {"error": str(e)}
 
     conn.close()
 
@@ -2739,116 +2731,133 @@ def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
     }
 
 
-def _fetch_div_pykrx(date: str):
-    """[1차] pykrx 전종목 배당수익률(DIV %). 성공 시 {ticker: yield%}(무배당 0 포함), 실패 시 None.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# div_yield: KIS 예탁원 DPS 기반 (KRX 불필요)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _div_num(x) -> float:
+    try:
+        return float(str(x).replace(",", "").strip() or 0)
+    except (ValueError, TypeError):
+        return 0.0
 
-    KRX 원천(DVD_YLD)과 동일 정의 — 종전(~04-07) 1282종목 소스와 일치. 포괄적(전종목).
+
+def _recompute_div_yield_from_events(conn: sqlite3.Connection, dates: list = None) -> dict:
+    """dividend_events(KIS 예탁원 DPS)로 div_yield 재계산. KRX 불필요.
+
+    div_yield[date][sym] = (record_date ∈ (date-365, date] 현금 DPS 합) / close × 100.
+    종목별 실배당이라 재구성(낡은 앵커)보다 정확. 배당 종목 셀만 갱신(무배당/미보유 불변).
+    dates=None이면 전 거래일 재계산(소급 포함).
+    """
+    evrows = conn.execute(
+        "SELECT symbol, record_date, dps_cash FROM dividend_events WHERE dps_cash > 0").fetchall()
+    if not evrows:
+        return {"updated": 0, "note": "dividend_events 비어있음 (collect_dividends 먼저)"}
+    ev = {}  # symbol -> [(record_date_int, dps), ...]
+    for r in evrows:
+        try:
+            ev.setdefault(r["symbol"], []).append((int(r["record_date"]), float(r["dps_cash"])))
+        except (ValueError, TypeError):
+            continue
+    payers = set(ev.keys())
+
+    # payer들의 (date, close) 일괄 로드
+    closes = {}  # symbol -> {date: close}
+    for r in conn.execute("SELECT trade_date, symbol, close FROM daily_snapshot WHERE close > 0").fetchall():
+        if r["symbol"] in payers:
+            closes.setdefault(r["symbol"], {})[r["trade_date"]] = r["close"]
+
+    want = set(dates) if dates else None
+    # 날짜별 직전-12M 하한 1회 precompute
+    all_dates = {d for cm in closes.values() for d in cm if (want is None or d in want)}
+    date_lo = {d: int((datetime.strptime(d, "%Y%m%d") - timedelta(days=365)).strftime("%Y%m%d"))
+               for d in all_dates}
+
+    updates = []  # (div_yield, date, symbol)
+    for sym, evlist in ev.items():
+        cmap = closes.get(sym)
+        if not cmap:
+            continue
+        for d, c in cmap.items():
+            if c <= 0 or (want is not None and d not in want):
+                continue
+            di = int(d); lo = date_lo[d]
+            ttm = sum(dps for (rd, dps) in evlist if lo < rd <= di)
+            if ttm > 0:
+                updates.append((round(ttm / c * 100.0, 4), d, sym))
+    if updates:
+        # 비파괴: 기존 실값(pre-04-08 KRX DVD_YLD 등)은 보존하고 0/NULL(미수집)만 채운다.
+        conn.executemany(
+            "UPDATE daily_snapshot SET div_yield=? WHERE trade_date=? AND symbol=? "
+            "AND (div_yield IS NULL OR div_yield=0)", updates)
+        conn.commit()
+    return {"candidates": len(updates), "payers": len(ev)}
+
+
+async def collect_dividends(tickers: list = None, lookback_days: int = 430) -> dict:
+    """[KRX 불필요] KIS 예탁원(HHKDB669102C0)으로 종목별 현금배당 DPS 수집 → dividend_events 저장
+    → div_yield 재계산. DPS는 sticky(연 1회)라 주 1회 수집 권장. div_yield = DPS÷종가.
     """
     try:
-        from pykrx import stock
-    except ImportError:
-        return None
-    import time as _time
-    for attempt in range(1, 3):  # 2회 (KRX soft-block 시 과도한 지연 방지)
-        try:
-            df = stock.get_market_fundamental(date, market="ALL")
-            if df is not None and len(df) > 0 and "DIV" in df.columns:
-                out = {}
-                for ticker, row in df.iterrows():
-                    try:
-                        out[str(ticker).zfill(6)] = float(row["DIV"])
-                    except (ValueError, TypeError, KeyError):
-                        continue
-                if out:
-                    return out
-        except Exception:
-            pass
-        if attempt < 2:
-            _time.sleep(1.5)
-    return None
+        from kis_api import get_kis_token, kis_dividend_schedule
+    except ImportError as e:
+        return {"error": f"kis_api import 실패: {e}"}
+    tok = await get_kis_token()
+    if not tok:
+        return {"error": "KIS 토큰 발급 실패"}
 
+    conn = _get_db()
+    if tickers is None:
+        cutoff = (datetime.now(KST) - timedelta(days=14)).strftime("%Y%m%d")
+        tickers = [r[0] for r in conn.execute(
+            "SELECT DISTINCT symbol FROM daily_snapshot WHERE trade_date >= ?", (cutoff,)).fetchall()]
+    today = datetime.now(KST).strftime("%Y%m%d")
+    from_dt = (datetime.now(KST) - timedelta(days=lookback_days)).strftime("%Y%m%d")
 
-def _update_dividend_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
-    """daily_snapshot.div_yield 보강. insert default=NULL(미수집) → 실측값으로 채움.
+    sem = asyncio.Semaphore(6)
+    events = []
+    stat = {"ok": 0, "fail": 0, "payers": 0}
 
-    소스: pykrx get_market_fundamental(DIV %) = KRX 원천 DVD_YLD.
-    종전(~04-07) 1282종목을 채우던 소스와 '동일 정의'라 시계열 일관성이 보장된다.
-    KRX는 간헐적 soft-block → _fetch_div_pykrx에서 retry. 실패 시:
-      div_yield를 NULL로 남겨 미수집을 가시화(침묵 0 금지) + ⚠️ 경보 → 다음 수집서 자동 재시도(self-heal).
+    async def _one(t):
+        async with sem:
+            try:
+                rows = await kis_dividend_schedule(tok, from_dt=from_dt, to_dt=today, ticker=t, gb1="0")
+                stat["ok"] += 1
+            except Exception:
+                stat["fail"] += 1
+                return
+            got = False
+            for r in (rows or []):
+                amt = _div_num(r.get("per_sto_divi_amt"))   # 현금 DPS (주식배당은 0)
+                rd = (r.get("record_date") or "").strip()
+                if amt > 0 and len(rd) == 8 and rd.isdigit():
+                    events.append((t, rd, amt, (r.get("divi_kind") or "").strip(),
+                                   (r.get("divi_pay_dt") or "").strip()))
+                    got = True
+            if got:
+                stat["payers"] += 1
+            await asyncio.sleep(0.03)
 
-    KIS 예탁원 폴백은 의도적으로 미채택:
-      (1) 페이지네이션 한계로 종목별 직전12M DPS가 불완전 → 잘못된(과소) 수익률,
-      (2) DPS/close 정의가 KRX DVD_YLD와 달라 소스 추적 컬럼이 없는 현 스키마에선
-          source 혼합이 시계열 정의 불일치(알파 연구 오염)를 유발.
-      → '틀린 값'보다 '정직한 NULL'이 안전.
+    # circuit breaker: 첫 50종목 프로브
+    probe = tickers[:50]
+    await asyncio.gather(*[_one(t) for t in probe])
+    if probe and stat["fail"] >= len(probe) * 0.8:
+        conn.close()
+        print(f"⚠️ [Dividends] KIS 배당 조회 프로브 대량 실패 ({stat['fail']}/{len(probe)}) → 중단")
+        return {"error": "KIS 배당 조회 대량 실패", **stat}
+    await asyncio.gather(*[_one(t) for t in tickers[50:]])
 
-    종전 버그: v2 수집기가 div_yield=0.0 하드코딩 + 별도 보강 미구현 → 04-08 이후 전종목 영구 0.
-    """
-    if not date:
-        return {"error": "date 누락"}
-
-    div_map = _fetch_div_pykrx(date)
-    if div_map is None:
-        print(f"⚠️ [Dividend] KRX(pykrx) 배당 소스 실패 ({date}) — div_yield NULL 유지 "
-              f"(미수집 가시화, 다음 수집서 재시도).")
-        return {"source": None, "updated": 0, "ok": False, "error": "pykrx dividend source down"}
-
-    # 포괄 소스 성공 → 미수집(NULL) 종목을 '실제 0(무배당)'으로 확정.
-    zeroed = conn.execute(
-        "UPDATE daily_snapshot SET div_yield=0 WHERE trade_date=? AND div_yield IS NULL",
-        (date,)).rowcount
-    # 배당 종목(DIV>0)만 실수익률로 갱신.
-    updated = 0
-    for ticker, y in div_map.items():
-        if y and y > 0:
-            updated += conn.execute(
-                "UPDATE daily_snapshot SET div_yield=? WHERE trade_date=? AND symbol=?",
-                (round(float(y), 4), date, ticker)).rowcount
+    now = datetime.now(KST).isoformat()
+    conn.executemany(
+        "INSERT OR REPLACE INTO dividend_events(symbol,record_date,dps_cash,divi_kind,pay_date,fetched_at) "
+        "VALUES (?,?,?,?,?,?)",
+        [(s, rd, amt, k, p, now) for (s, rd, amt, k, p) in events])
     conn.commit()
-
-    payers = sum(1 for y in div_map.values() if y and y > 0)
-    print(f"[Dividend] div_yield 갱신: source=pykrx, payers={payers}, updated={updated}, zeroed={zeroed}")
-    return {"source": "pykrx", "updated": updated, "payers": payers, "zeroed": zeroed, "ok": True}
-
-
-def _backfill_dividend_gap(conn: sqlite3.Connection, lookback_days: int = 90) -> dict:
-    """최근 구간에서 div_yield가 전부 0/NULL인 거래일(=미수집)을 pykrx로 소급 채운다.
-
-    KRX(pykrx) 다운 동안 쌓인 과거 공백(예: 04-08~)을, KRX 복구 후 첫 collect_daily가
-    자동으로 메우게 하는 self-heal 훅. pykrx get_market_fundamental(과거일자)는 그날의
-    실제 KRX DVD_YLD를 주므로 합성이 아니라 '실데이터·동일 정의'다.
-      - KRX 다운: 첫 fetch가 None → 즉시 중단(no-op).
-      - 공백 없음: GROUP BY 한 번으로 즉시 반환(저비용).
-      - 멱등: 채워진 날짜는 다음 실행 때 대상에서 빠진다.
-    """
-    cutoff = (datetime.now(KST) - timedelta(days=lookback_days)).strftime("%Y%m%d")
-    rows = conn.execute(
-        "SELECT trade_date, SUM(CASE WHEN div_yield > 0 THEN 1 ELSE 0 END) payers "
-        "FROM daily_snapshot WHERE trade_date >= ? GROUP BY trade_date",
-        (cutoff,)).fetchall()
-    # 배당 페이어가 0인 거래일 = 미수집(휴장일 제외)
-    broken = sorted(r["trade_date"] for r in rows
-                    if (r["payers"] or 0) == 0 and _is_kr_trading_day(r["trade_date"]))
-    if not broken:
-        return {"backfilled": 0, "pending": 0}
-
-    filled = 0
-    for d in broken:
-        div_map = _fetch_div_pykrx(d)
-        if div_map is None:  # KRX 다운 → 더 시도 무의미
-            print(f"[DivBackfill] KRX 다운 — div_yield 소급 보류 (대기 {len(broken) - filled}일)")
-            break
-        conn.execute("UPDATE daily_snapshot SET div_yield=0 WHERE trade_date=? AND div_yield IS NULL", (d,))
-        for ticker, y in div_map.items():
-            if y and y > 0:
-                conn.execute("UPDATE daily_snapshot SET div_yield=? WHERE trade_date=? AND symbol=?",
-                             (round(float(y), 4), d, ticker))
-        conn.commit()
-        filled += 1
-        print(f"[DivBackfill] {d} div_yield 소급 완료")
-    if filled:
-        print(f"[DivBackfill] 소급 {filled}일 완료, 잔여 {len(broken) - filled}일")
-    return {"backfilled": filled, "pending": len(broken) - filled}
+    rc = _recompute_div_yield_from_events(conn)
+    conn.close()
+    print(f"[Dividends] KIS 예탁원: 조회 {stat['ok']}, payers {stat['payers']}, "
+          f"events {len(events)}, 실패 {stat['fail']} → div_yield {rc}")
+    return {"tickers": stat["ok"], "payers": stat["payers"], "events": len(events),
+            "fail": stat["fail"], "recompute": rc}
 
 
 def _update_consensus_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:

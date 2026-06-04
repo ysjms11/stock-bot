@@ -17,7 +17,7 @@ from main_pkg.jobs.universe import weekly_universe_update
 from main_pkg.jobs.earnings import (
     check_earnings_calendar, check_us_earnings_calendar, check_dividend_calendar
 )
-from main_pkg.jobs.collect import daily_collect_job, daily_collect_sanity_check
+from main_pkg.jobs.collect import daily_collect_job, daily_collect_sanity_check, weekly_dividend_job
 from main_pkg.jobs.financial import weekly_financial_job
 from main_pkg.jobs.dart_inc import daily_dart_incremental, daily_dart_disclosure_collect
 from main_pkg.jobs.reports import collect_reports_daily
@@ -99,6 +99,7 @@ def register_all_schedules(jq):
     jq.run_daily(hourly_us_holdings_check, time=dtime(16, 30, tzinfo=ET), days=(1,2,3,4,5), name="us_holdings_close")
     jq.run_daily(weekly_us_analyst_report, time=dtime(19, 0, tzinfo=KST), days=(0,), name="weekly_us_analyst")
     jq.run_daily(weekly_financial_job,    time=dtime(7,  15, tzinfo=KST), days=(0,),         name="weekly_financial")
+    jq.run_daily(weekly_dividend_job,     time=dtime(7,  20, tzinfo=KST), days=(0,),         name="weekly_dividend")  # KIS 예탁원 DPS → div_yield (KRX 불필요)
     jq.run_daily(daily_dart_incremental,  time=dtime(2,  0, tzinfo=KST),                     name="dart_incremental")
     jq.run_daily(watch_change_detect,     time=dtime(19, 0, tzinfo=KST), days=(1,2,3,4,5), name="watch_change")
     jq.run_daily(check_insider_cluster,   time=dtime(20, 0, tzinfo=KST), days=(1,2,3,4,5), name="insider_cluster")
