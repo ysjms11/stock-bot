@@ -92,16 +92,30 @@ async def _cached(key: str, ttl: float, factory):
 async def warm_caches() -> None:
     """서버 시작 직후 주요 캐시를 백그라운드에서 미리 채움.
 
-    /api/home, /api/portfolio, /api/watch, /api/market 빌더를 순차 호출.
+    core 4개(home/portfolio/watch/market)를 먼저 순차 워밍 후,
+    무거운 것(macro_panel ~40s, us_candidates ~40s)을 순차 워밍.
     각 소스 독립 try/except — 일부 실패해도 나머지 계속 진행.
     asyncio.create_task로 호출 → 봇 기동을 블로킹하지 않음.
     """
-    print("[cache] warm_caches 시작 — home/portfolio/watch/market 프리워밍")
+    print("[cache] warm_caches 시작 — core 4개 프리워밍")
     for label, key, factory in [
         ("home",      "home",      lambda: build_home_payload()),
         ("portfolio", "portfolio", lambda: _build_portfolio_with_grand()),
         ("watch",     "watch",     lambda: _build_watch_payload()),
         ("market",    "market",    lambda: build_market_payload()),
+    ]:
+        try:
+            data = await factory()
+            _cache[key] = {"ts": time.monotonic(), "data": data}
+            print(f"[cache] warm OK: {label}")
+        except Exception as e:
+            print(f"[cache] warm FAIL: {label} — {e}")
+
+    # core 완료 후 무거운 엔드포인트 추가 프리워밍 (~40s 각)
+    print("[cache] warm_caches — 무거운 것(macro_panel, us_candidates) 프리워밍 시작")
+    for label, key, factory in [
+        ("macro_panel",   "macro_panel",   lambda: build_macro_panel_payload()),
+        ("us_candidates", "us_candidates", lambda: _build_us_candidates_payload()),
     ]:
         try:
             data = await factory()
@@ -2000,8 +2014,8 @@ _MARKET_PANEL = (
     '                    </div>\n'
     '                  </template>\n'
     '\n'
-    '                  <!-- C: 수익률 곡선 / 침체확률 -->\n'
-    '                  <template x-if="macroPanel.curve || macroPanel.recession_prob != null">\n'
+    '                  <!-- C: 수익률 곡선 / 침체 시그널 -->\n'
+    '                  <template x-if="macroPanel.curve || macroPanel.recession_signal">\n'
     '                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">\n'
     '                      <!-- 수익률 곡선 -->\n'
     '                      <template x-if="macroPanel.curve">\n'
@@ -2030,7 +2044,19 @@ _MARKET_PANEL = (
     '                          </div>\n'
     '                        </div>\n'
     '                      </template>\n'
-    '                      <!-- 침체확률 -->\n'
+    '                      <!-- 침체 시그널 (Estrella-Mishkin 1998) -->\n'
+    '                      <template x-if="macroPanel.recession_signal">\n'
+    '                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">침체 시그널 (Estrella-Mishkin)</h3>\n'
+    '                          <div class="flex items-center gap-2 mb-2">\n'
+    '                            <span class="text-lg font-bold"\n'
+    '                                  :class="macroPanel.recession_signal.includes(\'역전\') ? \'text-red-600\' : macroPanel.recession_signal.includes(\'주의\') ? \'text-amber-500\' : \'text-green-600\'"\n'
+    '                                  x-text="macroPanel.recession_signal"></span>\n'
+    '                          </div>\n'
+    '                          <div class="text-xs text-slate-400">10Y-2Y 스프레드 기반 선행지표</div>\n'
+    '                        </div>\n'
+    '                      </template>\n'
+    '                      <!-- recession_prob (숫자 데이터 있을 때) -->\n'
     '                      <template x-if="macroPanel.recession_prob != null">\n'
     '                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
     '                          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">침체확률 (12개월 선행)</h3>\n'
@@ -6611,7 +6637,8 @@ async def build_macro_panel_payload() -> dict:
       regime: {label, regime_en, color, days}
       indicators: [{label, value, chg_pct|chg}]   — VIX/DXY/US10Y/WTI/GOLD/SP500/KOSPI/USDKRW
       curve: {y2, y10, spread}
-      recession_prob: float | None
+      recession_signal: str | None   — "정상"/"주의 (역전 임박)"/"역전 (침체 선행)"/"데이터 부족"
+      recession_prob: float | None   — 숫자 침체확률 (현재 API 미제공, 향후 대비)
       polymarket_fed: [{title, yes_pct, volume_usd}]  최대 3건
       sector_rotation: [{sector, foreign_net, inst_net, combined}]  합산 내림차순, 최대 15
       _errors: [{source, msg}]
@@ -6709,6 +6736,9 @@ async def build_macro_panel_payload() -> dict:
             errors.append({"source": "macro_external", "msg": r_ext.get("error", "unknown")})
         else:
             # treasury 수익률 곡선
+            # 반환 구조: treasury.yields = {"10y":float,"2y":float,"3m":float}
+            #            treasury.spread_10y_2y = float|None
+            #            treasury.recession_signal = "정상"/"주의 (역전 임박)"/"역전 (침체 선행)"/"데이터 부족"
             treasury = r_ext.get("treasury", {})
             if isinstance(treasury, dict):
                 def _tf(x):
@@ -6716,18 +6746,22 @@ async def build_macro_panel_payload() -> dict:
                         return float(x) if x not in (None, "", "-") else None
                     except (TypeError, ValueError):
                         return None
-                y2  = _tf(treasury.get("2y"))
-                y10 = _tf(treasury.get("10y"))
-                spread = _tf(treasury.get("spread"))
+                yields = treasury.get("yields", {})
+                if not isinstance(yields, dict):
+                    yields = {}
+                y2  = _tf(yields.get("2y"))
+                y10 = _tf(yields.get("10y"))
+                # spread: treasury.spread_10y_2y 우선, 없으면 y10-y2 계산
+                raw_spread = _tf(treasury.get("spread_10y_2y"))
+                if raw_spread is None and y10 is not None and y2 is not None:
+                    raw_spread = round(y10 - y2, 3)
                 if y2 is not None or y10 is not None:
-                    payload["curve"] = {"y2": y2, "y10": y10, "spread": spread}
-            # 침체확률
-            rec = r_ext.get("recession_prob")
-            if rec is not None:
-                try:
-                    payload["recession_prob"] = float(rec)
-                except (TypeError, ValueError):
-                    pass
+                    payload["curve"] = {"y2": y2, "y10": y10, "spread": raw_spread}
+                # recession_signal 텍스트 → 프론트용 코드 변환 + 침체확률 대용
+                rec_signal = treasury.get("recession_signal", "")
+                payload["recession_signal"] = rec_signal
+            # recession_prob 키는 fetch_treasury_curve에 없음.
+            # recession_signal 텍스트를 그대로 노출 (프론트에서 -/주의/역전 색 처리).
             # Polymarket Fed 관련 시장 (get_macro_external 내 polymarket 키)
             pm_data = r_ext.get("polymarket", {})
             if not isinstance(pm_data, dict):
