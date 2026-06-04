@@ -42,25 +42,73 @@ from kis_api import (
 from mcp_tools import execute_tool
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# TTL 캐시 (단순 dict, asyncio 단일스레드 — lock 불필요)
+# TTL 캐시 + stale-while-revalidate (asyncio 단일스레드 — lock 불필요)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_cache: dict = {}  # {key: (ts_monotonic, data)}
+_cache: dict = {}         # {key: {"ts": float, "data": any}}
+_refreshing: set = set()  # 백그라운드 갱신 중인 key 집합 (중복 방지)
 
 
 async def _cached(key: str, ttl: float, factory):
-    """ttl초 내 캐시 hit이면 저장 데이터 반환, 아니면 factory() await 후 저장.
+    """stale-while-revalidate(SWR) 캐시.
 
-    W2: factory는 콜러블(람다 또는 함수). miss일 때만 await해 코루틴 누수 방지.
-    캐시 hit 시 코루틴이 아예 생성되지 않으므로 RuntimeWarning 없음.
+    동작:
+      - fresh (age <= ttl): 즉시 data 반환.
+      - stale (age > ttl) 이지만 data 존재: 즉시 stale data 반환
+        + 백그라운드 asyncio.create_task로 factory 재실행해 캐시 갱신.
+      - cold (캐시 없음): await factory() 후 저장 및 반환 (최초 1회만 블로킹).
+
+    중복 갱신 가드: _refreshing set으로 동시 백그라운드 refresh 1개만 허용.
+    갱신 실패 시 기존 data 유지 + 플래그 해제 (try/finally).
+    W2: factory는 콜러블. miss일 때만 await해 코루틴 누수 방지.
     """
     entry = _cache.get(key)
+    now = time.monotonic()
+
     if entry is not None:
-        ts, data = entry
-        if time.monotonic() - ts < ttl:
-            return data
+        age = now - entry["ts"]
+        if age <= ttl:
+            # fresh — 즉시 반환
+            return entry["data"]
+        # stale — 즉시 반환 + 백그라운드 갱신
+        if key not in _refreshing:
+            _refreshing.add(key)
+            async def _bg_refresh(k, f):
+                try:
+                    new_data = await f()
+                    _cache[k] = {"ts": time.monotonic(), "data": new_data}
+                except Exception as _bg_err:
+                    print(f"[cache] 백그라운드 갱신 실패 ({k}): {_bg_err}")
+                finally:
+                    _refreshing.discard(k)
+            asyncio.create_task(_bg_refresh(key, factory))
+        return entry["data"]
+
+    # cold — 블로킹 최초 로드
     data = await factory()
-    _cache[key] = (time.monotonic(), data)
+    _cache[key] = {"ts": time.monotonic(), "data": data}
     return data
+
+
+async def warm_caches() -> None:
+    """서버 시작 직후 주요 캐시를 백그라운드에서 미리 채움.
+
+    /api/home, /api/portfolio, /api/watch, /api/market 빌더를 순차 호출.
+    각 소스 독립 try/except — 일부 실패해도 나머지 계속 진행.
+    asyncio.create_task로 호출 → 봇 기동을 블로킹하지 않음.
+    """
+    print("[cache] warm_caches 시작 — home/portfolio/watch/market 프리워밍")
+    for label, key, factory in [
+        ("home",      "home",      lambda: build_home_payload()),
+        ("portfolio", "portfolio", lambda: _build_portfolio_with_grand()),
+        ("watch",     "watch",     lambda: _build_watch_payload()),
+        ("market",    "market",    lambda: build_market_payload()),
+    ]:
+        try:
+            data = await factory()
+            _cache[key] = {"ts": time.monotonic(), "data": data}
+            print(f"[cache] warm OK: {label}")
+        except Exception as e:
+            print(f"[cache] warm FAIL: {label} — {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

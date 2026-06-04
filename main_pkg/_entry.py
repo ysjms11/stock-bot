@@ -255,6 +255,7 @@ async def _run_all(app, port):
     dashboard.register_routes(mcp_app)
     import dashboard_home
     dashboard_home.register_home_routes(mcp_app)
+    asyncio.create_task(dashboard_home.warm_caches())  # 콜드로드 방지 프리워밍 (비블로킹)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port, reuse_address=True)
