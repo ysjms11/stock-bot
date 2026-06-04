@@ -14,7 +14,13 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
-import krx_update  # noqa: E402
+
+krx_update = pytest.importorskip(
+    "krx_update",
+    reason="krx_update 모듈은 패키지 리팩터에서 삭제됨 (KRX 수집은 db_collector.py 로 이동, "
+           "OTP/CSV 다운로드 방식 폐기). 이 테스트는 삭제된 모듈 내부를 검증하므로 obsolete — "
+           "재작성/삭제 결정 대기.",
+)
 from krx_update import (
     _pi, _pf, _open_api_get, _extract_short_ticker,
     fetch_market_data_openapi, fetch_market_data,

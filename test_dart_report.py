@@ -30,8 +30,12 @@ TEST_REPORTS_DIR = os.path.join(TEST_DATA_DIR, "dart_reports")
 
 # ── kis_api 상수를 테스트용으로 패치 (import 전에) ──
 import kis_api
+import kis_api.dart
 kis_api.DART_REPORTS_DIR = TEST_REPORTS_DIR
 kis_api.CORP_CODES_FILE = os.path.join(TEST_DATA_DIR, "corp_codes.json")
+# submodule이 실제 경로를 참조하므로 kis_api.dart에도 패치 필요
+kis_api.dart.DART_REPORTS_DIR = TEST_REPORTS_DIR
+kis_api.dart.CORP_CODES_FILE = os.path.join(TEST_DATA_DIR, "corp_codes.json")
 
 
 from kis_api import (
@@ -77,7 +81,7 @@ class TestSaveDartReport:
     @pytest.mark.asyncio
     async def test_creates_txt_file(self):
         """mode='report', ticker='005930' → txt 파일 생성 확인"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="삼성전자 사업보고서 본문 내용입니다. " * 10):
             result = await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
 
@@ -91,7 +95,7 @@ class TestSaveDartReport:
     @pytest.mark.asyncio
     async def test_meta_header_format(self):
         """txt 파일 메타 헤더 포맷 검증"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="본문 내용 " * 20):
             result = await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
 
@@ -108,7 +112,7 @@ class TestSaveDartReport:
     @pytest.mark.asyncio
     async def test_duplicate_prevention(self):
         """중복 저장 방지: 같은 접수번호 → skipped=True"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="사업보고서 본문 텍스트 내용 " * 10):
             result1 = await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
             result2 = await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
@@ -119,7 +123,7 @@ class TestSaveDartReport:
     @pytest.mark.asyncio
     async def test_empty_document_returns_none(self):
         """본문이 빈 경우 None 반환"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value=""):
             result = await save_dart_report("005930", "삼성전자", "20260310999999", "20260310")
 
@@ -132,7 +136,7 @@ class TestListDartReports:
     @pytest.mark.asyncio
     async def test_report_list_returns_saved_files(self):
         """mode='report_list' → 저장된 파일 목록 반환"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="본문 내용 " * 20):
             await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
 
@@ -154,7 +158,7 @@ class TestCorpCodes:
     @pytest.mark.asyncio
     async def test_cache_creation(self):
         """corp_codes 캐시 파일 생성 확인"""
-        with patch("kis_api._download_corp_codes", new_callable=AsyncMock,
+        with patch("kis_api.dart._download_corp_codes", new_callable=AsyncMock,
                     return_value=FAKE_CORP_CODES):
             codes = await load_corp_codes()
 
@@ -166,11 +170,11 @@ class TestCorpCodes:
         """캐시 파일 존재 시 다운로드 안 함"""
         # 캐시 파일 직접 생성
         os.makedirs(TEST_DATA_DIR, exist_ok=True)
-        cache_path = kis_api.CORP_CODES_FILE
+        cache_path = kis_api.dart.CORP_CODES_FILE
         with open(cache_path, "w") as f:
             json.dump(FAKE_CORP_CODES, f)
 
-        with patch("kis_api._download_corp_codes", new_callable=AsyncMock) as mock_dl:
+        with patch("kis_api.dart._download_corp_codes", new_callable=AsyncMock) as mock_dl:
             codes = await load_corp_codes()
             mock_dl.assert_not_called()
 
@@ -194,7 +198,7 @@ class TestReadDartReport:
     @pytest.mark.asyncio
     async def test_read_returns_content(self):
         """mode='read', ticker='005930' → 저장된 txt 내용 반환"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="삼성전자 사업보고서 본문 " * 50):
             await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
 
@@ -209,10 +213,10 @@ class TestReadDartReport:
     @pytest.mark.asyncio
     async def test_read_latest_when_multiple(self):
         """여러 파일이 있으면 가장 최신 날짜 반환"""
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="구 보고서 내용 " * 10):
             await save_dart_report("005930", "삼성전자", "20250310000100", "20250310")
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="신 보고서 내용 " * 10):
             await save_dart_report("005930", "삼성전자", "20260310000200", "20260310")
 
@@ -231,7 +235,7 @@ class TestReadDartReport:
     async def test_read_truncation(self):
         """50,000자 초과 시 truncated=True"""
         long_text = "가" * 60_000
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value=long_text):
             await save_dart_report("005930", "삼성전자", "20260310000123", "20260310")
 
@@ -245,11 +249,11 @@ class TestReadDartReport:
         """MCP _execute_tool로 mode='read' 호출"""
         from mcp_tools import _execute_tool
 
-        with patch("kis_api.fetch_dart_document", new_callable=AsyncMock,
+        with patch("kis_api.dart.fetch_dart_document", new_callable=AsyncMock,
                     return_value="보고서 본문 " * 50):
             await save_dart_report("092780", "동양생명", "20260401000999", "20260401")
 
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+        with patch("mcp_tools.tools.dart.get_kis_token", new_callable=AsyncMock,
                     return_value="fake_token"):
             result = await _execute_tool("get_dart", {"mode": "read", "ticker": "092780"})
 
@@ -262,7 +266,7 @@ class TestReadDartReport:
         """MCP mode='read' ticker 미지정 → 에러"""
         from mcp_tools import _execute_tool
 
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+        with patch("mcp_tools.tools.dart.get_kis_token", new_callable=AsyncMock,
                     return_value="fake_token"):
             result = await _execute_tool("get_dart", {"mode": "read"})
 
@@ -274,7 +278,7 @@ class TestReadDartReport:
         """MCP mode='read' ticker=None → 에러 (AttributeError 방지)"""
         from mcp_tools import _execute_tool
 
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+        with patch("mcp_tools.tools.dart.get_kis_token", new_callable=AsyncMock,
                     return_value="fake_token"):
             result = await _execute_tool("get_dart", {"mode": "read", "ticker": None})
 
@@ -294,11 +298,11 @@ class TestBackwardCompatibility:
             {"corp_name": "삼성전자", "report_nm": "주요사항보고서",
              "rcept_dt": "20260401", "pblntf_ty": "B"},
         ]
-        with patch("mcp_tools.search_dart_disclosures", new_callable=AsyncMock,
+        with patch("mcp_tools.tools.dart.search_dart_disclosures", new_callable=AsyncMock,
                     return_value=fake_disclosures), \
-             patch("mcp_tools.load_watchlist",
+             patch("mcp_tools.tools.dart.load_watchlist",
                     return_value={"005930": "삼성전자"}), \
-             patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+             patch("mcp_tools.tools.dart.get_kis_token", new_callable=AsyncMock,
                     return_value="fake_token"):
             result = await _execute_tool("get_dart", {})
 

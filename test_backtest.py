@@ -21,7 +21,8 @@ ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
 sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
 
-from mcp_tools import _execute_tool, SUPPLY_HISTORY_FILE
+from mcp_tools import _execute_tool
+from kis_api import SUPPLY_HISTORY_FILE
 
 
 def make_candles(prices, start_date="20250101"):
@@ -69,10 +70,10 @@ async def run_backtest(ticker, strategy, candles, is_us=False, supply_data=None)
             for c in reversed(candles)
         ]}
 
-    with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token"), \
-         patch("mcp_tools._kis_get", new_callable=AsyncMock, return_value=(200, mock_response)), \
-         patch("mcp_tools.load_json", side_effect=_load_json_side_effect(supply_data or {})), \
-         patch("mcp_tools.kis_investor_trend_history", new_callable=AsyncMock, return_value=[]):
+    with patch("mcp_tools.tools.backtest.get_kis_token", new_callable=AsyncMock, return_value="mock_token"), \
+         patch("mcp_tools.tools.backtest._kis_get", new_callable=AsyncMock, return_value=(200, mock_response)), \
+         patch("mcp_tools.tools.backtest.load_json", side_effect=_load_json_side_effect(supply_data or {})), \
+         patch("mcp_tools.tools.backtest.kis_investor_trend_history", new_callable=AsyncMock, return_value=[]):
         result = await _execute_tool("get_backtest", {
             "ticker": ticker,
             "strategy": strategy,

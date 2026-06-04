@@ -6,15 +6,14 @@ import asyncio
 import os
 import sys
 import aiohttp
+import pytest
 
 # main.py의 함수를 그대로 임포트 (telegram 패키지 없이 동작하도록 예외 처리)
 try:
     from main import get_hankyung_consensus
-except ImportError as e:
-    # python-telegram-bot 없을 수 있으므로 함수만 직접 가져옴
+except ImportError:
+    # telegram 스텁 후 재시도 (python-telegram-bot 미설치 케이스)
     import importlib, types
-
-    # telegram 스텁 모듈 생성
     telegram_stub = types.ModuleType("telegram")
     telegram_stub.Update = object
     telegram_stub.ReplyKeyboardMarkup = type("ReplyKeyboardMarkup", (), {"__init__": lambda self, *a, **kw: None})
@@ -26,8 +25,15 @@ except ImportError as e:
     ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
     sys.modules.setdefault("telegram", telegram_stub)
     sys.modules.setdefault("telegram.ext", ext_stub)
-
-    from main import get_hankyung_consensus
+    try:
+        from main import get_hankyung_consensus
+    except ImportError:
+        pytest.skip(
+            "get_hankyung_consensus 가 main 에서 제거됨 (컨센서스 소스 한경→FnGuide, "
+            "fetch_fnguide_consensus 로 대체). 이 파일은 라이브 텔레그램 CI 스크립트이며 "
+            "제거된 함수를 호출하므로 obsolete — 재작성/삭제 결정 대기.",
+            allow_module_level=True,
+        )
 
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]

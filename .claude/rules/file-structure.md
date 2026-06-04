@@ -1,6 +1,8 @@
 # 파일별 함수 구조 상세
 
-## kis_api.py 구조 (위→아래)
+> ⚠️ **STALE (2026-05 리팩터)**: 아래 `kis_api.py`·`main.py`·`mcp_tools.py` 단일파일 구조/라인범위 맵은 **더 이상 유효하지 않음** — 패키지로 분리됨(`kis_api/` 23파일, `mcp_tools/` = `__init__`·`_registry`·`_execute`·`server`·`tools/*`, `main_pkg/` = `telegram_bot`·`_entry`·`_ctx`·`schedule`·`jobs/*`; `main.py`는 7줄 shim). **함수 위치는 `grep -rn "def <name>" <pkg>/`로 확인할 것.** `db_collector.py` 구조 맵은 단일파일이라 아직 유효.
+
+## kis_api.py 구조 (위→아래) — ⚠️ STALE, kis_api/ 패키지로 분리됨
 
 ```
 [1~9]       imports (aiohttp, json, re, xml, datetime, zoneinfo 등)

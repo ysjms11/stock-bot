@@ -51,8 +51,8 @@ class TestSupplyHistoryLimit:
                        "institution_net": -i * 50, "individual_net": 0,
                        "foreign_buy": 1000, "foreign_sell": 500}
                       for i in range(20)]
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_investor_trend_history", new_callable=AsyncMock, return_value=mock_rows):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.supply.kis_investor_trend_history", new_callable=AsyncMock, return_value=mock_rows):
             result = await _execute_tool("get_supply", {"mode": "history", "ticker": "005930", "days": 20})
         assert result["days"] == 20
 
@@ -60,8 +60,8 @@ class TestSupplyHistoryLimit:
     async def test_days_60_capped_to_30(self):
         """days=60 → 30으로 캡"""
         from mcp_tools import _execute_tool
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_investor_trend_history", new_callable=AsyncMock, return_value=[]):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.supply.kis_investor_trend_history", new_callable=AsyncMock, return_value=[]):
             result = await _execute_tool("get_supply", {"mode": "history", "ticker": "005930", "days": 60})
         assert result["days"] == 30
 
@@ -69,8 +69,8 @@ class TestSupplyHistoryLimit:
     async def test_empty_history_graceful(self):
         """빈 배열 반환 시 graceful"""
         from mcp_tools import _execute_tool
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_investor_trend_history", new_callable=AsyncMock, return_value=[]):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.supply.kis_investor_trend_history", new_callable=AsyncMock, return_value=[]):
             result = await _execute_tool("get_supply", {"mode": "history", "ticker": "005930", "days": 30})
         assert result["history"] == []
         assert result["days"] == 30
@@ -94,8 +94,8 @@ class TestShortSaleLimit:
         mock_rows = [{"date": f"2026030{i}", "short_vol": 1000,
                        "total_vol": 10000, "short_ratio": 10.0, "close": 50000}
                       for i in range(45)]
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_daily_short_sale", new_callable=AsyncMock, return_value=mock_rows):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.market_signal.kis_daily_short_sale", new_callable=AsyncMock, return_value=mock_rows):
             result = await _execute_tool("get_market_signal", {"mode": "short_sale", "ticker": "005930", "days": 45})
         assert result["count"] == 45
 
@@ -103,8 +103,8 @@ class TestShortSaleLimit:
     async def test_days_90_capped_to_60(self):
         """days=90 → 60으로 캡"""
         from mcp_tools import _execute_tool
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_daily_short_sale", new_callable=AsyncMock, return_value=[]) as mock_fn:
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.market_signal.kis_daily_short_sale", new_callable=AsyncMock, return_value=[]) as mock_fn:
             result = await _execute_tool("get_market_signal", {"mode": "short_sale", "ticker": "005930", "days": 90})
         # kis_daily_short_sale에 n=60으로 전달됐는지 확인
         mock_fn.assert_called_once()
@@ -114,8 +114,8 @@ class TestShortSaleLimit:
     async def test_short_sale_empty_graceful(self):
         """빈 배열 반환 시 graceful"""
         from mcp_tools import _execute_tool
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_daily_short_sale", new_callable=AsyncMock, return_value=[]):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.market_signal.kis_daily_short_sale", new_callable=AsyncMock, return_value=[]):
             result = await _execute_tool("get_market_signal", {"mode": "short_sale", "ticker": "005930", "days": 30})
         assert result["items"] == []
         assert result["count"] == 0
@@ -139,11 +139,11 @@ class TestStockDetailInvestor:
             {"frgn_ntby_qty": "500", "orgn_ntby_qty": "-200"},
             {"frgn_ntby_qty": "700", "orgn_ntby_qty": "100"},
         ]
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_stock_price", new_callable=AsyncMock, return_value=mock_price), \
-             patch("mcp_tools.kis_investor_trend", new_callable=AsyncMock, return_value=mock_inv), \
-             patch("mcp_tools.kis_estimate_perform", new_callable=AsyncMock, return_value={}), \
-             patch("mcp_tools._is_us_ticker", return_value=False):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.price.kis_stock_price", new_callable=AsyncMock, return_value=mock_price), \
+             patch("mcp_tools.tools.price.kis_investor_trend", new_callable=AsyncMock, return_value=mock_inv), \
+             patch("mcp_tools.tools.price.kis_estimate_perform", new_callable=AsyncMock, return_value={}), \
+             patch("mcp_tools.tools.price._is_us_ticker", return_value=False):
             result = await _execute_tool("get_stock_detail", {"ticker": "005930"})
         assert len(result["investor"]) == 5, f"investor 배열 {len(result['investor'])}건, 5건 기대"
 
@@ -154,11 +154,11 @@ class TestStockDetailInvestor:
         mock_price = {"stck_prpr": "65000", "prdy_ctrt": "+1.0", "acml_vol": "100000",
                        "w52_hgpr": "", "w52_lwpr": "",
                        "per": "", "pbr": "", "eps": "", "bps": ""}
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
-             patch("mcp_tools.kis_stock_price", new_callable=AsyncMock, return_value=mock_price), \
-             patch("mcp_tools.kis_investor_trend", new_callable=AsyncMock, return_value=[]), \
-             patch("mcp_tools.kis_estimate_perform", new_callable=AsyncMock, return_value={}), \
-             patch("mcp_tools._is_us_ticker", return_value=False):
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value="tok"), \
+             patch("mcp_tools.tools.price.kis_stock_price", new_callable=AsyncMock, return_value=mock_price), \
+             patch("mcp_tools.tools.price.kis_investor_trend", new_callable=AsyncMock, return_value=[]), \
+             patch("mcp_tools.tools.price.kis_estimate_perform", new_callable=AsyncMock, return_value={}), \
+             patch("mcp_tools.tools.price._is_us_ticker", return_value=False):
             result = await _execute_tool("get_stock_detail", {"ticker": "005930"})
         assert result["investor"] == []
 
@@ -170,7 +170,7 @@ class TestShortSaleDateRange:
     @pytest.mark.asyncio
     async def test_date_range_params_sent(self):
         """날짜범위 파라미터가 비어있지 않은지 확인"""
-        with patch("kis_api._kis_get", new_callable=AsyncMock,
+        with patch("kis_api.kr_stock._kis_get", new_callable=AsyncMock,
                     return_value=({}, {"output2": []})) as mock_get:
             await kis_daily_short_sale("005930", "tok", n=30)
             call_args = mock_get.call_args
@@ -181,7 +181,7 @@ class TestShortSaleDateRange:
     @pytest.mark.asyncio
     async def test_date_range_covers_period(self):
         """n=60일 요청 시 시작일이 충분히 과거인지"""
-        with patch("kis_api._kis_get", new_callable=AsyncMock,
+        with patch("kis_api.kr_stock._kis_get", new_callable=AsyncMock,
                     return_value=({}, {"output2": []})) as mock_get:
             await kis_daily_short_sale("005930", "tok", n=60)
             params = mock_get.call_args[0][4]

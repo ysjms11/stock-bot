@@ -124,7 +124,8 @@ class TestLoadRussell1000Tickers(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="stock-bot-rs1000-")
         self.cache_path = os.path.join(self.tmpdir, "us_russell1000.json")
-        self._patcher = patch.object(kis_api, "US_RUSSELL1000_FILE", self.cache_path)
+        import kis_api.us_ratings as _ur
+        self._patcher = patch.object(_ur, "US_RUSSELL1000_FILE", self.cache_path)
         self._patcher.start()
 
     def tearDown(self):
@@ -191,8 +192,8 @@ class TestLoadUsScanUniverse(unittest.TestCase):
 
     def test_union_is_sorted_and_deduped(self):
         """두 로더 결과 합집합 → 중복 제거 + 정렬."""
-        with patch("kis_api.load_sp500_tickers", return_value=["AAPL", "MSFT", "BRK.B"]), \
-             patch("kis_api.load_russell1000_tickers", return_value=["MMM", "AOS", "BRK.B", "MSFT"]):
+        with patch("kis_api.us_ratings.load_sp500_tickers", return_value=["AAPL", "MSFT", "BRK.B"]), \
+             patch("kis_api.us_ratings.load_russell1000_tickers", return_value=["MMM", "AOS", "BRK.B", "MSFT"]):
             u = load_us_scan_universe()
         self.assertEqual(u, sorted({"AAPL", "MSFT", "BRK.B", "MMM", "AOS"}))
 
@@ -202,8 +203,8 @@ class TestLoadUsScanUniverse(unittest.TestCase):
         sp500 = [f"SP{i:03d}" for i in range(503)]
         # Russell 1000: S&P 500 중 많은 수가 포함됨 (대부분의 대형주 겹침) + 중형주 추가
         rs1000 = sp500[:450] + [f"MID{i:03d}" for i in range(550)]  # 총 1000
-        with patch("kis_api.load_sp500_tickers", return_value=sp500), \
-             patch("kis_api.load_russell1000_tickers", return_value=rs1000):
+        with patch("kis_api.us_ratings.load_sp500_tickers", return_value=sp500), \
+             patch("kis_api.us_ratings.load_russell1000_tickers", return_value=rs1000):
             u = load_us_scan_universe()
         self.assertGreater(len(u), len(sp500))  # S&P 500 단독보다 커야
         self.assertGreaterEqual(len(u), 1000)
@@ -211,22 +212,22 @@ class TestLoadUsScanUniverse(unittest.TestCase):
 
     def test_returns_sp500_when_russell_fails(self):
         """Russell 로드 실패해도 S&P 500 는 반환 (방어적)."""
-        with patch("kis_api.load_sp500_tickers", return_value=["AAPL", "MSFT"]), \
-             patch("kis_api.load_russell1000_tickers", return_value=[]):
+        with patch("kis_api.us_ratings.load_sp500_tickers", return_value=["AAPL", "MSFT"]), \
+             patch("kis_api.us_ratings.load_russell1000_tickers", return_value=[]):
             u = load_us_scan_universe()
         self.assertEqual(u, ["AAPL", "MSFT"])
 
     def test_returns_russell_when_sp500_fails(self):
         """S&P 500 로드 실패해도 Russell 는 반환 (방어적)."""
-        with patch("kis_api.load_sp500_tickers", return_value=[]), \
-             patch("kis_api.load_russell1000_tickers", return_value=["MMM", "AOS"]):
+        with patch("kis_api.us_ratings.load_sp500_tickers", return_value=[]), \
+             patch("kis_api.us_ratings.load_russell1000_tickers", return_value=["MMM", "AOS"]):
             u = load_us_scan_universe()
         self.assertEqual(u, ["AOS", "MMM"])  # 정렬됨
 
     def test_both_fail_returns_empty(self):
         """둘 다 실패/예외 → 빈 리스트."""
-        with patch("kis_api.load_sp500_tickers", side_effect=RuntimeError("sp500 down")), \
-             patch("kis_api.load_russell1000_tickers", side_effect=RuntimeError("rs down")):
+        with patch("kis_api.us_ratings.load_sp500_tickers", side_effect=RuntimeError("sp500 down")), \
+             patch("kis_api.us_ratings.load_russell1000_tickers", side_effect=RuntimeError("rs down")):
             u = load_us_scan_universe()
         self.assertEqual(u, [])
 
@@ -241,7 +242,8 @@ class TestLoadSp500TickersRegression(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="stock-bot-sp500-")
         self.cache_path = os.path.join(self.tmpdir, "us_sp500.json")
-        self._patcher = patch.object(kis_api, "US_SP500_FILE", self.cache_path)
+        import kis_api.us_ratings as _ur
+        self._patcher = patch.object(_ur, "US_SP500_FILE", self.cache_path)
         self._patcher.start()
 
     def tearDown(self):

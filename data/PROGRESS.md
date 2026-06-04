@@ -1,3 +1,68 @@
+## 📄 2026-06-04 db_collector div_yield/foreign 침묵-0 회귀 + div_yield KIS-DPS 전환 (KRX 독립화)
+
+**발단**: 알파 연구 중 `daily_snapshot`의 두 필드 회귀 발견 — **div_yield** 2026-04-08부터 전종목 0, **foreign_net_amt** 05-07부터 간헐 0. 둘 다 upstream 실패를 **0으로 침묵 기록**(fetch 실패 ≠ 실제 0 구분 불가).
+
+**근본 원인**:
+- div_yield: v1(JSON)→v2(SQLite) 전환 때 "별도 계산" 보강 미포팅. `_store_daily_snapshot`가 0.0 하드코딩 + 갱신 코드 부재 → **애초에 수집 안 함**. (04-07까지 1282는 마이그된 v1 데이터)
+- foreign_net_amt: ① insert가 amt=0 하드코딩(주석 "히스토리 API에 금액 없음"은 **오류** — Phase-3 KIS `FHPTJ04160001`이 `frgn_ntby_tr_pbmn`(금액) 이미 반환, 매핑만 누락) ② 실 amt 소스 `_update_supply_in_snapshot`(pykrx)가 KRX soft-block 실패를 침묵(retry 무). KRX 포털 스크래핑은 세션 내내 다운(간헐적).
+
+**수정 (브랜치 `fix/collector-div-yield-foreign-amt`, 커밋 8개 push)**:
+- **foreign**: KIS `*_ntby_tr_pbmn×1e6`(원, 기존 pykrx값과 0.3~1.1% 일치)을 1차 소스로. 누락 시 **NULL(0 아님)**. pykrx는 retry+never-zero refiner로 강등. 전 구간(04-08~06-02)+05-08 데이터 KIS 복구(~92k행).
+- **div_yield → ★KIS 예탁원 DPS 기반 전환 (KRX 완전 독립)★**: 신규 `dividend_events` 테이블 + `collect_dividends()`(예탁원 HHKDB669102C0 종목별 현금 DPS, 일요일 07:20 주간잡) + `_recompute_div_yield_from_events()`(`div_yield = 직전12M DPS÷종가`, collect_daily 6c 매일 재계산, 무 API, 비파괴). 종전 pykrx div 경로 3함수 제거. **전종목 2864→payers 1373, events 1845, 04-08~06-02 ~1360종/일 채움. 신호 z=+1.80**(random 98% 상회).
+- **휴장일 가드**: collect_daily/backfill에 `_is_kr_trading_day` 추가(휴장일 평일에 KIS 직전영업일 시세로 spurious 행 생기던 것 차단). 기존 spurious 8,586행 삭제(04-12일·05-05·05-25, KIS chk-holiday 권위 확인). 휴장일 list telegram_bot→db_collector 단일화.
+- **부수**: 05-08 부분일(600→2768행 완성) · 백필 insert 금액0버그 fix · **pyarrow 설치**(누락으로 `divyield_reconstruct.py` sidecar/probe 침묵 실패하던 것 복구, requirements 등록) · 토큰 `.git/config`평문→`~/.git-credentials`(600) 이동.
+
+**핵심 교훈**:
+- **div_yield는 KRX 불필요** — KIS 예탁원 DPS÷종가로 매일 산출(KRX feed 죽어도 무관). 사용자 `RALPH/divyield_reconstruct.py`(DPS 역산, no-API)도 같은 원리, 검증됨(+0.34, deployable). [[KRX 스크래핑 의존 금지]]
+- "히스토리 API에 금액 없음" 같은 **주석 가정 검증 필수** — 실제로 KIS output2에 `*_ntby_tr_pbmn` 존재했음.
+- 침묵-0 안티패턴: **fetch 실패는 NULL+retry+가시화**, 실제 0과 구분.
+
+**브랜치 주의**: `fix/collector-div-yield-foreign-amt`는 dashboard 재구축·test 스위트 작업과 **공유 중**(동시 세션). main 머지 전 내용 확인 필수.
+
+**남은 것 (사용자 스킵 결정)**: 🔐 토큰 키체인 암호화(헤드리스 차단 확정)·교체(gh 미로그인 대화형) — 둘 다 선택, 봇 정상. 메모리 [[DB research]] "div_yield/foreign 배포 불가" 차단 **해제됨**.
+
+---
+
+## 📄 2026-06-04 테스트 스위트 분할 회귀 소탕 (사용자 "test_mcp_schema 7개 실패" → 옵션1 확장)
+
+**발단**: `test_mcp_schema.py` 7개 실패 — 헬퍼가 `open("mcp_tools.py")` 하는데 5/27 분할로 그 flat 파일이 사라짐. collection abort(6 error)에 가려져 **조용히 stale-fail 중**이던 분할 회귀. ([[package-refactor-stale-docs]])
+
+**요청 범위 (reviewer+verifier Opus 통과)**:
+- `test_mcp_schema.py` **7/7** — flat 파일 regex 스크래핑 → `MCP_TOOLS`(__init__) / `TOOL_HANDLERS`(_registry) **직접 import** + 핸들러 서브모드는 `mcp_tools/tools/*.py` **AST 파싱**으로 추출. elif 체인→dispatch dict 구조 반영. mutation-test로 non-vacuous 확인(팬텀 enum→FAIL).
+- `test_mcp_consolidation.py` **41/41** — stale `@patch("mcp_tools.X")` → `kis_api.get_kis_token`(토큰은 _registry 지역 import) + `mcp_tools.tools.<mod>.X`(핸들러가 `from kis_api import *`로 바인딩).
+- **collection error 6→0** (610 collect): test_backtest/regime/us_features/phase_b import 복구(심볼이 kis_api 서브모듈로 이동: SUPPLY_HISTORY_FILE/_REGIME_ORDER/US_SECTOR_ETFS, KR 감성 키워드 미사용 삭제).
+- **obsolete 2개 → module-level skip**(되돌리기 쉬움): `test_krx_otp`(krx_update 모듈 삭제·db_collector로 이동·OTP 방식 폐기), `test_consensus_ci`(get_hankyung_consensus 제거, 한경→FnGuide; def test_ 없는 라이브 텔레그램 스크립트).
+
+**옵션1 확장 — stale-path 소탕 (사용자 "니추천대로 진행"; 2 병렬 dev + reviewer + verifier)**:
+- 완전 green: test_backtest **18**, test_us_features **24**, test_us_ratings **13**, test_data_extension **14**, test_sector_flow_cache **12**, test_schedule_registration **1**(← `main.py` shim 아닌 `main_pkg/schedule.py` 읽도록 경로 교정, 등록 라인 제거 시 FAIL 확인=non-vacuous).
+- stale-path 수정·잔여는 behavioral: test_regime, test_edge_cases(23/3, reviewer 지적 토큰타깃 `kis_api.get_kis_token` 교정으로 +1), test_phase_b(SimulateTrade), test_scan_presets, test_report(dead `report_crawler.load_reports` patch 제거).
+- 패턴: `mcp_tools.X`→`mcp_tools.tools.<mod>.X`, `kis_api.X`(이동분 aiohttp/US_*_FILE)→서브모듈, `from main import X`→`main_pkg.*`(telegram_bot·_entry·_ctx·jobs.stoploss).
+
+**결과**: 175 failed → **111 failed / 497 passed / 2 skipped** (64 해소). 회귀 0(test_undefined_names 단독 통과 확인).
+
+옵션1 후 **175→111 fail**. 사용자 "니추천대로 다해" → 옵션2까지 전부 진행:
+
+**옵션2 — async 인프라 + behavioral + 격리 (Wave A/B, 4 병렬 dev + reviewer + verifier)**:
+- **Wave A: `pytest-asyncio` 1.4.0 venv 설치 + `pytest.ini asyncio_mode=auto`** → "async def not supported" ~82개 해제. test_tool_fallbacks 5·test_api_limits 12·test_phase_a 28 완전 green. 나머지 async 파일은 동일 stale-`@patch`로 드러나 레시피 적용(get_kis_token→kis_api, mcp_tools.X→tools.<mod>, kis_api.X→서브모듈, from main→main_pkg).
+- **라이브 마커 인프라**: `conftest.py`에 `--run-live` 옵션 + 기본 skip(`pytest_collection_modifyitems`), `pytest.ini` 마커 등록. pytest-asyncio가 라이브 KRX/DB 통합 테스트를 실제 실행시켜 hang 유발 → **15개 `@pytest.mark.live`** 마킹(KRX 네트워크 5·report DB 7·scanner DB 2 등; 기본 skip, `pytest --run-live`로 실행). bot 기존 관례.
+- **Wave B 잔여 stale-namespace/behavioral/격리**: test_dart_report 17(DART_REPORTS_DIR→`kis_api.dart`)·test_phase_b rotation 2(→`kis_api.kr_stock`)·test_regime 47(라벨 위기→공포·공격→탐욕 코드 검증 후 갱신, REGIME_STATE_FILE 격리, _yf_history→kis_api.news)·test_edge_cases 26(토큰 파일캐시 격리)·test_keyboard 29(cmd 출력 신규동작 갱신 + telegram stub cross-file 오염 = main_pkg purge+reimport로 해결)·test_report 24(extract_pdf_text 3-tuple). reviewer가 동작-갱신 단언을 실제 구현과 전수 대조(rubber-stamp 회귀 0).
+
+**최종 결과 (full suite, 기본 live-skip)**: **595 passed / 17 skipped / 0 failed**. 회귀 0. (시작: collection 불가·175 숨은 실패 → 0). 마지막 3건도 해결:
+- `test_mixed_sentiment`: 코드 갭 아님 — `_FINANCE_PHRASE_SCORES`는 의도적 큐레이션(컨텍스트 반전 "공매도 감소"=+3, bare "상승/급등" 모호하므로 제외). 옛 naive-keyword 기대가 stale → 입력을 큐레이션 긍정구문("사상 최대 어닝서프라이즈…하지만 우려도", +9)으로 교체해 "mixed→net positive" 의도 보존. **알고리즘 미수정**.
+- supply 2개: 사용자 foreign_rank DB-first에 맞춰 `@patch("sqlite3.connect", side_effect=Exception)`로 DB 비활성→KIS-live 폴백 경로 테스트(SQL 비커플링 → 사용자 추가 편집에 강건). dict shape(`source:"KIS live"`) 단언.
+
+**⚠️ 동시 세션 충돌 감지**: 작업 막바지(22:43) 사용자가 같은 브랜치에서 `mcp_tools/tools/supply.py`(foreign_rank → **DB-first** daily_snapshot, KIS는 폴백)·`kis_api/polymarket.py`(+163)·`dashboard_home.py` 동시 편집(이 PROGRESS 상단 db_collector 항목도 사용자 추가). **내 에이전트는 프로덕션 미수정 — revert 안 함**. 단 사용자의 foreign_rank DB-first 변경이 내가 고친 테스트 2개를 깸: `test_mcp_consolidation::TestGetSupply::test_foreign_rank`(mock_frgn.assert_called_once — DB경로가 KIS API 우회), `test_tool_fallbacks::test_get_supply_foreign_rank_empty_returns_note`("note" 미반환). → **해결**: 두 테스트를 DB-first 폴백 경로로 갱신(위 참조). SQL에 커플링 안 했으므로 사용자가 foreign_rank 쿼리 더 바꿔도 대체로 견딤. **supply.py/polymarket.py/dashboard_home.py는 사용자 작업 — 손대지 않음.**
+
+**git**: 전부 **미커밋**(test_*.py 22개 + conftest.py + pytest.ini + PROGRESS.md = 내 작업; supply.py/polymarket.py/dashboard_home.py = 사용자). pytest-asyncio는 venv 설치만(requirements.txt에 pytest 자체도 없는 기존 관례 따름). .claude/rules·CLAUDE.md 미수정(stale flat 경로 잔존하나 보호 파일 — 플래그).
+
+**docs 갱신 완료** (사용자 "다 해" 승인): CLAUDE.md(파일구조표 flat→패키지·MCP 47개·dispatch dict), `.claude/rules/add-mcp-tool.md`(절차 재작성: __init__ MCP_TOOLS→tools/<mod> 핸들러→_registry dict), `mcp-tools.md`(47), `file-structure.md`(stale 경고 헤더). 정책/워크플로 섹션은 미수정.
+
+**git**: 전부 **미커밋**. 내 작업(test 22개+conftest+pytest.ini+CLAUDE.md+rules 3개+PROGRESS) 과 사용자 WIP(supply/polymarket/dashboard_home)가 같은 브랜치 작업트리에 혼재 → 커밋 경계는 사용자 판단(자동 커밋 안 함). pytest-asyncio는 venv 설치만.
+
+**다음 세션**: 본 테스트 작업 완료. 잔여 = 전부 사용자 영역(① main 머지 타이밍 ② 사용자 collector/dashboard WIP 마무리). 새 MCP 도구 추가 시 갱신된 add-mcp-tool.md 따를 것.
+
+---
+
 ## 📄 2026-06-03 대시보드 바닥부터 재구축 (사용자 "데쉬보드 너무 별로지 않냐")
 
 기존 `/dash`(dashboard.py 3700줄 string-concat 누적물, 10섹션·11탭 오버플로·데스크탑 여백·조용히 썩음)를 비판 → **새 `/home` 대시보드를 나란히 신축**. **브랜치 `fix/collector-div-yield-foreign-amt`** 에서 작업(세션 중 사용자가 collector/US_EXIT 작업으로 이 브랜치 사용 중인 것 발견 — [[deploy-main-직행]] 참고, 커밋 전 git branch 확인 교훈).

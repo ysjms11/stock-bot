@@ -53,16 +53,17 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ## 파일 구조
 
-프로젝트는 6개 주요 Python 파일로 분리되어 있음:
+⚠️ **2026-05 리팩터: 단일 `kis_api.py`/`mcp_tools.py`/`main.py` → 패키지로 분리됨.** 옛 단일파일을 직접 참조(`open("mcp_tools.py")`, `from main import X` 등)하는 코드·테스트·문서는 stale — **파일시스템을 믿을 것**(`ls kis_api/ mcp_tools/ main_pkg/`). (참고: 이 표/아래 `.claude/rules/*`도 구조 기술이 갱신 중일 수 있음.)
 
-| 파일 | 줄 수 | 역할 |
-|------|-------|------|
-| `kis_api.py` | ~9100 | KIS/DART/Yahoo API 함수, 데이터 파일 I/O, WebSocket, 매크로, 백업, 미국 애널 레이팅 (StockAnalysis), NPS/13F |
-| `main.py` | ~5300 | 텔레그램 봇 + 자동알림 스케줄 (40+잡) + 진입점 |
-| `dashboard.py` | ~3900 | 웹 대시보드 (HTTP HTML 렌더링, /dash + /dash/whale 등 14 라우트). 5/5 main.py에서 분리. |
-| `mcp_tools.py` | ~4800 | MCP 도구 (46개) 스키마 + 실행 로직 + SSE 서버 |
-| `db_collector.py` | ~3500 | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
-| `krx_crawler.py` | ~1500 | db_collector 호환 wrapper (레거시 fallback) |
+| 모듈 | 형태 | 역할 |
+|------|------|------|
+| `kis_api/` | 패키지(23) | KIS/DART/Yahoo API, 데이터 I/O, WebSocket, 매크로, 백업, 미국 애널, NPS/13F. 기반: `_config`·`_session`·`_files`·`_helpers`·`_db`. 도메인: `kr_stock`·`us_stock`·`consensus`·`regime`·`news`·`macro`·`dart`·`fmp`·`polymarket`·`pension`·`portfolio`·`ranks`·`sec_edgar`·`universe`·`us_ratings`·`backup`·`websocket`. `from kis_api import *`로 공개 API 노출 |
+| `mcp_tools/` | 패키지 | `__init__`=`MCP_TOOLS` 스키마 배열(47개), `_registry`=`TOOL_HANDLERS` dict + `execute_tool`(elif 체인 폐기), `_execute`=`_execute_tool` 래퍼, `server`=JSON-RPC/SSE, `tools/*.py`=도구별 핸들러(20). 각 핸들러는 `from kis_api import *` |
+| `main.py` + `main_pkg/` | shim + 패키지 | `main.py`(~7줄)=진입점 shim. 로직은 `main_pkg/`: `telegram_bot`·`_entry`·`_ctx`·`schedule` + `jobs/`(23 잡파일). 텔레그램 봇 + 자동알림 스케줄 |
+| `db_collector.py` | 단일파일(~4400) | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
+| `krx_crawler.py` | 단일파일(~1500) | db_collector 호환 wrapper (레거시 fallback) |
+| `dashboard.py` | 단일파일(~3700) | 구 `/dash` 웹 대시보드 (HTML 렌더링) |
+| `dashboard_home.py` | 단일파일(~5300) | 신 `/home` 대시보드 (2026-06 재구축, JSON API) |
 
 기타 파일:
 
@@ -84,16 +85,16 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ---
 
-## MCP 도구 (43개)
+## MCP 도구 (47개)
 
-실행 로직: `mcp_tools.py`의 `_execute_tool()` 함수.
+스키마 배열 `MCP_TOOLS` → `mcp_tools/__init__.py`. 디스패치 `TOOL_HANDLERS` dict + `execute_tool()` → `mcp_tools/_registry.py` (구 `_execute_tool` elif 체인 폐기). 도구별 핸들러 → `mcp_tools/tools/*.py`.
 전체 도구 목록/모드/파라미터 → `.claude/rules/mcp-tools.md`
 
 ---
 
 ## 새 MCP 도구 추가
 
-절차 (API 함수 작성 → 스키마 추가 → elif 핸들러 → 커밋):
+절차 (API 함수 작성 → `MCP_TOOLS` 스키마 추가 → `tools/<mod>.py` 핸들러 작성 → `_registry.TOOL_HANDLERS`에 등록 → 커밋):
 → `.claude/rules/add-mcp-tool.md` 참조
 
 ---

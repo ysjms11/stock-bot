@@ -1,6 +1,6 @@
-# MCP 도구 전체 목록 (43개)
+# MCP 도구 전체 목록 (47개)
 
-> `mcp_tools.py`의 도구 스키마 요약. 새 도구 추가 시 → `.claude/rules/add-mcp-tool.md` 참조
+> `mcp_tools/__init__.py`의 `MCP_TOOLS` 스키마 요약 (디스패치 `TOOL_HANDLERS`→`mcp_tools/_registry.py`, 핸들러→`mcp_tools/tools/*.py`). 새 도구 추가 시 → `.claude/rules/add-mcp-tool.md` 참조. (아래 표 개수는 갱신 지연 가능 — 권위 값은 `len(MCP_TOOLS)`.)
 
 | # | 이름 | mode/type | 설명 |
 |---|------|-----------|------|

@@ -21,7 +21,7 @@ ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
 sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
 
-from kis_api import analyze_news_sentiment, _POSITIVE_KEYWORDS, _NEGATIVE_KEYWORDS
+from kis_api import analyze_news_sentiment
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -56,11 +56,12 @@ class TestNewsSentiment(unittest.TestCase):
         self.assertEqual(result["neutral"][0]["sentiment"], "neutral")
 
     def test_mixed_sentiment(self):
-        """긍정+부정 혼합 -> 개수 많은 쪽으로 분류."""
-        # 긍정 2개(상승, 신고가) vs 부정 1개(우려) -> positive
-        items = [{"title": "삼성전자 상승 신고가 돌파 하지만 우려도"}]
+        """긍정 구문 + 부정 혼합 → net score 양수면 positive (큐레이션 KNU 스코어러)."""
+        # '사상 최대'(+4) 등 큐레이션 긍정 구문이 '우려' 류 부정을 상회 → positive.
+        # (구 버전은 naive 키워드 상승/신고가/돌파 카운트였으나, 현 KNU 스코어러는
+        #  모호한 bare 키워드를 의도적으로 제외하므로 큐레이션 구문으로 의도 보존)
+        items = [{"title": "삼성전자 사상 최대 실적 어닝서프라이즈, 하지만 일부 우려도"}]
         result = analyze_news_sentiment(items)
-        # 상승, 신고가, 돌파 = 긍정 3개, 우려 = 부정 1개
         self.assertEqual(len(result["positive"]), 1)
         self.assertEqual(result["positive"][0]["sentiment"], "positive")
 
@@ -101,9 +102,9 @@ class TestSectorRotation(unittest.TestCase):
     def _run(self, coro):
         return asyncio.run(coro)
 
-    @patch("kis_api.save_json")
-    @patch("kis_api.load_json")
-    @patch("kis_api._fetch_sector_flow")
+    @patch("kis_api.kr_stock.save_json")
+    @patch("kis_api.kr_stock.load_json")
+    @patch("kis_api.kr_stock._fetch_sector_flow")
     def test_rotation_detection(self, mock_fetch, mock_load, mock_save):
         """전일 데이터 있을 때 change 계산 정확성."""
         # _fetch_sector_flow 반환: (frgn, orgn)
@@ -135,9 +136,9 @@ class TestSectorRotation(unittest.TestCase):
         for s in result["sectors"]:
             self.assertEqual(s["total"], 800)  # frgn=500 + orgn=300
 
-    @patch("kis_api.save_json")
-    @patch("kis_api.load_json")
-    @patch("kis_api._fetch_sector_flow")
+    @patch("kis_api.kr_stock.save_json")
+    @patch("kis_api.kr_stock.load_json")
+    @patch("kis_api.kr_stock._fetch_sector_flow")
     def test_no_prev_data(self, mock_fetch, mock_load, mock_save):
         """전일 데이터 없을 때 change=0."""
         mock_fetch.return_value = (100, 50)
@@ -151,9 +152,9 @@ class TestSectorRotation(unittest.TestCase):
             self.assertEqual(s["change"], 0)
         self.assertEqual(result["rotations"], [])
 
-    @patch("kis_api.save_json")
-    @patch("kis_api.load_json")
-    @patch("kis_api._fetch_sector_flow")
+    @patch("kis_api.kr_stock.save_json")
+    @patch("kis_api.kr_stock.load_json")
+    @patch("kis_api.kr_stock._fetch_sector_flow")
     def test_rotation_pattern(self, mock_fetch, mock_load, mock_save):
         """유출/유입이 모두 100 이상일 때 rotations 리스트 생성."""
         # 업종별 다른 값을 반환하여 유입/유출 생성
@@ -227,11 +228,11 @@ class TestSimulateTrade(unittest.TestCase):
             "005930": {"name": "삼성전자", "stop_price": 60000, "target_price": 90000},
         }
 
-    @patch("mcp_tools.kis_us_stock_price", new_callable=AsyncMock)
-    @patch("mcp_tools.kis_stock_price", new_callable=AsyncMock)
-    @patch("mcp_tools.load_stoploss")
-    @patch("mcp_tools.load_json")
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.kis_us_stock_price", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.kis_stock_price", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.load_stoploss")
+    @patch("mcp_tools.tools.portfolio.load_json")
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock)
     def test_sell_simulation(self, mock_token, mock_load, mock_stops, mock_kr_price, mock_us_price):
         """매도 시뮬레이션 -> cash 증가, holdings 감소."""
         mock_token.return_value = "mock_token"
@@ -254,11 +255,11 @@ class TestSimulateTrade(unittest.TestCase):
         # cash_krw 증가: 5000000 + 75000*30 = 7250000
         self.assertEqual(result["cash"]["krw"], 7250000)
 
-    @patch("mcp_tools.kis_us_stock_price", new_callable=AsyncMock)
-    @patch("mcp_tools.kis_stock_price", new_callable=AsyncMock)
-    @patch("mcp_tools.load_stoploss")
-    @patch("mcp_tools.load_json")
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.kis_us_stock_price", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.kis_stock_price", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.load_stoploss")
+    @patch("mcp_tools.tools.portfolio.load_json")
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock)
     def test_buy_simulation(self, mock_token, mock_load, mock_stops, mock_kr_price, mock_us_price):
         """매수 시뮬레이션 -> cash 감소, holdings 증가."""
         mock_token.return_value = "mock_token"
@@ -281,7 +282,7 @@ class TestSimulateTrade(unittest.TestCase):
         # cash_krw 감소: 5000000 - 75000*20 = 3500000
         self.assertEqual(result["cash"]["krw"], 3500000)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock)
     def test_empty_trades(self, mock_token):
         """sells+buys 모두 비면 에러 반환."""
         mock_token.return_value = "mock_token"
@@ -295,11 +296,11 @@ class TestSimulateTrade(unittest.TestCase):
 
         self.assertIn("error", result)
 
-    @patch("mcp_tools.kis_us_stock_price", new_callable=AsyncMock)
-    @patch("mcp_tools.kis_stock_price", new_callable=AsyncMock)
-    @patch("mcp_tools.load_stoploss")
-    @patch("mcp_tools.load_json")
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.kis_us_stock_price", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.kis_stock_price", new_callable=AsyncMock)
+    @patch("mcp_tools.tools.portfolio.load_stoploss")
+    @patch("mcp_tools.tools.portfolio.load_json")
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock)
     def test_sector_weights(self, mock_token, mock_load, mock_stops, mock_kr_price, mock_us_price):
         """시뮬 후 sector_weights 계산 정확성."""
         mock_token.return_value = "mock_token"

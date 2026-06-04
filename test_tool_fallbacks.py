@@ -33,8 +33,8 @@ from mcp_tools import _execute_tool
 @pytest.mark.asyncio
 async def test_get_rank_price_empty_returns_note():
     """kis_fluctuation_rank 빈 리스트 반환 시 'note' 키에 'get_scan' 포함 여부."""
-    with patch("mcp_tools.get_kis_token", new=AsyncMock(return_value="fake_token")), \
-         patch("mcp_tools.kis_fluctuation_rank", new=AsyncMock(return_value=[])):
+    with patch("kis_api.get_kis_token", new=AsyncMock(return_value="fake_token")), \
+         patch("mcp_tools.tools.price.kis_fluctuation_rank", new=AsyncMock(return_value=[])):
         result = await _execute_tool("get_rank", {"type": "price"})
 
     assert "note" in result, f"'note' 키 없음: {result}"
@@ -49,8 +49,9 @@ async def test_get_rank_price_empty_returns_note():
 @pytest.mark.asyncio
 async def test_get_supply_foreign_rank_empty_returns_note():
     """kis_foreigner_trend 빈 리스트 반환 시 'note' 키에 'combined_rank' 포함 여부."""
-    with patch("mcp_tools.get_kis_token", new=AsyncMock(return_value="fake_token")), \
-         patch("mcp_tools.kis_foreigner_trend", new=AsyncMock(return_value=[])):
+    with patch("kis_api.get_kis_token", new=AsyncMock(return_value="fake_token")), \
+         patch("sqlite3.connect", side_effect=Exception("no db")), \
+         patch("mcp_tools.tools.supply.kis_foreigner_trend", new=AsyncMock(return_value=[])):
         result = await _execute_tool("get_supply", {"mode": "foreign_rank"})
 
     assert "note" in result, f"'note' 키 없음: {result}"
@@ -65,8 +66,8 @@ async def test_get_supply_foreign_rank_empty_returns_note():
 @pytest.mark.asyncio
 async def test_get_supply_history_empty_returns_note():
     """kis_investor_trend_history 빈 리스트 반환 시 'note' 키에 'estimate' 포함 여부."""
-    with patch("mcp_tools.get_kis_token", new=AsyncMock(return_value="fake_token")), \
-         patch("mcp_tools.kis_investor_trend_history", new=AsyncMock(return_value=[])):
+    with patch("kis_api.get_kis_token", new=AsyncMock(return_value="fake_token")), \
+         patch("mcp_tools.tools.supply.kis_investor_trend_history", new=AsyncMock(return_value=[])):
         result = await _execute_tool("get_supply", {"mode": "history", "ticker": "005930"})
 
     assert "note" in result, f"'note' 키 없음: {result}"
@@ -90,11 +91,11 @@ async def test_get_sector_flow_all_zero_returns_note_etf():
     async def _fake_kis_get(session, path, tr_id, token, params):
         return {}, {"output": {}}
 
-    with patch("mcp_tools.get_kis_token", new=AsyncMock(return_value="fake_token")), \
-         patch("mcp_tools._fetch_sector_flow", new=AsyncMock(return_value=(0, 0))), \
-         patch("mcp_tools.kis_foreigner_trend", new=AsyncMock(return_value=[])), \
-         patch("mcp_tools._kis_get", side_effect=_fake_kis_get), \
-         patch("mcp_tools.load_sector_flow_cache", return_value={}):
+    with patch("kis_api.get_kis_token", new=AsyncMock(return_value="fake_token")), \
+         patch("mcp_tools.tools.sector._fetch_sector_flow", new=AsyncMock(return_value=(0, 0))), \
+         patch("mcp_tools.tools.sector.kis_foreigner_trend", new=AsyncMock(return_value=[])), \
+         patch("mcp_tools.tools.sector._kis_get", side_effect=_fake_kis_get), \
+         patch("mcp_tools.tools.sector.load_sector_flow_cache", return_value={}):
         result = await _execute_tool("get_sector", {"mode": "flow"})
 
     assert "note" in result, f"'note' 키 없음: {result}"
@@ -126,9 +127,9 @@ async def test_combined_rank_with_krx_db_has_fi_ratio_pct():
         }
     }
 
-    with patch("mcp_tools.get_kis_token", new=AsyncMock(return_value="fake_token")), \
-         patch("mcp_tools.kis_foreign_institution_total", new=AsyncMock(return_value=fake_items)), \
-         patch("mcp_tools.load_krx_db", return_value=fake_db):
+    with patch("kis_api.get_kis_token", new=AsyncMock(return_value="fake_token")), \
+         patch("mcp_tools.tools.supply.kis_foreign_institution_total", new=AsyncMock(return_value=fake_items)), \
+         patch("mcp_tools.tools.supply.load_krx_db", return_value=fake_db):
         result = await _execute_tool("get_supply", {"mode": "combined_rank"})
 
     assert "items" in result, f"'items' 키 없음: {result}"

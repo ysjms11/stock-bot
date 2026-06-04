@@ -29,6 +29,7 @@ sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
 
 import kis_api
+import kis_api._files as _kis_files
 from kis_api import load_sector_flow_cache, save_sector_flow_cache, load_json, save_json
 
 
@@ -38,7 +39,8 @@ class TestSectorFlowCacheIO:
     def test_load_empty_cache(self, tmp_path):
         """캐시 파일 없을 때 빈 dict 반환"""
         fake_path = str(tmp_path / "sector_flow_cache.json")
-        with patch.object(kis_api, "SECTOR_FLOW_CACHE_FILE", fake_path):
+        with patch.object(kis_api, "SECTOR_FLOW_CACHE_FILE", fake_path), \
+             patch.object(_kis_files, "SECTOR_FLOW_CACHE_FILE", fake_path):
             result = load_sector_flow_cache()
         assert result == {}
 
@@ -54,7 +56,8 @@ class TestSectorFlowCacheIO:
                 "all": [],
             },
         }
-        with patch.object(kis_api, "SECTOR_FLOW_CACHE_FILE", fake_path):
+        with patch.object(kis_api, "SECTOR_FLOW_CACHE_FILE", fake_path), \
+             patch.object(_kis_files, "SECTOR_FLOW_CACHE_FILE", fake_path):
             save_sector_flow_cache(sample)
             loaded = load_sector_flow_cache()
         assert loaded == sample
@@ -66,7 +69,8 @@ class TestSectorFlowCacheIO:
         fake_path = str(tmp_path / "sector_flow_cache.json")
         with open(fake_path, "w") as f:
             f.write("{corrupted json!!")
-        with patch.object(kis_api, "SECTOR_FLOW_CACHE_FILE", fake_path):
+        with patch.object(kis_api, "SECTOR_FLOW_CACHE_FILE", fake_path), \
+             patch.object(_kis_files, "SECTOR_FLOW_CACHE_FILE", fake_path):
             result = load_sector_flow_cache()
         assert result == {}
 

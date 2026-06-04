@@ -1,97 +1,80 @@
 """
 MCP 도구 스키마 ↔ 핸들러 동기화 검증 테스트.
-MCP_TOOLS 등록과 _execute_tool 핸들러가 1:1 매칭되는지 자동 검증.
+MCP_TOOLS 등록과 TOOL_HANDLERS dispatch dict가 1:1 매칭되는지,
+그리고 서브모드 enum이 각 핸들러의 실제 분기와 일치하는지 자동 검증.
+
+리팩터 후: mcp_tools.py(flat) → mcp_tools/ 패키지. 더 이상 소스 파일을
+regex로 긁지 않고 MCP_TOOLS / TOOL_HANDLERS 를 직접 import 한다.
+서브모드(예: rank_type == "...")는 핸들러 함수 본문에 있으므로
+해당 tools/<module>.py 를 AST로 파싱해 추출한다.
 """
+import ast
+from pathlib import Path
 
-import re
-import pytest
+from mcp_tools import MCP_TOOLS
+from mcp_tools._registry import TOOL_HANDLERS
 
-
-def _read_mcp_tools_py():
-    with open("mcp_tools.py", "r") as f:
-        return f.read()
-
-
-def _extract_registered_tools(content: str) -> list[str]:
-    """MCP_TOOLS 배열에서 등록된 도구 이름 추출."""
-    # MCP_TOOLS는 _execute_tool 함수 정의 전까지
-    cut = content.find("async def _execute_tool")
-    schema_section = content[:cut]
-    return re.findall(r'"name":\s*"([^"]+)"', schema_section)
+_PKG = Path(__file__).parent / "mcp_tools"
 
 
-def _extract_handler_names(content: str) -> set[str]:
-    """_execute_tool 함수 내 elif name == '...' 핸들러 추출."""
-    exec_section = content[content.find("async def _execute_tool"):]
-    return set(re.findall(r'(?:if|elif)\s+name\s*==\s*"([^"]+)"', exec_section))
+def _registered_tools() -> list[str]:
+    return [t["name"] for t in MCP_TOOLS]
 
 
-def _extract_enum_values(content: str, tool_name: str, field_name: str) -> list[str]:
-    """특정 도구의 특정 필드 enum 값 추출."""
-    idx = content.find(f'"name": "{tool_name}"')
-    if idx < 0:
-        return []
-    chunk = content[idx:idx + 1500]
-    # Find the field's enum
-    field_pattern = f'"{field_name}".*?"enum":\\s*\\[([^\\]]+)\\]'
-    match = re.search(field_pattern, chunk, re.DOTALL)
-    if not match:
-        return []
-    return re.findall(r'"([^"]+)"', match.group(1))
+def _handler_names() -> set[str]:
+    return set(TOOL_HANDLERS.keys())
 
 
-def _extract_handler_submodes(content: str, tool_name: str, var_name: str) -> set[str]:
-    """_execute_tool 내 특정 도구의 서브모드(elif var == '...') 추출."""
-    exec_section = content[content.find("async def _execute_tool"):]
-    # Find the tool handler block
-    tool_idx = exec_section.find(f'name == "{tool_name}"')
-    if tool_idx < 0:
-        return set()
-    # Find next top-level elif (same indentation as name ==)
-    # Find the next top-level tool handler to limit scope
-    next_tool = re.search(r'\n        elif name == "', exec_section[tool_idx + 50:])
-    end = tool_idx + 50 + next_tool.start() if next_tool else tool_idx + 15000
-    block = exec_section[tool_idx:end]
-    # Extract submodes
-    return set(re.findall(
-        rf'(?:if|elif)\s+{var_name}\s*==\s*"([^"]+)"', block
-    ))
+def _enum_values(tool_name: str, field: str) -> set[str]:
+    for t in MCP_TOOLS:
+        if t["name"] == tool_name:
+            props = t.get("inputSchema", {}).get("properties", {})
+            return set(props.get(field, {}).get("enum", []) or [])
+    return set()
+
+
+def _handler_submodes(module_rel: str, func_name: str, var_name: str) -> set[str]:
+    """tools/<module>.py 의 func_name 함수 본문에서 `var_name == "리터럴"` 비교를 AST로 수집."""
+    tree = ast.parse((_PKG / module_rel).read_text(encoding="utf-8"))
+    fn = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func_name),
+        None,
+    )
+    assert fn is not None, f"{func_name} 함수를 {module_rel} 에서 못 찾음"
+    out: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == var_name:
+            for op, comp in zip(node.ops, node.comparators):
+                if isinstance(op, ast.Eq) and isinstance(comp, ast.Constant) and isinstance(comp.value, str):
+                    out.add(comp.value)
+    return out
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Test 1: 모든 핸들러가 MCP_TOOLS에 등록되어 있는지
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_all_handlers_registered():
-    content = _read_mcp_tools_py()
-    registered = set(_extract_registered_tools(content))
-    handlers = _extract_handler_names(content)
-
-    missing = handlers - registered
-    assert not missing, f"_execute_tool에 핸들러가 있지만 MCP_TOOLS에 미등록: {missing}"
+    missing = _handler_names() - set(_registered_tools())
+    assert not missing, f"TOOL_HANDLERS에 있지만 MCP_TOOLS에 미등록: {missing}"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Test 2: 모든 MCP_TOOLS 등록 도구에 핸들러가 있는지
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_all_registered_have_handlers():
-    content = _read_mcp_tools_py()
-    registered = set(_extract_registered_tools(content))
-    handlers = _extract_handler_names(content)
-
-    orphaned = registered - handlers
-    assert not orphaned, f"MCP_TOOLS에 등록됐지만 _execute_tool에 핸들러 없음: {orphaned}"
+    orphaned = set(_registered_tools()) - _handler_names()
+    assert not orphaned, f"MCP_TOOLS에 등록됐지만 TOOL_HANDLERS에 없음: {orphaned}"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Test 3: get_rank type enum과 핸들러 서브모드 동기화
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_get_rank_type_sync():
-    content = _read_mcp_tools_py()
-    enum_vals = set(_extract_enum_values(content, "get_rank", "type"))
-    handler_modes = _extract_handler_submodes(content, "get_rank", "rank_type")
-
-    missing_handler = enum_vals - handler_modes
-    missing_enum = handler_modes - enum_vals
+    enum = _enum_values("get_rank", "type")
+    submodes = _handler_submodes("tools/price.py", "handle_get_rank", "rank_type")
+    missing_handler = enum - submodes
+    missing_enum = submodes - enum
     assert not missing_handler, f"get_rank enum에 있지만 핸들러 없음: {missing_handler}"
     assert not missing_enum, f"get_rank 핸들러에 있지만 enum 미등록: {missing_enum}"
 
@@ -100,12 +83,10 @@ def test_get_rank_type_sync():
 # Test 4: get_supply mode enum과 핸들러 서브모드 동기화
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_get_supply_mode_sync():
-    content = _read_mcp_tools_py()
-    enum_vals = set(_extract_enum_values(content, "get_supply", "mode"))
-    handler_modes = _extract_handler_submodes(content, "get_supply", "supply_mode")
-
-    missing_handler = enum_vals - handler_modes
-    missing_enum = handler_modes - enum_vals
+    enum = _enum_values("get_supply", "mode")
+    submodes = _handler_submodes("tools/supply.py", "handle_get_supply", "supply_mode")
+    missing_handler = enum - submodes
+    missing_enum = submodes - enum
     assert not missing_handler, f"get_supply enum에 있지만 핸들러 없음: {missing_handler}"
     assert not missing_enum, f"get_supply 핸들러에 있지만 enum 미등록: {missing_enum}"
 
@@ -114,12 +95,10 @@ def test_get_supply_mode_sync():
 # Test 5: get_market_signal mode enum과 핸들러 서브모드 동기화
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_get_market_signal_mode_sync():
-    content = _read_mcp_tools_py()
-    enum_vals = set(_extract_enum_values(content, "get_market_signal", "mode"))
-    handler_modes = _extract_handler_submodes(content, "get_market_signal", "signal_mode")
-
-    missing_handler = enum_vals - handler_modes
-    missing_enum = handler_modes - enum_vals
+    enum = _enum_values("get_market_signal", "mode")
+    submodes = _handler_submodes("tools/market_signal.py", "handle_get_market_signal", "signal_mode")
+    missing_handler = enum - submodes
+    missing_enum = submodes - enum
     assert not missing_handler, f"get_market_signal enum에 있지만 핸들러 없음: {missing_handler}"
     assert not missing_enum, f"get_market_signal 핸들러에 있지만 enum 미등록: {missing_enum}"
 
@@ -128,12 +107,10 @@ def test_get_market_signal_mode_sync():
 # Test 6: get_stock_detail mode enum과 핸들러 서브모드 동기화
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_get_stock_detail_mode_sync():
-    content = _read_mcp_tools_py()
-    enum_vals = set(_extract_enum_values(content, "get_stock_detail", "mode"))
-    handler_modes = _extract_handler_submodes(content, "get_stock_detail", "mode")
-
-    missing_handler = enum_vals - handler_modes
-    missing_enum = handler_modes - enum_vals
+    enum = _enum_values("get_stock_detail", "mode")
+    submodes = _handler_submodes("tools/price.py", "handle_get_stock_detail", "mode")
+    missing_handler = enum - submodes
+    missing_enum = submodes - enum
     assert not missing_handler, f"get_stock_detail enum에 있지만 핸들러 없음: {missing_handler}"
     assert not missing_enum, f"get_stock_detail 핸들러에 있지만 enum 미등록: {missing_enum}"
 
@@ -142,12 +119,8 @@ def test_get_stock_detail_mode_sync():
 # Test 7: MCP_TOOLS 도구 수 일관성
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_tool_count():
-    content = _read_mcp_tools_py()
-    tools = _extract_registered_tools(content)
-    handlers = _extract_handler_names(content)
-
-    assert len(tools) == len(handlers), \
-        f"MCP_TOOLS({len(tools)}개) != 핸들러({len(handlers)}개)"
-    # 중복 도구명 없어야 함
+    tools = _registered_tools()
+    assert len(tools) == len(_handler_names()), \
+        f"MCP_TOOLS({len(tools)}개) != TOOL_HANDLERS({len(_handler_names())}개)"
     assert len(tools) == len(set(tools)), \
         f"MCP_TOOLS에 중복 도구명: {[t for t in tools if tools.count(t) > 1]}"

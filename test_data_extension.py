@@ -202,8 +202,8 @@ class TestBacktestYMode(unittest.TestCase):
     def _run(self, coro):
         return asyncio.run(coro)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="test_token")
-    @patch("mcp_tools.get_historical_ohlcv")
+    @patch("mcp_tools.tools.backtest.get_kis_token", new_callable=AsyncMock, return_value="test_token")
+    @patch("mcp_tools.tools.backtest.get_historical_ohlcv")
     def test_y3_backtest_kr(self, mock_ohlcv, mock_token):
         """Y3 period로 한국 종목 백테스트."""
         candles = make_candles(200, base_price=50000)
@@ -223,8 +223,8 @@ class TestBacktestYMode(unittest.TestCase):
         # 결과에 에러가 없어야 함
         self.assertNotIn("error", result)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="test_token")
-    @patch("mcp_tools.get_historical_ohlcv")
+    @patch("mcp_tools.tools.backtest.get_kis_token", new_callable=AsyncMock, return_value="test_token")
+    @patch("mcp_tools.tools.backtest.get_historical_ohlcv")
     def test_y3_backtest_us(self, mock_ohlcv, mock_token):
         """Y3 period로 미국 종목 백테스트."""
         candles = make_candles(200, base_price=150)
@@ -248,9 +248,9 @@ class TestBacktestYMode(unittest.TestCase):
         self.assertEqual(args[0][0], "AAPL")
         self.assertNotIn("error", result)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="test_token")
-    @patch("mcp_tools.get_historical_supply")
-    @patch("mcp_tools.get_historical_ohlcv")
+    @patch("mcp_tools.tools.backtest.get_kis_token", new_callable=AsyncMock, return_value="test_token")
+    @patch("mcp_tools.tools.backtest.get_historical_supply")
+    @patch("mcp_tools.tools.backtest.get_historical_ohlcv")
     def test_y_mode_supply_follow_with_krx(self, mock_ohlcv, mock_supply, mock_token):
         """Y모드 + supply_follow 전략에서 get_historical_supply 호출 확인."""
         candles = make_candles(200, base_price=50000)
@@ -274,8 +274,8 @@ class TestBacktestYMode(unittest.TestCase):
         self.assertEqual(supply_args[0][0], "005930")
         self.assertNotIn("error", result)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="test_token")
-    @patch("mcp_tools.get_historical_ohlcv")
+    @patch("mcp_tools.tools.backtest.get_kis_token", new_callable=AsyncMock, return_value="test_token")
+    @patch("mcp_tools.tools.backtest.get_historical_ohlcv")
     def test_y_mode_fallback_on_failure(self, mock_ohlcv, mock_token):
         """FDR/yfinance 실패 시 에러 메시지 반환."""
         mock_ohlcv.return_value = []
@@ -294,8 +294,8 @@ class TestBacktestYMode(unittest.TestCase):
             or "일봉 데이터 부족" in result["error"]
         )
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="test_token")
-    @patch("mcp_tools.get_historical_ohlcv")
+    @patch("mcp_tools.tools.backtest.get_kis_token", new_callable=AsyncMock, return_value="test_token")
+    @patch("mcp_tools.tools.backtest.get_historical_ohlcv")
     def test_y_mode_years_clamp(self, mock_ohlcv, mock_token):
         """Y6 -> 5년 제한, Y0 -> 1년 제한."""
         candles = make_candles(200, base_price=50000)

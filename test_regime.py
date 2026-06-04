@@ -19,11 +19,12 @@ kis_api.PORTFOLIO_FILE = "/tmp/test_data/portfolio.json"
 from kis_api import (
     _calc_zscore, _rolling_ma_pct, _rolling_momentum,
     _realized_vol, _rolling_realized_vol, _sig_entry,
-    _regime_label, _REGIME_ORDER, apply_debounce,
+    _regime_label, apply_debounce,
     compute_turbulence, cmd_regime,
     load_json, save_json,
     REGIME_STATE_FILE,
 )
+from kis_api.regime import _REGIME_ORDER
 
 KST = timezone(timedelta(hours=9))
 
@@ -231,26 +232,29 @@ class TestOverrideMode(unittest.TestCase):
         self.state_file = "/tmp/test_data/regime_state.json"
         save_json(self.state_file, {"history": [], "current": {"regime": "neutral"}})
 
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
     def test_override_crisis(self):
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             cmd_regime(mode="override", regime="crisis", reason="블랙스완"))
-        self.assertIn("위기", result["regime"])
+        self.assertIn("공포", result["regime"])
         self.assertEqual(result["mode"], "override")
         self.assertEqual(result["reason"], "블랙스완")
         # 파일에 저장되었는지 확인
         state = load_json(self.state_file)
-        self.assertEqual(state["current"]["regime"], "defensive")
+        self.assertEqual(state["current"]["current"], "crisis")
         self.assertTrue(state["current"]["override"])
 
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
     def test_override_invalid(self):
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             cmd_regime(mode="override", regime="invalid"))
         self.assertIn("error", result)
 
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
     def test_override_offensive(self):
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             cmd_regime(mode="override", regime="offensive", reason="강세전환"))
-        self.assertIn("공격", result["regime"])
+        self.assertIn("탐욕", result["regime"])
 
 
 class TestHistoryMode(unittest.TestCase):
@@ -264,14 +268,16 @@ class TestHistoryMode(unittest.TestCase):
         save_json("/tmp/test_data/regime_state.json",
                   {"history": history, "current": {"regime": "neutral"}})
 
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
     def test_history_default(self):
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             cmd_regime(mode="history", days=3))
         self.assertEqual(len(result["history"]), 3)
         self.assertEqual(result["total_records"], 5)
 
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
     def test_history_all(self):
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             cmd_regime(mode="history", days=100))
         self.assertEqual(len(result["history"]), 5)
 
@@ -291,8 +297,8 @@ class TestPartialFailure(unittest.TestCase):
                 return good_data
             return []
 
-        with patch("kis_api._yf_history", side_effect=mock_yf):
-            result = asyncio.get_event_loop().run_until_complete(
+        with patch("kis_api.news._yf_history", side_effect=mock_yf):
+            result = asyncio.run(
                 compute_us_signals())
         # VIX만 성공, 나머지 5개 실패
         self.assertGreater(result["n_signals"], 0)

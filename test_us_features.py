@@ -19,8 +19,9 @@ sys.modules.setdefault("telegram.ext", ext_stub)
 from kis_api import (
     fetch_us_news, analyze_us_news_sentiment,
     fetch_us_earnings_calendar, fetch_us_sector_etf,
-    _US_POSITIVE_KEYWORDS, _US_NEGATIVE_KEYWORDS, US_SECTOR_ETFS,
+    _US_POSITIVE_KEYWORDS, _US_NEGATIVE_KEYWORDS,
 )
+from kis_api.news import US_SECTOR_ETFS
 from mcp_tools import _execute_tool
 
 
@@ -261,8 +262,8 @@ class TestMcpGetNewsUs(unittest.TestCase):
     def _run(self, coro):
         return asyncio.run(coro)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
-    @patch("mcp_tools.fetch_us_news", return_value=[
+    @patch("mcp_tools.tools.news.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
+    @patch("mcp_tools.tools.news.fetch_us_news", return_value=[
         {"title": "Tesla news", "source": "Reuters", "date": "20260401", "time": "100000"},
     ])
     def test_us_news_plain(self, mock_news, mock_token):
@@ -272,12 +273,12 @@ class TestMcpGetNewsUs(unittest.TestCase):
         self.assertEqual(result["ticker"], "TSLA")
         self.assertEqual(result["count"], 1)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
-    @patch("mcp_tools.fetch_us_news", return_value=[
+    @patch("mcp_tools.tools.news.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
+    @patch("mcp_tools.tools.news.fetch_us_news", return_value=[
         {"title": "Apple upgrade bullish momentum", "source": "CNBC",
          "date": "20260401", "time": "110000"},
     ])
-    @patch("mcp_tools.analyze_us_news_sentiment")
+    @patch("mcp_tools.tools.news.analyze_us_news_sentiment")
     def test_us_news_sentiment(self, mock_analysis, mock_news, mock_token):
         """get_news(ticker='AAPL', sentiment=true) → 감성분석 포함."""
         mock_analysis.return_value = {
@@ -290,8 +291,8 @@ class TestMcpGetNewsUs(unittest.TestCase):
         self.assertIn("positive", result)
         self.assertIn("summary", result)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
-    @patch("mcp_tools.kis_news_title", new_callable=AsyncMock, return_value=[
+    @patch("mcp_tools.tools.news.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
+    @patch("mcp_tools.tools.news.kis_news_title", new_callable=AsyncMock, return_value=[
         {"title": "삼성전자 실적 발표", "date": "20260401", "time": "090000"},
     ])
     def test_kr_news_unchanged(self, mock_kis_news, mock_token):
@@ -310,8 +311,8 @@ class TestMcpGetMacroUsSector(unittest.TestCase):
     def _run(self, coro):
         return asyncio.run(coro)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
-    @patch("mcp_tools.fetch_us_sector_etf", return_value=[
+    @patch("mcp_tools.tools.macro.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
+    @patch("mcp_tools.tools.macro.fetch_us_sector_etf", return_value=[
         {"ticker": "XLK", "name": "기술", "price": 200.0, "chg_1d": 1.5, "chg_5d": 3.0},
         {"ticker": "XLE", "name": "에너지", "price": 90.0, "chg_1d": -0.8, "chg_5d": -2.1},
         {"ticker": "XLF", "name": "금융", "price": 42.0, "chg_1d": 0.5, "chg_5d": 1.2},
@@ -328,8 +329,8 @@ class TestMcpGetMacroUsSector(unittest.TestCase):
         # top3 should be sorted descending by chg_1d
         self.assertEqual(result["top3"][0]["ticker"], "XLK")
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
-    @patch("mcp_tools.fetch_us_sector_etf", return_value=[])
+    @patch("mcp_tools.tools.macro.get_kis_token", new_callable=AsyncMock, return_value="fake_token")
+    @patch("mcp_tools.tools.macro.fetch_us_sector_etf", return_value=[])
     def test_us_sector_failure(self, mock_etf, mock_token):
         """fetch_us_sector_etf 빈 결과 → 에러 반환."""
         result = self._run(_execute_tool("get_macro", {"mode": "us_sector"}))
@@ -400,8 +401,8 @@ class TestMcpShortSaleUs(unittest.TestCase):
             "ticker": "TSLA", "name": "Tesla",
             "shares_short": 30000000, "short_ratio": 1.5,
         }
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock"), \
-             patch("mcp_tools.fetch_us_short_interest", return_value=mock_short):
+        with patch("mcp_tools.tools.market_signal.get_kis_token", new_callable=AsyncMock, return_value="mock"), \
+             patch("mcp_tools.tools.market_signal.fetch_us_short_interest", return_value=mock_short):
             result = asyncio.run(_execute_tool("get_market_signal", {
                 "mode": "short_sale", "ticker": "TSLA"
             }))
@@ -411,8 +412,8 @@ class TestMcpShortSaleUs(unittest.TestCase):
     def test_kr_short_sale_unchanged(self):
         from mcp_tools import _execute_tool
         mock_rows = [{"date": "20260330", "short_vol": 1000, "total_vol": 50000}]
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock"), \
-             patch("mcp_tools.kis_daily_short_sale", new_callable=AsyncMock, return_value=mock_rows):
+        with patch("mcp_tools.tools.market_signal.get_kis_token", new_callable=AsyncMock, return_value="mock"), \
+             patch("mcp_tools.tools.market_signal.kis_daily_short_sale", new_callable=AsyncMock, return_value=mock_rows):
             result = asyncio.run(_execute_tool("get_market_signal", {
                 "mode": "short_sale", "ticker": "005930"
             }))
@@ -421,7 +422,7 @@ class TestMcpShortSaleUs(unittest.TestCase):
 
     def test_missing_ticker(self):
         from mcp_tools import _execute_tool
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock"):
+        with patch("mcp_tools.tools.market_signal.get_kis_token", new_callable=AsyncMock, return_value="mock"):
             result = asyncio.run(_execute_tool("get_market_signal", {
                 "mode": "short_sale"
             }))

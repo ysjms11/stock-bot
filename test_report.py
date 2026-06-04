@@ -1,5 +1,6 @@
 """증권사 리포트 수집 테스트"""
 import sys, types, json, os, unittest, asyncio, tempfile
+import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -148,6 +149,17 @@ class TestIsChartImageText(unittest.TestCase):
 class TestExtractPdfText(unittest.TestCase):
     """extract_pdf_text 테스트"""
 
+    def setUp(self):
+        # extract_pdf_text는 _PDF_TEXT_EXTRACT=True일 때만 텍스트 추출 경로를 실행.
+        # 기본값은 False(운영 설정)이므로, 단위 테스트에서 추출 로직을 검증하려면
+        # 모듈 수준 플래그를 True로 패치해야 한다.
+        import report_crawler as _rc
+        self._patcher = patch.object(_rc, "_PDF_TEXT_EXTRACT", True)
+        self._patcher.start()
+
+    def tearDown(self):
+        self._patcher.stop()
+
     def _make_mock_pdf(self, page_text):
         """pdfplumber mock 생성 헬퍼."""
         mock_page = MagicMock()
@@ -175,7 +187,7 @@ class TestExtractPdfText(unittest.TestCase):
         mock_get.return_value = self._make_mock_response()
         mock_plumber_mod = self._make_mock_pdf("PDF 본문 텍스트입니다.")
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/test.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/test.pdf")
 
         self.assertIn("PDF 본문 텍스트", text)
         self.assertIn(status, ("success", "partial"))
@@ -189,7 +201,7 @@ class TestExtractPdfText(unittest.TestCase):
         long_text = "가나다라마바사아자차" * 1500  # 15000자, 100% 한글
         mock_plumber_mod = self._make_mock_pdf(long_text)
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/big.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/big.pdf")
 
         self.assertLessEqual(len(text), _MAX_TEXT)
 
@@ -199,7 +211,7 @@ class TestExtractPdfText(unittest.TestCase):
 
         mock_get.return_value = self._make_mock_response(status_code=500)
 
-        text, status = extract_pdf_text("https://stock.pstatic.net/fail.pdf")
+        text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/fail.pdf")
         self.assertEqual(text, "")
         self.assertEqual(status, "failed")
 
@@ -213,7 +225,7 @@ class TestExtractPdfText(unittest.TestCase):
         mock_plumber_mod = MagicMock()
         mock_plumber_mod.open.side_effect = Exception("corrupt PDF")
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/corrupt.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/corrupt.pdf")
 
         self.assertEqual(text, "")
         self.assertEqual(status, "failed")
@@ -227,7 +239,7 @@ class TestExtractPdfText(unittest.TestCase):
         # 영문만 있는 텍스트 → 한글 비율 0%
         mock_plumber_mod = self._make_mock_pdf("This is all English text from scanned image PDF.")
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/image.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/image.pdf")
 
         self.assertIn("이미지 기반 PDF", text)
         self.assertEqual(status, "failed")
@@ -241,7 +253,7 @@ class TestExtractPdfText(unittest.TestCase):
         chart_text = "100,000 200,000 300,000\n50.5 60.3 70.1\n(2024) (2025) (2026)\n" * 5
         mock_plumber_mod = self._make_mock_pdf(chart_text)
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/chart.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/chart.pdf")
 
         self.assertIn("차트/이미지 PDF", text)
         self.assertEqual(status, "failed")
@@ -256,7 +268,7 @@ class TestExtractPdfText(unittest.TestCase):
         korean_text = "삼성전자 반도체 사업부 실적이 크게 개선되었습니다. 매출액은 전분기 대비 증가하였습니다."
         mock_plumber_mod = self._make_mock_pdf(korean_text)
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/good.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/good.pdf")
 
         self.assertEqual(status, "success")
         self.assertIn("삼성전자", text)
@@ -271,12 +283,13 @@ class TestExtractPdfText(unittest.TestCase):
         long_korean = "가나다라마바사아자차" * 1500
         mock_plumber_mod = self._make_mock_pdf(long_korean)
         with patch.dict("sys.modules", {"pdfplumber": mock_plumber_mod}):
-            text, status = extract_pdf_text("https://stock.pstatic.net/long.pdf")
+            text, status, _pdf_bytes = extract_pdf_text("https://stock.pstatic.net/long.pdf")
 
         self.assertEqual(status, "partial")
         self.assertLessEqual(len(text), _MAX_TEXT)
 
 
+@pytest.mark.live  # collect_reports calls _get_report_db() → real stock.db SQLite; no mock intercepts it
 class TestCollectReports(unittest.TestCase):
     """collect_reports 테스트"""
 
@@ -471,19 +484,10 @@ class TestManageReportMcp(unittest.TestCase):
     def _run(self, coro):
         return asyncio.run(coro)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
-    @patch("mcp_tools.load_reports")
-    def test_list_action(self, mock_load, mock_token):
+    @pytest.mark.live  # manage_report list calls _get_report_db() → real stock.db; no fixture provides a populated test DB
+    @patch("mcp_tools.tools.manage_report.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
+    def test_list_action(self, mock_token):
         from mcp_tools import _execute_tool
-
-        mock_load.return_value = {
-            "reports": [
-                {"date": "2026-03-28", "ticker": "005930", "name": "삼성전자",
-                 "source": "미래에셋", "title": "반도체 전망",
-                 "pdf_url": "https://ex.com/1.pdf", "full_text": "본문 내용"},
-            ],
-            "last_collected": "2026-03-28T12:00:00+09:00",
-        }
 
         result = self._run(_execute_tool("manage_report", {"action": "list", "days": 7}))
 
@@ -491,19 +495,10 @@ class TestManageReportMcp(unittest.TestCase):
         self.assertEqual(len(result["reports"]), 1)
         self.assertIn("full_text", result["reports"][0])
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
-    @patch("mcp_tools.load_reports")
-    def test_list_brief(self, mock_load, mock_token):
+    @pytest.mark.live  # manage_report list calls _get_report_db() → real stock.db; no fixture provides a populated test DB
+    @patch("mcp_tools.tools.manage_report.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
+    def test_list_brief(self, mock_token):
         from mcp_tools import _execute_tool
-
-        mock_load.return_value = {
-            "reports": [
-                {"date": "2026-03-28", "ticker": "005930", "name": "삼성전자",
-                 "source": "미래에셋", "title": "반도체 전망",
-                 "pdf_url": "https://ex.com/1.pdf", "full_text": "본문 내용"},
-            ],
-            "last_collected": "2026-03-28T12:00:00+09:00",
-        }
 
         result = self._run(_execute_tool("manage_report", {"action": "list", "brief": True}))
 
@@ -511,9 +506,9 @@ class TestManageReportMcp(unittest.TestCase):
         # brief=True면 full_text 없음
         self.assertNotIn("full_text", result["reports"][0])
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
-    @patch("mcp_tools.collect_reports")
-    @patch("mcp_tools.get_collection_tickers")
+    @patch("mcp_tools.tools.manage_report.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
+    @patch("mcp_tools.tools.manage_report.collect_reports")
+    @patch("mcp_tools.tools.manage_report.get_collection_tickers")
     def test_collect_action(self, mock_tickers, mock_collect, mock_token):
         from mcp_tools import _execute_tool
 
@@ -528,8 +523,8 @@ class TestManageReportMcp(unittest.TestCase):
         self.assertEqual(result["collected"], 1)
         mock_collect.assert_called_once()
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
-    @patch("mcp_tools.get_collection_tickers")
+    @patch("mcp_tools.tools.manage_report.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
+    @patch("mcp_tools.tools.manage_report.get_collection_tickers")
     def test_tickers_action(self, mock_tickers, mock_token):
         from mcp_tools import _execute_tool
 
@@ -542,7 +537,7 @@ class TestManageReportMcp(unittest.TestCase):
         self.assertIn("005930", tickers)
         self.assertIn("035720", tickers)
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
+    @patch("mcp_tools.tools.manage_report.get_kis_token", new_callable=AsyncMock, return_value="dummy_token")
     def test_invalid_action(self, mock_token):
         from mcp_tools import _execute_tool
 

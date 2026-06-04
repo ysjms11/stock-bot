@@ -11,12 +11,12 @@ ROOT = Path(__file__).parent
 
 
 def collect_main_jobs() -> set:
-    """main.py 의 jq.run_daily(... name="X") 에서 X 수집.
+    """main_pkg/schedule.py 의 jq.run_daily(... name="X") 에서 X 수집.
 
     한 라인 단위로 jq.run_daily/run_repeating 호출 식별 후 name= 추출.
     (regex `[^)]+` 는 dtime(...) 내부 `)` 에서 멈추므로 라인 기반이 견고).
     """
-    src = (ROOT / "main.py").read_text()
+    src = (ROOT / "main_pkg" / "schedule.py").read_text()
     jobs = set()
     for line in src.splitlines():
         if "jq.run_daily" in line or "jq.run_repeating" in line:
@@ -66,7 +66,13 @@ def test_schedule_registration_consistency():
 
     # 함수 이름은 schedule.md 의 4번째 컬럼에 별도 백틱으로 들어가는데
     # 동일 추출되므로 main.py 의 async def 함수명도 모아서 화이트리스트 처리
-    src = (ROOT / "main.py").read_text()
+    # Collect function names from all main_pkg source files
+    src_parts = [(ROOT / "main_pkg" / "schedule.py").read_text()]
+    for jobs_file in sorted((ROOT / "main_pkg" / "jobs").glob("*.py")):
+        src_parts.append(jobs_file.read_text())
+    src_parts.append((ROOT / "main_pkg" / "_entry.py").read_text())
+    src_parts.append((ROOT / "main_pkg" / "telegram_bot.py").read_text())
+    src = "\n".join(src_parts)
     func_names = set(re.findall(r"^async def (\w+)\(", src, re.MULTILINE))
     func_names |= set(re.findall(r"^def (\w+)\(", src, re.MULTILINE))
 

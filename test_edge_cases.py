@@ -137,29 +137,49 @@ class TestLoadSaveJson(unittest.TestCase):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 2. KIS 토큰 캐시 및 만료 재발급
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _make_mock_session(token_response: dict):
+    """get_kis_token()이 사용하는 _get_session() 반환값을 모방하는 mock 세션 생성."""
+    mock_resp = AsyncMock()
+    mock_resp.json = AsyncMock(return_value=token_response)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+    return mock_session
+
+
 class TestKisTokenCache(unittest.TestCase):
 
+    _TEMP_CACHE = "/tmp/_nonexistent_token_cache_test.json"
+
     def setUp(self):
-        # 매 테스트 전에 토큰 캐시 초기화
-        _token_cache["token"] = None
-        _token_cache["expires"] = None
+        # 매 테스트 전에 메모리 캐시 초기화
+        import kis_api._session as _s
+        _s._token_cache["token"] = None
+        _s._token_cache["expires"] = None
+        # 공유 세션도 닫아 _get_session() 강제 재생성 방지
+        _s._shared_session = None
+        # 이전 테스트가 남긴 임시 파일 캐시만 삭제 (실제 캐시 파일은 건드리지 않음)
+        import os as _os
+        if _os.path.exists(self._TEMP_CACHE):
+            _os.remove(self._TEMP_CACHE)
 
     def tearDown(self):
-        _token_cache["token"] = None
-        _token_cache["expires"] = None
+        import kis_api._session as _s
+        _s._token_cache["token"] = None
+        _s._token_cache["expires"] = None
+        _s._shared_session = None
+        # 임시 파일 캐시만 정리 (실제 캐시 파일은 건드리지 않음)
+        import os as _os
+        if _os.path.exists(self._TEMP_CACHE):
+            _os.remove(self._TEMP_CACHE)
 
-    @patch("kis_api.aiohttp.ClientSession")
-    def test_token_fresh_issue(self, mock_session_cls):
+    @patch("kis_api._session.TOKEN_CACHE_FILE", "/tmp/_nonexistent_token_cache_test.json")
+    @patch("kis_api._session._get_session")
+    def test_token_fresh_issue(self, mock_get_session):
         """토큰 캐시 비었을 때 → 새 토큰 발급"""
-        mock_resp = AsyncMock()
-        mock_resp.json = AsyncMock(return_value={"access_token": "new_token_abc"})
-        mock_session = MagicMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=None)
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=None)
-        mock_session_cls.return_value = mock_session
+        mock_get_session.return_value = _make_mock_session({"access_token": "new_token_abc"})
 
         token = _run(kis_api.get_kis_token())
         self.assertEqual(token, "new_token_abc")
@@ -173,40 +193,23 @@ class TestKisTokenCache(unittest.TestCase):
         token = _run(kis_api.get_kis_token())
         self.assertEqual(token, "cached_token")
 
-    @patch("kis_api.aiohttp.ClientSession")
-    def test_token_expired_reissue(self, mock_session_cls):
+    @patch("kis_api._session.TOKEN_CACHE_FILE", "/tmp/_nonexistent_token_cache_test.json")
+    @patch("kis_api._session._get_session")
+    def test_token_expired_reissue(self, mock_get_session):
         """만료된 캐시 → 재발급"""
         _token_cache["token"] = "expired_token"
         _token_cache["expires"] = datetime.now() - timedelta(hours=1)  # 이미 만료
 
-        mock_resp = AsyncMock()
-        mock_resp.json = AsyncMock(return_value={"access_token": "refreshed_token"})
-        mock_session = MagicMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=None)
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=None)
-        mock_session_cls.return_value = mock_session
+        mock_get_session.return_value = _make_mock_session({"access_token": "refreshed_token"})
 
         token = _run(kis_api.get_kis_token())
         self.assertEqual(token, "refreshed_token")
 
-    @patch("kis_api.aiohttp.ClientSession")
-    def test_token_api_failure_returns_none(self, mock_session_cls):
+    @patch("kis_api._session.TOKEN_CACHE_FILE", "/tmp/_nonexistent_token_cache_test.json")
+    @patch("kis_api._session._get_session")
+    def test_token_api_failure_returns_none(self, mock_get_session):
         """토큰 API가 access_token 없이 응답 → None 반환"""
-        _token_cache["token"] = None
-        _token_cache["expires"] = None
-
-        mock_resp = AsyncMock()
-        mock_resp.json = AsyncMock(return_value={"error": "invalid credentials"})
-        mock_session = MagicMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=None)
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=None)
-        mock_session_cls.return_value = mock_session
+        mock_get_session.return_value = _make_mock_session({"error": "invalid credentials"})
 
         token = _run(kis_api.get_kis_token())
         self.assertIsNone(token)
@@ -217,26 +220,26 @@ class TestKisTokenCache(unittest.TestCase):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class TestEmptyPortfolio(unittest.TestCase):
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
-    @patch("mcp_tools.load_json", return_value={})
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
+    @patch("mcp_tools.tools.portfolio.load_json", return_value={})
     def test_empty_portfolio_returns_message(self, mock_load, mock_token):
         """포트폴리오가 비어있을 때 안내 메시지 반환"""
         result = _run(_execute_tool("get_portfolio", {}))
         self.assertIn("message", result)
         self.assertIn("비어있습니다", result["message"])
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
-    @patch("mcp_tools.load_json", return_value={"us_stocks": {}, "cash_krw": 0, "cash_usd": 0})
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
+    @patch("mcp_tools.tools.portfolio.load_json", return_value={"us_stocks": {}, "cash_krw": 0, "cash_usd": 0})
     def test_only_meta_keys_portfolio_returns_message(self, mock_load, mock_token):
         """메타키만 있고 종목이 없는 포트폴리오 → 비어있음"""
         result = _run(_execute_tool("get_portfolio", {}))
         self.assertIn("message", result)
         self.assertIn("비어있습니다", result["message"])
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
-    @patch("mcp_tools.load_json", return_value={})
-    @patch("mcp_tools.save_json")
-    @patch("mcp_tools.ws_manager", MagicMock())
+    @patch("mcp_tools.tools.portfolio.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
+    @patch("mcp_tools.tools.portfolio.load_json", return_value={})
+    @patch("mcp_tools.tools.portfolio.save_json")
+    @patch("mcp_tools.tools.portfolio.ws_manager", MagicMock())
     def test_set_portfolio_without_holdings_returns_error(self, mock_save, mock_load, mock_token):
         """holdings 없이 set 모드 → 에러"""
         result = _run(_execute_tool("get_portfolio", {"mode": "set"}))
@@ -248,10 +251,10 @@ class TestEmptyPortfolio(unittest.TestCase):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class TestInvalidTicker(unittest.TestCase):
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
-    @patch("mcp_tools.kis_stock_price", new_callable=AsyncMock, return_value={})
-    @patch("mcp_tools.kis_investor_trend", new_callable=AsyncMock, return_value=[])
-    @patch("mcp_tools.kis_estimate_perform", new_callable=AsyncMock, return_value={})
+    @patch("mcp_tools.tools.price.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
+    @patch("mcp_tools.tools.price.kis_stock_price", new_callable=AsyncMock, return_value={})
+    @patch("mcp_tools.tools.price.kis_investor_trend", new_callable=AsyncMock, return_value=[])
+    @patch("mcp_tools.tools.price.kis_estimate_perform", new_callable=AsyncMock, return_value={})
     def test_nonexistent_kr_ticker_returns_zeros(self, mock_est, mock_inv, mock_price, mock_token):
         """존재하지 않는 국내 종목코드 → 빈 응답, 0 값 반환 (크래시 없음)"""
         result = _run(_execute_tool("get_stock_detail", {"ticker": "999999"}))
@@ -259,19 +262,19 @@ class TestInvalidTicker(unittest.TestCase):
         self.assertNotIn("error", result)
         self.assertEqual(result.get("ticker"), "999999")
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
-    @patch("mcp_tools.kis_us_stock_price", new_callable=AsyncMock, return_value={})
-    @patch("mcp_tools.kis_us_stock_detail", new_callable=AsyncMock, return_value={})
+    @patch("mcp_tools.tools.price.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
+    @patch("mcp_tools.tools.price.kis_us_stock_price", new_callable=AsyncMock, return_value={})
+    @patch("mcp_tools.tools.price.kis_us_stock_detail", new_callable=AsyncMock, return_value={})
     def test_nonexistent_us_ticker_returns_zeros(self, mock_detail, mock_price, mock_token):
         """존재하지 않는 미국 종목코드 → 빈 응답, 크래시 없음"""
         result = _run(_execute_tool("get_stock_detail", {"ticker": "ZZZZZ"}))
         self.assertNotIn("error", result)
         self.assertEqual(result.get("ticker"), "ZZZZZ")
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
-    @patch("mcp_tools.kis_stock_price", new_callable=AsyncMock, return_value={})
-    @patch("mcp_tools.kis_investor_trend", new_callable=AsyncMock, return_value=[])
-    @patch("mcp_tools.kis_estimate_perform", new_callable=AsyncMock, return_value={})
+    @patch("mcp_tools.tools.price.get_kis_token", new_callable=AsyncMock, return_value="mock_token")
+    @patch("mcp_tools.tools.price.kis_stock_price", new_callable=AsyncMock, return_value={})
+    @patch("mcp_tools.tools.price.kis_investor_trend", new_callable=AsyncMock, return_value=[])
+    @patch("mcp_tools.tools.price.kis_estimate_perform", new_callable=AsyncMock, return_value={})
     def test_empty_ticker_string(self, mock_est, mock_inv, mock_price, mock_token):
         """빈 문자열 ticker → 크래시 없이 처리"""
         result = _run(_execute_tool("get_stock_detail", {"ticker": ""}))
@@ -286,24 +289,24 @@ class TestStoplossHelpers(unittest.TestCase):
 
     def test_stoploss_sent_count_empty(self):
         """빈 sent dict → count 0"""
-        from main import _get_stoploss_sent_count
+        from main_pkg.jobs.stoploss import _get_stoploss_sent_count
         self.assertEqual(_get_stoploss_sent_count({}, "005930", "20260329"), 0)
 
     def test_stoploss_sent_count_existing(self):
         """기존 카운트가 있는 경우"""
-        from main import _get_stoploss_sent_count
+        from main_pkg.jobs.stoploss import _get_stoploss_sent_count
         sent = {"005930": {"date": "20260329", "count": 2}}
         self.assertEqual(_get_stoploss_sent_count(sent, "005930", "20260329"), 2)
 
     def test_stoploss_sent_count_different_date(self):
         """다른 날짜의 카운트 → 0"""
-        from main import _get_stoploss_sent_count
+        from main_pkg.jobs.stoploss import _get_stoploss_sent_count
         sent = {"005930": {"date": "20260328", "count": 3}}
         self.assertEqual(_get_stoploss_sent_count(sent, "005930", "20260329"), 0)
 
     def test_increment_stoploss_sent(self):
         """카운트 증가"""
-        from main import _increment_stoploss_sent
+        from main_pkg.jobs.stoploss import _increment_stoploss_sent
         sent = {}
         _increment_stoploss_sent(sent, "005930", "20260329")
         self.assertEqual(sent["005930"]["count"], 1)
@@ -314,7 +317,7 @@ class TestStoplossHelpers(unittest.TestCase):
 
 class TestTokenFailureInExecuteTool(unittest.TestCase):
 
-    @patch("mcp_tools.get_kis_token", new_callable=AsyncMock, return_value=None)
+    @patch("kis_api.get_kis_token", new_callable=AsyncMock, return_value=None)
     def test_no_token_returns_error(self, mock_token):
         """토큰 발급 실패 → RuntimeError → error dict 반환"""
         result = _run(_execute_tool("get_portfolio", {}))
@@ -326,21 +329,21 @@ class TestIsKrTradingTime(unittest.TestCase):
 
     def test_weekday_market_hours(self):
         """평일 장중 → True"""
-        from main import _is_kr_trading_time
+        from main_pkg._ctx import _is_kr_trading_time
         # 2026-03-30 is Monday
         dt = datetime(2026, 3, 30, 10, 0, tzinfo=KST)
         self.assertTrue(_is_kr_trading_time(dt))
 
     def test_weekend_returns_false(self):
         """주말 → False"""
-        from main import _is_kr_trading_time
+        from main_pkg._ctx import _is_kr_trading_time
         # 2026-03-29 is Sunday
         dt = datetime(2026, 3, 29, 10, 0, tzinfo=KST)
         self.assertFalse(_is_kr_trading_time(dt))
 
     def test_late_night_returns_false(self):
         """심야 → False"""
-        from main import _is_kr_trading_time
+        from main_pkg._ctx import _is_kr_trading_time
         dt = datetime(2026, 3, 30, 2, 0, tzinfo=KST)
         self.assertFalse(_is_kr_trading_time(dt))
 

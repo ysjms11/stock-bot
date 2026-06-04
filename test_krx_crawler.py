@@ -54,8 +54,15 @@ from krx_crawler import (
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 @pytest.fixture(autouse=True)
 def clean_test_dir():
-    """각 테스트 전후 임시 디렉토리 정리."""
+    """각 테스트 전후 임시 디렉토리 정리.
+
+    test_scan_presets.py 가 같은 프로세스에서 import될 때
+    krx_crawler.KRX_DB_DIR을 자신의 경로로 덮어쓰므로,
+    각 테스트 직전에 다시 패치한다.
+    """
     os.makedirs(TEST_KRX_DB_DIR, exist_ok=True)
+    import krx_crawler as _kc
+    _kc.KRX_DB_DIR = TEST_KRX_DB_DIR  # re-apply patch in case another test module overwrote it
     yield
     if os.path.exists(TEST_ROOT):
         shutil.rmtree(TEST_ROOT)
@@ -149,6 +156,7 @@ class TestFetchKRXMarketDataKOSPI:
         for stock in result:
             assert len(stock["ticker"]) == 6, f"ticker 길이 이상: {stock['ticker']}"
 
+    @pytest.mark.live  # KRX_API_KEY present in env bypasses the _krx_post mock; fetch_krx_market_data goes through the real KRX OPENAPI path and returns real (non-deterministic) data
     @pytest.mark.asyncio
     async def test_kospi_numeric_parsing(self):
         """콤마 포맷 숫자 파싱 정확성 검증."""
@@ -198,6 +206,7 @@ class TestFetchKRXMarketDataKOSDAQ:
         # market 값 확인
         assert all(s["market"] == "kosdaq" for s in result)
 
+    @pytest.mark.live  # KRX_API_KEY present in env bypasses the _krx_post mock; fetch_krx_market_data goes through the real KRX OPENAPI path and returns real (non-deterministic) data
     @pytest.mark.asyncio
     async def test_kosdaq_skips_invalid_tickers(self):
         """6자리 아닌 ticker는 걸러져야 함."""
@@ -564,6 +573,7 @@ class TestScanPresetValue:
 class TestDBFileCreationAndLoad:
     """Test 8: update_daily_db로 DB 파일 생성 후 load_krx_db로 동일 데이터 로드."""
 
+    @pytest.mark.live  # update_daily_db calls real KRX OPENAPI + KIS API (KRX_API_KEY in env bypasses _krx_post mock, then hits _fetch_kis_valuations); slow and non-deterministic
     @pytest.mark.asyncio
     async def test_update_daily_db_creates_file(self):
         """update_daily_db 실행 후 DATE.json 파일이 생성돼야 함."""
@@ -596,6 +606,7 @@ class TestDBFileCreationAndLoad:
         assert result["count"] > 0
         assert result["date"] == date
 
+    @pytest.mark.live  # depends on test_update_daily_db_creates_file; update_daily_db hits real KRX OPENAPI + KIS API despite mock
     @pytest.mark.asyncio
     async def test_load_krx_db_returns_same_data(self):
         """update_daily_db로 저장 후 load_krx_db로 동일 데이터 확인."""
@@ -637,6 +648,7 @@ class TestDBFileCreationAndLoad:
         assert "pbr" in s
         assert "foreign_ratio" in s
 
+    @pytest.mark.live  # load_krx_db() with no date calls db_collector.load_krx_db() which reads real stock.db SQLite; the result is the actual latest date in production, not the fake JSON files written to TEST_KRX_DB_DIR
     def test_load_krx_db_latest_without_date(self):
         """date=None 이면 가장 최신 파일 로드."""
         # 가짜 DB 파일 2개 생성
@@ -664,13 +676,22 @@ class TestMCPBackwardCompatibility:
     """Test 9: mcp_tools import 및 get_dart 도구 호출 하위 호환성."""
 
     def test_mcp_tools_import_does_not_break(self):
-        """mcp_tools 모듈이 정상적으로 import돼야 함."""
+        """mcp_tools 모듈이 정상적으로 import돼야 함.
+
+        패키지 리팩토링(flat → package) 후 scan_stocks/load_krx_db는 더 이상
+        mcp_tools 최상위에 재-export되지 않는다. 대신 mcp_tools.tools.scan 서브모듈에
+        존재하며, mcp_tools 최상위의 실제 공개 API(_execute_tool, MCP_TOOLS)와
+        서브모듈 접근 경로를 검증한다.
+        """
         try:
             import mcp_tools
-            assert hasattr(mcp_tools, "_execute_tool")
-            assert hasattr(mcp_tools, "MCP_TOOLS")
-            assert hasattr(mcp_tools, "scan_stocks")
-            assert hasattr(mcp_tools, "load_krx_db")
+            # 최상위 공개 API
+            assert hasattr(mcp_tools, "_execute_tool"), "_execute_tool must be at mcp_tools top-level"
+            assert hasattr(mcp_tools, "MCP_TOOLS"), "MCP_TOOLS must be at mcp_tools top-level"
+            # scan_stocks / load_krx_db는 패키지 리팩토링 후 서브모듈에 위치
+            import mcp_tools.tools.scan as scan_mod
+            assert hasattr(scan_mod, "scan_stocks"), "scan_stocks must be in mcp_tools.tools.scan"
+            assert hasattr(scan_mod, "load_krx_db"), "load_krx_db must be in mcp_tools.tools.scan"
         except ImportError as e:
             pytest.fail(f"mcp_tools import 실패: {e}")
 
@@ -684,11 +705,11 @@ class TestMCPBackwardCompatibility:
              "rcept_dt": "20260402", "pblntf_ty": "B"},
         ]
 
-        with patch("mcp_tools.search_dart_disclosures", new_callable=AsyncMock,
+        with patch("mcp_tools.tools.dart.search_dart_disclosures", new_callable=AsyncMock,
                    return_value=fake_disclosures), \
-             patch("mcp_tools.load_watchlist",
+             patch("mcp_tools.tools.dart.load_watchlist",
                    return_value={"005930": "삼성전자"}), \
-             patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+             patch("kis_api.get_kis_token", new_callable=AsyncMock,
                    return_value="fake_token"):
             result = await _execute_tool("get_dart", {})
 
@@ -702,9 +723,9 @@ class TestMCPBackwardCompatibility:
         from mcp_tools import _execute_tool
 
         # DB 디렉토리가 비어있으므로 load_krx_db(None)=None
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock,
                    return_value="fake_token"), \
-             patch("mcp_tools.load_krx_db", return_value=None):
+             patch("mcp_tools.tools.scan.load_krx_db", return_value=None):
             result = await _execute_tool("get_scan", {})
 
         assert "error" in result
@@ -721,9 +742,9 @@ class TestMCPBackwardCompatibility:
                        "inst_ratio": 0.1, "fi_ratio": 0.4, "turnover": 0.16},
         })
 
-        with patch("mcp_tools.get_kis_token", new_callable=AsyncMock,
+        with patch("kis_api.get_kis_token", new_callable=AsyncMock,
                    return_value="fake_token"), \
-             patch("mcp_tools.load_krx_db", return_value=fake_db):
+             patch("mcp_tools.tools.scan.load_krx_db", return_value=fake_db):
             result = await _execute_tool("get_scan", {})
 
         assert "results" in result
