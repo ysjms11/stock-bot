@@ -786,6 +786,10 @@ function dashApp() {
     sectorHeatmap: null,
     sectorHeatmapLoading: false,
 
+    /* market: macro panel */
+    macroPanel: null,
+    macroPanelLoading: false,
+
     /* P2: watch/alert tab */
     watch: null,
     watchForm: { show: false, ticker: '', name: '', stop: '', target: '', buy: '' },
@@ -1189,6 +1193,14 @@ function dashApp() {
       if (!data.error) this.sectorHeatmap = data;
     },
 
+    async loadMacroPanel() {
+      /* SWR: keep stale data, never null during refresh */
+      if (!this.macroPanel) this.macroPanelLoading = true;
+      const data = await this.api('/api/macro_panel');
+      this.macroPanelLoading = false;
+      if (!data.error) this.macroPanel = data;
+    },
+
     setTab(t) {
       this.activeTab = t;
       if (t === 'portfolio') {
@@ -1207,7 +1219,7 @@ function dashApp() {
       if (t === 'signal') this.loadSignal();
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
-      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); }
+      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); this.loadMacroPanel(); }
       if (t === 'us') { this.loadUsCandidates(); this.loadUsScan(); }
       this.$nextTick(() => this.refreshIcons());
     },
@@ -1696,6 +1708,9 @@ _MARKET_PANEL = (
     '              <button @click="marketMoverSeg=\'vol\'"\n'
     '                :class="marketMoverSeg===\'vol\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
     '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">거래량</button>\n'
+    '              <button @click="marketMoverSeg=\'macro\'; loadMacroPanel()"\n'
+    '                :class="marketMoverSeg===\'macro\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">매크로</button>\n'
     '            </div>\n'
     '\n'
     '            <!-- KR 등락 -->\n'
@@ -1867,6 +1882,169 @@ _MARKET_PANEL = (
     '            </template>\n'
     '\n'
     '          </div><!-- /급등락·거래량 카드 -->\n'
+    '\n'
+    '          <!-- 매크로 패널 -->\n'
+    '          <template x-if="marketMoverSeg===\'macro\'">\n'
+    '            <div class="space-y-4">\n'
+    '\n'
+    '              <!-- 로딩 스켈레톤 -->\n'
+    '              <template x-if="macroPanelLoading && !macroPanel">\n'
+    '                <div class="space-y-4">\n'
+    '                  <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 h-12 animate-pulse bg-slate-100"></div>\n'
+    '                  <div class="grid grid-cols-2 md:grid-cols-4 gap-3">\n'
+    '                    <template x-for="i in [1,2,3,4]" :key="i"><div class="bg-slate-100 animate-pulse rounded-xl h-16"></div></template>\n'
+    '                  </div>\n'
+    '                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">\n'
+    '                    <div class="bg-slate-100 animate-pulse rounded-xl h-24"></div>\n'
+    '                    <div class="bg-slate-100 animate-pulse rounded-xl h-24"></div>\n'
+    '                  </div>\n'
+    '                  <div class="bg-slate-100 animate-pulse rounded-xl h-32"></div>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '              <!-- 실데이터 -->\n'
+    '              <template x-if="macroPanel">\n'
+    '                <div class="space-y-4">\n'
+    '\n'
+    '                  <!-- A: 레짐 배너 -->\n'
+    '                  <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex items-center gap-3">\n'
+    '                    <template x-if="macroPanel.regime">\n'
+    '                      <div class="flex items-center gap-3 w-full">\n'
+    '                        <span class="text-xs font-semibold px-2.5 py-1 rounded-full"\n'
+    '                              :class="regimeBadgeClass(macroPanel.regime.color)"\n'
+    '                              x-text="macroPanel.regime.label"></span>\n'
+    '                        <span class="text-sm text-slate-600"\n'
+    '                              x-text="macroPanel.regime.regime_en === \'offensive\' ? \'공격형\' : macroPanel.regime.regime_en === \'defensive\' ? \'수비형\' : macroPanel.regime.regime_en === \'crisis\' ? \'위기\' : macroPanel.regime.regime_en"></span>\n'
+    '                        <template x-if="macroPanel.regime.days != null">\n'
+    '                          <span class="text-xs text-slate-400" x-text="macroPanel.regime.days + \'일째\'"></span>\n'
+    '                        </template>\n'
+    '                      </div>\n'
+    '                    </template>\n'
+    '                    <template x-if="!macroPanel.regime">\n'
+    '                      <span class="text-sm text-slate-400">레짐 데이터 없음</span>\n'
+    '                    </template>\n'
+    '                  </div>\n'
+    '\n'
+    '                  <!-- B: 핵심 지표 카드 -->\n'
+    '                  <template x-if="macroPanel.indicators && macroPanel.indicators.length">\n'
+    '                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">\n'
+    '                      <template x-for="ind in macroPanel.indicators" :key="ind.label">\n'
+    '                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                          <div class="text-xs text-slate-500 mb-1" x-text="ind.label"></div>\n'
+    '                          <div class="text-lg font-bold text-slate-800"\n'
+    '                               :class="ind.label===\'VIX\' && ind.value != null ? (Number(ind.value) >= 30 ? \'text-red-600\' : Number(ind.value) >= 20 ? \'text-amber-500\' : \'text-slate-800\') : \'text-slate-800\'"\n'
+    '                               x-text="ind.value != null ? ind.value : \'-\'"></div>\n'
+    '                          <div class="text-xs mt-1"\n'
+    '                               :class="chgClass(ind.chg_pct != null ? ind.chg_pct : ind.chg)"\n'
+    '                               x-text="(ind.chg_pct != null ? chgStr(ind.chg_pct) : (ind.chg != null ? (Number(ind.chg) > 0 ? \'+\' : \'\') + Number(ind.chg).toFixed(2) : \'-\'))"></div>\n'
+    '                        </div>\n'
+    '                      </template>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '\n'
+    '                  <!-- C: 수익률 곡선 / 침체확률 -->\n'
+    '                  <template x-if="macroPanel.curve || macroPanel.recession_prob != null">\n'
+    '                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">\n'
+    '                      <!-- 수익률 곡선 -->\n'
+    '                      <template x-if="macroPanel.curve">\n'
+    '                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                          <div class="flex items-center gap-2 mb-3">\n'
+    '                            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">수익률 곡선</h3>\n'
+    '                            <template x-if="macroPanel.curve.spread != null && macroPanel.curve.spread < 0">\n'
+    '                              <span class="text-xs font-semibold bg-red-100 text-red-600 px-1.5 py-0.5 rounded">역전중</span>\n'
+    '                            </template>\n'
+    '                          </div>\n'
+    '                          <div class="space-y-2">\n'
+    '                            <div class="flex justify-between text-sm">\n'
+    '                              <span class="text-slate-500">2Y</span>\n'
+    '                              <span class="font-semibold text-slate-800" x-text="macroPanel.curve.y2 != null ? macroPanel.curve.y2.toFixed(2) + \'%\' : \'-\'"></span>\n'
+    '                            </div>\n'
+    '                            <div class="flex justify-between text-sm">\n'
+    '                              <span class="text-slate-500">10Y</span>\n'
+    '                              <span class="font-semibold text-slate-800" x-text="macroPanel.curve.y10 != null ? macroPanel.curve.y10.toFixed(2) + \'%\' : \'-\'"></span>\n'
+    '                            </div>\n'
+    '                            <div class="flex justify-between text-sm border-t border-slate-100 pt-2">\n'
+    '                              <span class="text-slate-500">스프레드</span>\n'
+    '                              <span class="font-semibold"\n'
+    '                                    :class="macroPanel.curve.spread != null && macroPanel.curve.spread < 0 ? \'text-red-600\' : \'text-green-600\'"\n'
+    '                                    x-text="macroPanel.curve.spread != null ? (macroPanel.curve.spread > 0 ? \'+\' : \'\') + macroPanel.curve.spread.toFixed(2) + \'%\' : \'-\'"></span>\n'
+    '                            </div>\n'
+    '                          </div>\n'
+    '                        </div>\n'
+    '                      </template>\n'
+    '                      <!-- 침체확률 -->\n'
+    '                      <template x-if="macroPanel.recession_prob != null">\n'
+    '                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">침체확률 (12개월 선행)</h3>\n'
+    '                          <div class="flex items-end gap-2 mb-1">\n'
+    '                            <span class="text-3xl font-bold"\n'
+    '                                  :class="macroPanel.recession_prob >= 40 ? \'text-red-600\' : macroPanel.recession_prob >= 20 ? \'text-amber-500\' : \'text-green-600\'"\n'
+    '                                  x-text="macroPanel.recession_prob.toFixed(1) + \'%\'"></span>\n'
+    '                          </div>\n'
+    '                          <div class="text-xs text-slate-400">Estrella-Mishkin 1998</div>\n'
+    '                        </div>\n'
+    '                      </template>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '\n'
+    '                  <!-- D: Polymarket Fed -->\n'
+    '                  <template x-if="macroPanel.polymarket_fed && macroPanel.polymarket_fed.length">\n'
+    '                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Polymarket — Fed</h3>\n'
+    '                      <div class="space-y-2">\n'
+    '                        <template x-for="m in macroPanel.polymarket_fed" :key="m.title">\n'
+    '                          <div class="flex items-center justify-between gap-2 py-1.5 border-b border-slate-50">\n'
+    '                            <div class="text-sm text-slate-700 flex-1 min-w-0 truncate" x-text="m.title"></div>\n'
+    '                            <div class="flex items-center gap-2 flex-shrink-0">\n'
+    '                              <span class="text-sm font-semibold"\n'
+    '                                    :class="m.yes_pct >= 60 ? \'text-green-600\' : m.yes_pct <= 40 ? \'text-red-500\' : \'text-slate-700\'"\n'
+    '                                    x-text="m.yes_pct + \'%\'"></span>\n'
+    '                              <span class="text-xs text-slate-400" x-text="\'$\' + (m.volume_usd / 1e6).toFixed(1) + \'M\'"></span>\n'
+    '                            </div>\n'
+    '                          </div>\n'
+    '                        </template>\n'
+    '                      </div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '\n'
+    '                  <!-- E: 섹터 로테이션 -->\n'
+    '                  <template x-if="macroPanel.sector_rotation && macroPanel.sector_rotation.length">\n'
+    '                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">\n'
+    '                      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">섹터 로테이션 (외인+기관)</h3>\n'
+    '                      <table class="w-full text-sm">\n'
+    '                        <thead><tr class="text-xs text-slate-400 border-b border-slate-100">\n'
+    '                          <th class="text-left py-1.5 font-medium">섹터</th>\n'
+    '                          <th class="text-right py-1.5 font-medium">외인</th>\n'
+    '                          <th class="text-right py-1.5 font-medium">기관</th>\n'
+    '                          <th class="text-right py-1.5 font-medium">합산</th>\n'
+    '                        </tr></thead>\n'
+    '                        <tbody>\n'
+    '                          <template x-for="s in macroPanel.sector_rotation" :key="s.sector">\n'
+    '                            <tr class="border-b border-slate-50 hover:bg-slate-50">\n'
+    '                              <td class="py-1.5 font-medium text-slate-800" x-text="s.sector"></td>\n'
+    '                              <td class="py-1.5 text-right text-xs" :class="chgClass(s.foreign_net)" x-text="s.foreign_net != null ? Number(s.foreign_net).toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                              <td class="py-1.5 text-right text-xs" :class="chgClass(s.inst_net)" x-text="s.inst_net != null ? Number(s.inst_net).toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                              <td class="py-1.5 text-right text-sm font-semibold" :class="chgClass(s.combined)" x-text="s.combined != null ? Number(s.combined).toLocaleString(\'ko-KR\') : \'-\'"></td>\n'
+    '                            </tr>\n'
+    '                          </template>\n'
+    '                        </tbody>\n'
+    '                      </table>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '\n'
+    '                  <!-- 오류 정보 -->\n'
+    '                  <template x-if="macroPanel._errors && macroPanel._errors.length">\n'
+    '                    <div class="text-xs text-slate-400 px-1">\n'
+    '                      <span x-text="\'일부 소스 미수신: \' + macroPanel._errors.map(e => e.source).join(\', \')"></span>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '\n'
+    '                </div>\n'
+    '              </template>\n'
+    '\n'
+    '            </div>\n'
+    '          </template>\n'
+    '          <!-- /매크로 패널 -->\n'
     '\n'
     '        </div>\n'
     '      </template>\n'
@@ -5743,6 +5921,205 @@ async def _handle_api_sector_heatmap(request: web.Request) -> web.Response:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 매크로 패널 API (시세 탭 'macro' 서브)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def build_macro_panel_payload() -> dict:
+    """매크로 패널 집계 payload. asyncio.gather 병렬 호출, 소스별 개별 try/except.
+
+    반환 구조:
+      regime: {label, regime_en, color, days}
+      indicators: [{label, value, chg_pct|chg}]   — VIX/DXY/US10Y/WTI/GOLD/SP500/KOSPI/USDKRW
+      curve: {y2, y10, spread}
+      recession_prob: float | None
+      polymarket_fed: [{title, yes_pct, volume_usd}]  최대 3건
+      sector_rotation: [{sector, foreign_net, inst_net, combined}]  합산 내림차순, 최대 15
+      _errors: [{source, msg}]
+    """
+    payload: dict = {}
+    errors: list = []
+
+    # 병렬 호출 — 느린 polymarket/외부 호출도 동시에
+    results = await asyncio.gather(
+        execute_tool("get_regime", {"mode": "current"}),
+        execute_tool("get_macro", {"mode": "dashboard"}),
+        execute_tool("get_macro_external", {}),
+        execute_tool("get_sector", {}),
+        return_exceptions=True,
+    )
+    r_regime, r_macro, r_ext, r_sector = results
+
+    # 1. regime
+    try:
+        if isinstance(r_regime, Exception):
+            raise r_regime
+        if _tool_err(r_regime):
+            errors.append({"source": "regime", "msg": r_regime.get("error", "unknown")})
+        else:
+            regime_en = r_regime.get("regime_en", "neutral")
+            days_val = None
+            deb = r_regime.get("debounce", {})
+            if isinstance(deb, dict):
+                days_val = deb.get("days")
+            payload["regime"] = {
+                "label": r_regime.get("regime", regime_en),
+                "regime_en": regime_en,
+                "color": _regime_color(regime_en),
+                "days": days_val,
+            }
+    except Exception as e:
+        errors.append({"source": "regime", "msg": str(e)})
+
+    # 2. indicators — get_macro mode=dashboard の data dict
+    try:
+        if isinstance(r_macro, Exception):
+            raise r_macro
+        if _tool_err(r_macro):
+            errors.append({"source": "macro", "msg": r_macro.get("error", "unknown")})
+        else:
+            data = r_macro.get("data", {})
+            if not data:
+                # mode 없이 호출한 경우 최상위에 직접 있는 키 처리
+                data = r_macro
+            indicators = []
+            # 주요 지표 순서 정의
+            _ind_map = [
+                ("VIX",    "VIX",    "price", "change_pct"),
+                ("DXY",    "DXY",    "price", "change_pct"),
+                ("US10Y",  "US10Y",  "price", "change_pct"),
+                ("WTI",    "WTI",    "price", "change_pct"),
+                ("GOLD",   "GOLD",   "price", "change_pct"),
+                ("S&P500", "SP500",  "price", "change_pct"),
+                ("KOSPI",  "KOSPI",  "price", "change_pct"),
+                ("USD/KRW","USDKRW", "price", "change_pct"),
+            ]
+            for label, key, vf, chgf in _ind_map:
+                d = data.get(key, {})
+                if not isinstance(d, dict):
+                    continue
+                raw_val = d.get(vf)
+                raw_chg = d.get(chgf)
+                def _sf(x):
+                    try:
+                        return float(x) if x not in (None, "", "-") else None
+                    except (TypeError, ValueError):
+                        return None
+                val = _sf(raw_val)
+                chg = _sf(raw_chg)
+                if val is None:
+                    continue
+                # 포맷: 정수계열(KOSPI/USDKRW/SP500) → 소수점 0, 나머지 소수점 2
+                if key in ("KOSPI", "SP500"):
+                    val_str = f"{val:,.2f}"
+                elif key == "USDKRW":
+                    val_str = f"{val:,.1f}"
+                else:
+                    val_str = f"{val:.2f}"
+                indicators.append({"label": label, "value": val_str, "chg_pct": chg})
+            if indicators:
+                payload["indicators"] = indicators
+    except Exception as e:
+        errors.append({"source": "macro", "msg": str(e)})
+
+    # 3. 수익률 곡선 + 침체확률 — get_macro_external
+    try:
+        if isinstance(r_ext, Exception):
+            raise r_ext
+        if _tool_err(r_ext):
+            errors.append({"source": "macro_external", "msg": r_ext.get("error", "unknown")})
+        else:
+            # treasury 수익률 곡선
+            treasury = r_ext.get("treasury", {})
+            if isinstance(treasury, dict):
+                def _tf(x):
+                    try:
+                        return float(x) if x not in (None, "", "-") else None
+                    except (TypeError, ValueError):
+                        return None
+                y2  = _tf(treasury.get("2y"))
+                y10 = _tf(treasury.get("10y"))
+                spread = _tf(treasury.get("spread"))
+                if y2 is not None or y10 is not None:
+                    payload["curve"] = {"y2": y2, "y10": y10, "spread": spread}
+            # 침체확률
+            rec = r_ext.get("recession_prob")
+            if rec is not None:
+                try:
+                    payload["recession_prob"] = float(rec)
+                except (TypeError, ValueError):
+                    pass
+            # Polymarket Fed 관련 시장 (get_macro_external 내 polymarket 키)
+            pm_data = r_ext.get("polymarket", {})
+            if not isinstance(pm_data, dict):
+                pm_data = {}
+            pm_markets = pm_data.get("markets", [])
+            fed_markets = []
+            for m in pm_markets:
+                title = m.get("title", "")
+                tags = m.get("tags", [])
+                is_fed = any(t.lower() in ("fed", "fed rates", "economic policy") for t in tags) or "fed" in title.lower() or "fomc" in title.lower() or "rate" in title.lower()
+                if not is_fed:
+                    continue
+                # binary: top_outcome prob = YES. non-binary: top_outcome prob
+                top = m.get("top_outcome", {})
+                yes_pct = None
+                if m.get("is_binary"):
+                    prob = top.get("prob")
+                    if prob is not None:
+                        yes_pct = round(float(prob) * 100, 1)
+                else:
+                    prob = top.get("prob")
+                    outcome = top.get("outcome", "")
+                    if prob is not None:
+                        yes_pct = round(float(prob) * 100, 1)
+                vol = m.get("vol_total", 0) or 0
+                fed_markets.append({
+                    "title": title,
+                    "yes_pct": yes_pct,
+                    "volume_usd": vol,
+                    "outcome": top.get("outcome", ""),
+                })
+            if fed_markets:
+                payload["polymarket_fed"] = fed_markets[:3]
+    except Exception as e:
+        errors.append({"source": "macro_external", "msg": str(e)})
+
+    # 4. 섹터 로테이션 — get_sector all[] , 합산 내림차순 MAX 15
+    try:
+        if isinstance(r_sector, Exception):
+            raise r_sector
+        if _tool_err(r_sector):
+            errors.append({"source": "sector", "msg": r_sector.get("error", "unknown")})
+        else:
+            all_sectors = r_sector.get("all", [])
+            rotation = []
+            for s in all_sectors:
+                sector = s.get("sector", "")
+                frgn = s.get("frgn", 0) or 0
+                orgn = s.get("orgn", 0) or 0
+                combined = frgn + orgn
+                rotation.append({
+                    "sector": sector,
+                    "foreign_net": frgn,
+                    "inst_net": orgn,
+                    "combined": combined,
+                })
+            rotation.sort(key=lambda x: x["combined"], reverse=True)
+            if rotation:
+                payload["sector_rotation"] = rotation[:15]
+    except Exception as e:
+        errors.append({"source": "sector", "msg": str(e)})
+
+    payload["_errors"] = errors
+    return payload
+
+
+async def _handle_api_macro_panel(request: web.Request) -> web.Response:
+    """GET /api/macro_panel — 매크로 패널 집계 (600s TTL, SWR)."""
+    return await _api(_cached("macro_panel", 600.0, build_macro_panel_payload))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # US 애널리스트 탭 API 핸들러
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -5845,6 +6222,8 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/market", _handle_api_market)
     # 히트맵 추가
     app.router.add_get("/api/sector_heatmap", _handle_api_sector_heatmap)
+    # 매크로 패널 추가
+    app.router.add_get("/api/macro_panel", _handle_api_macro_panel)
     # US 애널리스트 탭 추가
     app.router.add_get("/api/us/candidates", _handle_api_us_candidates)
     app.router.add_get("/api/us/scan", _handle_api_us_scan)
