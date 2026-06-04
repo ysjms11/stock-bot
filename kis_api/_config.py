@@ -4,7 +4,7 @@ from datetime import timezone, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # .env를 단일 진실원천으로 — 옛 launchctl setenv 값이 가리지 않게
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 & 설정
