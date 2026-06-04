@@ -640,6 +640,7 @@ function dashApp() {
     _portChart: null,
     _portSeries: null,
     _portResizeObs: null,
+    _portChartRetry: false,
 
     /* market tab */
     market: null,
@@ -673,6 +674,8 @@ function dashApp() {
     _candleSeries: null,
     _volChart: null,
     _volSeries: null,
+    _candleResizeObs: null,
+    _candleChartRetry: false,
 
     /* P2: watch/alert tab */
     watch: null,
@@ -755,6 +758,16 @@ function dashApp() {
       }
       if (emptyEl) emptyEl.style.display = 'none';
       el.style.display = 'block';
+      // 레이아웃 전(컨테이너 폭 0)이면 0-width 차트 생성 방지 → rAF 1회 재시도 후 return.
+      // _portChartRetry 플래그로 무한루프 가드(1회만 재시도).
+      if (el.clientWidth === 0) {
+        if (!this._portChartRetry) {
+          this._portChartRetry = true;
+          requestAnimationFrame(() => this._mountPortChart());
+        }
+        return;
+      }
+      this._portChartRetry = false;
       // 이전 차트 제거
       if (this._portChart) {
         try { this._portChart.remove(); } catch(e) {}
@@ -832,9 +845,11 @@ function dashApp() {
       const data = await this.api('/api/stock/' + ticker);
       this.portModal = data.error ? { ticker, error: data.error } : data;
       this.portModalLoading = false;
+      /* 캔들 mount: 모달 DOM이 보인 뒤(x-if 렌더 + 레이아웃) mount.
+         nextTick + rAF 한 번 더로 모달 폭 0-width 생성 방지(_mountCandleChart에도 가드 있음). */
       this.$nextTick(() => {
         this.refreshIcons();
-        this._mountCandleChart();
+        requestAnimationFrame(() => this._mountCandleChart());
       });
     },
 
@@ -844,6 +859,7 @@ function dashApp() {
     },
 
     _destroyCandleChart() {
+      if (this._candleResizeObs) { this._candleResizeObs.disconnect(); this._candleResizeObs = null; }
       if (this._candleChart) {
         try { this._candleChart.remove(); } catch(e) {}
         this._candleChart = null;
@@ -878,12 +894,21 @@ function dashApp() {
     _mountCandleChart() {
       if (typeof LightweightCharts === 'undefined') return;
       if (!this.portModal || !this.portModal.candles) return;
-      const isUS = this.portModal.market === 'US' || (this.portModal.ticker && /^[A-Z]{1,5}$/.test(this.portModal.ticker) && isNaN(this.portModal.ticker));
       const candleEl = document.getElementById('modal-candle-container');
       const volEl = document.getElementById('modal-vol-container');
       if (!candleEl) return;
       const chartData = this._candleChartData();
       if (chartData.length === 0) return;
+      // 모달 레이아웃 전(컨테이너 폭 0)이면 0-width 생성 방지 → rAF 1회 재시도 후 return.
+      // _candleChartRetry 플래그로 무한루프 가드(1회만 재시도).
+      if (candleEl.clientWidth === 0) {
+        if (!this._candleChartRetry) {
+          this._candleChartRetry = true;
+          requestAnimationFrame(() => this._mountCandleChart());
+        }
+        return;
+      }
+      this._candleChartRetry = false;
       this._destroyCandleChart();
       const isMobile = window.innerWidth < 768;
       const commonOpts = {
@@ -941,6 +966,16 @@ function dashApp() {
           if (range && this._candleChart) this._candleChart.timeScale().setVisibleLogicalRange(range);
         });
       }
+      // ResizeObserver: 기기 회전/뷰포트 변화 시 캔들+거래량 폭 동기화
+      const cro = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const w = entry.contentRect.width;
+          if (this._candleChart) this._candleChart.applyOptions({ width: w });
+          if (this._volChart) this._volChart.applyOptions({ width: w });
+        }
+      });
+      cro.observe(candleEl);
+      this._candleResizeObs = cro;
     },
 
     setCandlePeriod(p) {
@@ -1009,7 +1044,15 @@ function dashApp() {
       this.activeTab = t;
       if (t === 'portfolio') {
         this.loadPortfolio();
-        this.loadPortfolioHistory();
+        /* 차트 A mount 트리거: 패널이 x-show로 보이게 된 뒤 mount.
+           portHistory가 이미 있으면 즉시 재mount(이전 차트 remove 후 재생성 → 누수 없음),
+           없으면 loadPortfolioHistory()가 fetch 후 mount.
+           x-show 레이아웃 적용을 기다리려고 nextTick + rAF 한 번 더. */
+        if (this.portHistory) {
+          this.$nextTick(() => requestAnimationFrame(() => this._mountPortChart()));
+        } else {
+          this.loadPortfolioHistory();
+        }
       }
       if (t === 'watch') this.loadWatch();
       if (t === 'signal') this.loadSignal();
