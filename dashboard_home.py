@@ -35,6 +35,7 @@ from kis_api import (
     DART_SEEN_FILE,
     EVENTS_FILE,
     DECISION_LOG_FILE,
+    PORTFOLIO_HISTORY_FILE,
     _DATA_DIR,
     KST,
 )
@@ -633,6 +634,12 @@ function dashApp() {
 
     /* P2: portfolio tab */
     portfolio: null,
+    portHistory: null,
+    portHistoryLoading: false,
+    portChartPeriod: '3M',
+    _portChart: null,
+    _portSeries: null,
+    _portResizeObs: null,
 
     /* market tab */
     market: null,
@@ -661,6 +668,11 @@ function dashApp() {
     portSort: 'eval',
     portModal: null,
     portModalLoading: false,
+    portModalCandlePeriod: '3M',
+    _candleChart: null,
+    _candleSeries: null,
+    _volChart: null,
+    _volSeries: null,
 
     /* P2: watch/alert tab */
     watch: null,
@@ -706,6 +718,102 @@ function dashApp() {
       if (!data.error) this.portfolio = data;
     },
 
+    async loadPortfolioHistory() {
+      this.portHistoryLoading = true;
+      const data = await this.api('/api/portfolio_history');
+      this.portHistoryLoading = false;
+      if (!data.error) {
+        this.portHistory = data;
+        this.$nextTick(() => this._mountPortChart());
+      }
+    },
+
+    _portChartData() {
+      if (!this.portHistory || !this.portHistory.snapshots) return [];
+      const snaps = this.portHistory.snapshots;
+      const now = new Date();
+      let cutoff = new Date(now);
+      if (this.portChartPeriod === '1M') cutoff.setMonth(cutoff.getMonth() - 1);
+      else if (this.portChartPeriod === '3M') cutoff.setMonth(cutoff.getMonth() - 3);
+      else cutoff.setFullYear(cutoff.getFullYear() - 1);
+      return snaps
+        .filter(s => s.date && s.total_asset_krw > 0 && new Date(s.date) >= cutoff)
+        .map(s => ({ time: s.date, value: s.total_asset_krw }));
+    },
+
+    _mountPortChart() {
+      if (typeof LightweightCharts === 'undefined') return;
+      const el = document.getElementById('port-chart-container');
+      if (!el) return;
+      const chartData = this._portChartData();
+      // 빈 상태
+      const emptyEl = document.getElementById('port-chart-empty');
+      if (chartData.length < 2) {
+        if (emptyEl) emptyEl.style.display = 'flex';
+        el.style.display = 'none';
+        return;
+      }
+      if (emptyEl) emptyEl.style.display = 'none';
+      el.style.display = 'block';
+      // 이전 차트 제거
+      if (this._portChart) {
+        try { this._portChart.remove(); } catch(e) {}
+        this._portChart = null;
+        this._portSeries = null;
+      }
+      if (this._portResizeObs) { this._portResizeObs.disconnect(); this._portResizeObs = null; }
+      const isMobile = window.innerWidth < 768;
+      const h = isMobile ? 200 : 260;
+      const chart = LightweightCharts.createChart(el, {
+        width: el.clientWidth,
+        height: h,
+        layout: { background: { color: '#ffffff' }, textColor: '#94a3b8', fontSize: 11 },
+        grid: { vertLines: { color: '#f1f5f9' }, horzLines: { color: '#f1f5f9' } },
+        rightPriceScale: { borderColor: '#e2e8f0' },
+        timeScale: { borderColor: '#e2e8f0', timeVisible: true, secondsVisible: false },
+        handleScroll: !isMobile,
+        handleScale: !isMobile,
+      });
+      const first = chartData[0].value;
+      const last = chartData[chartData.length - 1].value;
+      const isUp = last >= first;
+      const lineColor = isUp ? '#16a34a' : '#dc2626';
+      const topColor = isUp ? 'rgba(34,197,94,0.3)' : 'rgba(220,38,38,0.3)';
+      const series = chart.addAreaSeries({
+        lineColor,
+        topColor,
+        bottomColor: 'rgba(255,255,255,0)',
+        lineWidth: 2,
+        priceFormat: {
+          type: 'custom',
+          formatter: v => (v / 1e8).toFixed(1) + '억',
+        },
+      });
+      series.setData(chartData);
+      chart.timeScale().fitContent();
+      this._portChart = chart;
+      this._portSeries = series;
+      // ResizeObserver
+      const ro = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          if (this._portChart) this._portChart.applyOptions({ width: entry.contentRect.width });
+        }
+      });
+      ro.observe(el);
+      this._portResizeObs = ro;
+    },
+
+    setPortChartPeriod(p) {
+      this.portChartPeriod = p;
+      this.$nextTick(() => {
+        if (!this._portChart || !this._portSeries) { this._mountPortChart(); return; }
+        const chartData = this._portChartData();
+        if (chartData.length < 2) { this._mountPortChart(); return; }
+        this._portSeries.setData(chartData);
+        this._portChart.timeScale().fitContent();
+      });
+    },
+
     portSorted(holdings) {
       if (!holdings || !holdings.length) return [];
       const arr = [...holdings];
@@ -716,17 +824,142 @@ function dashApp() {
     },
 
     async openStockModal(ticker) {
+      this._destroyCandleChart();
       this.portModal = { ticker, loading: true };
       this.portModalLoading = true;
+      this.portModalCandlePeriod = '3M';
       this.$nextTick(() => this.refreshIcons());
       const data = await this.api('/api/stock/' + ticker);
       this.portModal = data.error ? { ticker, error: data.error } : data;
       this.portModalLoading = false;
-      this.$nextTick(() => this.refreshIcons());
+      this.$nextTick(() => {
+        this.refreshIcons();
+        this._mountCandleChart();
+      });
     },
 
     closeModal() {
+      this._destroyCandleChart();
       this.portModal = null;
+    },
+
+    _destroyCandleChart() {
+      if (this._candleChart) {
+        try { this._candleChart.remove(); } catch(e) {}
+        this._candleChart = null;
+        this._candleSeries = null;
+      }
+      if (this._volChart) {
+        try { this._volChart.remove(); } catch(e) {}
+        this._volChart = null;
+        this._volSeries = null;
+      }
+    },
+
+    _candleChartData() {
+      if (!this.portModal || !this.portModal.candles) return [];
+      const now = new Date();
+      let cutoff = new Date(now);
+      if (this.portModalCandlePeriod === '1M') cutoff.setMonth(cutoff.getMonth() - 1);
+      else if (this.portModalCandlePeriod === '3M') cutoff.setMonth(cutoff.getMonth() - 3);
+      else cutoff.setMonth(cutoff.getMonth() - 6);
+      return this.portModal.candles
+        .filter(c => c.open > 0 && c.close > 0 && c.date)
+        .filter(c => {
+          const d = c.date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+          return new Date(d) >= cutoff;
+        })
+        .map(c => {
+          const t = c.date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+          return { time: t, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume };
+        });
+    },
+
+    _mountCandleChart() {
+      if (typeof LightweightCharts === 'undefined') return;
+      if (!this.portModal || !this.portModal.candles) return;
+      const isUS = this.portModal.market === 'US' || (this.portModal.ticker && /^[A-Z]{1,5}$/.test(this.portModal.ticker) && isNaN(this.portModal.ticker));
+      const candleEl = document.getElementById('modal-candle-container');
+      const volEl = document.getElementById('modal-vol-container');
+      if (!candleEl) return;
+      const chartData = this._candleChartData();
+      if (chartData.length === 0) return;
+      this._destroyCandleChart();
+      const isMobile = window.innerWidth < 768;
+      const commonOpts = {
+        layout: { background: { color: '#ffffff' }, textColor: '#94a3b8', fontSize: 11 },
+        grid: { vertLines: { color: '#f1f5f9' }, horzLines: { color: '#f1f5f9' } },
+        rightPriceScale: { borderColor: '#e2e8f0' },
+        timeScale: { borderColor: '#e2e8f0', timeVisible: false, secondsVisible: false },
+        handleScroll: !isMobile,
+        handleScale: !isMobile,
+      };
+      const cChart = LightweightCharts.createChart(candleEl, {
+        ...commonOpts,
+        width: candleEl.clientWidth,
+        height: isMobile ? 180 : 220,
+      });
+      const cSeries = cChart.addCandlestickSeries({
+        upColor: '#16a34a',
+        downColor: '#dc2626',
+        borderUpColor: '#16a34a',
+        borderDownColor: '#dc2626',
+        wickUpColor: '#16a34a',
+        wickDownColor: '#dc2626',
+      });
+      cSeries.setData(chartData.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+      cChart.timeScale().fitContent();
+      this._candleChart = cChart;
+      this._candleSeries = cSeries;
+      // 거래량 히스토그램
+      if (volEl) {
+        const vChart = LightweightCharts.createChart(volEl, {
+          ...commonOpts,
+          width: volEl.clientWidth,
+          height: 50,
+          rightPriceScale: { visible: false },
+          leftPriceScale: { visible: false },
+        });
+        const vSeries = vChart.addHistogramSeries({
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
+        });
+        vSeries.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+        vSeries.setData(chartData.map(c => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open ? 'rgba(22,163,74,0.6)' : 'rgba(220,38,38,0.6)',
+        })));
+        vChart.timeScale().fitContent();
+        this._volChart = vChart;
+        this._volSeries = vSeries;
+        // 두 차트 timeScale 동기화
+        cChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (range && this._volChart) this._volChart.timeScale().setVisibleLogicalRange(range);
+        });
+        vChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (range && this._candleChart) this._candleChart.timeScale().setVisibleLogicalRange(range);
+        });
+      }
+    },
+
+    setCandlePeriod(p) {
+      this.portModalCandlePeriod = p;
+      this.$nextTick(() => {
+        if (!this._candleChart || !this._candleSeries) { this._mountCandleChart(); return; }
+        const chartData = this._candleChartData();
+        if (chartData.length === 0) return;
+        this._candleSeries.setData(chartData.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+        this._candleChart.timeScale().fitContent();
+        if (this._volSeries && this._volChart) {
+          this._volSeries.setData(chartData.map(c => ({
+            time: c.time,
+            value: c.volume,
+            color: c.close >= c.open ? 'rgba(22,163,74,0.6)' : 'rgba(220,38,38,0.6)',
+          })));
+          this._volChart.timeScale().fitContent();
+        }
+      });
     },
 
     /* ── watch/alert tab ── */
@@ -774,7 +1007,10 @@ function dashApp() {
 
     setTab(t) {
       this.activeTab = t;
-      if (t === 'portfolio') this.loadPortfolio();
+      if (t === 'portfolio') {
+        this.loadPortfolio();
+        this.loadPortfolioHistory();
+      }
       if (t === 'watch') this.loadWatch();
       if (t === 'signal') this.loadSignal();
       if (t === 'report') this.loadReport();
@@ -1311,6 +1547,31 @@ _PORTFOLIO_PANEL = (
     '            </div>\n'
     '          </template>\n'
     '\n'
+    '          <!-- 차트 A: 자산 추이 -->\n'
+    '          <div class="bg-white rounded-xl border border-slate-200 p-4 mb-5">\n'
+    '            <div class="flex items-center justify-between mb-3">\n'
+    '              <span class="text-sm font-semibold text-slate-700">자산 추이</span>\n'
+    '              <div class="flex gap-1">\n'
+    '                <template x-for="p in [\'1M\',\'3M\',\'1Y\']" :key="p">\n'
+    '                  <button @click="setPortChartPeriod(p)"\n'
+    '                    :class="portChartPeriod===p ? \'bg-blue-600 text-white\' : \'bg-slate-100 text-slate-600 hover:bg-slate-200\'"\n'
+    '                    class="text-xs px-2.5 py-1 rounded font-medium transition-colors"\n'
+    '                    x-text="p"></button>\n'
+    '                </template>\n'
+    '              </div>\n'
+    '            </div>\n'
+    '            <template x-if="portHistoryLoading && !portHistory">\n'
+    '              <div class="h-48 flex items-center justify-center text-slate-400 text-sm">자산 추이 로딩 중...</div>\n'
+    '            </template>\n'
+    '            <div id="port-chart-empty"\n'
+    '                 style="display:none"\n'
+    '                 class="h-48 flex flex-col items-center justify-center text-slate-400 text-sm gap-1">\n'
+    '              <span>자산 스냅샷 없음</span>\n'
+    '              <span class="text-xs text-slate-300">(매일 15:50 자동 수집)</span>\n'
+    '            </div>\n'
+    '            <div id="port-chart-container" style="display:none"></div>\n'
+    '          </div>\n'
+    '\n'
     '          <!-- 정렬 pill -->\n'
     '          <div class="flex gap-2 mb-4">\n'
     '            <button @click="portSort=\'eval\'"\n'
@@ -1403,7 +1664,7 @@ _PORTFOLIO_PANEL = (
     '      <!-- 종목 상세 모달 -->\n'
     '      <template x-if="portModal">\n'
     '        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="closeModal()">\n'
-    '          <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 relative">\n'
+    '          <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6 relative max-h-[90vh] overflow-y-auto">\n'
     '            <button @click="closeModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700">\n'
     '              <i data-lucide="x" class="w-5 h-5"></i>\n'
     '            </button>\n'
@@ -1421,16 +1682,37 @@ _PORTFOLIO_PANEL = (
     '            <!-- 데이터 -->\n'
     '            <template x-if="!portModalLoading && !portModal.error && portModal.ticker">\n'
     '              <div>\n'
-    '                <div class="flex items-baseline gap-2 mb-4">\n'
+    '                <!-- 헤더: 종목명 + 현재가 -->\n'
+    '                <div class="flex items-baseline gap-2 mb-3">\n'
     '                  <span class="text-lg font-bold text-slate-800" x-text="portModal.name || portModal.ticker"></span>\n'
     '                  <span class="text-xs text-slate-400" x-text="portModal.ticker"></span>\n'
     '                </div>\n'
-    '                <div class="grid grid-cols-2 gap-3 text-sm">\n'
-    '                  <div class="bg-slate-50 rounded-lg p-3">\n'
-    '                    <div class="text-xs text-slate-400 mb-0.5">현재가</div>\n'
-    '                    <div class="font-semibold text-slate-800" x-text="portModal.cur_price != null ? (portModal.market===\'US\' ? usd(portModal.cur_price) : won(portModal.cur_price)) : \'-\'"></div>\n'
-    '                    <div :class="pnlClass(portModal.chg_rate)" class="text-xs" x-text="portModal.chg_rate != null ? pct(portModal.chg_rate) : \'\'"></div>\n'
+    '                <div class="flex items-baseline gap-3 mb-4">\n'
+    '                  <span class="text-xl font-bold text-slate-800" x-text="portModal.cur_price != null ? (portModal.market===\'US\' ? usd(portModal.cur_price) : won(portModal.cur_price)) : \'-\'"></span>\n'
+    '                  <span :class="pnlClass(portModal.chg_rate)" class="text-sm font-semibold" x-text="portModal.chg_rate != null ? pct(portModal.chg_rate) : \'\'"></span>\n'
+    '                </div>\n'
+    '                <!-- 캔들 차트 B -->\n'
+    '                <template x-if="portModal.candles && portModal.candles.length > 0">\n'
+    '                  <div class="mb-3">\n'
+    '                    <div id="modal-candle-container"></div>\n'
+    '                    <div id="modal-vol-container" class="mt-1"></div>\n'
+    '                    <div class="flex gap-1 mt-2">\n'
+    '                      <template x-for="p in [\'1M\',\'3M\',\'6M\']" :key="p">\n'
+    '                        <button @click="setCandlePeriod(p)"\n'
+    '                          :class="portModalCandlePeriod===p ? \'bg-blue-600 text-white\' : \'bg-slate-100 text-slate-600 hover:bg-slate-200\'"\n'
+    '                          class="text-xs px-2.5 py-1 rounded font-medium transition-colors"\n'
+    '                          x-text="p"></button>\n'
+    '                      </template>\n'
+    '                    </div>\n'
     '                  </div>\n'
+    '                </template>\n'
+    '                <template x-if="portModal.candles && portModal.candles.length === 0">\n'
+    '                  <div class="text-center text-slate-400 text-xs py-3 mb-3">\n'
+    '                    <span x-text="portModal.market===\'US\' ? \'US 종목 캔들 미지원\' : \'캔들 데이터 없음\'"></span>\n'
+    '                  </div>\n'
+    '                </template>\n'
+    '                <!-- 메타 그리드: PER/PBR/외인/기관 -->\n'
+    '                <div class="grid grid-cols-2 gap-3 text-sm">\n'
     '                  <div class="bg-slate-50 rounded-lg p-3">\n'
     '                    <div class="text-xs text-slate-400 mb-0.5">PER / PBR</div>\n'
     '                    <div class="font-semibold text-slate-800" x-text="(portModal.per != null ? portModal.per : \'-\') + \' / \' + (portModal.pbr != null ? portModal.pbr : \'-\')"></div>\n'
@@ -2885,6 +3167,7 @@ _HOME_SHELL = (
     '  <meta name="viewport" content="width=device-width,initial-scale=1">\n'
     "  <title>\U0001f4ca Stock Bot</title>\n"
     '  <script src="https://cdn.tailwindcss.com"></script>\n'
+    '  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>\n'
     '  <script src="https://unpkg.com/lucide@latest"></script>\n'
     '  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>\n'
     "  <style>\n"
@@ -4031,26 +4314,84 @@ async def _handle_api_watch_get(request: web.Request) -> web.Response:
     return await _api(_cached("watch", 240.0, _build_watch_payload))
 
 
+def _fetch_candles_sync(ticker: str) -> list:
+    """daily_snapshot에서 최근 ~120영업일 캔들 반환 (동기, run_in_executor용)."""
+    try:
+        conn = _open_db()
+        from datetime import date, timedelta as _td
+        cutoff = (date.today() - _td(days=170)).strftime("%Y%m%d")
+        rows = conn.execute(
+            "SELECT trade_date,open,high,low,close,volume FROM daily_snapshot"
+            " WHERE symbol=? AND trade_date>=? ORDER BY trade_date ASC",
+            (ticker, cutoff),
+        ).fetchall()
+        conn.close()
+        return [
+            {"date": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4], "volume": r[5]}
+            for r in rows if r[1] and r[4]  # open/close not null
+        ]
+    except Exception:
+        return []
+
+
+def _fetch_consensus_history_sync(ticker: str) -> list:
+    """consensus_history 최근 1년 반환 (동기, run_in_executor용)."""
+    try:
+        conn = _open_db()
+        from datetime import date, timedelta as _td
+        cutoff = (date.today() - _td(days=365)).strftime("%Y%m%d")
+        rows = conn.execute(
+            "SELECT trade_date,target_avg,target_high,target_low,buy_count,hold_count,sell_count"
+            " FROM consensus_history WHERE symbol=? AND trade_date>=? ORDER BY trade_date ASC",
+            (ticker, cutoff),
+        ).fetchall()
+        conn.close()
+        return [
+            {
+                "date": r[0], "target_avg": r[1], "target_high": r[2],
+                "target_low": r[3], "buy_count": r[4], "hold_count": r[5], "sell_count": r[6],
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
 async def _handle_api_stock_detail(request: web.Request) -> web.Response:
     ticker = request.match_info.get("ticker", "").strip().upper()
     if not ticker:
         return web.json_response({"error": "ticker required"}, status=200)
 
+    is_us = _is_us_ticker_simple(ticker)
+
     async def _fetch():
         raw = await execute_tool("get_stock_detail", {"ticker": ticker})
         if _tool_err(raw):
             return raw
-        # 핵심 필드만 추려서 모달용으로 반환
+
+        # 캔들 + 컨센서스 히스토리 (KR만, US는 빈 배열)
+        loop = asyncio.get_event_loop()
+        if is_us:
+            candles = []
+            consensus_history = []
+        else:
+            candles, consensus_history = await asyncio.gather(
+                loop.run_in_executor(None, _fetch_candles_sync, ticker),
+                loop.run_in_executor(None, _fetch_consensus_history_sync, ticker),
+            )
+
         return {
             "ticker": ticker,
             "name": raw.get("name") or raw.get("hts_kor_isnm") or ticker,
-            "market": raw.get("market", ""),
+            "market": raw.get("market", "US" if is_us else "KR"),
             "cur_price": raw.get("cur_price") or raw.get("stck_prpr"),
             "chg_rate": raw.get("chg_rate") or raw.get("prdy_ctrt"),
             "per": raw.get("per"),
             "pbr": raw.get("pbr"),
             "foreign_net": raw.get("foreign_net") or raw.get("frgnr_ntby_qty"),
             "inst_net": raw.get("inst_net") or raw.get("orgn_ntby_qty"),
+            "candles": candles,
+            "consensus_history": consensus_history,
         }
 
     return await _api(_cached(f"stock_{ticker}", 60.0, _fetch))
@@ -4084,6 +4425,38 @@ async def _handle_api_watch_post(request: web.Request) -> web.Response:
     if _tool_err(result):
         return web.json_response(result, status=200)
     return web.json_response(result)
+
+
+async def _handle_api_portfolio_history(request: web.Request) -> web.Response:
+    """GET /api/portfolio_history — 자산 추이 스냅샷 (300s TTL)."""
+
+    def _load_sync():
+        try:
+            raw = load_json(PORTFOLIO_HISTORY_FILE, default=[])
+            if isinstance(raw, list):
+                snaps = raw
+            elif isinstance(raw, dict):
+                snaps = raw.get("snapshots", [])
+            else:
+                snaps = []
+            result = []
+            for s in snaps:
+                if not isinstance(s, dict):
+                    continue
+                d = s.get("date", "")
+                v = s.get("total_asset_krw") or s.get("total_eval_krw")
+                if d and v:
+                    result.append({"date": d, "total_asset_krw": float(v)})
+            result.sort(key=lambda x: x["date"])
+            return {"snapshots": result, "count": len(result)}
+        except Exception as e:
+            return {"snapshots": [], "count": 0, "_error": str(e)}
+
+    async def _factory():
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _load_sync)
+
+    return await _api(_cached("portfolio_history", 300.0, _factory))
 
 
 async def _handle_api_whale(request: web.Request) -> web.Response:
@@ -4316,6 +4689,8 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/watch", _handle_api_watch_get)
     app.router.add_get("/api/stock/{ticker}", _handle_api_stock_detail)
     app.router.add_post("/api/watch", _handle_api_watch_post)
+    # 차트 Pass 1 추가
+    app.router.add_get("/api/portfolio_history", _handle_api_portfolio_history)
     # P3a 추가
     app.router.add_get("/api/whale", _handle_api_whale)
     # P3b 추가
