@@ -49,7 +49,7 @@ MCP_TOOLS = [
                          "mode": {"type": "string", "description": "volume_profile/after_hours/orderbook", "enum": ["volume_profile", "after_hours", "orderbook"]},
                          "period": {"type": "string", "description": "일봉 조회: D60/D30/W20 등. volume_profile 시: Y1=1년, Y2=2년, Y3=3년 (기본 Y1)"},
                          "bins": {"type": "integer", "description": "볼륨 프로파일 가격 구간 수 (기본 20, 최대 50)"},
-                         "tickers": {"type": "string", "description": "콤마 구분 종목코드로 다종목 일괄 조회 (예: '005930,000660'). 최대 20종목."},
+                         "tickers": {"type": "string", "description": "콤마 구분 종목코드로 다종목 일괄 조회 (예: '005930,000660' 또는 'AAPL,TSLA'). 최대 20종목."},
                          "delay": {"type": "number", "description": "일괄조회 시 종목간 딜레이 (기본 0.3초)"},
                      },
                      "required": []}},
