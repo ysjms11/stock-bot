@@ -493,6 +493,60 @@ def _kr_volume_from_db(n: int = 10) -> tuple[list[dict], str]:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# KR 섹터 히트맵 DB 헬퍼
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _kr_sector_heatmap_from_db() -> dict:
+    """daily_snapshot + stock_master JOIN으로 섹터별 평균 등락률 집계.
+
+    최신 trade_date 기준, sector != '' AND n_stocks >= 3, avg_chg DESC 정렬.
+    동기 sqlite3 읽기 — loop에서 짧게 호출.
+    """
+    try:
+        conn = _sqlite3.connect(f"{_DATA_DIR}/stock.db", timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        dt_row = conn.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()
+        if not dt_row or not dt_row[0]:
+            conn.close()
+            return {"date": None, "sectors": []}
+        as_of = dt_row[0]
+        rows = conn.execute(
+            """
+            SELECT s.sector, AVG(d.change_pct) avg_chg, COUNT(*) n_stocks
+            FROM daily_snapshot d
+            JOIN stock_master s ON d.symbol = s.symbol
+            WHERE d.trade_date = ?
+              AND s.sector IS NOT NULL
+              AND TRIM(s.sector) != ''
+              AND d.close > 0
+            GROUP BY s.sector
+            HAVING n_stocks >= 3
+            ORDER BY avg_chg DESC
+            """,
+            (as_of,),
+        ).fetchall()
+        conn.close()
+        sectors = [
+            {
+                "sector": r[0].strip(),
+                "avg_chg": round(float(r[1]), 2),
+                "n_stocks": int(r[2]),
+            }
+            for r in rows
+            if r[0] and r[0].strip()
+        ]
+        return {"date": as_of, "sectors": sectors}
+    except Exception:
+        return {"date": None, "sectors": []}
+
+
+async def _build_sector_heatmap_payload() -> dict:
+    """섹터 히트맵 payload — 동기 DB 조회를 executor로 래핑."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _kr_sector_heatmap_from_db)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # build_market_payload — 시세 탭 집계 (TTL 240s)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -724,6 +778,13 @@ function dashApp() {
     _volSeries: null,
     _candleResizeObs: null,
     _candleChartRetry: false,
+
+    /* P2: portfolio view toggle */
+    portView: 'list',
+
+    /* market: sector heatmap */
+    sectorHeatmap: null,
+    sectorHeatmapLoading: false,
 
     /* P2: watch/alert tab */
     watch: null,
@@ -1088,6 +1149,46 @@ function dashApp() {
       setTimeout(() => { this.watchToast = ''; }, 3000);
     },
 
+    hmColor(v) {
+      if (v == null) return 'bg-slate-100 text-slate-500';
+      if (v >= 5)  return 'bg-green-700 text-white';
+      if (v >= 3)  return 'bg-green-500 text-white';
+      if (v >= 1)  return 'bg-green-400 text-white';
+      if (v >= 0)  return 'bg-green-100 text-green-800';
+      if (v >= -1) return 'bg-red-100 text-red-800';
+      if (v >= -3) return 'bg-red-300 text-white';
+      if (v >= -5) return 'bg-red-500 text-white';
+      return 'bg-red-700 text-white';
+    },
+
+    hmPortItems() {
+      if (!this.portfolio) return [];
+      const krHoldings = (this.portfolio.kr && this.portfolio.kr.holdings) ? this.portfolio.kr.holdings : [];
+      const usHoldings = (this.portfolio.us && this.portfolio.us.holdings) ? this.portfolio.us.holdings : [];
+      const usdKrw = this.portfolio.usd_krw || 1400;
+      const allItems = [];
+      for (const h of krHoldings) {
+        allItems.push({ ...h, eval_krw: h.eval_amt || 0, market: 'KR' });
+      }
+      for (const h of usHoldings) {
+        allItems.push({ ...h, eval_krw: (h.eval_amt || 0) * usdKrw, market: 'US' });
+      }
+      const total = allItems.reduce((s, i) => s + i.eval_krw, 0);
+      for (const item of allItems) {
+        item.weight = total > 0 ? item.eval_krw / total * 100 : 0;
+      }
+      allItems.sort((a, b) => b.weight - a.weight);
+      return allItems;
+    },
+
+    async loadSectorHeatmap() {
+      /* SWR: keep stale data, never null during refresh */
+      if (!this.sectorHeatmap) this.sectorHeatmapLoading = true;
+      const data = await this.api('/api/sector_heatmap');
+      this.sectorHeatmapLoading = false;
+      if (!data.error) this.sectorHeatmap = data;
+    },
+
     setTab(t) {
       this.activeTab = t;
       if (t === 'portfolio') {
@@ -1106,7 +1207,7 @@ function dashApp() {
       if (t === 'signal') this.loadSignal();
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
-      if (t === 'market') this.loadMarket();
+      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); }
       this.$nextTick(() => this.refreshIcons());
     },
 
@@ -1382,6 +1483,41 @@ _MARKET_PANEL = (
     '              </template>\n'
     '            </div>\n'
     '          </template>\n'
+    '\n'
+    '          <!-- KR 섹터 히트맵 -->\n'
+    '          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">\n'
+    '            <div class="flex items-center gap-3 mb-3">\n'
+    '              <h2 class="text-sm font-semibold text-slate-700">KR 섹터 동향</h2>\n'
+    '              <template x-if="sectorHeatmap && sectorHeatmap.date">\n'
+    '                <span class="text-xs text-slate-400" x-text="sectorHeatmap.date.slice(0,4)+\'.\'+sectorHeatmap.date.slice(4,6)+\'.\'+sectorHeatmap.date.slice(6)"></span>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '            <!-- 로딩 스켈레톤 -->\n'
+    '            <template x-if="sectorHeatmapLoading && !sectorHeatmap">\n'
+    '              <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 gap-1.5 animate-pulse">\n'
+    '                <template x-for="i in [1,2,3,4,5,6,7,8,9,10,11,12,13,14]" :key="i">\n'
+    '                  <div class="bg-slate-100 rounded-lg h-16"></div>\n'
+    '                </template>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '            <!-- 데이터 -->\n'
+    '            <template x-if="sectorHeatmap && sectorHeatmap.sectors && sectorHeatmap.sectors.length">\n'
+    '              <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 gap-1.5">\n'
+    '                <template x-for="s in sectorHeatmap.sectors" :key="s.sector">\n'
+    '                  <div class="rounded-lg p-2 text-center h-16 md:h-20 flex flex-col items-center justify-center cursor-pointer hover:brightness-110 hover:ring-2 hover:ring-white/60 transition-all"\n'
+    '                       :class="hmColor(s.avg_chg)">\n'
+    '                    <div class="text-xs font-semibold truncate w-full text-center leading-tight" x-text="s.sector"></div>\n'
+    '                    <div class="text-sm font-bold mt-0.5" x-text="(s.avg_chg >= 0 ? \'+\' : \'\') + s.avg_chg.toFixed(2) + \'%\'"></div>\n'
+    '                    <div class="text-xs opacity-80" x-text="s.n_stocks + \'종목\'"></div>\n'
+    '                  </div>\n'
+    '                </template>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '            <!-- 빈 상태 -->\n'
+    '            <template x-if="!sectorHeatmapLoading && (!sectorHeatmap || !sectorHeatmap.sectors || !sectorHeatmap.sectors.length)">\n'
+    '              <div class="text-slate-400 text-sm py-4 text-center">섹터 데이터 없음 (장 마감 후 반영)</div>\n'
+    '            </template>\n'
+    '          </div>\n'
     '\n'
     '          <!-- 종목 시세 직접 조회 -->\n'
     '          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">\n'
@@ -1745,8 +1881,8 @@ _PORTFOLIO_PANEL = (
     '            <div id="port-chart-container" style="display:none"></div>\n'
     '          </div>\n'
     '\n'
-    '          <!-- 정렬 pill -->\n'
-    '          <div class="flex gap-2 mb-4">\n'
+    '          <!-- 정렬 pill + 보기 토글 -->\n'
+    '          <div class="flex items-center gap-2 mb-4 flex-wrap">\n'
     '            <button @click="portSort=\'eval\'"\n'
     '              :class="portSort===\'eval\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
     '              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">평가금순</button>\n'
@@ -1756,7 +1892,46 @@ _PORTFOLIO_PANEL = (
     '            <button @click="portSort=\'pnl\'"\n'
     '              :class="portSort===\'pnl\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
     '              class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors">손익금순</button>\n'
+    '            <div class="ml-auto flex gap-1">\n'
+    '              <button @click="portView=\'list\'"\n'
+    '                :class="portView===\'list\' ? \'bg-slate-700 text-white\' : \'bg-white text-slate-500 border border-slate-200\'"\n'
+    '                class="p-1.5 rounded-lg transition-colors" title="리스트 보기">\n'
+    '                <i data-lucide="layout-list" class="w-4 h-4"></i>\n'
+    '              </button>\n'
+    '              <button @click="portView=\'heatmap\'"\n'
+    '                :class="portView===\'heatmap\' ? \'bg-slate-700 text-white\' : \'bg-white text-slate-500 border border-slate-200\'"\n'
+    '                class="p-1.5 rounded-lg transition-colors" title="히트맵 보기">\n'
+    '                <i data-lucide="grid-2x2" class="w-4 h-4"></i>\n'
+    '              </button>\n'
+    '            </div>\n'
     '          </div>\n'
+    '\n'
+    '          <!-- 히트맵 보기 -->\n'
+    '          <template x-if="portView===\'heatmap\'">\n'
+    '            <div>\n'
+    '              <template x-if="hmPortItems().length === 0">\n'
+    '                <div class="text-slate-400 text-center py-20">보유 종목이 없습니다</div>\n'
+    '              </template>\n'
+    '              <template x-if="hmPortItems().length > 0">\n'
+    '                <div class="flex flex-wrap gap-1.5">\n'
+    '                  <template x-for="item in hmPortItems()" :key="item.ticker">\n'
+    '                    <div @click="openStockModal(item.ticker)"\n'
+    '                         :style="\'flex-grow:\' + item.weight"\n'
+    '                         class="min-w-[60px] md:min-w-[72px] h-14 md:h-20 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:brightness-110 hover:ring-2 hover:ring-white/60 transition-all px-1"\n'
+    '                         :class="hmColor(item.pnl_pct)">\n'
+    '                      <div class="text-xs font-semibold truncate w-full text-center leading-tight" x-text="item.name && item.name.length <= 5 ? item.name : item.ticker"></div>\n'
+    '                      <div class="text-sm font-bold" x-text="(item.pnl_pct >= 0 ? \'+\' : \'\') + (item.pnl_pct != null ? item.pnl_pct.toFixed(1) : \'-\') + \'%\'"></div>\n'
+    '                      <div class="text-xs opacity-80 truncate w-full text-center" x-text="item.market===\'US\' ? (item.eval_amt != null ? \'$\' + Number(item.eval_amt).toLocaleString(\'en-US\', {maximumFractionDigits:0}) : \'-\') : (item.eval_amt != null ? Math.round(item.eval_amt/10000) + \'만\' : \'-\')"></div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '          </template>\n'
+    '\n'
+    '          <!-- 리스트 보기 -->\n'
+    '          <template x-if="portView===\'list\'">\n'
+    '            <div>\n'
     '\n'
     '          <!-- KR 종목 -->\n'
     '          <template x-if="portfolio.kr && portfolio.kr.holdings && portfolio.kr.holdings.length">\n'
@@ -1830,6 +2005,9 @@ _PORTFOLIO_PANEL = (
     '          <template x-if="(!portfolio.kr || !portfolio.kr.holdings || !portfolio.kr.holdings.length) && (!portfolio.us || !portfolio.us.holdings || !portfolio.us.holdings.length)">\n'
     '            <div class="text-slate-400 text-center py-20">보유 종목이 없습니다</div>\n'
     '          </template>\n'
+    '\n'
+    '            </div>\n'
+    '          </template><!-- /portView list -->\n'
     '\n'
     '        </div>\n'
     '      </template>\n'
@@ -5013,6 +5191,11 @@ async def _handle_api_market(request: web.Request) -> web.Response:
     return await _api(_cached("market", 240.0, build_market_payload))
 
 
+async def _handle_api_sector_heatmap(request: web.Request) -> web.Response:
+    """GET /api/sector_heatmap — KR 섹터별 평균 등락률 (300s TTL, SWR)."""
+    return await _api(_cached("sector_heatmap", 300.0, _build_sector_heatmap_payload))
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라우트 등록
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -5042,3 +5225,5 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/signals", _handle_api_signals)
     # 시세 탭 추가
     app.router.add_get("/api/market", _handle_api_market)
+    # 히트맵 추가
+    app.router.add_get("/api/sector_heatmap", _handle_api_sector_heatmap)
