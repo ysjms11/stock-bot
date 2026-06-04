@@ -1204,13 +1204,13 @@ async def collect_daily_backfill(date_str: str, *, _limit: int = 0, kis_history:
                 0.0,  # turnover
                 # 신용잔고비율 (당일 시점)
                 float(crd.get("credit_ratio", 0) or 0),
-                # 수급 (KIS FHPTJ04160001 히스토리 — 당일 행 필터)
-                int(sup.get("foreign_net",     0) or 0),
-                0,  # foreign_net_amt (히스토리 API 미제공)
-                int(sup.get("institution_net", 0) or 0),
-                0,  # inst_net_amt
-                int(sup.get("individual_net",  0) or 0),
-                0,  # indiv_net_amt
+                # 수급 (KIS FHPTJ04160001 히스토리 — 당일 행 필터). 금액은 `*_ntby_tr_pbmn`(원).
+                int(sup.get("foreign_net",         0) or 0),
+                int(sup.get("foreign_net_amt",     0) or 0),
+                int(sup.get("institution_net",     0) or 0),
+                int(sup.get("institution_net_amt", 0) or 0),
+                int(sup.get("individual_net",      0) or 0),
+                int(sup.get("individual_net_amt",  0) or 0),
                 # 공매도 (KIS FHPST04830000 히스토리 — 당일 행 필터)
                 int(sht.get("short_vol",   0) or 0),
                 float(sht.get("short_ratio", 0) or 0),
