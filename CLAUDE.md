@@ -168,9 +168,13 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 | **code-reviewer** | **Opus** | 일반 코드 리뷰 — 선언 안 된 갭 발견 (jugular vein, 학습 #32) |
 | **critic** | **Opus** | 고위험 최종 게이트. 실수 비용 10-100x. 다관점 갭 분석 |
 | **verifier** | **Opus** | 증거 기반 완료 검증. self-approve 금지. 17+ acceptance criteria 추적 |
+| **ui-ux-designer** | Sonnet | 대시보드 UI/UX 설계 (IA/레이아웃/반응형/비주얼 spec, 코드 X). 웹디자인 팀 |
+| **frontend-developer** | Sonnet | `dashboard_home.py` UI(Alpine/Tailwind/Lucide)+JSON API 구현. 무빌드 스택 전담 |
+| **design-reviewer** | **Opus** | UI/UX·반응형·접근성·스택함정(JS \n·탭키·payload정합) 리뷰 게이트 |
 
 **작업 순서:**
 - 신기능: architect → developer → (kis-api-specialist) → test-writer → reviewer → (고위험이면 critic) → verifier
 - 버그: debugger → developer → reviewer → (고위험이면 critic) → verifier
+- **웹/대시보드** (`dashboard_home.py`): architect → ui-ux-designer(설계) → frontend-developer(구현) → design-reviewer → verifier → 메인세션 라이브확인(브라우저). 옛 `dashboard.py`(=/dash-classic)는 무수정.
 - 재검증 필요 시: verifier 단독 (self-approve 금지)
 - **공통**: 모든 코드 작업에 reviewer + verifier 필수. 인라인 진단/편집 금지.
