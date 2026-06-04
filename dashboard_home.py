@@ -1321,9 +1321,43 @@ _MARKET_PANEL = (
     '    <!-- 시세 탭 패널 -->\n'
     '    <section x-show="activeTab===\'market\'" x-cloak>\n'
     '\n'
-    '      <!-- 로딩 -->\n'
+    '      <!-- 로딩 스켈레톤 (최초 1회만) -->\n'
     '      <template x-if="!market">\n'
-    '        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>\n'
+    '        <div class="animate-pulse">\n'
+    '          <!-- 지수 4카드 -->\n'
+    '          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">\n'
+    '            <template x-for="i in [1,2,3,4]" :key="i">\n'
+    '              <div class="bg-white rounded-xl border border-slate-100 p-4">\n'
+    '                <div class="h-2.5 w-14 bg-slate-200 rounded mb-2"></div>\n'
+    '                <div class="h-5 w-20 bg-slate-200 rounded mb-1"></div>\n'
+    '                <div class="h-3 w-12 bg-slate-200 rounded"></div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '          <!-- 종목 조회 박스 -->\n'
+    '          <div class="bg-white rounded-xl border border-slate-100 p-5 mb-6">\n'
+    '            <div class="h-3 w-24 bg-slate-200 rounded mb-3"></div>\n'
+    '            <div class="h-9 w-full bg-slate-200 rounded-lg"></div>\n'
+    '          </div>\n'
+    '          <!-- 급등락 리스트 -->\n'
+    '          <div class="bg-white rounded-xl border border-slate-100 p-5">\n'
+    '            <div class="flex gap-2 mb-4">\n'
+    '              <template x-for="p in [1,2,3]" :key="p">\n'
+    '                <div class="h-7 w-16 bg-slate-200 rounded-full"></div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '            <template x-for="r in [1,2,3,4,5]" :key="r">\n'
+    '              <div class="flex items-center gap-3 py-2.5 border-b border-slate-50 last:border-0">\n'
+    '                <div class="flex-1">\n'
+    '                  <div class="h-3 w-32 bg-slate-200 rounded mb-1"></div>\n'
+    '                  <div class="h-3 w-20 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '                <div class="h-4 w-14 bg-slate-200 rounded ml-auto"></div>\n'
+    '                <div class="h-4 w-12 bg-slate-200 rounded"></div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '        </div>\n'
     '      </template>\n'
     '\n'
     '      <template x-if="market">\n'
@@ -1364,7 +1398,14 @@ _MARKET_PANEL = (
     '            </div>\n'
     '            <!-- 조회 결과 -->\n'
     '            <template x-if="marketStockLoading">\n'
-    '              <div class="text-slate-400 text-sm mt-3">조회 중...</div>\n'
+    '              <div class="animate-pulse mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">\n'
+    '                <template x-for="s in [1,2,3,4]" :key="s">\n'
+    '                  <div class="bg-slate-100 rounded-lg p-3">\n'
+    '                    <div class="h-2.5 w-16 bg-slate-200 rounded mb-2"></div>\n'
+    '                    <div class="h-5 w-20 bg-slate-200 rounded"></div>\n'
+    '                  </div>\n'
+    '                </template>\n'
+    '              </div>\n'
     '            </template>\n'
     '            <template x-if="!marketStockLoading && marketStockResult && marketStockResult.error">\n'
     '              <div class="text-red-500 text-sm mt-3" x-text="\'오류: \' + marketStockResult.error"></div>\n'
@@ -1602,9 +1643,50 @@ _PORTFOLIO_PANEL = (
     '    <!-- 포트폴리오 패널 -->\n'
     '    <section x-show="activeTab===\'portfolio\'" x-cloak>\n'
     '\n'
-    '      <!-- 로딩 -->\n'
+    '      <!-- 로딩 스켈레톤 (최초 1회만) -->\n'
     '      <template x-if="!portfolio">\n'
-    '        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>\n'
+    '        <div class="animate-pulse">\n'
+    '          <!-- 요약 바 셀 x4 -->\n'
+    '          <div class="bg-white rounded-xl border border-slate-100 p-5 mb-5">\n'
+    '            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">\n'
+    '              <template x-for="i in [1,2,3,4]" :key="i">\n'
+    '                <div>\n'
+    '                  <div class="h-2.5 w-20 bg-slate-200 rounded mb-2"></div>\n'
+    '                  <div class="h-6 w-28 bg-slate-200 rounded mb-1"></div>\n'
+    '                  <div class="h-3 w-16 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '          </div>\n'
+    '          <!-- 차트 박스 h-48 -->\n'
+    '          <div class="bg-slate-100 rounded-xl h-48 mb-5"></div>\n'
+    '          <!-- 종목 카드 grid x4 -->\n'
+    '          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">\n'
+    '            <template x-for="j in [1,2,3,4]" :key="j">\n'
+    '              <div class="bg-white rounded-xl border border-slate-100 p-4">\n'
+    '                <div class="flex items-start justify-between mb-3">\n'
+    '                  <div>\n'
+    '                    <div class="h-4 w-28 bg-slate-200 rounded mb-1"></div>\n'
+    '                    <div class="h-3 w-16 bg-slate-200 rounded"></div>\n'
+    '                  </div>\n'
+    '                  <div class="h-4 w-14 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '                <div class="grid grid-cols-3 gap-2 mb-3">\n'
+    '                  <template x-for="k in [1,2,3]" :key="k">\n'
+    '                    <div>\n'
+    '                      <div class="h-2.5 w-10 bg-slate-200 rounded mb-1"></div>\n'
+    '                      <div class="h-3.5 w-16 bg-slate-200 rounded"></div>\n'
+    '                    </div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '                <div class="border-t border-slate-50 pt-2">\n'
+    '                  <div class="h-3 w-full bg-slate-200 rounded mb-1"></div>\n'
+    '                  <div class="h-3 w-3/4 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '        </div>\n'
     '      </template>\n'
     '\n'
     '      <template x-if="portfolio">\n'
@@ -1652,7 +1734,7 @@ _PORTFOLIO_PANEL = (
     '              </div>\n'
     '            </div>\n'
     '            <template x-if="portHistoryLoading && !portHistory">\n'
-    '              <div class="h-48 flex items-center justify-center text-slate-400 text-sm">자산 추이 로딩 중...</div>\n'
+    '              <div class="bg-slate-100 rounded-lg animate-pulse h-48"></div>\n'
     '            </template>\n'
     '            <div id="port-chart-empty"\n'
     '                 style="display:none"\n'
@@ -1759,9 +1841,21 @@ _PORTFOLIO_PANEL = (
     '            <button @click="closeModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700">\n'
     '              <i data-lucide="x" class="w-5 h-5"></i>\n'
     '            </button>\n'
-    '            <!-- 로딩 상태 -->\n'
+    '            <!-- 로딩 스켈레톤 -->\n'
     '            <template x-if="portModalLoading">\n'
-    '              <div class="text-slate-400 text-center py-10">조회 중...</div>\n'
+    '              <div class="animate-pulse">\n'
+    '                <div class="flex items-baseline gap-2 mb-3">\n'
+    '                  <div class="h-5 w-32 bg-slate-200 rounded"></div>\n'
+    '                  <div class="h-4 w-16 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '                <div class="h-7 w-24 bg-slate-200 rounded mb-4"></div>\n'
+    '                <div class="bg-slate-100 rounded-lg h-40 mb-4"></div>\n'
+    '                <div class="grid grid-cols-2 gap-3">\n'
+    '                  <template x-for="n in [1,2,3,4,5,6]" :key="n">\n'
+    '                    <div class="bg-slate-50 rounded-lg h-12"></div>\n'
+    '                  </template>\n'
+    '                </div>\n'
+    '              </div>\n'
     '            </template>\n'
     '            <!-- 에러 -->\n'
     '            <template x-if="!portModalLoading && portModal.error">\n'
@@ -1838,9 +1932,31 @@ _WATCH_PANEL = (
     '    <!-- 워치·알림 패널 -->\n'
     '    <section x-show="activeTab===\'watch\'" x-cloak>\n'
     '\n'
-    '      <!-- 로딩: 초기 1회만 표시, 이후 재fetch 시에는 기존 데이터 유지(stale-while-revalidate) -->\n'
+    '      <!-- 로딩 스켈레톤 (최초 1회만, SWR) -->\n'
     '      <template x-if="!watch">\n'
-    '        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>\n'
+    '        <div class="animate-pulse">\n'
+    '          <!-- 헤더 행 -->\n'
+    '          <div class="flex items-center justify-between mb-4">\n'
+    '            <div class="h-5 w-32 bg-slate-200 rounded"></div>\n'
+    '            <div class="h-7 w-16 bg-slate-200 rounded-lg"></div>\n'
+    '          </div>\n'
+    '          <!-- 섹션 카드 x2 -->\n'
+    '          <template x-for="s in [1,2]" :key="s">\n'
+    '            <div class="bg-white rounded-xl border border-slate-100 p-5 mb-4">\n'
+    '              <div class="h-3 w-24 bg-slate-200 rounded mb-4"></div>\n'
+    '              <template x-for="r in [1,2,3,4]" :key="r">\n'
+    '                <div class="flex items-center gap-3 py-2.5 border-b border-slate-50 last:border-0">\n'
+    '                  <div class="rounded-full h-8 w-8 bg-slate-200 shrink-0"></div>\n'
+    '                  <div class="flex-1">\n'
+    '                    <div class="h-3 w-32 bg-slate-200 rounded mb-1"></div>\n'
+    '                    <div class="h-3 w-20 bg-slate-200 rounded"></div>\n'
+    '                  </div>\n'
+    '                  <div class="ml-auto h-4 w-14 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '          </template>\n'
+    '        </div>\n'
     '      </template>\n'
     '\n'
     '      <template x-if="watch">\n'
@@ -2039,9 +2155,30 @@ _REPORT_PANEL = r"""
     <!-- 리포트 탭 -->
     <section x-show="activeTab==='report'" x-cloak>
 
-      <!-- 로딩 -->
+      <!-- 로딩 스켈레톤 (최초 1회만) -->
       <template x-if="!report">
-        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>
+        <div class="animate-pulse">
+          <!-- 세그먼트 pill x4 -->
+          <div class="flex gap-1 mb-5 flex-wrap">
+            <template x-for="i in [1,2,3,4]" :key="i">
+              <div class="h-7 w-20 bg-slate-200 rounded-full"></div>
+            </template>
+          </div>
+          <!-- 리포트 카드 x5 -->
+          <div class="space-y-2">
+            <template x-for="j in [1,2,3,4,5]" :key="j">
+              <div class="bg-white rounded-xl border border-slate-100 p-4 flex items-start gap-3">
+                <div class="rounded-full h-8 w-8 bg-slate-200 shrink-0"></div>
+                <div class="flex-1">
+                  <div class="h-3 w-28 bg-slate-200 rounded mb-2"></div>
+                  <div class="h-3 w-full bg-slate-200 rounded mb-1"></div>
+                  <div class="h-3 w-3/4 bg-slate-200 rounded"></div>
+                </div>
+                <div class="h-3 w-16 bg-slate-200 rounded"></div>
+              </div>
+            </template>
+          </div>
+        </div>
       </template>
 
       <template x-if="report">
@@ -2202,7 +2339,20 @@ _REPORT_PANEL = r"""
             </button>
             <div class="text-sm font-bold text-slate-700 mb-3" x-text="reportModal.ticker + ' 리포트 목록'"></div>
             <template x-if="reportModalLoading">
-              <div class="text-slate-400 text-center py-10">로딩 중...</div>
+              <div class="animate-pulse">
+                <div class="flex items-baseline gap-2 mb-3">
+                  <div class="h-5 w-32 bg-slate-200 rounded"></div>
+                  <div class="h-4 w-16 bg-slate-200 rounded"></div>
+                </div>
+                <div class="space-y-2">
+                  <template x-for="n in [1,2,3,4]" :key="n">
+                    <div class="border border-slate-100 rounded-lg p-3">
+                      <div class="h-3 w-full bg-slate-200 rounded mb-2"></div>
+                      <div class="h-3 w-3/4 bg-slate-200 rounded"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
             </template>
             <template x-if="!reportModalLoading && reportModal.error">
               <div class="text-red-500 text-sm" x-text="reportModal.error"></div>
@@ -2259,9 +2409,32 @@ _SIGNAL_PANEL = r"""
     <!-- 시그널 탭 -->
     <section x-show="activeTab==='signal'" x-cloak>
 
-      <!-- 로딩 -->
+      <!-- 로딩 스켈레톤 (최초 1회만) -->
       <template x-if="!signals">
-        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>
+        <div class="animate-pulse">
+          <!-- 서브탭 pill x5 -->
+          <div class="flex flex-wrap gap-2 mb-5">
+            <template x-for="i in [1,2,3,4,5]" :key="i">
+              <div class="h-7 w-20 bg-slate-200 rounded-full"></div>
+            </template>
+          </div>
+          <!-- 피드 카드 x4 -->
+          <div class="space-y-2">
+            <template x-for="j in [1,2,3,4]" :key="j">
+              <div class="bg-white rounded-xl border border-slate-100 p-4 flex items-start gap-3">
+                <div class="rounded-full h-8 w-8 bg-slate-200 shrink-0"></div>
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 mb-2">
+                    <div class="h-4 w-16 bg-slate-200 rounded"></div>
+                    <div class="h-4 w-20 bg-slate-200 rounded"></div>
+                  </div>
+                  <div class="h-3 w-full bg-slate-200 rounded mb-1"></div>
+                  <div class="h-3 w-2/3 bg-slate-200 rounded"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
       </template>
 
       <template x-if="signals">
@@ -2476,9 +2649,29 @@ _RECORD_PANEL = r"""
     <!-- 기록 탭 -->
     <section x-show="activeTab==='record'" x-cloak>
 
-      <!-- 로딩 -->
+      <!-- 로딩 스켈레톤 (최초 1회만) -->
       <template x-if="!record">
-        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>
+        <div class="animate-pulse">
+          <!-- 섹션 서브탭 pill x3 -->
+          <div class="flex gap-1 mb-5">
+            <template x-for="i in [1,2,3]" :key="i">
+              <div class="h-7 w-20 bg-slate-200 rounded-full"></div>
+            </template>
+          </div>
+          <!-- 기록 카드 x3 -->
+          <div class="space-y-3">
+            <template x-for="j in [1,2,3]" :key="j">
+              <div class="bg-white rounded-xl border border-slate-100 p-4">
+                <div class="flex items-start justify-between mb-3">
+                  <div class="h-4 w-24 bg-slate-200 rounded"></div>
+                  <div class="h-5 w-14 bg-slate-200 rounded-full"></div>
+                </div>
+                <div class="h-3 w-full bg-slate-200 rounded mb-1"></div>
+                <div class="h-3 w-3/4 bg-slate-200 rounded"></div>
+              </div>
+            </template>
+          </div>
+        </div>
       </template>
 
       <template x-if="record">
@@ -2743,9 +2936,21 @@ _WHALE_PANEL = r"""
         </template>
       </div>
 
-      <!-- 로딩 -->
+      <!-- 로딩 스켈레톤 -->
       <template x-if="wLoading">
-        <div class="text-slate-400 text-center py-20">로딩 중...</div>
+        <div class="animate-pulse">
+          <template x-for="i in [1,2,3,4,5,6,7,8]" :key="i">
+            <div class="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
+              <div class="h-3 w-6 bg-slate-200 rounded shrink-0"></div>
+              <div class="flex-1">
+                <div class="h-3 w-32 bg-slate-200 rounded mb-1"></div>
+                <div class="h-3 w-20 bg-slate-200 rounded"></div>
+              </div>
+              <div class="h-4 w-16 bg-slate-200 rounded ml-auto"></div>
+              <div class="h-4 w-14 bg-slate-200 rounded"></div>
+            </div>
+          </template>
+        </div>
       </template>
 
       <!-- 연기금 흐름 -->
@@ -3064,9 +3269,51 @@ _HOME_PANEL = (
     '    <!-- 홈 패널 -->\n'
     '    <section x-show="activeTab===\'home\'">\n'
     '\n'
-    '      <!-- 로딩 중 -->\n'
+    '      <!-- 로딩 스켈레톤 (최초 1회만) -->\n'
     '      <template x-if="!home">\n'
-    '        <div class="text-slate-400 text-center py-20">데이터 로딩 중...</div>\n'
+    '        <div class="animate-pulse">\n'
+    '          <!-- 지수 칩 x4 -->\n'
+    '          <div class="flex gap-3 overflow-x-auto pb-1 mb-5">\n'
+    '            <template x-for="i in [1,2,3,4]" :key="i">\n'
+    '              <div class="flex-shrink-0 bg-white rounded-xl border border-slate-100 px-4 py-3 min-w-[110px] flex flex-col gap-2">\n'
+    '                <div class="h-2.5 w-14 bg-slate-200 rounded"></div>\n'
+    '                <div class="h-5 w-20 bg-slate-200 rounded"></div>\n'
+    '                <div class="h-3 w-10 bg-slate-200 rounded"></div>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '          <!-- 자산 요약 카드 -->\n'
+    '          <div class="bg-white rounded-xl border border-slate-100 p-5 mb-6">\n'
+    '            <div class="h-3 w-24 bg-slate-200 rounded mb-4"></div>\n'
+    '            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">\n'
+    '              <template x-for="j in [1,2,3,4]" :key="j">\n'
+    '                <div>\n'
+    '                  <div class="h-2.5 w-16 bg-slate-200 rounded mb-2"></div>\n'
+    '                  <div class="h-6 w-24 bg-slate-200 rounded mb-1"></div>\n'
+    '                  <div class="h-3 w-20 bg-slate-200 rounded"></div>\n'
+    '                </div>\n'
+    '              </template>\n'
+    '            </div>\n'
+    '          </div>\n'
+    '          <!-- 신호 카드 그리드 x3 -->\n'
+    '          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">\n'
+    '            <template x-for="k in [1,2,3]" :key="k">\n'
+    '              <div class="bg-white rounded-xl border border-slate-100 p-4">\n'
+    '                <div class="h-3 w-24 bg-slate-200 rounded mb-3"></div>\n'
+    '                <template x-for="m in [1,2,3]" :key="m">\n'
+    '                  <div class="flex items-center gap-3 py-2.5 border-b border-slate-50 last:border-0">\n'
+    '                    <div class="rounded-full h-8 w-8 bg-slate-200 shrink-0"></div>\n'
+    '                    <div class="flex-1">\n'
+    '                      <div class="h-3 w-32 bg-slate-200 rounded mb-1"></div>\n'
+    '                      <div class="h-3 w-20 bg-slate-200 rounded"></div>\n'
+    '                    </div>\n'
+    '                    <div class="ml-auto h-4 w-14 bg-slate-200 rounded"></div>\n'
+    '                  </div>\n'
+    '                </template>\n'
+    '              </div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '        </div>\n'
     '      </template>\n'
     '\n'
     '      <template x-if="home">\n'
