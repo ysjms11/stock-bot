@@ -84,10 +84,27 @@
 
 **폴리시 완료 (b98dba8)**: 기록 탭 페이지네이션(최근20+더보기) + 홈 DART 카드 누적라벨 정리. 탭키 단/복수 버그(signals→signal) 픽스.
 
+### 후속 빌드 (06-03~04, 사용자 "남들 사례 찾아 추가/보강/최적화" → "쭉쭉 진행")
+연구(OpenStock/Tremor/AddyOsmani 멀티에이전트/VoltAgent 등) → 우리 적용. **전부 라이브 검증·커밋·브랜치 푸시.**
+- **웹디자인 팀 신설** (`.claude/agents/`: ui-ux-designer/frontend-developer/design-reviewer, CLAUDE.md Agent Team 등록 b7e889c). 워크플로 architect→designer→frontend-dev→design-reviewer→verifier→메인 라이브확인. **실제 가동**(설계 spec→구현→리뷰), mount 타이밍 버그는 메인세션 라이브에서 포착·수정("검증이 병목" 입증).
+- **차트** (d36cd8f/60025e6): TradingView lightweight-charts(무빌드 CDN). 자산추이(area)·종목 캔들+거래량. mount 타이밍 fix(탭/모달 가시화 후 + rAF 0-width 가드).
+- **콜드로드 최적화** (0cb46b8): `_cached` 서버측 SWR(stale 즉시+백그라운드 갱신) + `warm_caches()` 시작 프리워밍. **홈/포트/워치 30s→0.002s.** (US후보·매크로 등 무거운 lazy 엔드포인트는 미프리워밍 → 첫 로드 ~40s, 백로그.)
+- **스켈레톤** (60f1e03): 11표면 "로딩중"텍스트→animate-pulse.
+- **히트맵** (214b2c0): 포트폴리오 손익(flex-grow=평가액,색=손익%) + KR 섹터(78개, /api/sector_heatmap, daily_snapshot 집계).
+- **US 애널 탭** (1a38513): 9번째 탭. 매수후보(get_us_buy_candidates)·레이팅변화(get_us_scan)·톱애널·종목 리서치 모달. 26k행 자산 표면화.
+- **매크로** (5c3fc11): 시세 탭 pill. /api/macro_panel(get_macro+external+polymarket+sector gather). 레짐배너·지표·Fed·섹터로테이션. (curve/침체확률은 get_macro_external 키 불일치로 비어있음 — 백로그.)
+- **알파스크리너+수급** (7a766f1): 시그널 탭 알파스크리너(F/M-Score·FCF·52주, /api/alpha) + 시세 탭 수급(외인/공매도/신용, /api/supply). 둘 다 pill로 흡수(탭 9개 유지). M-Score는 데이터 수집 전(graceful).
+
+**현재 = 9탭 풀 리서치/시그널 콕핏.** 무빌드 Tailwind+Alpine+Lucide+lightweight-charts. dashboard.py(옛 /dash-classic) 전 과정 무수정.
+
 **🟡 남은 것 (사용자 결정 필요 — 내가 안 함)**:
-1. **브랜치 → main 머지**: 대시보드는 `fix/collector-div-yield-foreign-amt` 작업트리로 돌고 있으나 main(`8c9f70b`)엔 없음. 머지 시 사용자 collector/US_EXIT WIP도 같이 올라감 → 타이밍 사용자 판단.
-2. **CLAUDE.md 인프라표 URL `/dash`→`/home`**: 보호 파일, 명시 동의 후.
-3. **콜드로드 ~30s 단축**: 라이브 vs DB종가 트레이드오프 결정 필요(보류).
+1. **브랜치 → main 머지**: 대시보드+collector 전부 `fix/collector-div-yield-foreign-amt`에 있고 라이브, main(`8c9f70b`)엔 없음. 사용자 판단.
+2. **CLAUDE.md 인프라표 URL `/dash`→`/home`** (파일구조/팀은 사용자가 이미 갱신함, 인프라표 URL만 남음): 보호 파일, 명시 동의 후.
+
+**🔧 폴리시 백로그 (선택)**:
+- 무거운 엔드포인트(US후보·macro_panel) 프리워밍 추가 → 첫 로드 즉시화.
+- 매크로 국채곡선/침체확률(get_macro_external 반환 키 파싱) + M-Score(데이터 수집 전) 보강.
+- 접근성(aria/명암대비/키보드).
 
 ---
 
