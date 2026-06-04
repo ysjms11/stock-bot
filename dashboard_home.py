@@ -1208,6 +1208,7 @@ function dashApp() {
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
       if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); }
+      if (t === 'us') { this.loadUsCandidates(); this.loadUsScan(); }
       this.$nextTick(() => this.refreshIcons());
     },
 
@@ -1409,6 +1410,110 @@ function dashApp() {
     consBadgeClass(chg) {
       if (chg == null) return 'text-slate-500';
       return Number(chg) >= 0 ? 'text-green-600' : 'text-red-600';
+    },
+
+    /* ── US 애널리스트 탭 ── */
+    usSeg: 'candidates',
+    usCandidates: null,
+    usScan: null,
+    usAnalysts: null,
+    usAnalystsLoading: false,
+    usCandidatesMinUpside: 20,
+    usCandidatesTierSOnly: false,
+    usModal: null,
+    usModalRatings: null,
+    usModalConsensus: null,
+    usModalResearch: null,
+
+    setUsSeg(s) {
+      this.usSeg = s;
+      if (s === 'analysts' && !this.usAnalysts) this.loadUsAnalysts();
+      this.$nextTick(() => this.refreshIcons());
+    },
+
+    async loadUsCandidates() {
+      const data = await this.api('/api/us/candidates');
+      if (!data.error) this.usCandidates = data;
+    },
+
+    async loadUsScan() {
+      const data = await this.api('/api/us/scan');
+      if (!data.error) this.usScan = data;
+    },
+
+    async loadUsAnalysts() {
+      this.usAnalystsLoading = true;
+      const data = await this.api('/api/us/analysts');
+      this.usAnalystsLoading = false;
+      if (!data.error) this.usAnalysts = data;
+    },
+
+    filteredCandidates() {
+      if (!this.usCandidates || !this.usCandidates.candidates) return [];
+      let list = this.usCandidates.candidates.filter(c => {
+        if (c.upside_pct < this.usCandidatesMinUpside) return false;
+        if (this.usCandidatesTierSOnly && c.tier_s_count < 1) return false;
+        return true;
+      });
+      return list.slice().sort((a, b) => b.upside_pct - a.upside_pct);
+    },
+
+    hmColorUs(upside) {
+      if (upside >= 80) return 'bg-emerald-100 text-emerald-700';
+      if (upside >= 50) return 'bg-green-100 text-green-700';
+      if (upside >= 30) return 'bg-lime-100 text-lime-700';
+      return 'bg-slate-100 text-slate-600';
+    },
+
+    usSuccessColor(rate) {
+      const r = Number(rate);
+      if (r >= 60) return 'text-emerald-600 font-semibold';
+      if (r >= 45) return 'text-green-600';
+      if (r >= 30) return 'text-amber-600';
+      return 'text-slate-500';
+    },
+
+    usActionBadge(action) {
+      if (!action) return 'bg-slate-100 text-slate-600';
+      const a = action.toLowerCase();
+      if (a === 'upgrades') return 'bg-green-100 text-green-700';
+      if (a === 'downgrades') return 'bg-red-100 text-red-700';
+      if (a === 'initiates') return 'bg-blue-100 text-blue-700';
+      return 'bg-slate-100 text-slate-600';
+    },
+
+    async openUsModal(ticker) {
+      this.usModal = { ticker, loading: true };
+      this.usModalRatings = null;
+      this.usModalConsensus = null;
+      this.usModalResearch = null;
+      this.$nextTick(() => this.refreshIcons());
+      const [r, c, res] = await Promise.all([
+        this.api('/api/us/ratings?ticker=' + encodeURIComponent(ticker)),
+        this.api('/api/us/consensus?ticker=' + encodeURIComponent(ticker)),
+        this.api('/api/us/analyst_research?ticker=' + encodeURIComponent(ticker)),
+      ]);
+      this.usModal = { ticker, loading: false };
+      this.usModalRatings = r.error ? null : r;
+      this.usModalConsensus = c.error ? null : c;
+      this.usModalResearch = res;
+      this.$nextTick(() => this.refreshIcons());
+    },
+
+    closeUsModal() {
+      this.usModal = null;
+      this.usModalRatings = null;
+      this.usModalConsensus = null;
+      this.usModalResearch = null;
+    },
+
+    usdCompact(n) {
+      if (n == null || isNaN(Number(n))) return '-';
+      const v = Number(n);
+      if (v >= 1e12) return '$' + (v / 1e12).toFixed(1) + 'T';
+      if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+      if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+      return '$' + v.toLocaleString('en-US', {maximumFractionDigits: 0});
     }
   };
 }
@@ -3065,6 +3170,436 @@ _RECORD_PANEL = r"""
 """
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# US 애널리스트 탭 패널 HTML
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_US_PANEL = r"""
+    <!-- US 애널리스트 탭 -->
+    <section x-show="activeTab==='us'" x-cloak>
+
+      <!-- 서브탭 pill 바 -->
+      <div class="flex gap-2 mb-5 overflow-x-auto">
+        <button @click="setUsSeg('candidates')"
+          :class="usSeg==='candidates' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+          class="px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors">
+          매수후보
+        </button>
+        <button @click="setUsSeg('scan')"
+          :class="usSeg==='scan' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+          class="px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors">
+          레이팅변화
+        </button>
+        <button @click="setUsSeg('analysts')"
+          :class="usSeg==='analysts' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'"
+          class="px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors">
+          톱애널
+        </button>
+      </div>
+
+      <!-- ── 매수후보 서브탭 ── -->
+      <template x-if="usSeg==='candidates'">
+        <div>
+          <!-- 스켈레톤 -->
+          <template x-if="!usCandidates">
+            <div class="animate-pulse">
+              <div class="flex gap-3 mb-4">
+                <div class="h-8 w-32 bg-slate-200 rounded-lg"></div>
+                <div class="h-8 w-24 bg-slate-200 rounded-lg"></div>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="i in [1,2,3,4,5,6]" :key="i">
+                  <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <div class="h-4 w-16 bg-slate-200 rounded mb-2"></div>
+                    <div class="h-6 w-24 bg-slate-200 rounded mb-3"></div>
+                    <div class="h-3 w-full bg-slate-200 rounded mb-1"></div>
+                    <div class="h-3 w-2/3 bg-slate-200 rounded"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- 데이터 있음 -->
+          <template x-if="usCandidates">
+            <div>
+              <!-- 필터 바 -->
+              <div class="flex flex-wrap items-center gap-3 mb-4">
+                <div class="flex items-center gap-2">
+                  <label class="text-sm text-slate-600 whitespace-nowrap">최소 업사이드</label>
+                  <select x-model.number="usCandidatesMinUpside"
+                    class="text-sm border border-slate-200 rounded px-2 py-1">
+                    <option value="20">20%+</option>
+                    <option value="30">30%+</option>
+                    <option value="50">50%+</option>
+                  </select>
+                </div>
+                <label class="flex items-center gap-1.5 text-sm text-slate-600 cursor-pointer">
+                  <input type="checkbox" x-model="usCandidatesTierSOnly" class="rounded">
+                  Tier S 포함
+                </label>
+                <span class="text-xs text-slate-400" x-text="'총 ' + filteredCandidates().length + '건'"></span>
+              </div>
+
+              <!-- 카드 그리드 -->
+              <template x-if="filteredCandidates().length === 0">
+                <div class="text-center py-12 text-slate-400">
+                  <i data-lucide="search-x" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+                  <p class="text-sm">필터 조건을 만족하는 매수후보가 없습니다.</p>
+                </div>
+              </template>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="c in filteredCandidates()" :key="c.ticker">
+                  <div @click="openUsModal(c.ticker)"
+                    class="bg-white rounded-xl border border-slate-100 p-4 cursor-pointer hover:shadow-md transition-shadow">
+                    <div class="flex items-center justify-between mb-2">
+                      <span class="font-bold text-slate-800" x-text="c.ticker"></span>
+                      <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                        :class="hmColorUs(c.upside_pct)"
+                        x-text="'+' + c.upside_pct.toFixed(1) + '%'"></span>
+                    </div>
+                    <div class="text-sm text-slate-600 mb-1">
+                      <span x-text="usd(c.price)"></span>
+                      <span class="text-slate-400 mx-1">→</span>
+                      <span class="font-semibold text-slate-800" x-text="usd(c.avg_target)"></span>
+                    </div>
+                    <div class="flex items-center gap-2 mb-3">
+                      <template x-if="c.tier_s_count > 0">
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium"
+                          x-text="'S×' + c.tier_s_count"></span>
+                      </template>
+                      <template x-if="c.tier_a_count > 0">
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium"
+                          x-text="'A×' + c.tier_a_count"></span>
+                      </template>
+                      <span class="text-xs text-slate-400" x-text="'총 ' + c.total_advisors + '명'"></span>
+                    </div>
+                    <div class="text-xs text-slate-500 flex items-center gap-1">
+                      <i data-lucide="clock" class="w-3 h-3 opacity-60"></i>
+                      <span x-text="c.latest_call_days_ago + '일 전'"></span>
+                      <template x-if="c.tier_s_analysts && c.tier_s_analysts.length > 0">
+                        <span class="ml-1 text-amber-600 truncate" x-text="c.tier_s_analysts[0].name"></span>
+                      </template>
+                      <template x-if="(!c.tier_s_analysts || c.tier_s_analysts.length === 0) && c.tier_a_analysts && c.tier_a_analysts.length > 0">
+                        <span class="ml-1 text-blue-600 truncate" x-text="c.tier_a_analysts[0].name"></span>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── 레이팅변화 서브탭 ── -->
+      <template x-if="usSeg==='scan'">
+        <div>
+          <!-- 스켈레톤 -->
+          <template x-if="!usScan">
+            <div class="animate-pulse space-y-3">
+              <template x-for="i in [1,2,3,4,5]" :key="i">
+                <div class="bg-white rounded-xl border border-slate-100 p-4">
+                  <div class="flex items-center gap-3">
+                    <div class="h-4 w-12 bg-slate-200 rounded"></div>
+                    <div class="h-4 w-8 bg-slate-200 rounded"></div>
+                    <div class="h-4 w-8 bg-slate-200 rounded"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <template x-if="usScan">
+            <div>
+              <template x-if="!usScan.data || usScan.data.length === 0">
+                <div class="text-center py-12 text-slate-400">
+                  <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+                  <p class="text-sm">최근 레이팅 변화 데이터가 없습니다.</p>
+                </div>
+              </template>
+              <div class="space-y-3">
+                <template x-for="item in (usScan.data || [])" :key="item.ticker">
+                  <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <div class="flex items-center gap-2 mb-2">
+                      <span class="font-bold text-slate-800 text-sm" x-text="item.ticker"></span>
+                      <template x-if="item.upgrades > 0">
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium"
+                          x-text="'↑' + item.upgrades"></span>
+                      </template>
+                      <template x-if="item.downgrades > 0">
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium"
+                          x-text="'↓' + item.downgrades"></span>
+                      </template>
+                      <span class="text-xs text-slate-400" x-text="item.events + '건'"></span>
+                      <button @click="openUsModal(item.ticker)"
+                        class="ml-auto text-xs text-blue-500 hover:underline">상세 ›</button>
+                    </div>
+                    <div class="space-y-1.5">
+                      <template x-for="(ev, idx) in (item.latest || []).slice(0, 3)" :key="idx">
+                        <div class="flex items-center gap-2 text-xs text-slate-600">
+                          <span class="text-slate-400 w-12 shrink-0"
+                            x-text="ev.date ? ev.date.slice(5) : ''"></span>
+                          <span class="text-slate-600 truncate max-w-24 shrink-0" x-text="ev.firm"></span>
+                          <span class="px-1.5 py-0.5 rounded text-xs font-medium shrink-0"
+                            :class="usActionBadge(ev.action)"
+                            x-text="ev.action"></span>
+                          <span class="font-medium shrink-0" x-text="ev.rating_new"></span>
+                          <template x-if="ev.pt_now">
+                            <span class="text-slate-400 shrink-0" x-text="'TP $' + ev.pt_now"></span>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── 톱애널 서브탭 ── -->
+      <template x-if="usSeg==='analysts'">
+        <div>
+          <!-- 스켈레톤 -->
+          <template x-if="usAnalystsLoading || !usAnalysts">
+            <div class="animate-pulse">
+              <div class="hidden md:block bg-white rounded-xl border border-slate-100 overflow-hidden">
+                <div class="h-10 bg-slate-100 w-full"></div>
+                <template x-for="i in [1,2,3,4,5,6,7,8,9,10]" :key="i">
+                  <div class="flex gap-4 p-3 border-b border-slate-50">
+                    <div class="h-3 w-6 bg-slate-200 rounded"></div>
+                    <div class="h-3 w-24 bg-slate-200 rounded"></div>
+                    <div class="h-3 w-20 bg-slate-200 rounded"></div>
+                    <div class="h-3 w-12 bg-slate-200 rounded"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="!usAnalystsLoading && usAnalysts">
+            <div>
+              <template x-if="!usAnalysts.analysts || usAnalysts.analysts.length === 0">
+                <div class="text-center py-12 text-slate-400">
+                  <i data-lucide="user-x" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+                  <p class="text-sm">톱 애널리스트 데이터가 없습니다.</p>
+                </div>
+              </template>
+
+              <!-- 데스크탑 테이블 -->
+              <div class="hidden md:block bg-white rounded-xl border border-slate-100 overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="bg-slate-50 border-b border-slate-100">
+                      <th class="text-left px-4 py-3 text-xs text-slate-500 font-medium w-10">#</th>
+                      <th class="text-left px-4 py-3 text-xs text-slate-500 font-medium">이름</th>
+                      <th class="text-left px-4 py-3 text-xs text-slate-500 font-medium">증권사</th>
+                      <th class="text-right px-4 py-3 text-xs text-slate-500 font-medium">별점</th>
+                      <th class="text-right px-4 py-3 text-xs text-slate-500 font-medium">적중률</th>
+                      <th class="text-right px-4 py-3 text-xs text-slate-500 font-medium">콜수</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="(a, idx) in (usAnalysts.analysts || [])" :key="a.slug || a.analyst">
+                      <tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                        <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="idx + 1"></td>
+                        <td class="px-4 py-2.5 font-medium text-slate-800" x-text="a.analyst"></td>
+                        <td class="px-4 py-2.5 text-slate-600 text-xs" x-text="a.firm"></td>
+                        <td class="px-4 py-2.5 text-right">
+                          <span class="text-amber-500 font-semibold text-xs">
+                            <template x-for="s in Math.round(a.avg_stars)" :key="s">★</template>
+                          </span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="Number(a.avg_stars).toFixed(1)"></span>
+                        </td>
+                        <td class="px-4 py-2.5 text-right text-xs"
+                          :class="usSuccessColor(a.avg_success_rate)"
+                          x-text="Number(a.avg_success_rate).toFixed(1) + '%'"></td>
+                        <td class="px-4 py-2.5 text-right text-xs text-slate-600" x-text="a.call_count"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 모바일 카드 -->
+              <div class="md:hidden space-y-3">
+                <template x-for="(a, idx) in (usAnalysts.analysts || [])" :key="a.slug || a.analyst">
+                  <div class="bg-white rounded-xl border border-slate-100 p-4">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-xs text-slate-400" x-text="idx + 1 + '.'"></span>
+                      <span class="font-medium text-slate-800 text-sm" x-text="a.analyst"></span>
+                    </div>
+                    <div class="text-xs text-slate-500 mb-2" x-text="a.firm"></div>
+                    <div class="flex items-center gap-4 text-xs">
+                      <span class="text-amber-500 font-semibold" x-text="'★ ' + Number(a.avg_stars).toFixed(1)"></span>
+                      <span :class="usSuccessColor(a.avg_success_rate)"
+                        x-text="'적중 ' + Number(a.avg_success_rate).toFixed(1) + '%'"></span>
+                      <span class="text-slate-400" x-text="a.call_count + '콜'"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- ── US 종목 상세 모달 ── -->
+      <template x-if="usModal">
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4"
+          @click.self="closeUsModal()">
+          <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+          <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
+              <div class="flex items-center gap-2">
+                <i data-lucide="star" class="w-5 h-5 text-amber-500"></i>
+                <h2 class="font-bold text-slate-800 text-lg" x-text="usModal.ticker + ' 애널리스트 상세'"></h2>
+              </div>
+              <button @click="closeUsModal()"
+                class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+
+            <!-- 로딩 스켈레톤 -->
+            <template x-if="usModal.loading">
+              <div class="p-6 animate-pulse space-y-4">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <template x-for="i in [1,2,3,4]" :key="i">
+                    <div class="h-16 bg-slate-100 rounded-lg"></div>
+                  </template>
+                </div>
+                <div class="h-4 w-32 bg-slate-200 rounded mt-4"></div>
+                <template x-for="i in [1,2,3,4,5]" :key="i">
+                  <div class="h-10 bg-slate-100 rounded"></div>
+                </template>
+              </div>
+            </template>
+
+            <!-- 모달 컨텐츠 -->
+            <template x-if="!usModal.loading">
+              <div class="p-6 space-y-6">
+
+                <!-- 컨센서스 요약 4그리드 -->
+                <template x-if="usModalConsensus && usModalConsensus.data">
+                  <div>
+                    <h3 class="text-sm font-semibold text-slate-600 mb-3">컨센서스</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div class="bg-slate-50 rounded-lg p-3 text-center">
+                        <div class="text-xs text-slate-400 mb-1">등급</div>
+                        <div class="text-sm font-bold text-slate-800"
+                          x-text="usModalConsensus.data.consensus_rating || '-'"></div>
+                      </div>
+                      <div class="bg-slate-50 rounded-lg p-3 text-center">
+                        <div class="text-xs text-slate-400 mb-1">평균 TP</div>
+                        <div class="text-sm font-bold text-slate-800"
+                          x-text="usModalConsensus.data.target_avg ? '$' + Number(usModalConsensus.data.target_avg).toFixed(0) : '-'"></div>
+                      </div>
+                      <div class="bg-slate-50 rounded-lg p-3 text-center">
+                        <div class="text-xs text-slate-400 mb-1">커버 수</div>
+                        <div class="text-sm font-bold text-slate-800"
+                          x-text="(usModalConsensus.data.analyst_count || '-') + '명'"></div>
+                      </div>
+                      <div class="bg-slate-50 rounded-lg p-3 text-center">
+                        <div class="text-xs text-slate-400 mb-1">기준일</div>
+                        <div class="text-xs font-medium text-slate-600"
+                          x-text="usModalConsensus.data.snapshot_date || '-'"></div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- 레이팅 이벤트 테이블 (최대 15) -->
+                <template x-if="usModalRatings && usModalRatings.events && usModalRatings.events.length > 0">
+                  <div>
+                    <h3 class="text-sm font-semibold text-slate-600 mb-3">
+                      레이팅 이력 <span class="text-slate-400 text-xs font-normal"
+                        x-text="'(' + usModalRatings.count + '건 · 최근 15개)'"></span>
+                    </h3>
+                    <div class="overflow-x-auto">
+                      <table class="w-full text-xs">
+                        <thead>
+                          <tr class="bg-slate-50 border-b border-slate-100">
+                            <th class="text-left px-3 py-2 text-slate-500 font-medium">날짜</th>
+                            <th class="text-left px-3 py-2 text-slate-500 font-medium">증권사</th>
+                            <th class="text-left px-3 py-2 text-slate-500 font-medium">액션</th>
+                            <th class="text-left px-3 py-2 text-slate-500 font-medium">등급</th>
+                            <th class="text-right px-3 py-2 text-slate-500 font-medium">TP</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="(ev, i) in usModalRatings.events.slice(0, 15)" :key="i">
+                            <tr class="border-b border-slate-50">
+                              <td class="px-3 py-2 text-slate-400" x-text="ev.date"></td>
+                              <td class="px-3 py-2 text-slate-600 max-w-28 truncate" x-text="ev.firm"></td>
+                              <td class="px-3 py-2">
+                                <span class="px-1.5 py-0.5 rounded text-xs font-medium"
+                                  :class="usActionBadge(ev.action)"
+                                  x-text="ev.action"></span>
+                              </td>
+                              <td class="px-3 py-2 font-medium text-slate-800" x-text="ev.rating_new || '-'"></td>
+                              <td class="px-3 py-2 text-right text-slate-600"
+                                x-text="ev.pt_now ? '$' + ev.pt_now : '-'"></td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- FMP TP Summary (연구 데이터) -->
+                <template x-if="usModalResearch && !usModalResearch.error && usModalResearch.price_target_summary">
+                  <div>
+                    <h3 class="text-sm font-semibold text-slate-600 mb-3">FMP Price Target</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div class="bg-blue-50 rounded-lg p-3 text-center">
+                        <div class="text-slate-400 mb-1">최근 1개월</div>
+                        <div class="font-bold text-slate-800"
+                          x-text="usModalResearch.price_target_summary.last_month ? '$' + Number(usModalResearch.price_target_summary.last_month.avg_target).toFixed(0) : '-'"></div>
+                        <div class="text-slate-400"
+                          x-text="usModalResearch.price_target_summary.last_month ? usModalResearch.price_target_summary.last_month.count + '명' : ''"></div>
+                      </div>
+                      <div class="bg-blue-50 rounded-lg p-3 text-center">
+                        <div class="text-slate-400 mb-1">최근 1분기</div>
+                        <div class="font-bold text-slate-800"
+                          x-text="usModalResearch.price_target_summary.last_quarter ? '$' + Number(usModalResearch.price_target_summary.last_quarter.avg_target).toFixed(0) : '-'"></div>
+                        <div class="text-slate-400"
+                          x-text="usModalResearch.price_target_summary.last_quarter ? usModalResearch.price_target_summary.last_quarter.count + '명' : ''"></div>
+                      </div>
+                      <div class="bg-slate-50 rounded-lg p-3 text-center">
+                        <div class="text-slate-400 mb-1">최근 1년</div>
+                        <div class="font-bold text-slate-800"
+                          x-text="usModalResearch.price_target_summary.last_year ? '$' + Number(usModalResearch.price_target_summary.last_year.avg_target).toFixed(0) : '-'"></div>
+                        <div class="text-slate-400"
+                          x-text="usModalResearch.price_target_summary.last_year ? usModalResearch.price_target_summary.last_year.count + '명' : ''"></div>
+                      </div>
+                      <div class="bg-slate-50 rounded-lg p-3 text-center">
+                        <div class="text-slate-400 mb-1">전체</div>
+                        <div class="font-bold text-slate-800"
+                          x-text="usModalResearch.price_target_summary.all_time ? '$' + Number(usModalResearch.price_target_summary.all_time.avg_target).toFixed(0) : '-'"></div>
+                        <div class="text-slate-400"
+                          x-text="usModalResearch.price_target_summary.all_time ? usModalResearch.price_target_summary.all_time.count + '명' : ''"></div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- 빈 상태 -->
+                <template x-if="!usModalRatings && !usModalConsensus && !usModalResearch">
+                  <div class="text-center py-8 text-slate-400 text-sm">데이터를 불러오지 못했습니다.</div>
+                </template>
+
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+    </section>
+"""
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # P3a: Whale 탭 패널 HTML (반드시 _HOME_SHELL 이전 정의)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3724,7 +4259,7 @@ _HOME_SHELL = (
     '    </div>\n'
     '  </header>\n'
     '\n'
-    '  <!-- 탭 네비 (8개) -->\n'
+    '  <!-- 탭 네비 (9개) -->\n'
     '  <nav class="bg-white border-b border-slate-200 sticky top-12 z-40">\n'
     '    <div class="max-w-6xl mx-auto px-4">\n'
     '      <div class="overflow-x-auto">\n'
@@ -3790,6 +4325,16 @@ _HOME_SHELL = (
     '            기록\n'
     '          </button>\n'
     '\n'
+    '          <!-- US 애널 -->\n'
+    '          <button\n'
+    '            @click="setTab(\'us\')"\n'
+    '            :class="activeTab===\'us\' ? \'bg-blue-600 text-white\' : \'text-slate-600 hover:bg-slate-100\'"\n'
+    '            class="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors"\n'
+    '          >\n'
+    '            <i data-lucide="star" class="w-4 h-4"></i>\n'
+    '            US 애널\n'
+    '          </button>\n'
+    '\n'
     '          <!-- Whale -->\n'
     '          <button\n'
     '            @click="setTab(\'whale\')"\n'
@@ -3824,6 +4369,7 @@ _HOME_SHELL = (
     + _WATCH_PANEL
     + _SIGNAL_PANEL
     + _RECORD_PANEL
+    + _US_PANEL
     + _WHALE_PANEL
     + _REPORT_PANEL
     + '\n'
@@ -5197,6 +5743,78 @@ async def _handle_api_sector_heatmap(request: web.Request) -> web.Response:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# US 애널리스트 탭 API 핸들러
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _build_us_candidates_payload() -> dict:
+    """get_us_buy_candidates 래핑. 에러 시 {"error": ..., "candidates": []} 반환."""
+    r = await execute_tool("get_us_buy_candidates", {
+        "days": 180, "min_advisors": 1, "min_upside": 20, "limit": 50
+    })
+    if isinstance(r, dict) and "error" in r:
+        return {"error": r["error"], "candidates": [], "total_pool": 0, "after_upside_filter": 0}
+    return r
+
+
+async def _build_us_scan_payload() -> dict:
+    """get_us_scan watchlist 래핑."""
+    r = await execute_tool("get_us_scan", {"mode": "watchlist", "days": 14})
+    if isinstance(r, dict) and "error" in r:
+        return {"error": r["error"], "data": []}
+    return r
+
+
+async def _build_us_analysts_payload() -> dict:
+    """get_us_analyst top 30 래핑."""
+    r = await execute_tool("get_us_analyst", {"top": 30, "min_stars": 4.0, "days": 30})
+    if isinstance(r, dict) and "error" in r:
+        return {"error": r["error"], "analysts": []}
+    return r
+
+
+async def _handle_api_us_candidates(request: web.Request) -> web.Response:
+    """GET /api/us/candidates — 매수후보 (600s TTL, SWR)."""
+    return await _api(_cached("us_candidates", 600.0, _build_us_candidates_payload))
+
+
+async def _handle_api_us_scan(request: web.Request) -> web.Response:
+    """GET /api/us/scan — 워치/보유 레이팅 변화 (300s TTL, SWR)."""
+    return await _api(_cached("us_scan", 300.0, _build_us_scan_payload))
+
+
+async def _handle_api_us_analysts(request: web.Request) -> web.Response:
+    """GET /api/us/analysts — 톱애널 리스트 (600s TTL, SWR)."""
+    return await _api(_cached("us_analysts", 600.0, _build_us_analysts_payload))
+
+
+async def _handle_api_us_ratings(request: web.Request) -> web.Response:
+    """GET /api/us/ratings?ticker=NVDA — 종목별 레이팅 이벤트 (온디맨드, 캐시 없음)."""
+    ticker = request.rel_url.query.get("ticker", "").strip().upper()
+    if not ticker:
+        return web.json_response({"error": "ticker 파라미터 필요"})
+    return await _api(execute_tool("get_us_ratings", {"ticker": ticker, "mode": "events", "days": 180}))
+
+
+async def _handle_api_us_consensus(request: web.Request) -> web.Response:
+    """GET /api/us/consensus?ticker=NVDA — 종목 컨센서스 (60s TTL)."""
+    ticker = request.rel_url.query.get("ticker", "").strip().upper()
+    if not ticker:
+        return web.json_response({"error": "ticker 파라미터 필요"})
+    return await _api(_cached(
+        f"us_consensus_{ticker}", 60.0,
+        lambda: execute_tool("get_us_ratings", {"ticker": ticker, "mode": "consensus"})
+    ))
+
+
+async def _handle_api_us_analyst_research(request: web.Request) -> web.Response:
+    """GET /api/us/analyst_research?ticker=NVDA — FMP TP/grades (온디맨드, 에러 허용)."""
+    ticker = request.rel_url.query.get("ticker", "").strip().upper()
+    if not ticker:
+        return web.json_response({"error": "ticker 파라미터 필요"})
+    return await _api(execute_tool("get_us_analyst_research", {"ticker": ticker}))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라우트 등록
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -5227,3 +5845,10 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/market", _handle_api_market)
     # 히트맵 추가
     app.router.add_get("/api/sector_heatmap", _handle_api_sector_heatmap)
+    # US 애널리스트 탭 추가
+    app.router.add_get("/api/us/candidates", _handle_api_us_candidates)
+    app.router.add_get("/api/us/scan", _handle_api_us_scan)
+    app.router.add_get("/api/us/analysts", _handle_api_us_analysts)
+    app.router.add_get("/api/us/ratings", _handle_api_us_ratings)
+    app.router.add_get("/api/us/consensus", _handle_api_us_consensus)
+    app.router.add_get("/api/us/analyst_research", _handle_api_us_analyst_research)
