@@ -561,6 +561,135 @@ async def _build_sector_heatmap_payload() -> dict:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 마켓맵 트리맵 DB 함수 (한경식 ECharts 트리맵용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _kr_marketmap_from_db(market: str = "kospi") -> dict:
+    """daily_snapshot + stock_master JOIN으로 섹터별 종목 트리맵 데이터 집계.
+
+    최신 trade_date 기준, 섹터별 시총상위 8종목 + 기타 합산 노드 구성.
+    n_stocks >= 3 섹터만 포함. 시총 500억원 이상 필터 (market_cap 단위=억원).
+    동기 sqlite3 읽기 — loop에서 run_in_executor로 호출할 것.
+    """
+    market = market.lower()
+    if market not in ("kospi", "kosdaq"):
+        market = "kospi"
+    try:
+        conn = _sqlite3.connect(f"{_DATA_DIR}/stock.db", timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        dt_row = conn.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()
+        if not dt_row or not dt_row[0]:
+            conn.close()
+            return {"market": market, "as_of": None, "total_stocks": 0, "shown_stocks": 0, "data": []}
+        as_of = dt_row[0]
+        rows = conn.execute(
+            """
+            WITH latest AS (SELECT ? dt),
+            ranked AS (
+              SELECT d.symbol, d.close, d.change_pct, d.market_cap,
+                     s.name, s.sector, s.market,
+                     ROW_NUMBER() OVER (PARTITION BY s.sector ORDER BY d.market_cap DESC) rn
+              FROM daily_snapshot d
+              JOIN stock_master s ON d.symbol = s.symbol, latest
+              WHERE d.trade_date = latest.dt
+                AND d.close > 0
+                AND d.market_cap > 500
+                AND s.market = ?
+                AND s.sector IS NOT NULL
+                AND TRIM(s.sector) != ''
+            )
+            SELECT symbol, name, sector, market_cap, change_pct, rn
+            FROM ranked
+            ORDER BY sector, rn
+            """,
+            (as_of, market),
+        ).fetchall()
+        conn.close()
+
+        # 섹터별 그룹화
+        from collections import defaultdict
+        sector_items: dict = defaultdict(list)
+        for sym, name, sector, mktcap, chg_pct, rn in rows:
+            sector = (sector or "").strip()
+            if not sector:
+                continue
+            sector_items[sector].append({
+                "symbol": sym,
+                "name": (name or sym).strip(),
+                "market_cap": int(mktcap) if mktcap else 0,
+                "change_pct": round(float(chg_pct), 2) if chg_pct is not None else None,
+                "rn": int(rn),
+            })
+
+        total_stocks = sum(len(v) for v in sector_items.values())
+        shown_stocks = 0
+        data = []
+
+        for sector, items in sorted(sector_items.items()):
+            n = len(items)
+            if n < 3:
+                continue
+            # 섹터 시총 가중 평균 등락률
+            total_cap = sum(it["market_cap"] for it in items)
+            if total_cap > 0:
+                sector_chg = sum(
+                    it["change_pct"] * it["market_cap"]
+                    for it in items
+                    if it["change_pct"] is not None
+                ) / total_cap
+            else:
+                sector_chg = 0.0
+
+            children = []
+            # rn <= 8 종목 노드
+            top = [it for it in items if it["rn"] <= 8]
+            rest = [it for it in items if it["rn"] > 8]
+            for it in top:
+                children.append({
+                    "name": it["name"],
+                    "ticker": it["symbol"],
+                    "value": it["market_cap"],
+                    "change_pct": it["change_pct"],
+                })
+                shown_stocks += 1
+            # 기타 합산 노드
+            if rest:
+                rest_cap = sum(it["market_cap"] for it in rest)
+                children.append({
+                    "name": f"기타 ({len(rest)})",
+                    "ticker": None,
+                    "value": rest_cap,
+                    "change_pct": None,
+                })
+
+            data.append({
+                "name": sector,
+                "value": total_cap,
+                "change_pct": round(sector_chg, 2),
+                "children": children,
+            })
+
+        # 섹터 시총 내림차순 정렬
+        data.sort(key=lambda x: x["value"], reverse=True)
+
+        return {
+            "market": market,
+            "as_of": as_of,
+            "total_stocks": total_stocks,
+            "shown_stocks": shown_stocks,
+            "data": data,
+        }
+    except Exception:
+        return {"market": market, "as_of": None, "total_stocks": 0, "shown_stocks": 0, "data": []}
+
+
+async def _build_marketmap_payload(market: str = "kospi") -> dict:
+    """마켓맵 payload — 동기 DB 조회를 executor로 래핑."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _kr_marketmap_from_db, market)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # build_market_payload — 시세 탭 집계 (TTL 240s)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -765,6 +894,12 @@ function dashApp() {
     marketStockResult: null,
     marketStockLoading: false,
 
+    /* market: marketmap treemap */
+    marketmap: {},
+    marketmapMarket: 'kospi',
+    marketmapLoading: false,
+    _mmChart: null,
+
     /* P3b: report tab */
     report: null,
     reportSeg: 'kr',
@@ -823,6 +958,7 @@ function dashApp() {
       await this.loadHome();
       this.refreshIcons();
       this._startAutoRefresh();
+      window.addEventListener('resize', () => { if (this._mmChart) this._mmChart.resize(); });
     },
 
     _startAutoRefresh() {
@@ -1217,6 +1353,156 @@ function dashApp() {
       if (!data.error) this.sectorHeatmap = data;
     },
 
+    /* ── marketmap treemap ── */
+    mmHeight() {
+      return window.innerWidth >= 768 ? 480 : 320;
+    },
+
+    async loadMarketmap(market) {
+      market = market || this.marketmapMarket;
+      this.marketmapMarket = market;
+      if (this.marketmap[market]) {
+        this._renderMarketmap();
+        this._bgRefreshMarketmap(market);
+        return;
+      }
+      this.marketmapLoading = true;
+      const data = await this.api('/api/marketmap?market=' + market);
+      this.marketmapLoading = false;
+      if (data && !data.error) {
+        this.marketmap = Object.assign({}, this.marketmap, { [market]: data });
+        this._renderMarketmap();
+      }
+    },
+
+    async _bgRefreshMarketmap(market) {
+      const data = await this.api('/api/marketmap?market=' + market);
+      if (data && !data.error) {
+        this.marketmap = Object.assign({}, this.marketmap, { [market]: data });
+        this._renderMarketmap();
+      }
+    },
+
+    mmColor(pct) {
+      if (pct == null) return '#e2e8f0';
+      const stops = [[-5,[185,28,28]],[-3,[239,68,68]],[-1,[252,165,165]],[0,[241,245,249]],[1,[134,239,172]],[3,[34,197,94]],[5,[21,128,61]]];
+      let p = Math.max(-5, Math.min(5, pct));
+      for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i][0], ca = stops[i][1], b = stops[i+1][0], cb = stops[i+1][1];
+        if (p >= a && p <= b) {
+          const t = (p - a) / (b - a);
+          const c = ca.map((v, k) => Math.round(v + (cb[k] - v) * t));
+          return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+        }
+      }
+      return '#f1f5f9';
+    },
+    mmEchartsData(raw) {
+      if (!raw || !raw.data) return [];
+      return raw.data.map(sector => {
+        return {
+          name: sector.name,
+          value: [sector.value, sector.change_pct != null ? sector.change_pct : 0],
+          change_pct: sector.change_pct,
+          itemStyle: { color: this.mmColor(sector.change_pct) },
+          children: (sector.children || []).map(child => {
+            return {
+              name: child.name,
+              ticker: child.ticker,
+              value: [child.value, child.change_pct != null ? child.change_pct : 0],
+              change_pct: child.change_pct,
+              itemStyle: { color: this.mmColor(child.change_pct) },
+            };
+          }),
+        };
+      });
+    },
+
+    _renderMarketmap() {
+      const raw = this.marketmap[this.marketmapMarket];
+      if (!raw) return;
+      if (typeof echarts === 'undefined') {
+        const el = document.getElementById('marketmap-container');
+        if (el) el.innerHTML = '<div class="text-slate-400 text-sm py-8 text-center">ECharts 로드 실패 — 새로고침 후 재시도</div>';
+        return;
+      }
+      const el = document.getElementById('marketmap-container');
+      if (!el) return;
+      el.style.height = this.mmHeight() + 'px';
+      if (!this._mmChart) {
+        this._mmChart = echarts.init(el, null, { renderer: 'svg' });
+        const self = this;
+        this._mmChart.on('click', function(p) {
+          if (p.data && p.data.ticker) self.openStockModal(p.data.ticker);
+        });
+        if (window.ResizeObserver) {
+          const ro = new ResizeObserver(() => { if (this._mmChart) this._mmChart.resize(); });
+          ro.observe(el);
+          this._mmResizeObs = ro;
+        }
+      }
+      const treeData = this.mmEchartsData(raw);
+      const opt = {
+        tooltip: {
+          formatter: function(info) {
+            const d = info.data;
+            if (!d) return '';
+            if (d.ticker) {
+              const chgStr = d.change_pct != null ? ((d.change_pct >= 0 ? '+' : '') + d.change_pct.toFixed(2) + '%') : '-';
+              const cap = Array.isArray(d.value) ? d.value[0] : d.value;
+              const capStr = cap >= 10000 ? (cap / 10000).toFixed(1) + '조' : (cap.toFixed(0) + '억');
+              return d.name + ' (' + d.ticker + ')<br/>' + chgStr + ' | 시총 ' + capStr;
+            }
+            return d.name || info.name;
+          }
+        },
+        series: [{
+          type: 'treemap',
+          roam: false,
+          nodeClick: 'zoomToNode',
+          breadcrumb: { show: true, height: 28 },
+          label: {
+            show: true,
+            formatter: function(p) {
+              const d = p.data;
+              if (!d || !d.ticker) return '';
+              const chg = d.change_pct;
+              const chgStr = chg != null ? ((chg >= 0 ? '+' : '') + chg.toFixed(2) + '%') : '';
+              const rect = p.value;
+              const area = Array.isArray(rect) ? rect[0] : rect;
+              if (area > 30000) return d.name + '\n' + chgStr;
+              return chgStr;
+            },
+            fontSize: 11,
+            color: '#1e293b',
+            overflow: 'truncate',
+          },
+          upperLabel: {
+            show: true,
+            height: 24,
+            fontSize: 12,
+            fontWeight: 'bold',
+            color: '#1e293b',
+            backgroundColor: 'rgba(255,255,255,0.7)',
+            formatter: function(p) {
+              const d = p.data;
+              if (!d || d.ticker) return '';
+              const chg = d.change_pct;
+              const chgStr = chg != null ? (' ' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%') : '';
+              return (d.name || '') + chgStr;
+            }
+          },
+          levels: [
+            { itemStyle: { borderWidth: 2, borderColor: '#e2e8f0', gapWidth: 2 } },
+            { itemStyle: { borderWidth: 1, borderColor: '#cbd5e1', gapWidth: 1 } }
+          ],
+          data: treeData,
+        }],
+      };
+      this._mmChart.setOption(opt, true);
+      this._mmChart.resize();
+    },
+
     async loadMacroPanel() {
       /* SWR: keep stale data, never null during refresh */
       if (!this.macroPanel) this.macroPanelLoading = true;
@@ -1243,7 +1529,7 @@ function dashApp() {
       if (t === 'signal') { this.loadSignal(); this.loadAlpha(this.alphaSeg); }
       if (t === 'report') this.loadReport();
       if (t === 'record') this.loadRecord();
-      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); this.loadMacroPanel(); this.loadSupply(this.supplySeg); }
+      if (t === 'market') { this.loadMarket(); this.loadSectorHeatmap(); this.loadMacroPanel(); this.loadSupply(this.supplySeg); this.$nextTick(() => this.loadMarketmap()); }
       if (t === 'us') { this.loadUsCandidates(); this.loadUsScan(); }
       this.$nextTick(() => this.refreshIcons());
     },
@@ -1702,6 +1988,51 @@ _MARKET_PANEL = (
     '            <!-- 빈 상태 -->\n'
     '            <template x-if="!sectorHeatmapLoading && (!sectorHeatmap || !sectorHeatmap.sectors || !sectorHeatmap.sectors.length)">\n'
     '              <div class="text-slate-400 text-sm py-4 text-center">섹터 데이터 없음 (장 마감 후 반영)</div>\n'
+    '            </template>\n'
+    '          </div>\n'
+    '\n'
+    '          <!-- 마켓맵 트리맵 -->\n'
+    '          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">\n'
+    '            <!-- 헤더 -->\n'
+    '            <div class="flex flex-wrap items-center gap-3 mb-3">\n'
+    '              <h2 class="text-sm font-semibold text-slate-700">마켓맵</h2>\n'
+    '              <template x-if="marketmap[marketmapMarket] && marketmap[marketmapMarket].as_of">\n'
+    '                <span class="text-xs text-slate-400"\n'
+    '                      x-text="marketmap[marketmapMarket] && marketmap[marketmapMarket].as_of ? marketmap[marketmapMarket].as_of.slice(0,4)+\'.\'+marketmap[marketmapMarket].as_of.slice(4,6)+\'.\'+marketmap[marketmapMarket].as_of.slice(6) : \'\'"></span>\n'
+    '              </template>\n'
+    '              <!-- KOSPI / KOSDAQ 토글 -->\n'
+    '              <div class="flex gap-1 ml-auto">\n'
+    '                <button @click="loadMarketmap(\'kospi\')"\n'
+    '                        :class="marketmapMarket===\'kospi\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                        class="text-xs px-3 py-1.5 rounded-full transition-colors">KOSPI</button>\n'
+    '                <button @click="loadMarketmap(\'kosdaq\')"\n'
+    '                        :class="marketmapMarket===\'kosdaq\' ? \'bg-blue-600 text-white\' : \'bg-white text-slate-600 border border-slate-200\'"\n'
+    '                        class="text-xs px-3 py-1.5 rounded-full transition-colors">KOSDAQ</button>\n'
+    '              </div>\n'
+    '              <!-- 색 범례 (sm 이상에서만 표시) -->\n'
+    '              <div class="hidden sm:flex items-center gap-1">\n'
+    '                <span class="text-xs text-slate-400">-5%</span>\n'
+    '                <div class="w-24 h-2 rounded-full" style="background:linear-gradient(to right,#b91c1c,#ef4444,#fca5a5,#f1f5f9,#86efac,#22c55e,#15803d)"></div>\n'
+    '                <span class="text-xs text-slate-400">+5%</span>\n'
+    '              </div>\n'
+    '            </div>\n'
+    '            <!-- 로딩 스켈레톤 -->\n'
+    '            <template x-if="marketmapLoading && !marketmap[marketmapMarket]">\n'
+    '              <div class="animate-pulse bg-slate-100 rounded-lg" :style="`height:${mmHeight()}px`"></div>\n'
+    '            </template>\n'
+    '            <!-- 트리맵 컨테이너 -->\n'
+    '            <div id="marketmap-container"\n'
+    '                 x-show="marketmap[marketmapMarket] && marketmap[marketmapMarket].data && marketmap[marketmapMarket].data.length"\n'
+    '                 :style="`height:${mmHeight()}px`"\n'
+    '                 class="w-full"></div>\n'
+    '            <!-- 빈 상태 -->\n'
+    '            <template x-if="!marketmapLoading && (!marketmap[marketmapMarket] || !marketmap[marketmapMarket].data || !marketmap[marketmapMarket].data.length)">\n'
+    '              <div class="text-slate-400 text-sm py-8 text-center">마켓맵 데이터 없음 (장 마감 후 반영)</div>\n'
+    '            </template>\n'
+    '            <!-- 풋노트 -->\n'
+    '            <template x-if="marketmap[marketmapMarket] && marketmap[marketmapMarket].as_of">\n'
+    '              <div class="text-xs text-slate-400 mt-2 text-right"\n'
+    '                   x-text="\'시총상위 \' + (marketmap[marketmapMarket].shown_stocks||0) + \'종목 표시 / 전체 \' + (marketmap[marketmapMarket].total_stocks||0) + \'종목\'"></div>\n'
     '            </template>\n'
     '          </div>\n'
     '\n'
@@ -5103,6 +5434,7 @@ _HOME_SHELL = (
     "  <title>\U0001f4ca Stock Bot</title>\n"
     '  <script src="https://cdn.tailwindcss.com"></script>\n'
     '  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>\n'
+    '  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>\n'
     '  <script src="https://unpkg.com/lucide@latest"></script>\n'
     '  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>\n'
     "  <style>\n"
@@ -6626,6 +6958,15 @@ async def _handle_api_sector_heatmap(request: web.Request) -> web.Response:
     return await _api(_cached("sector_heatmap", 300.0, _build_sector_heatmap_payload))
 
 
+async def _handle_api_marketmap(request: web.Request) -> web.Response:
+    """GET /api/marketmap?market=kospi|kosdaq — ECharts 트리맵용 마켓맵 (3600s TTL, SWR)."""
+    market = request.rel_url.query.get("market", "kospi").lower()
+    if market not in ("kospi", "kosdaq"):
+        market = "kospi"
+    key = f"marketmap:{market}"
+    return await _api(_cached(key, 3600.0, lambda: _build_marketmap_payload(market)))
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 매크로 패널 API (시세 탭 'macro' 서브)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -7137,6 +7478,7 @@ def register_home_routes(app: web.Application) -> None:
     app.router.add_get("/api/market", _handle_api_market)
     # 히트맵 추가
     app.router.add_get("/api/sector_heatmap", _handle_api_sector_heatmap)
+    app.router.add_get("/api/marketmap", _handle_api_marketmap)
     # 매크로 패널 추가
     app.router.add_get("/api/macro_panel", _handle_api_macro_panel)
     # 알파스크리너 + 수급 추가
