@@ -1,3 +1,21 @@
+## 📄 2026-06-05 대시보드 마켓맵 트리맵 (한경식) — 시세 탭 추가
+
+**요청**: `markets.hankyung.com/marketmap` 식 트리맵(종목=시총 면적·등락%=색·섹터 그룹) 추가. 기존 섹터 히트맵은 유지(공존).
+
+**구현** (`dashboard_home.py` 단독, 커밋 `49237fd`, 브랜치 `fix/collector-div-yield-foreign-amt`):
+- ECharts 5.5.1 CDN(**SVG 렌더러**) 트리맵. 신규 `GET /api/marketmap?market=kospi|kosdaq` (`_kr_marketmap_from_db`+executor+`_cached` TTL 3600). daily_snapshot+stock_master JOIN, 섹터별 시총상위 8 + 기타합산, 시총 500억↑·섹터 n≥3 필터. KOSPI 59섹터/380종, KOSDAQ 53/362.
+- 토글(KOSPI/KOSDAQ)·드릴다운(zoomToNode)·종목클릭→openStockModal·SWR. team: designer→dev→design-reviewer→verifier(PASS) + 메인세션 라이브 DOM 검증.
+
+**개발 중 잡은 버그 4종 (라이브 검증으로 발견 — reviewer가 놓친 것 포함)**:
+1. **market_cap 단위=억원**(증거 line 5918 `*100_000_000`, "시총(억)" 헤더). 필터 `>50000`은 5조컷이라 KOSPI 112종 붕괴 → `>500`(500억). [[market_cap은 억원 단위]]
+2. **ECharts 트리맵은 standalone `visualMap` 무시** → 색 안 칠해짐(단색 lavender). 노드별 `itemStyle.color`(연속 mmColor red→neutral→green)로 직접 매핑해야. visualMap/visualDimension 제거. [[treemap=itemStyle.color]]
+3. **`$nextTick`+`rAF` 래퍼가 렌더 차단**(loadMarketmap async 연속에서 $nextTick 미flush) → 직접 init + ResizeObserver로 복귀. (배경탭이면 rAF throttle로 렌더 불안정 — 라이브 검증 시 `visibilityState:hidden` 확인. 포커스 탭에선 정상.)
+4. **raw 문자열 `\n` 이스케이프 반전**: `_DASH_APP_JS = r"""`(raw)라 JS 개행은 `'\n'`(역슬래시1개). non-raw `_HOME_SHELL`의 `\\n` 규칙과 **반대**. [[raw 문자열은 \n, non-raw는 \\n]]
+
+**남은 다듬기(선택, 낮음)**: 작은 타일 종목명 truncation("삼"…) — area>30000(3조) 임계 조정 여지. 포커스 탭 실시각 확인은 사용자 몫(검증 시 탭 백그라운드라 스크린샷 불가, DOM/curl로 검증).
+
+---
+
 ## 📄 2026-06-04 db_collector div_yield/foreign 침묵-0 회귀 + div_yield KIS-DPS 전환 (KRX 독립화)
 
 **발단**: 알파 연구 중 `daily_snapshot`의 두 필드 회귀 발견 — **div_yield** 2026-04-08부터 전종목 0, **foreign_net_amt** 05-07부터 간헐 0. 둘 다 upstream 실패를 **0으로 침묵 기록**(fetch 실패 ≠ 실제 0 구분 불가).
