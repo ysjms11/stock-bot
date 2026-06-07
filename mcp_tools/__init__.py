@@ -236,7 +236,7 @@ MCP_TOOLS = [
                      "required": ["action"]}},
     # 20. get_regime
     {"name": "get_regime",
-     "description": "시장 레짐 판정. KR/US 복합점수(0~100) 기반 🟢공격/🟡중립/🔴위기 판정. 디바운스로 잡음 방지. Turbulence Index 보조경고.",
+     "description": "시장 레짐 — 통화별 현금 다이얼. KR=KOSPI 실현변동성 252일 퍼센타일+200MA거리, US=S&P 200MA+VIX 252일 퍼센타일. KR/US 독립, 🟢평상(현금5~8%)/🟡경계(8~15%비축)/🔴발사(풀투자). 디바운스 잡음방지.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "mode": {"type": "string", "enum": ["current", "history", "override"],
@@ -245,8 +245,8 @@ MCP_TOOLS = [
                          "regime": {"type": "string", "enum": ["crisis", "neutral", "offensive"],
                                     "description": "override 모드에서 강제할 레짐"},
                          "reason": {"type": "string", "description": "override 사유"},
-                         "kr_weight": {"type": "number", "description": "한국 비중 (0~1, 기본 0.6)"},
-                         "us_weight": {"type": "number", "description": "미국 비중 (0~1, 기본 0.4)"},
+                         "market": {"type": "string", "enum": ["kr", "us", "both"],
+                                    "description": "override 적용 시장 (기본 both)", "default": "both"},
                      },
                      "required": []}},
     # 21. get_scan — KRX 전종목 스크리너

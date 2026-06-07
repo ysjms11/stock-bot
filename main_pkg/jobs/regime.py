@@ -27,51 +27,64 @@ from kis_api import (
 async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
     try:
         state = load_json(REGIME_STATE_FILE, {})
-        prev_en = state.get("prev_regime", "")
-        cur = state.get("current", {})
-        curr_en = cur.get("current", "")
-        if not prev_en or not curr_en or prev_en == curr_en:
-            return
-
         emoji_map = {"offensive": "🟢", "neutral": "🟡", "crisis": "🔴"}
-        prev_e = emoji_map.get(prev_en, "?")
-        curr_e = emoji_map.get(curr_en, "?")
+        dial_map = {
+            "offensive": "평상 — 현금 5~8% 상비",
+            "neutral":   "경계 — 현금 8~15% 실탄 비축",
+            "crisis":    "발사 — 비축현금 투입·풀투자 지향(현금 최소)",
+        }
 
-        # 전환당 1회만
         trans_file = f"{REGIME_STATE_FILE.rsplit('/', 1)[0]}/regime_transition_sent.json"
         trans_sent = load_json(trans_file, {})
-        key = f"{prev_e}→{curr_e}"
-        if trans_sent.get("transition") == key:
+
+        changed = False
+        lines = []
+
+        for mkt, flag, ind_fmt in [
+            ("kr", "🇰🇷 KR", "kr"),
+            ("us", "🇺🇸 US", "us"),
+        ]:
+            blk = state.get(mkt, {})
+            curr_en = blk.get("current", "")
+            if not curr_en:
+                continue
+            prev_sent = trans_sent.get(mkt, "")
+            if not prev_sent:
+                # 최초 — 잡음 방지: 기록만, 알림 없음
+                trans_sent[mkt] = curr_en
+                changed = True
+                continue
+            if prev_sent == curr_en:
+                continue
+            # 전환 발생
+            prev_e = emoji_map.get(prev_sent, "?")
+            curr_e = emoji_map.get(curr_en, "?")
+            ind = blk.get("indicators", {})
+            if mkt == "kr":
+                vol_pct = ind.get("vol_pct")
+                ma_dist = ind.get("ma_dist")
+                _v = vol_pct if vol_pct is not None else "?"
+                _m = ma_dist if ma_dist is not None else "?"
+                ind_str = f"변동성 {_v}%ile | 200MA {_m}%"
+            else:
+                sp_dist = ind.get("sp_dist")
+                vix_pct = ind.get("vix_pct")
+                _s = sp_dist if sp_dist is not None else "?"
+                _x = vix_pct if vix_pct is not None else "?"
+                ind_str = f"S&P {_s}% | VIX {_x}%ile"
+            dial_str = dial_map.get(curr_en, curr_en)
+            lines.append(f"{flag} {prev_e}→{curr_e}\n{ind_str}\n💰 {dial_str}")
+            trans_sent[mkt] = curr_en
+            changed = True
+
+        if changed:
+            save_json(trans_file, trans_sent)
+
+        if not lines:
             return
 
-        guides = {
-            "🔴→🟡": "1. A등급 감시가 재평가\n2. B등급 이하 비중 초과분 트림 검토\n3. 신규 진입: 확신 높은 것만, 소규모 분할\n4. 현금 비율: 25% → 15% OK",
-            "🟡→🟢": "1. 핵심 섹터 적극 확대\n2. A등급 풀사이즈 가능\n3. 감시가 터치 시 즉시 대응",
-            "🟢→🟡": "1. 신규 소규모만\n2. 기존 포지션 관리 집중\n3. 손절선 점검",
-            "🟡→🔴": "1. 신규 동결\n2. 현금 25%+ 확보\n3. C/D등급 점검\n4. 손절선 15% → 10% 타이트",
-        }
-        guide = guides.get(key, "레짐 전환 확인 필요")
-
-        ind = cur.get("indicators", {})
-        sp = ind.get("sp500_vs_200ma", {})
-        vix = ind.get("vix", {})
-        msg = f"🔄 *레짐 전환 확정* {prev_e} → {curr_e}\n"
-        msg += f"S&P {sp.get('distance_pct', '?')}% from 200MA | VIX {vix.get('value', '?')}\n\n"
-        msg += f"📋 행동 가이드:\n{guide}"
-
-        # 감시가 근접 A등급
-        wa = load_watchalert()
-        near_a = []
-        for t, info in wa.items():
-            if info.get("grade", "").upper() == "A":
-                buy_p = float(info.get("buy_price", 0) or 0)
-                if buy_p > 0:
-                    near_a.append(f"• {info.get('name', t)} {buy_p:,.0f}")
-        if near_a:
-            msg += "\n\n👀 A등급 감시 종목:\n" + "\n".join(near_a[:5])
-
+        msg = "🔄 *레짐 전환 (현금 다이얼)*\n\n" + "\n\n".join(lines)
         await _safe_send(context, msg)
-        save_json(trans_file, {"transition": key, "date": datetime.now(KST).strftime("%Y-%m-%d")})
     except Exception as e:
         print(f"regime_transition_alert 오류: {e}")
 
