@@ -4,6 +4,7 @@
 > [티커]·[종목명]·[현재가] 대괄호만 바꿔 복붙
 > 각 STEP 헤더(`━━ STEP N. ...`) 반드시 출력. 생략·통합 금지.
 > **확신등급(A/B+/B/C) 문자 사용 금지**. 비중 = Starter/Standard/Core, 카테고리 = 메인/가치/스윙.
+> **2026-06-08 정렬**: 단일 포지션 캡 35→**25% 하드캡**, 섹터 상한 없음→**클러스터 35% 소프트캡** (INVESTMENT_RULES §5 우선). 매도 규칙은 KR_EXIT.md 위임 (본 문서는 진입 전용).
 
 ---
 
@@ -99,7 +100,7 @@
 봇 병렬: get_regime + get_macro(mode="dashboard") + get_sector(mode="flow")
 
 <regime>🟢 공격 / 🟡 중립 / 🔴 위기</regime>
-<cash_floor>🟢 5~8% / 🟡 8~15% / 🔴 5%까지</cash_floor>
+<cash_floor>🟢 5~8% / 🟡 8~15% / 🔴 5%까지 발사</cash_floor>
 <kg_classification>
   K 주도: US10Y ±30bp/주 OR 한국 3Y ±15bp/주 OR VIX≥25 OR DXY ±2% OR 원달러 ±2% 중 3개+ 동시
   G 주도: KOSPI200 beat<50% OR 컨센 EPS 2주 변화 ≤-2%
@@ -256,7 +257,7 @@ Hard Kill: 감사의견 비적정 or 분식·횡령 진행 → 탈락
     2통과 (Starter 한정): 1:2.5+
     1통과: 매수 금지
 
-  기회비용: 현 포트 최고 확신 종목 대비 더 매력적?
+  기회비용: 현 포트 최고 확신 종목 대비 더 매력적? (경로3 능동 재배치 — INVESTMENT_RULES §3)
 </rr>
 
 ━━ STEP 8. 포트 시뮬 + 비중·카테고리 확정 (2분) ━━
@@ -270,16 +271,16 @@ Hard Kill: 감사의견 비적정 or 분식·횡령 진행 → 탈락
     3통과 → Core 15~25%
     2통과 → Starter 3~5%
     1 이하 → 금지
-  예외 25~35%: 강한 사이클 리더, 사전 기록 필수
-  절대 금지 >35%
+  단일 종목 25% 하드캡 (절대 한도, 예외 없음)
 
   신규 진입 항상 Starter부터 (Barber-Odean 2000 과잉확신 경계)
   카테고리: 메인 / 가치(12~36M) / 스윙(1~6M, 손절 -7~10%)
 
   한도:
-  □ 단일 종목 <35%
-  □ 섹터 상한 없음 (집중 투자 원칙, 킬스위치 2~3개 대체)
-  □ 현금 최소선 유지
+  □ 단일 종목 ≤25% (하드캡, 예외 없음)
+  □ 클러스터(섹터) 35% 소프트캡 — 의도적 매크로 베팅만 예외(사전 기록)
+  □ 현금 dry-powder 최소선 유지 (🟢 5~8% / 🟡 8~15% / 🔴 발사)
+  ※ INVESTMENT_RULES §5 우선
 </position_sizing>
 
 ━━ STEP 9. 결정·기록 (2분) ━━
@@ -327,7 +328,8 @@ XML 태그 준수. Bear Case 2개 필수. 확신등급 문자 사용 금지.
 
 ## 🔗 관련 문서
 
-- `INVESTMENT_RULES.md` — 전체 투자 규칙
+- `INVESTMENT_RULES.md` — 전체 투자 규칙 (매도 3경로·포지션 캡·현금 dry-powder의 단일 기준)
+- `KR_EXIT.md` — 한국 매도 규칙 (본 진입 문서는 매도 트리거 없음)
 - `US_DEEPSEARCH.md` — 미국 7단계
 - `bot_guide.md` — MCP 도구 용도
 
@@ -361,11 +363,17 @@ XML 태그 준수. Bear Case 2개 필수. 확신등급 문자 사용 금지.
 
 이 수치들은 "참고치"로만. 봇 `get_backtest`, `get_trade_stats`로 보완 교정.
 
+## ⚠️ 도구 레퍼런스 점검 필요 (봇 개발 과제)
+
+아래 도구명은 현행 MCP 스키마와 불일치 가능 — 코드 세션에서 확인 후 갱신 (INVESTMENT_RULES §6 점검 과제와 연동):
+- `get_sector(mode="flow")` (STEP 0·2 등) → 대안: `get_macro(mode="sector_etf")` 또는 `get_supply(mode="combined_rank")`
+- `get_highlow` (STEP 1) → 대안: `get_rank(type="scan")` 또는 `get_stock_detail`
+
 ## ❌ v3에서 완전 삭제
 
 - 확신등급 A/B+/B/B-/C/D 6단계
 - 등급별 RR 공식
-- 섹터 상한 50% (킬스위치 대체)
+- 섹터 상한 50% (→ 클러스터 35% 소프트캡으로 정렬, 2026-06-08)
 - "한국 매수 93.7%" (93.1%로 수정)
 - "Slovic 17% 정확도" 구체 수치 (원문 확인 불가 → 정성화)
 - "5개 변수 40개 정확도 동일" (Slovic 1973 미출판 WP)
@@ -374,6 +382,7 @@ XML 태그 준수. Bear Case 2개 필수. 확신등급 문자 사용 금지.
 
 ## 변경 이력
 
+- **2026-06-08**: 단일 포지션 캡 35→**25% 하드캡** (예외 없음), 섹터 상한 없음→**클러스터 35% 소프트캡** (INVESTMENT_RULES §5 정렬). 도구 레퍼런스 점검 항목 추가. 경로3 능동 재배치 RR 비교 명시.
 - **2026-04-24 v4**: 전면 개정
   - 확신등급 6단계 → 비중 3단계 (Starter/Standard/Core) + 카테고리
   - Hard Kill 5개로 축소 (감사·자본잠식·zombie·상폐·분식)
