@@ -788,7 +788,7 @@ async def _exec_us_analyst(name: str = None, firm: str = None, sector: str = Non
 
 
 async def _exec_watch_analyst(slug: str, watched: bool = True, **_) -> dict:
-    from db_collector import _get_db
+    from db_collector import _get_db, db_write_lock
     from datetime import datetime
     conn = _get_db()
     try:
@@ -798,11 +798,12 @@ async def _exec_watch_analyst(slug: str, watched: bool = True, **_) -> dict:
         if not row:
             return {"status": "error", "slug": slug,
                     "message": "애널 메타 없음 — 먼저 fetch_and_store_analyst_meta 로 수집 필요"}
-        conn.execute(
-            "UPDATE us_analysts SET watched=?, curated_at=? WHERE slug=?",
-            (1 if watched else 0, datetime.now().isoformat(), slug)
-        )
-        conn.commit()
+        async with db_write_lock:
+            conn.execute(
+                "UPDATE us_analysts SET watched=?, curated_at=? WHERE slug=?",
+                (1 if watched else 0, datetime.now().isoformat(), slug)
+            )
+            conn.commit()
         return {"status": "ok", "slug": slug, "name": row[1], "firm": row[2],
                 "stars": row[3], "watched": watched}
     finally:

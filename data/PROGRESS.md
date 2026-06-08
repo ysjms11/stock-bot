@@ -1,3 +1,34 @@
+## 📄 2026-06-07 시스템 전체 점검 + SQLite 쓰기 직렬화 (사용자 "전체 점검 → 할 수 있는 거 다 해, 코드리뷰 잊지마")
+
+**시스템 점검 결과 — 전반 건강**: main+cloudflared running, health(로컬/공개/MCP) 200, DB 최신 거래일 20260605(2864종목) 수집 정상, 백업 iCloud 오늘자 current/previous 정상, 디스크 115G 여유(45%), git 동기화. 봇 활발히 로깅.
+- 🟠 유일 실질 이슈: **SQLite "database is locked"** — 로그 142건(weekly_harvest 108·us_ratings 33, 오늘 일요일 버스트). 비치명적(INSERT OR IGNORE, 다음 사이클 자동보충)이나 일요일 harvest가 매주 ~108 레이팅 유실.
+- 🟡 비조치: `data/report_pdfs/` 6.2G(data/ 92%, 증가주범·당장 위험X·정책 결정), forward_bot 워크트리 잔여 PID 9016(무해), launchd 과거 비정상종료(KeepAlive 복구·1.5일 안정).
+
+**근본원인 (측정 확정)**: busy_timeout=30000은 `_get_db()`에 **이미 적용**됨(추가무의미). `kis_api/_db.py:get_db_conn`은 **데드코드(0 사용)**. lock은 **쓰기-쓰기 경합** — 무거운 async 잡들이 "누적 후 단일 commit"으로 쓰기락 30초+ 점유(harvest 03:00↔nps 03:30, us_ratings 07:30↔financial 07:15 겹침). _init_schema는 0.6ms(무관).
+
+**장기 수정 (사용자 "장기 유리하게" 지시) — 공유 asyncio 쓰기 락**:
+- `db_collector.py:71` `db_write_lock = asyncio.Lock()` (단일 이벤트루프 공유 싱글톤). 무거운 async writer들의 **write+commit을 락 안에서 원자적으로**(fetch는 락 밖). reads/소규모는 그대로, busy_timeout은 프로세스간 backstop.
+- 적용: collect_daily/backfill/financial_weekly/dividends/on_disclosure (db_collector), us_ratings 일·주·시간 스캔 (telegram_bot), NPS/DART 7잡 (pension), consensus, dart insider.
+- ⚠️ **2× Opus 코드리뷰가 핵심 결함 발견·수정**: (1) 초기엔 commit만 락에 감싸 INSERT는 밖 → SQLite는 첫 INSERT에서 락 획득하므로 **직렬화 무효**(financial Phase A/B, dart batch, wi_changes, 5개 deferred-commit 사이트) → write+commit을 락 안으로 재구성. (2) `_update_supply_in_snapshot`이 락 보유 중 동기 pykrx 네트워크 → fetch/write 분리. 데드락 없음(전수 확인, 모든 in-lock callee는 sync def).
+- **검증 (Opus verifier PASS)**: 595 passed/0 failed, 단일 공유 락(5파일 동일 객체), 동시 gather 무데드락, 불변식 충족. **단 동시-부하 lock 제거 효과는 다음 일요일 harvest까지 실측 불가** — 정확성·무회귀·무데드락만 검증됨.
+
+**git**: **미커밋** (db_collector·telegram_bot·pension·consensus·dart 5파일 = 프로덕션 동작 변경[쓰기 직렬화 → 잡 약간 큐잉]). 런타임 동작 변경이라 사용자 검토/커밋 판단 권장. 직렬화는 "30초 후 실패(데이터 유실)" → "writer 끝날 때까지 대기(무손실)" 트레이드오프.
+
+**추가 sweep (사용자 "놓친 거 없는지 다시 확인" 지시 — AST로 모든 async def + _get_db + write 검사)**:
+- 락 누락 2건 추가 발견·수정: `backfill_day_via_chart`(텔레그램 백필 핸들러, db_collector.py:889 — per-ticker INSERT+commit 락 안), `_exec_watch_analyst`(MCP UPDATE+commit, mcp_tools/_helpers.py:790).
+- false positive: `_exec_us_analyst` SELECT만 = read-only, 락 불필요.
+- 데드코드 발견: `collect_shares_historical`(db_collector.py:3285) 호출자 0 — 정리 별도.
+- **forward_bot 별도 프로세스 점검**: `~/stock-bot/data/stock.db` 접근하나 INSERT/UPDATE 0건 = **read-only**(WAL 동시 R 무관). asyncio.Lock 유효성 보존.
+- ⚠️ **수동 스크립트 `backfill_gaps.py` 위험**: 봇 실행 중 동시 실행 시 락 우회(별도 프로세스 + 락 import 안 함). 의식해서 봇 정지 후 돌릴 것. flag.
+- 인프라 누락 보완: `requirements.txt`에 `pytest>=8.0` + `pytest-asyncio>=1.4` 명시(누락 시 async 테스트 ~82개 즉시 실패 footgun).
+- code-reviewer APPROVE(추가 3건 전부 정확), 595 passed/0 failed 유지.
+
+**⚠️ 동시 편집 감지**: 점검 중 `kis_api/regime.py` 13:09 사용자 동시 편집(+440줄 regime 알고리즘 확장) — 손 안 댐, 커밋도 제외. 일괄 `git add .` 금지.
+
+**다음 세션**: ① DB-lock 변경 커밋(8파일: db_collector·telegram_bot·pension·consensus·dart·mcp_tools/_helpers·requirements·PROGRESS — regime.py 사용자 WIP 제외) ② 일요일 harvest 로그서 lock 142→감소 확인 ③ report_pdfs 보존정책(선택) ④ `collect_shares_historical` 데드코드 삭제(선택).
+
+---
+
 ## 📄 2026-06-05 대시보드 마켓맵 트리맵 (한경식) — 시세 탭 추가
 
 **요청**: `markets.hankyung.com/marketmap` 식 트리맵(종목=시총 면적·등락%=색·섹터 그룹) 추가. 기존 섹터 히트맵은 유지(공존).

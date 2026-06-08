@@ -1069,7 +1069,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # KRX 공휴일 — db_collector._KR_MARKET_HOLIDAYS를 단일 소스로 사용(중복 제거).
 # 갱신은 거기 한 곳에서. collect_daily 휴장일 가드와 동일 집합 보장.
-from db_collector import _KR_MARKET_HOLIDAYS as _KRX_HOLIDAYS
+from db_collector import _KR_MARKET_HOLIDAYS as _KRX_HOLIDAYS, db_write_lock
 
 
 def _is_krx_business_day(d) -> bool:
@@ -1272,8 +1272,9 @@ async def daily_us_rating_scan(context):
             try:
                 result = await _stockanalysis_ratings(ticker)
                 if result:
-                    inserted += _save_us_ratings_to_db(result)
-                    _save_consensus_snapshot(result)
+                    async with db_write_lock:
+                        inserted += _save_us_ratings_to_db(result)
+                        _save_consensus_snapshot(result)
                 else:
                     failed.append(ticker)
             except Exception as e:
@@ -1327,12 +1328,13 @@ async def weekly_us_ratings_universe_scan(context):
             try:
                 result = await _stockanalysis_ratings(ticker)
                 if result:
-                    new_n = _save_us_ratings_to_db(result)
+                    async with db_write_lock:
+                        new_n = _save_us_ratings_to_db(result)
+                        try:
+                            _save_consensus_snapshot(result)
+                        except Exception:
+                            pass
                     inserted_total += new_n
-                    try:
-                        _save_consensus_snapshot(result)
-                    except Exception:
-                        pass
                     if idx % 50 == 0 or idx == total:
                         print(f"[weekly_harvest] {idx}/{total} — {ticker} {new_n}건 신규 (누적 {inserted_total})")
                 else:
@@ -1370,7 +1372,8 @@ async def weekly_us_analyst_sync(context):
     """
     try:
         from db_collector import sync_us_analyst_master
-        result = await asyncio.to_thread(sync_us_analyst_master)
+        async with db_write_lock:
+            result = await asyncio.to_thread(sync_us_analyst_master)
         msg = (
             "🔄 US 애널 마스터 동기화 완료\n"
             f"• 신규 애널: {result['inserted']}명\n"
@@ -1448,8 +1451,9 @@ async def hourly_us_holdings_check(context):
             try:
                 result = await _stockanalysis_ratings(ticker)
                 if result:
-                    _save_us_ratings_to_db(result)
-                    _save_consensus_snapshot(result)
+                    async with db_write_lock:
+                        _save_us_ratings_to_db(result)
+                        _save_consensus_snapshot(result)
             except Exception as e:
                 print(f"[us_holdings] {ticker} fetch 실패: {e}")
             await asyncio.sleep(2.0)

@@ -646,7 +646,9 @@ async def collect_insider_for_tickers(tickers: list, corp_map: dict) -> dict:
         if not corp_code:
             continue
         records = await kis_elestock(corp_code)
-        new_cnt = upsert_insider_transactions(sym, corp_code, records)
+        from db_collector import db_write_lock
+        async with db_write_lock:
+            new_cnt = upsert_insider_transactions(sym, corp_code, records)
         result[sym] = {"new": new_cnt, "total": len(records)}
         await asyncio.sleep(0.3)  # DART rate limit 여유
     return result

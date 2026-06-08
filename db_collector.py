@@ -64,6 +64,13 @@ _PHASE_TIMEOUT = 600   # Phase별 타임아웃 10분
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 무거운 DB 쓰기 트랜잭션 직렬화 (SQLite WAL = 동시 writer 1개).
+# 여러 async 잡이 interleave하며 쓰기 → busy_timeout race → 'database is locked'.
+# 이 락으로 쓰기를 큐잉(대기)시켜 경합 제거. ⚠️ 락은 connect→write→commit 구간만 잡고,
+# 네트워크 fetch/sleep 등 await-heavy 작업은 락 밖에서 한다 (안 그러면 불필요하게 직렬화).
+db_write_lock = asyncio.Lock()
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # SQLite 연결 / 스키마 초기화
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 def _get_db() -> sqlite3.Connection:
@@ -794,50 +801,61 @@ async def collect_daily(date: str = None) -> dict:
         "success": p4["success"], "failed": p4["failed"],
     }
 
-    # 4. daily_snapshot INSERT
-    print(f"[collect_daily] daily_snapshot INSERT")
-    _store_daily_snapshot(conn, date, all_stocks, p1, p2, p3, p4)
+    # 4-6, 6c. DB 쓰기 직렬화 — 네트워크 fetch(Phase 1-4) 완료 후 순수 sync 쓰기 구간.
+    # 6b의 _update_supply_in_snapshot은 내부에 pykrx 네트워크+sleep이 있으므로
+    # lock 밖에서 fetch하고 lock 안에서 write+commit한다. 나머지는 순수 sync.
+    async with db_write_lock:
+        # 4. daily_snapshot INSERT
+        print(f"[collect_daily] daily_snapshot INSERT")
+        _store_daily_snapshot(conn, date, all_stocks, p1, p2, p3, p4)
 
-    # 5. 기술지표 계산 + UPDATE
-    try:
-        _compute_and_update(conn, date)
-    except Exception as e:
-        print(f"[collect_daily] 기술지표 계산 실패: {e}")
+        # 5. 기술지표 계산 + UPDATE
+        try:
+            _compute_and_update(conn, date)
+        except Exception as e:
+            print(f"[collect_daily] 기술지표 계산 실패: {e}")
 
-    # 6. FnGuide 컨센서스 UPDATE — daily_snapshot.consensus_target/count/gap
-    # 5/8 fix: 미구현 상태였음 (학습 #13 "수집 성공 but 0값 함정" 재현)
-    try:
-        c_res = _update_consensus_in_snapshot(conn, date)
-        report["consensus"] = c_res
-    except Exception as e:
-        print(f"[collect_daily] 컨센서스 갱신 실패: {e}")
-        report["consensus"] = {"error": str(e)}
+        # 6. FnGuide 컨센서스 UPDATE — daily_snapshot.consensus_target/count/gap
+        # 5/8 fix: 미구현 상태였음 (학습 #13 "수집 성공 but 0값 함정" 재현)
+        try:
+            c_res = _update_consensus_in_snapshot(conn, date)
+            report["consensus"] = c_res
+        except Exception as e:
+            print(f"[collect_daily] 컨센서스 갱신 실패: {e}")
+            report["consensus"] = {"error": str(e)}
 
-    # 6b. 외인/기관 수급 금액 정밀화 (pykrx refiner).
+        # 6c. div_yield 재계산 — KIS 예탁원 DPS(dividend_events) ÷ 종가. ★KRX 불필요★.
+        # events는 주간 collect_dividends가 갱신(DPS는 sticky). 여기선 당일 셀만 재계산(무 API, 저비용).
+        # 종전: v2 수집기 div_yield=0.0 하드코딩 → 04-08~ 영구 0. 이제 KIS-DPS로 항상 산출.
+        try:
+            dv_res = _recompute_div_yield_from_events(conn, dates=[date])
+            report["dividend"] = dv_res
+        except Exception as e:
+            print(f"[collect_daily] div_yield 재계산 실패: {e}")
+            report["dividend"] = {"error": str(e)}
+
+        conn.commit()
+
+    # 6b. 외인/기관 수급 금액 정밀화 (pykrx refiner) — lock 밖에서 fetch, lock 안에서 write.
     # 1차값은 _store_daily_snapshot이 KIS FHPTJ04160001(`*_ntby_tr_pbmn`)로 이미 기록.
     # 여기서는 KRX 가용 시 정확한 원(KRW)으로 덮어쓰기만 한다(실패해도 1차값 보존).
+    # ⚠️ _fetch_supply_data는 blocking pykrx HTTP+sleep → 반드시 lock 밖에서 실행.
     try:
-        s_res = _update_supply_in_snapshot(conn, date)
+        supply_fetched = _fetch_supply_data(date)
+        async with db_write_lock:
+            s_res = _write_supply_to_snapshot(conn, date, supply_fetched)
+            conn.commit()
         report["supply"] = s_res
     except Exception as e:
         print(f"[collect_daily] 수급 정밀화 실패: {e}")
         report["supply"] = {"error": str(e)}
 
-    # 6c. div_yield 재계산 — KIS 예탁원 DPS(dividend_events) ÷ 종가. ★KRX 불필요★.
-    # events는 주간 collect_dividends가 갱신(DPS는 sticky). 여기선 당일 셀만 재계산(무 API, 저비용).
-    # 종전: v2 수집기 div_yield=0.0 하드코딩 → 04-08~ 영구 0. 이제 KIS-DPS로 항상 산출.
-    try:
-        dv_res = _recompute_div_yield_from_events(conn, dates=[date])
-        report["dividend"] = dv_res
-    except Exception as e:
-        print(f"[collect_daily] div_yield 재계산 실패: {e}")
-        report["dividend"] = {"error": str(e)}
-
     conn.close()
 
     # 7. F/M/FCF 알파 메트릭 일괄 업데이트 (실패해도 collect_daily는 성공 취급)
     try:
-        alpha_res = update_all_alpha_metrics(trade_date=date)
+        async with db_write_lock:
+            alpha_res = update_all_alpha_metrics(trade_date=date)
         report["alpha"] = alpha_res
     except Exception as e:
         print(f"[collect_daily] 알파 메트릭 계산 실패: {e}")
@@ -886,31 +904,33 @@ async def backfill_day_via_chart(date: str, tickers: list) -> dict:
             if not row:
                 fail += 1
                 continue
-            conn.execute("""
-                INSERT OR IGNORE INTO daily_snapshot
-                (trade_date, symbol, close, open, high, low,
-                 volume, trade_value, market_cap, per, pbr, eps,
-                 loan_balance_rate, collected_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
-            """, (
-                date, ticker,
-                int(row.get("stck_clpr", 0) or 0),
-                int(row.get("stck_oprc", 0) or 0),
-                int(row.get("stck_hgpr", 0) or 0),
-                int(row.get("stck_lwpr", 0) or 0),
-                int(row.get("acml_vol", 0) or 0),
-                int(row.get("acml_tr_pbmn", 0) or 0),
-                int(hdr.get("hts_avls", 0) or 0),  # 억원 (KIS hts_avls 단위)
-                float(hdr.get("per", 0) or 0),
-                float(hdr.get("pbr", 0) or 0),
-                float(hdr.get("eps", 0) or 0),
-                float(hdr.get("itewhol_loan_rmnd_ratem", 0) or 0),
-            ))
+            # write+commit 원자: 락 안에서, 네트워크 fetch는 위에서 락 밖에 끝남
+            async with db_write_lock:
+                conn.execute("""
+                    INSERT OR IGNORE INTO daily_snapshot
+                    (trade_date, symbol, close, open, high, low,
+                     volume, trade_value, market_cap, per, pbr, eps,
+                     loan_balance_rate, collected_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                """, (
+                    date, ticker,
+                    int(row.get("stck_clpr", 0) or 0),
+                    int(row.get("stck_oprc", 0) or 0),
+                    int(row.get("stck_hgpr", 0) or 0),
+                    int(row.get("stck_lwpr", 0) or 0),
+                    int(row.get("acml_vol", 0) or 0),
+                    int(row.get("acml_tr_pbmn", 0) or 0),
+                    int(hdr.get("hts_avls", 0) or 0),  # 억원 (KIS hts_avls 단위)
+                    float(hdr.get("per", 0) or 0),
+                    float(hdr.get("pbr", 0) or 0),
+                    float(hdr.get("eps", 0) or 0),
+                    float(hdr.get("itewhol_loan_rmnd_ratem", 0) or 0),
+                ))
+                conn.commit()
             ok += 1
             await asyncio.sleep(0.3)
         except Exception:
             fail += 1
-    conn.commit()
     conn.close()
     return {"date": date, "ok": ok, "fail": fail}
 
@@ -1144,103 +1164,106 @@ async def collect_daily_backfill(date_str: str, *, _limit: int = 0, kis_history:
     inserted = 0
     errors = 0
 
-    for ticker in tickers:
+    # 모든 fetch는 위에서 완료됨. 순수 sync INSERT 루프 + 후속 쓰기를 한 lock 블록으로.
+    async with db_write_lock:
+        for ticker in tickers:
+            try:
+                krx  = krx_by_ticker.get(ticker, {})
+                ch   = chart_map.get(ticker, {})
+                sup  = supply_map.get(ticker, {})
+                sht  = short_map.get(ticker, {})
+                crd  = credit_map.get(ticker, {})
+
+                close = int(krx.get("close", 0) or 0)
+
+                conn.execute("""
+                    INSERT OR REPLACE INTO daily_snapshot (
+                        trade_date, symbol,
+                        close, open, high, low, change_pct,
+                        volume, trade_value, market_cap,
+                        per, pbr, eps, bps, div_yield,
+                        w52_high, w52_low, foreign_own_pct, listing_shares, turnover,
+                        loan_balance_rate,
+                        foreign_net_qty, foreign_net_amt, inst_net_qty, inst_net_amt,
+                        indiv_net_qty, indiv_net_amt,
+                        short_volume, short_ratio,
+                        ovtm_close, ovtm_change_pct, ovtm_volume,
+                        collected_at
+                    ) VALUES (
+                        ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?,
+                        ?, ?, ?, ?,
+                        ?, ?,
+                        ?, ?,
+                        ?, ?, ?,
+                        datetime('now')
+                    )
+                """, (
+                    date_str, ticker,
+                    # OHLCV — KRX close, KIS chart open/high/low
+                    close,
+                    int(ch.get("open", 0) or 0),
+                    int(ch.get("high", 0) or 0),
+                    int(ch.get("low",  0) or 0),
+                    float(krx.get("chg_pct", 0) or 0),
+                    int(krx.get("volume",     0) or 0),
+                    int(krx.get("trade_value", 0) or 0),
+                    int(krx.get("market_cap",  0) or 0) // 100_000_000,  # KRW → 억원
+                    # 시점 특정 불가 컬럼 → 0 (KIS 현재가 API 미사용 원칙)
+                    0.0,  # per
+                    0.0,  # pbr
+                    0.0,  # eps
+                    0.0,  # bps
+                    0.0,  # div_yield
+                    0,    # w52_high
+                    0,    # w52_low
+                    0.0,  # foreign_own_pct
+                    0,    # listing_shares
+                    0.0,  # turnover
+                    # 신용잔고비율 (당일 시점)
+                    float(crd.get("credit_ratio", 0) or 0),
+                    # 수급 (KIS FHPTJ04160001 히스토리 — 당일 행 필터). 금액은 `*_ntby_tr_pbmn`(원).
+                    int(sup.get("foreign_net",         0) or 0),
+                    int(sup.get("foreign_net_amt",     0) or 0),
+                    int(sup.get("institution_net",     0) or 0),
+                    int(sup.get("institution_net_amt", 0) or 0),
+                    int(sup.get("individual_net",      0) or 0),
+                    int(sup.get("individual_net_amt",  0) or 0),
+                    # 공매도 (KIS FHPST04830000 히스토리 — 당일 행 필터)
+                    int(sht.get("short_vol",   0) or 0),
+                    float(sht.get("short_ratio", 0) or 0),
+                    # 시간외 — 히스토리 없음 → 0
+                    0, 0.0, 0,
+                ))
+                inserted += 1
+            except Exception as e:
+                print(f"[backfill] {ticker} INSERT 실패: {e}")
+                errors += 1
+
+        conn.commit()
+
+        # 기술지표 계산 (collect_daily와 동일)
         try:
-            krx  = krx_by_ticker.get(ticker, {})
-            ch   = chart_map.get(ticker, {})
-            sup  = supply_map.get(ticker, {})
-            sht  = short_map.get(ticker, {})
-            crd  = credit_map.get(ticker, {})
-
-            close = int(krx.get("close", 0) or 0)
-
-            conn.execute("""
-                INSERT OR REPLACE INTO daily_snapshot (
-                    trade_date, symbol,
-                    close, open, high, low, change_pct,
-                    volume, trade_value, market_cap,
-                    per, pbr, eps, bps, div_yield,
-                    w52_high, w52_low, foreign_own_pct, listing_shares, turnover,
-                    loan_balance_rate,
-                    foreign_net_qty, foreign_net_amt, inst_net_qty, inst_net_amt,
-                    indiv_net_qty, indiv_net_amt,
-                    short_volume, short_ratio,
-                    ovtm_close, ovtm_change_pct, ovtm_volume,
-                    collected_at
-                ) VALUES (
-                    ?, ?,
-                    ?, ?, ?, ?, ?,
-                    ?, ?, ?,
-                    ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?,
-                    ?,
-                    ?, ?, ?, ?,
-                    ?, ?,
-                    ?, ?,
-                    ?, ?, ?,
-                    datetime('now')
-                )
-            """, (
-                date_str, ticker,
-                # OHLCV — KRX close, KIS chart open/high/low
-                close,
-                int(ch.get("open", 0) or 0),
-                int(ch.get("high", 0) or 0),
-                int(ch.get("low",  0) or 0),
-                float(krx.get("chg_pct", 0) or 0),
-                int(krx.get("volume",     0) or 0),
-                int(krx.get("trade_value", 0) or 0),
-                int(krx.get("market_cap",  0) or 0) // 100_000_000,  # KRW → 억원
-                # 시점 특정 불가 컬럼 → 0 (KIS 현재가 API 미사용 원칙)
-                0.0,  # per
-                0.0,  # pbr
-                0.0,  # eps
-                0.0,  # bps
-                0.0,  # div_yield
-                0,    # w52_high
-                0,    # w52_low
-                0.0,  # foreign_own_pct
-                0,    # listing_shares
-                0.0,  # turnover
-                # 신용잔고비율 (당일 시점)
-                float(crd.get("credit_ratio", 0) or 0),
-                # 수급 (KIS FHPTJ04160001 히스토리 — 당일 행 필터). 금액은 `*_ntby_tr_pbmn`(원).
-                int(sup.get("foreign_net",         0) or 0),
-                int(sup.get("foreign_net_amt",     0) or 0),
-                int(sup.get("institution_net",     0) or 0),
-                int(sup.get("institution_net_amt", 0) or 0),
-                int(sup.get("individual_net",      0) or 0),
-                int(sup.get("individual_net_amt",  0) or 0),
-                # 공매도 (KIS FHPST04830000 히스토리 — 당일 행 필터)
-                int(sht.get("short_vol",   0) or 0),
-                float(sht.get("short_ratio", 0) or 0),
-                # 시간외 — 히스토리 없음 → 0
-                0, 0.0, 0,
-            ))
-            inserted += 1
+            _compute_and_update(conn, date_str)
         except Exception as e:
-            print(f"[backfill] {ticker} INSERT 실패: {e}")
-            errors += 1
+            print(f"[backfill] 기술지표 계산 실패: {e}")
 
-    conn.commit()
-
-    # 기술지표 계산 (collect_daily와 동일)
-    try:
-        _compute_and_update(conn, date_str)
-    except Exception as e:
-        print(f"[backfill] 기술지표 계산 실패: {e}")
-
-    # 컨센서스 UPDATE (consensus_history → daily_snapshot.consensus_target/count/gap)
-    try:
-        _update_consensus_in_snapshot(conn, date_str)
-    except Exception as e:
-        print(f"[backfill] 컨센서스 갱신 실패: {e}")
+        # 컨센서스 UPDATE (consensus_history → daily_snapshot.consensus_target/count/gap)
+        try:
+            _update_consensus_in_snapshot(conn, date_str)
+        except Exception as e:
+            print(f"[backfill] 컨센서스 갱신 실패: {e}")
 
     conn.close()
 
     # F/M/FCF 알파 메트릭
     try:
-        update_all_alpha_metrics(trade_date=date_str)
+        async with db_write_lock:
+            update_all_alpha_metrics(trade_date=date_str)
     except Exception as e:
         print(f"[backfill] 알파 메트릭 실패: {e}")
 
@@ -2113,20 +2136,23 @@ async def collect_financial_weekly(date: str = None) -> dict:
                 _rate_limited(kis_income_statement(ticker, token, session=session)),
                 timeout=_PER_TICKER_TIMEOUT
             )
-            for r in (rows_is or []):
-                rp = r.get("report_period", "")
-                if not rp:
-                    continue
-                conn.execute("""
-                    INSERT OR REPLACE INTO financial_quarterly (
-                        symbol, report_period, revenue, cost_of_sales, gross_profit,
-                        operating_profit, op_profit, net_income, collected_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                """, (
-                    ticker, rp,
-                    r.get("revenue"), r.get("cost_of_sales"), r.get("gross_profit"),
-                    r.get("operating_profit"), r.get("op_profit"), r.get("net_income"),
-                ))
+            # fetch 완료 후 쓰기+커밋을 동일 lock 블록 안에서 수행
+            async with db_write_lock:
+                for r in (rows_is or []):
+                    rp = r.get("report_period", "")
+                    if not rp:
+                        continue
+                    conn.execute("""
+                        INSERT OR REPLACE INTO financial_quarterly (
+                            symbol, report_period, revenue, cost_of_sales, gross_profit,
+                            operating_profit, op_profit, net_income, collected_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    """, (
+                        ticker, rp,
+                        r.get("revenue"), r.get("cost_of_sales"), r.get("gross_profit"),
+                        r.get("operating_profit"), r.get("op_profit"), r.get("net_income"),
+                    ))
+                conn.commit()
             success_is += 1
         except asyncio.TimeoutError:
             _timeout_count["is"] += 1
@@ -2135,9 +2161,6 @@ async def collect_financial_weekly(date: str = None) -> dict:
         if (i + 1) % _PROGRESS_EVERY == 0:
             elapsed = asyncio.get_event_loop().time() - _phase_start
             print(f"[Finance] 손익: {i+1}/{len(tickers)} (성공 {success_is}, 타임아웃 {_timeout_count['is']}, {elapsed:.0f}s)", flush=True)
-            conn.commit()
-
-    conn.commit()
     elapsed_a = asyncio.get_event_loop().time() - _phase_start
     print(f"[Finance] Phase A 완료 — 성공 {success_is}/{len(tickers)}, 타임아웃 {_timeout_count['is']}, {elapsed_a:.0f}s", flush=True)
 
@@ -2151,23 +2174,26 @@ async def collect_financial_weekly(date: str = None) -> dict:
                 _rate_limited(kis_balance_sheet(ticker, token, session=session)),
                 timeout=_PER_TICKER_TIMEOUT
             )
-            for r in (rows_bs or []):
-                rp = r.get("report_period", "")
-                if not rp:
-                    continue
-                conn.execute("""
-                    UPDATE financial_quarterly SET
-                        current_assets=?, fixed_assets=?, total_assets=?,
-                        current_liab=?, fixed_liab=?, total_liab=?,
-                        capital=?, total_equity=?,
-                        collected_at=datetime('now')
-                    WHERE symbol=? AND report_period=?
-                """, (
-                    r.get("current_assets"), r.get("fixed_assets"), r.get("total_assets"),
-                    r.get("current_liab"), r.get("fixed_liab"), r.get("total_liab"),
-                    r.get("capital"), r.get("total_equity"),
-                    ticker, rp,
-                ))
+            # fetch 완료 후 쓰기+커밋을 동일 lock 블록 안에서 수행
+            async with db_write_lock:
+                for r in (rows_bs or []):
+                    rp = r.get("report_period", "")
+                    if not rp:
+                        continue
+                    conn.execute("""
+                        UPDATE financial_quarterly SET
+                            current_assets=?, fixed_assets=?, total_assets=?,
+                            current_liab=?, fixed_liab=?, total_liab=?,
+                            capital=?, total_equity=?,
+                            collected_at=datetime('now')
+                        WHERE symbol=? AND report_period=?
+                    """, (
+                        r.get("current_assets"), r.get("fixed_assets"), r.get("total_assets"),
+                        r.get("current_liab"), r.get("fixed_liab"), r.get("total_liab"),
+                        r.get("capital"), r.get("total_equity"),
+                        ticker, rp,
+                    ))
+                conn.commit()
             success_bs += 1
         except asyncio.TimeoutError:
             _timeout_count["bs"] += 1
@@ -2176,9 +2202,6 @@ async def collect_financial_weekly(date: str = None) -> dict:
         if (i + 1) % _PROGRESS_EVERY == 0:
             elapsed = asyncio.get_event_loop().time() - _phase_start
             print(f"[Finance] 대차: {i+1}/{len(tickers)} (성공 {success_bs}, 타임아웃 {_timeout_count['bs']}, {elapsed:.0f}s)", flush=True)
-            conn.commit()
-
-    conn.commit()
     elapsed_b = asyncio.get_event_loop().time() - _phase_start
     print(f"[Finance] Phase B 완료 — 성공 {success_bs}/{len(tickers)}, 타임아웃 {_timeout_count['bs']}, {elapsed_b:.0f}s", flush=True)
 
@@ -2215,7 +2238,8 @@ async def collect_financial_weekly(date: str = None) -> dict:
         )
 
     # 재무 파생값 → daily_snapshot UPDATE
-    _update_financial_derived(conn, date)
+    async with db_write_lock:
+        _update_financial_derived(conn, date)
     conn.close()
 
     print(f"[Finance] 완료 — IS:{success_is}/{len(tickers)}, "
@@ -2328,16 +2352,17 @@ async def _collect_dart_full_batch(conn: sqlite3.Connection, tickers: list,
             try:
                 r = await dart_quarterly_full(corp_code, y, q, session=session)
                 if r:
-                    _upsert_dart_full_row(conn, ticker, r)
+                    # fetch 완료 후 쓰기+커밋을 동일 lock 블록 안에서 수행
+                    async with db_write_lock:
+                        _upsert_dart_full_row(conn, ticker, r)
+                        conn.commit()
                     success += 1
             except Exception:
                 pass
             done += 1
             await asyncio.sleep(_DART_INTERVAL)
             if done % 500 == 0:
-                conn.commit()
                 print(f"[DART-Full] 진행: {done}/{total} (성공 {success})")
-    conn.commit()
 
     print(f"[DART-Full] 완료 — 성공 {success}/{total}, corp_map 미등록 스킵 {skipped_no_corp}")
     return success
@@ -2579,36 +2604,44 @@ async def collect_financial_on_disclosure(days: int = 2,
         if not master_exists:
             print(f"[DART-Incr] skip {ticker}({corp_code}) — stock_master 미등록")
             continue
+        # 4a. fnlttSinglAcntAll — fetch 먼저, 쓰기는 lock 안에서
+        _dart_row = None
         try:
             r = await dart_quarterly_full(corp_code, year, quarter, session=sess)
             result["fnltt_calls"] += 1
             if r:
-                _upsert_dart_full_row(conn, ticker, r)
-                if period > latest_period:
-                    latest_period = period
+                _dart_row = r
         except Exception as e:
             print(f"[DART-Incr] full {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
             result["errors"] += 1
             await asyncio.sleep(_DART_INTERVAL)
             continue
+        if _dart_row:
+            async with db_write_lock:
+                _upsert_dart_full_row(conn, ticker, _dart_row)
+                conn.commit()
+            if period > latest_period:
+                latest_period = period
         await asyncio.sleep(_DART_INTERVAL)
 
         if (result["fnltt_calls"] + result["shares_calls"]) >= max_calls:
             print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
             break
 
-        # 4b. stockTotqySttus
+        # 4b. stockTotqySttus — fetch 먼저, 쓰기는 lock 안에서
         try:
             shares = await dart_shares_outstanding(
                 corp_code, year, quarter, session=sess,
             )
             result["shares_calls"] += 1
             if shares:
-                conn.execute(
-                    "UPDATE financial_quarterly SET shares_out=? "
-                    "WHERE symbol=? AND report_period=?",
-                    (shares, ticker, period),
-                )
+                async with db_write_lock:
+                    conn.execute(
+                        "UPDATE financial_quarterly SET shares_out=? "
+                        "WHERE symbol=? AND report_period=?",
+                        (shares, ticker, period),
+                    )
+                    conn.commit()
         except Exception as e:
             print(f"[DART-Incr] shares {ticker}({corp_code}) {year}Q{quarter} 오류: {e}")
             result["errors"] += 1
@@ -2620,13 +2653,13 @@ async def collect_financial_on_disclosure(days: int = 2,
             print(f"[DART-Incr] max_calls({max_calls}) 도달 — 수집 중단")
             break
 
-    conn.commit()
     conn.close()
 
     # Step 5: 알파 메트릭 재계산 (최신 period 기준)
     if result["newly_collected"] > 0 and latest_period:
         try:
-            result["alpha_recalc"] = update_all_alpha_metrics(end_period=latest_period)
+            async with db_write_lock:
+                result["alpha_recalc"] = update_all_alpha_metrics(end_period=latest_period)
         except Exception as e:
             print(f"[DART-Incr] update_all_alpha_metrics 오류: {e}")
             result["alpha_recalc"] = {"error": str(e)}
@@ -2641,25 +2674,21 @@ async def collect_financial_on_disclosure(days: int = 2,
     return result
 
 
-def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
-    """pykrx 종목별 외인/기관 매매로 daily_snapshot 수급 금액을 '정밀화(refine)'한다.
+def _fetch_supply_data(date: str) -> dict:
+    """pykrx 종목별 외인/기관 순매수 데이터를 네트워크에서 가져온다 (blocking HTTP+sleep 포함).
 
-    ⚠️ 더 이상 유일 소스가 아니다. 1차 소스는 KIS FHPTJ04160001(`*_ntby_tr_pbmn`,
-    `_store_daily_snapshot`에서 기록). 이 함수는 KRX가 가용할 때만 정확한 원(KRW) 값으로
-    덮어쓰는 보강(refiner)이다. KRX/pykrx는 간헐적으로 빈 응답(soft-block)을 주므로:
-      - 호출은 retry+backoff 한다.
-      - 빈 응답/실패 시 절대 0/NULL로 덮어쓰지 않는다 (KIS 1차값 보존).
-      - 전부 실패하면 ⚠️ 경보를 출력해 가시화한다 (침묵 금지).
+    ⚠️ 이 함수는 동기 네트워크 호출 + sleep이 있으므로 db_write_lock 밖에서 호출해야 한다.
 
-    Returns: {foreign_count, inst_count, empty, errors, ok}
+    Returns: {"rows": [(col_qty, col_amt, date, ticker, qty, amt), ...],
+              "empty": N, "errors": [...]}
     """
     if not date:
-        return {"error": "date 누락"}
+        return {"rows": [], "empty": 0, "errors": ["date 누락"]}
 
     try:
         from pykrx import stock
     except ImportError:
-        return {"error": "pykrx 미설치"}
+        return {"rows": [], "empty": 0, "errors": ["pykrx 미설치"]}
 
     import time as _time
 
@@ -2678,8 +2707,7 @@ def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
                 _time.sleep(1.5 * attempt)  # backoff
         return None, last
 
-    foreign_n = 0
-    inst_n = 0
+    rows = []  # (col_qty, col_amt, qty, amt, ticker)
     empty = 0
     errors = []
 
@@ -2700,20 +2728,41 @@ def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
                     amt = int(row.get("순매수거래대금", 0) or 0)
                     if qty == 0 and amt == 0:
                         continue  # 0은 절대 기록하지 않음 (refiner 원칙)
-                    cur = conn.execute(
-                        f"UPDATE daily_snapshot SET {col_qty}=?, {col_amt}=? "
-                        f"WHERE trade_date=? AND symbol=?",
-                        (qty, amt, date, ticker)
-                    )
-                    if cur.rowcount > 0:
-                        if inv_name == "외국인":
-                            foreign_n += 1
-                        else:
-                            inst_n += 1
+                    rows.append((col_qty, col_amt, qty, amt, ticker))
                 except Exception:
                     continue
 
-    conn.commit()
+    return {"rows": rows, "empty": empty, "errors": errors}
+
+
+def _write_supply_to_snapshot(conn: sqlite3.Connection, date: str, supply_data: dict) -> dict:
+    """_fetch_supply_data()의 결과를 DB에 기록한다 (순수 sync 쓰기, lock 안에서 호출).
+
+    commit()은 호출자(async with db_write_lock 블록)가 직접 수행한다.
+    Returns: {foreign_count, inst_count, empty, errors, ok}
+    """
+    rows = supply_data.get("rows", [])
+    empty = supply_data.get("empty", 0)
+    errors = list(supply_data.get("errors", []))
+
+    foreign_n = 0
+    inst_n = 0
+
+    for col_qty, col_amt, qty, amt, ticker in rows:
+        try:
+            cur = conn.execute(
+                f"UPDATE daily_snapshot SET {col_qty}=?, {col_amt}=? "
+                f"WHERE trade_date=? AND symbol=?",
+                (qty, amt, date, ticker)
+            )
+            if cur.rowcount > 0:
+                if col_qty == "foreign_net_qty":
+                    foreign_n += 1
+                else:
+                    inst_n += 1
+        except Exception:
+            continue
+
     ok = foreign_n > 0
     print(f"[Supply] pykrx refine: 외인 {foreign_n}, 기관 {inst_n}, 빈응답/실패 {empty}/4")
     if errors:
@@ -2729,6 +2778,27 @@ def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
         "errors": errors,
         "ok": ok,
     }
+
+
+def _update_supply_in_snapshot(conn: sqlite3.Connection, date: str) -> dict:
+    """pykrx 종목별 외인/기관 매매로 daily_snapshot 수급 금액을 '정밀화(refine)'한다.
+
+    ⚠️ 더 이상 유일 소스가 아니다. 1차 소스는 KIS FHPTJ04160001(`*_ntby_tr_pbmn`,
+    `_store_daily_snapshot`에서 기록). 이 함수는 KRX가 가용할 때만 정확한 원(KRW) 값으로
+    덮어쓰는 보강(refiner)이다. KRX/pykrx는 간헐적으로 빈 응답(soft-block)을 주므로:
+      - 호출은 retry+backoff 한다.
+      - 빈 응답/실패 시 절대 0/NULL로 덮어쓰지 않는다 (KIS 1차값 보존).
+      - 전부 실패하면 ⚠️ 경보를 출력해 가시화한다 (침묵 금지).
+
+    ⚠️ 내부적으로 네트워크(pykrx)+sleep 후 DB 쓰기를 수행하므로 db_write_lock 밖에서
+    호출해야 한다. (fetch → _write_supply_to_snapshot → conn.commit() 패턴)
+
+    Returns: {foreign_count, inst_count, empty, errors, ok}
+    """
+    supply_data = _fetch_supply_data(date)
+    result = _write_supply_to_snapshot(conn, date, supply_data)
+    conn.commit()
+    return result
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2847,12 +2917,14 @@ async def collect_dividends(tickers: list = None, lookback_days: int = 430) -> d
     await asyncio.gather(*[_one(t) for t in tickers[50:]])
 
     now = datetime.now(KST).isoformat()
-    conn.executemany(
-        "INSERT OR REPLACE INTO dividend_events(symbol,record_date,dps_cash,divi_kind,pay_date,fetched_at) "
-        "VALUES (?,?,?,?,?,?)",
-        [(s, rd, amt, k, p, now) for (s, rd, amt, k, p) in events])
-    conn.commit()
-    rc = _recompute_div_yield_from_events(conn)
+    # 쓰기 직렬화 — asyncio.gather fetch 완료 후 sync 쓰기 구간이므로 한 번만 잠근다.
+    async with db_write_lock:
+        conn.executemany(
+            "INSERT OR REPLACE INTO dividend_events(symbol,record_date,dps_cash,divi_kind,pay_date,fetched_at) "
+            "VALUES (?,?,?,?,?,?)",
+            [(s, rd, amt, k, p, now) for (s, rd, amt, k, p) in events])
+        conn.commit()
+        rc = _recompute_div_yield_from_events(conn)
     conn.close()
     print(f"[Dividends] KIS 예탁원: 조회 {stat['ok']}, payers {stat['payers']}, "
           f"events {len(events)}, 실패 {stat['fail']} → div_yield {rc}")
