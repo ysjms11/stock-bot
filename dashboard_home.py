@@ -958,7 +958,6 @@ function dashApp() {
       await this.loadHome();
       this.refreshIcons();
       this._startAutoRefresh();
-      window.addEventListener('resize', () => { if (this._mmChart) this._mmChart.resize(); });
     },
 
     _startAutoRefresh() {
@@ -1420,14 +1419,19 @@ function dashApp() {
 
     _renderMarketmap() {
       const raw = this.marketmap[this.marketmapMarket];
-      if (!raw) return;
+      if (!raw || !raw.data || !raw.data.length) return;
       if (typeof echarts === 'undefined') {
-        const el = document.getElementById('marketmap-container');
-        if (el) el.innerHTML = '<div class="text-slate-400 text-sm py-8 text-center">ECharts 로드 실패 — 새로고침 후 재시도</div>';
+        this._mmTries = (this._mmTries || 0) + 1;
+        if (this._mmTries < 60) requestAnimationFrame(() => this._renderMarketmap());
         return;
       }
       const el = document.getElementById('marketmap-container');
-      if (!el) return;
+      if (!el || el.offsetWidth === 0) {
+        this._mmTries = (this._mmTries || 0) + 1;
+        if (this._mmTries < 60) requestAnimationFrame(() => this._renderMarketmap());
+        return;
+      }
+      this._mmTries = 0;
       el.style.height = this.mmHeight() + 'px';
       if (!this._mmChart) {
         this._mmChart = echarts.init(el, null, { renderer: 'svg' });
@@ -1436,7 +1440,14 @@ function dashApp() {
           if (p.data && p.data.ticker) self.openStockModal(p.data.ticker);
         });
         if (window.ResizeObserver) {
-          const ro = new ResizeObserver(() => { if (this._mmChart) this._mmChart.resize(); });
+          let _mmt;
+          const ro = new ResizeObserver(() => {
+            clearTimeout(_mmt);
+            _mmt = setTimeout(() => {
+              const e = document.getElementById('marketmap-container');
+              if (self._mmChart && self._mmOpt && e && e.offsetWidth > 0 && e.offsetWidth !== self._mmLastW) { self._mmLastW = e.offsetWidth; self._mmChart.resize(); self._mmChart.setOption(self._mmOpt, true); }
+            }, 120);
+          });
           ro.observe(el);
           this._mmResizeObs = ro;
         }
@@ -1499,8 +1510,10 @@ function dashApp() {
           data: treeData,
         }],
       };
-      this._mmChart.setOption(opt, true);
+      this._mmOpt = opt;
       this._mmChart.resize();
+      this._mmChart.setOption(opt, true);
+      this._mmLastW = el.offsetWidth;
     },
 
     async loadMacroPanel() {
