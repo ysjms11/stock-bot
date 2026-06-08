@@ -334,10 +334,13 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
                 if cash_pct < 10:
                     health_warnings.append(f"⚠️ 현금 {cash_pct:.1f}% → 최소 10% 미달")
 
-                # 레짐 체크
-                regime_en, regime_e = _read_regime()
-                if regime_en == "crisis" and cash_pct < 25:
-                    health_warnings.append(f"⚠️ {regime_e} 레짐 현금 {cash_pct:.1f}% → 25% 권장")
+                # KR 레짐 현금 다이얼 (🔴=발사, 종목 게이팅 아님)
+                kr_blk = (load_json(REGIME_STATE_FILE, {}).get("kr", {}) or {})
+                kr_en = kr_blk.get("current", "neutral")
+                if kr_en == "crisis":
+                    health_warnings.append(f"🔴 KR 발사국면 — 현금 {cash_pct:.1f}% (풀투자 지향·비축실탄 투입 검토)")
+                elif kr_en == "neutral" and cash_pct < 8:
+                    health_warnings.append(f"🟡 KR 경계 — 현금 {cash_pct:.1f}% (8~15% 실탄 비축 권장)")
 
             if health_warnings:
                 msg += "\n[포트 건강]\n" + "\n".join(health_warnings) + "\n"

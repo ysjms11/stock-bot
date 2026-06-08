@@ -189,3 +189,4 @@
 - [x] collect_daily 안전장치 4개
 - [x] rate limiter jitter
 - [x] 매크로 스케줄 18:55
+- [x] 레짐 재구현 완료(KR=실현변동성 252일%ile+200MA거리·E하이브리드, US=S&P+VIX%ile, 🔴=발사). VKOSPI는 KRX 인증 확보 시 2009~ 우선신호 전환 — 향후과제.

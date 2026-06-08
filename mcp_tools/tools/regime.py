@@ -56,6 +56,7 @@ async def handle_get_regime(arguments: dict) -> dict | list:
     result = None
     result = await cmd_regime(
         mode=arguments.get("mode", "current"),
+        market=arguments.get("market", "both"),
         days=int(arguments.get("days", 5)),
         regime=arguments.get("regime", ""),
         reason=arguments.get("reason", ""),

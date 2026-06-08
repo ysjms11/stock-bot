@@ -219,14 +219,13 @@ async def check_stoploss(context: ContextTypes.DEFAULT_TYPE):
             if buy_alerts:
                 # 브리핑 추가
                 regime_en, regime_str = _read_regime()
-                regime_ok = "매수 가능" if regime_en != "crisis" else "⚠️ 분할 1차만"
                 pf = load_json(PORTFOLIO_FILE, {})
                 cash_k = float(pf.get("cash_krw", 0) or 0)
                 cash_u = float(pf.get("cash_usd", 0) or 0)
                 events = load_json(EVENTS_FILE, {})
                 today_ev = events.get(now.strftime("%Y-%m-%d"), "")
 
-                extra = f"\n📊 레짐: {regime_str} → {regime_ok}"
+                extra = f"\n📊 레짐: {regime_str} (현금 다이얼 참고·매수판단은 3-Gate)"
                 extra += f"\n💰 현금: {cash_k:,.0f}원 / ${cash_u:,.0f}"
                 if today_ev:
                     extra += f"\n⚠️ 이벤트: {today_ev}"
