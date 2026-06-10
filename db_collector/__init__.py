@@ -1,15 +1,15 @@
-# 패키지 셸 (2026-06 분해 P2) — core.py는 구 단일파일 verbatim,
-# 이후 phase에서 도메인 모듈로 분리 예정.
+# 패키지 셸 (2026-06 분해 P2~P4) — collect.py가 수집 파이프라인 실소유자.
 # 외부 인터페이스(import 표면)는 이 __init__이 동결.
 #
 # monkeypatch 투명성 (P2a):
 # 다중 모듈 포워딩 — monkeypatch.setattr(db_collector, X)가 X를 정의한
 # 모든 백킹 모듈에 전파, 콜사이트가 어느 모듈에 있든 패치 보임.
-# _BACKING = [core, ...] — core를 항상 첫 원소로; 모듈 박리 시 append.
+# _BACKING = [collect, core, ...] — collect를 첫 원소로 (P4a).
 
 import sys
 import types
 
+from . import collect  # noqa: F401 — P4a 박리: 수집 파이프라인
 from . import core  # noqa: F401 — submodule must be importable
 from . import _config  # noqa: F401 — P2b-1 박리
 from . import technicals  # noqa: F401 — P2b-2 박리
@@ -26,7 +26,7 @@ from . import backup  # noqa: F401 — P3-8 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core, _config, technicals, sector, krx, _db,
+_BACKING: list = [collect, core, _config, technicals, sector, krx, _db,
                   master, scan, dividends, alpha, financial, us_analysts, backup]
 
 
@@ -118,13 +118,18 @@ from .us_analysts import (  # noqa: F401
     find_us_buy_candidates,
 )
 
-from .core import (  # noqa: F401
-    # 섹터 분류 — sector.py 가 실소유자, core re-import로 이 블록에서 가져옴
-    _classify_sector,
+from .sector import _classify_sector  # noqa: F401
 
-    # 공개 함수 (외부 직접 import)
+# 수집 파이프라인 — collect.py 가 실소유자 (P4a)
+from .collect import (  # noqa: F401
+    _RATE_SEM,
+    _rate_limited,
+    _collect_phase,
+    _store_daily_snapshot,
+    _compute_and_update,
     collect_daily,
     backfill_day_via_chart,
+    collect_daily_backfill,
 )
 
 

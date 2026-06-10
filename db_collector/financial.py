@@ -23,6 +23,21 @@ from ._db import _get_db, db_write_lock
 from .alpha import update_all_alpha_metrics
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# Rate limiter (collect.py 와 독립 사본 — 순환 import 방지)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_RATE_SEM = None  # collect_financial_weekly 시작 시 초기화
+
+
+async def _rate_limited(coro):
+    """초당 8건 제한 (세마포어 + jitter 슬립)."""
+    import random
+    async with _RATE_SEM:
+        result = await coro
+        await asyncio.sleep(0.10 + random.random() * 0.06)
+        return result
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 재무 수집 (주 1회)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
