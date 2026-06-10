@@ -12,10 +12,11 @@ import types
 
 from . import core  # noqa: F401 — submodule must be importable
 from . import _config  # noqa: F401 — P2b-1 박리
+from . import technicals  # noqa: F401 — P2b-2 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core, _config]
+_BACKING: list = [core, _config, technicals]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
@@ -27,6 +28,19 @@ from ._config import (  # noqa: F401
     KRX_DB_DIR,
     _KR_MARKET_HOLIDAYS,
     _is_kr_trading_day,
+)
+
+# 기술지표 헬퍼 — technicals.py 가 실소유자 (P2b-2)
+from .technicals import (  # noqa: F401
+    _ma,
+    _rsi,
+    _macd,
+    _atr,
+    _volatility_20d,
+    _calc_vp,
+    _volume_ratio,
+    _spread_at,
+    _rsi_at,
 )
 
 from .core import (  # noqa: F401
@@ -43,17 +57,6 @@ from .core import (  # noqa: F401
     _pi,
     _pf,
     _parse_market_records,
-
-    # 기술지표 헬퍼
-    _ma,
-    _rsi,
-    _macd,
-    _atr,
-    _volatility_20d,
-    _calc_vp,
-    _volume_ratio,
-    _spread_at,
-    _rsi_at,
 
     # 섹터 분류
     _classify_sector,
