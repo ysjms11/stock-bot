@@ -341,7 +341,7 @@ Quick Kill: Tier 1 해당 / Cash runway<12M / Implied g ≥ 10Y yield
   - Gate③ 신호 종류별 차등 — opportunistic insider·confidential 13F만 유효, 셀사이드·일반13F·UOA 제외
   - Stage 5 Pre-commit 의무화 — Kill Switch 정량 + 공통동인 + pre-mortem (매수=매도 묶음)
   - 매도 트리거 US_EXIT 동기화 — 전량 이진, 가격≠매도
-  - 비중 35% 진입 상한 유지(사용자 결정) + "트림 아닌 진입 상한" + 큰 비중일수록 좌꼬리 엄격
+  - 비중 35% 진입 상한 유지(사용자 결정) + "트림 아닌 진입 상한" + 큰 비중일수록 좌꼬리 엄격 (→ 2026-06-04 단일 25% 하드캡으로 대체 — §B)
   - z-score 미도입 (estimation error), 임계 라벨링 전면 적용
 - 2026-04-24 v4: Reverse DCF 1.3배→Damodaran cap, A/B+ 등급→3-Gate, Short Float 10/20/30%, 섹터상한 폐지, PEAD 대형주 소멸
 - 2026-04-17 v3: K/G STEP 0 추가 (→ v5에서 삭제)

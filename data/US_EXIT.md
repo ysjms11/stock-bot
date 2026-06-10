@@ -1,7 +1,7 @@
 # US_EXIT.md (v2)
 
 > 미국 집중투자자용 매도 판단 프레임. Claude.ai + KIS MCP 봇 + 웹 검증 게이트.
-> 작성일: 2026-04-25 · **개정: 2026-06-01 (v2, 3차 반증검증 반영)** · 페어: `US_DEEPSEARCH.md` (매수 v4) · `INVESTMENT_RULES.md`
+> 작성일: 2026-04-25 · **개정: 2026-06-01 (v2, 3차 반증검증 반영)** · 페어: `US_DEEPSEARCH.md` (매수 v5) · `INVESTMENT_RULES.md`
 > 3-Gate / 비중 3단계(Starter·Standard·Core) / 카테고리(메인·가치·스윙) 매수 프레임 용어 그대로 승계.
 > ⛔ 한국 전용 도구 사용 금지: `manage_report` / `get_dart` / `get_market_signal` / `read_report_pdf` (한국 종목 한정).
 
@@ -147,7 +147,7 @@
 ### 0. 라이트 체크 (5분, 일일 모니터링)
 ```
 [티커] 미국 라이트 체크.
-1. get_stock_detail(ticker) — 50MA·150MA·200MA, 52주 고가 괴리 (위치 확인용, 매도 아님)
+1. get_stock_detail(ticker, period="D250") — 50MA·150MA·200MA, 52주 고가 괴리 (위치 확인용, 매도 아님 · MA는 일봉으로 산출 — 기본 호출은 MA 미반환)
 2. get_us_ratings(ticker, mode="trend", months=3) — 3M 컨센 방향
 3. get_us_ratings(ticker, mode="events", days=30) — 30일 upgrade/downgrade 빈도
 4. get_news(ticker, sentiment=true) — 최근 헤드라인 감성
@@ -205,7 +205,7 @@ LLM 4중 편향 체크 + "가격 상승은 매도 사유 아님" 자가 확인
 
 ━━ STEP 4. 밸류에이션 (5분) — 경로 3 재산정 게이트 ━━
 웹: stockanalysis.com ratios / statistics
-업종 프레임(매수 v4 동일): SaaS Rule40<20+FCF<0(2Q) / 반도체 Fwd PE>35x / 바이오 PoS·runway / 광모듈 EV/Sales>6x
+업종 프레임(매수 v5 동일): SaaS Rule40<20+FCF<0(2Q) / 반도체 Fwd PE>35x / 바이오 PoS·runway / 광모듈 EV/Sales>6x
 Reverse DCF: Implied g ≥ 10Y T-yield → **재산정 트리거(자동매도 아님)**. 재산정 후 thesis 약화 시 경로3
 ※ 고밸류 자체는 매도 아님 — thesis 재점검 사유 (절대원칙 0)
 

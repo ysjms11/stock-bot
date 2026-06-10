@@ -46,8 +46,9 @@
 
 > **이게 본진. 디폴트 HOLD를 강제하는 최소 점검.**
 
-- [ ] `get_alpha_metrics(tickers="보유 전체")` (batch) → F-Score 변화
-- [ ] `get_news(tickers="보유 전체")` (batch) → thesis 영향 헤드라인
+- [ ] 보유 종목 루프(종목당): `get_alpha_metrics(ticker)` → F-Score 변화
+- [ ] 보유 종목 루프(종목당): `get_news(ticker, sentiment=true)` → thesis 영향 헤드라인
+  (두 도구는 단수 ticker만 — batch 미지원)
 - [ ] (KR) `get_supply` → 5일 외인+기관 net, 거래원 외국계 매도
 - [ ] (KR) `get_pension_flow(held_watch_only=true)` → **연기금 양방향** (NPS 60~80% 비중, 너 포트 매수/매도 직격)
 - [ ] (US) `get_us_ratings` → 다운그레이드

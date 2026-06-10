@@ -52,7 +52,7 @@
 - 볼륨 프로파일 지지 구간 확인 (`get_stock_detail volume_profile`)
 
 ### Step 7. 리스크 지표 — **미국 딥서치용** ⚠️
-- **Altman Z''-Score > 2.6 Safe / 1.1-2.6 Gray / <1.1 Distress** ✅ (Altman 2000/2013 NYU Stern, EMS 모델)
+- **Altman Z''-Score > 2.6 Safe / 1.1-2.6 Gray / <1.1 Distress** ✅ (Altman 2000/2013 NYU Stern, EMS 모델) — ⚠️ US 부실위험은 Merton DD/시총-부채 우선. Altman Z''는 제조업 한정(기술·성장주 무형자산 왜곡 — Braunsberger-Aschauer 2025). US는 US_DEEPSEARCH가 정본.
 - **Beneish M > -1.78 분식 의심** ✅ (Beneish 1999 FAJ 55(5); 오류율: FN 26%, FP 13.8%. **확률적 신호**로 해석)
 - **Short Float 10%+ 경계, 20%+ 고위험, 30%+ 극단** ✅ (업계 표준; **기존 5% 기준은 오류** ❌ → 수정됨)
 - **SBC: Net Dilution 3%+ 경고** ✅ (TDM Growth Partners 2024 벤치마크: 희석률 3%+ 기업 Nasdaq 아웃퍼폼 실패). SBC/매출 비율은 업종 peer 상대 비교 (고정 15% 기준 ❌)
@@ -80,7 +80,7 @@
 
 ## 2. 미국 딥서치 7단계 (미국 종목 전용)
 
-1. **Altman Z''-Score > 2.6** ✅ (EMS 모델)
+1. **Altman Z''-Score > 2.6** ✅ (EMS 모델 — 제조업 한정. US 부실위험은 Merton DD/시총-부채 우선: 기술·성장주 무형자산 왜곡, Braunsberger-Aschauer 2025. US는 US_DEEPSEARCH가 정본)
 2. **Beneish M < -1.78** (비분식) ✅ — M > -1.78이면 분식 의심
 3. **PEG < 1 저평가** (Lynch 원문) ✅
 4. **Short Float < 20%** ✅ (5% 아님 ❌, 표준 20%+ 고위험)
@@ -119,7 +119,7 @@
 > 경로3는 EXIT 문서엔 있었으나 (a) 마스터에 누락, (b) 반응형으로 묻혀 실제 발동 0건(decision_log)이었다. 이를 **능동 발동 + 검증 기반**으로 활성화한다. 근거: Fisher (1958 Ch.6) #3 — Fisher 본인이 가장 신중한 매도 사유로 명시. **이것은 익절이 아니라 자금 재배치이므로 전량 이진의 예외로 부분 조절 허용.**
 
 - **능동 발동 조건**: 검증된 신규 후보(3-Gate 3/3)가 있는데 **풀투자라 못 사는 상태**면, 자동으로 경로3 재배치 스캔을 발동한다. (반응형 "팔까?" 아님 — 능동. 이것이 "갈아탈 용기"의 시스템화.)
-- **RR 비교 (검증 필수)**: 신규 후보와 기존 보유를 **둘 다 PDF로 TP를 분해**(멀티플 타당성 × 브로커별 EPS × 피어 비교; 컨센 평균 금지, 교훈 #9)한 **검증된 forward-RR**로 비교. 셀사이드 목표가 받아쓰기 금지(한국 달성률 38%, Bradshaw 2013). 후보가 **명백히 우위**일 때만 발동. (구판 EXIT의 보수적 임계 "격차 5%p/12개월"은 본 능동 기준으로 대체.)
+- **RR 비교 (검증 필수)**: 신규 후보와 기존 보유를 **둘 다 PDF로 TP를 분해**(멀티플 타당성 × 브로커별 EPS × 피어 비교; 컨센 평균 금지, 교훈 #9)한 **검증된 forward-RR**로 비교. 셀사이드 목표가 받아쓰기 금지(한국 달성률 38%, Bradshaw 2013). 후보가 **명백히 우위**일 때만 발동. (KR_EXIT 본문에 잔존하는 보수 임계 "격차 ≥5%p/yr·12개월 지속" 표기보다 본 능동 발동 기준이 우선 — 2026-06-04. US_EXIT는 본 기준 우선을 이미 명시.)
 - **재원 선정 (우꼬리 함정 차단)**: 줄이는 대상 = **"가장 많이 오른 것"이 아니라 "검증된 forward-RR이 가장 낮은 것 / thesis가 가장 약한 것(G 신호 보유)"**. "올랐으니 여력 없다"는 폐기된 "고밸류=비싸다" 논리와 동일 → 금지(Bessembinder right-tail).
 - **빈도 제한 (churn·매매중독 차단)**: 종목 전환 최소 **20거래일 대기** 룰 연계. 잦은 갈아타기는 학습표본(테마점핑·하루뒤엎기) 재발. Akepanidtaworn et al.(2023 JoF 78(6)) "sell more thoughtfully."
 - **세제 게이트**: 한국 일반투자자 양도세 비과세(거래세 0.15%(2025)/0.20%(2026)만) → 회전 비용 낮음. 미국: 보유<1년 STCG 최대 37%+NIIT 3.8% → 자금이동 보류, 보유≥1년 LTCG 15~20%. 단 세제 절감이 매도 회피 변명이 되어선 안 됨(Munger 1994).
@@ -193,7 +193,7 @@
 | 매도 비교 | `simulate_trade`, `set_alert log_type=compare` | 경로3 재배치 |
 | 재검증 | `get_portfolio_history`, `get_trade_stats` | 성과 복기 |
 
-> ⚠️ 도구 레퍼런스 점검 과제: `get_sector flow`, `get_highlow`, `get_scan preset=` 표기는 현행 스키마와 불일치 가능 — 실제 호출명 검증 후 갱신 필요(`get_supply combined_rank/foreign_rank`, `get_macro convergence` 등으로 대체된 항목 확인).
+> ✅ 도구 표기 전수 검증 완료 (2026-06-08 감사): §6 표기 모두 현행 MCP 스키마와 일치 확인.
 
 ---
 
