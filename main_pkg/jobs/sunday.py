@@ -59,8 +59,8 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
             for t, v in {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}.items():
                 val = float(v.get("avg_price", 0)) * float(v.get("qty", 0))
                 pct = val / total_asset * 100
-                if pct > 35:
-                    warnings.append(f"• {v.get('name', t)} {pct:.0f}% → 한도 35% 초과")
+                if pct > 25:
+                    warnings.append(f"• {v.get('name', t)} {pct:.0f}% → 단일 25% 하드캡 초과")
 
         if warnings:
             msg += "\n⚠️ 점검 필요:\n" + "\n".join(warnings) + "\n"
