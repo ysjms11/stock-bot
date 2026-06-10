@@ -1,3 +1,15 @@
+## 📄 2026-06-10 dashboard_home.py 분해 — 단일파일 ~6,700줄 → dashboard_home/ 7모듈 패키지 (사용자 "계속해")
+
+**모놀리스 분해 2호** (db_collector 직후 동일 플레이북, worktree `refactor/dashboard-home-pkg`). 조건: 소비자 단 1곳(_entry.py — `register_home_routes`+`warm_caches` 2심볼), 테스트 0 → characterization 전략 재설계.
+
+- **P0 characterization 34개**: 템플릿/JS 상수 13종 **sha256 골든**(248KB `_HOME_SHELL` 조립 결과물 포함 — 최종 HTML byte 동결, r-string 재이스케이프 함정 원천 차단) + 라우트 테이블 57 + 오프라인 payload 키셋(whale/reports). 730 passed 베이스라인.
+- **P1~P4**: verbatim 셸 → `_assets.py`(5,133줄 — 템플릿 전부) → 도메인 5모듈(`_helpers` SWR캐시/`reports`/`whale`/`payloads` 1,495/`routes` 431) → core 소멸. 프록시 불필요(monkeypatch 소비자 0). `__doc__`도 해시 골든이라 `from .core import __doc__` 트릭으로 보존.
+- **게이트**: design-reviewer(Opus) — 캐시 동일성(SWR dict 단일 인스턴스)·서빙경로(GET /home 200 + body==_HOME_SHELL byte-exact 로컬 스모크)·import 부작용 전수 클린. code-reviewer(Opus) — 72함수 census 완전·바디 byte-identical.
+- **리뷰 수확 3건 수정**: ① `_helpers`의 죽은+깨진 `warm_caches` 중복본 제거(P3 잔재 — wire되면 즉시 NameError였음) ② **`test_undefined_names` 가드 확장**: PACKAGES에 `db_collector`(패키지화로 MODULES에선 __init__만 스캔되던 사각) + `dashboard_home` 추가 — 5/29 분할회귀 가드가 새 패키지 21개 서브모듈 커버 ③ **진짜 잠복버그 발굴·수정**: `payloads.py` `load_watchlist` 미import → market-signal 패널(short_sale/credit/lending)이 **원본부터 워치리스트 무시하고 005930 고정**이던 것(try/except이 삼켜온 silent bug) — import 1줄로 해소.
+- 잔여: `_WHALE_PANEL_REMOVED` 죽은 템플릿 ~380줄 verbatim 보존(삭제는 별도 결정), reports/whale의 미사용 `_sqlite3` import(cosmetic).
+
+---
+
 ## 📄 2026-06-10 db_collector.py 분해 — 단일파일 4,439줄 → db_collector/ 14모듈 패키지 (사용자 "진행하자, 에이전트 팀으로")
 
 **모놀리스 분해 1호** (남은 후보였던 dashboard.py=무수정 영역·dashboard_home.py=사용자 활발 편집이라 db_collector 선정). **worktree 격리**(`refactor/db-collector-pkg`, 사용자 동시 세션과 트리 충돌 방지) + 에이전트 팀(developer Sonnet ×5 phase / code-reviewer Opus ×2 / critic·verifier **Fable**) + 새 인프라 첫 실전(characterization-first·fast_gate 훅).
