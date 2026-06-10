@@ -11,19 +11,26 @@ import sys
 import types
 
 from . import core  # noqa: F401 — submodule must be importable
+from . import _config  # noqa: F401 — P2b-1 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core]
+_BACKING: list = [core, _config]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
 # (grep 기반: from db_collector import X / db_collector.X / @patch("db_collector.X"))
-from .core import (  # noqa: F401
-    # 상수 / 설정
+
+# 상수 / 설정 — _config.py 가 실소유자 (P2b-1)
+from ._config import (  # noqa: F401
     DB_PATH,
     KRX_DB_DIR,
     _KR_MARKET_HOLIDAYS,
+    _is_kr_trading_day,
+)
+
+from .core import (  # noqa: F401
+    # DART 간격 (core에 남아 있음)
     _DART_INTERVAL,
 
     # 비동기 락
@@ -57,7 +64,6 @@ from .core import (  # noqa: F401
     PRESETS,
 
     # 날짜 / 기간 헬퍼
-    _is_kr_trading_day,
     _parse_period,
     _build_period,
     _prev_yoy_period,

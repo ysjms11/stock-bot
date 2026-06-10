@@ -30,37 +30,27 @@ from dataclasses import dataclass, field
 
 from kis_api import _get_session
 
-KST = ZoneInfo("Asia/Seoul")
-_DATA_DIR = os.environ.get("DATA_DIR", "/data")
-DB_PATH = f"{_DATA_DIR}/stock.db"
-
-# 하위호환 (main.py import용)
-KRX_DB_DIR = f"{_DATA_DIR}/krx_db"
-
-# KRX OPEN API 상수 (krx_crawler.py와 동일)
-KRX_OPENAPI_BASE = "https://data-dbg.krx.co.kr/svc/apis"
-KRX_API_KEY = os.environ.get("KRX_API_KEY", "")
-
-_OPENAPI_ENDPOINTS = {
-    "market_STK": ("sto", "stk_bydd_trd"),
-    "market_KSQ": ("sto", "ksq_bydd_trd"),
-}
-
-KRX_JSON_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-KRX_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Referer": "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101",
-}
-
-_STD_SECTOR_MAP_PATH = f"{_DATA_DIR}/std_sector_map.json"
+# 설정 상수 및 거래일 판정 (_config.py 로 박리됨)
+from ._config import (
+    KST,
+    _DATA_DIR,
+    DB_PATH,
+    KRX_DB_DIR,
+    KRX_OPENAPI_BASE,
+    KRX_API_KEY,
+    _OPENAPI_ENDPOINTS,
+    KRX_JSON_URL,
+    KRX_HEADERS,
+    _STD_SECTOR_MAP_PATH,
+    _PHASE_TIMEOUT,
+    _KR_MARKET_HOLIDAYS,
+    _is_kr_trading_day,
+)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # Rate limiter 전역 세마포어
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 _RATE_SEM = None  # collect_daily 시작 시 초기화
-
-_PHASE_TIMEOUT = 600   # Phase별 타임아웃 10분
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -622,37 +612,7 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
     conn.commit()
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-# KR 시장 휴장일 가드
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-# 평일 휴장일(예: 어린이날·부처님오신날 대체)에 collect_daily가 돌면, KIS 현재가 API가
-# 직전 영업일 시세를 돌려줘 spurious 행(qty≠0/amt=0 불일치 등)이 쌓인다. 이를 차단한다.
-# 출처: KRX 휴장일(매년 1월 갱신 — main_pkg/telegram_bot.weekly_sanity_check가 갱신 알림).
-# ⚠️ main_pkg/telegram_bot.py:_KRX_HOLIDAYS와 중복. 추후 단일화 권장(현재는 수집기 자급용).
-_KR_MARKET_HOLIDAYS = frozenset({
-    # 2026
-    "20260101", "20260216", "20260217", "20260218", "20260302", "20260501",
-    "20260505", "20260525", "20260603", "20260817", "20260924", "20260925",
-    "20261009", "20261225",
-    # 2027 (1월 갱신 시 보강)
-    "20270101",
-})
-
-
-def _is_kr_trading_day(date: str) -> bool:
-    """KR 거래일(개장일) 판정. 주말 또는 KRX 휴장일이면 False. 오프라인·즉시·결정적.
-
-    하드코딩 집합 기반이라 네트워크 불필요(KRX/pykrx 다운에도 견고). 미등록 신규 휴장일은
-    weekly_sanity_check 갱신 알림으로 보강한다.
-    """
-    try:
-        dt = datetime.strptime(date, "%Y%m%d")
-    except (ValueError, TypeError):
-        return True  # 형식 불명 → 보수적으로 수집 허용
-    if dt.weekday() >= 5:  # 토(5)/일(6)
-        return False
-    return date not in _KR_MARKET_HOLIDAYS
-
+# _KR_MARKET_HOLIDAYS / _is_kr_trading_day — _config.py로 박리, 위 from ._config import 로 re-import됨.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 메인 수집 함수
