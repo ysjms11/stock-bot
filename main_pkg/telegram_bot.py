@@ -1141,7 +1141,7 @@ async def weekly_sanity_check(context):
                 chat_id=CHAT_ID,
                 text=(f"📅 KRX 공휴일 list 갱신 필요\n"
                       f"{this_year_str}년 등록: {krx_cnt}건 (정상 13~16건)\n"
-                      f"db_collector.py `_KR_MARKET_HOLIDAYS` frozenset 갱신 (단일 소스)\n"
+                      f"db_collector/_config.py `_KR_MARKET_HOLIDAYS` frozenset 갱신 (단일 소스)\n"
                       f"https://open.krx.co.kr/contents/MKD/01/0110/01100305/MKD01100305.jsp")
             )
 

@@ -203,7 +203,7 @@ class _PackageModule(types.ModuleType):
                 return getattr(mod, name)
             except AttributeError:
                 continue
-        raise AttributeError(f"module 'db_collector' has no attribute '{name!r}'")
+        raise AttributeError(f"module 'db_collector' has no attribute {name!r}")
 
 
 # 현재 패키지 모듈 객체를 서브클래스 인스턴스로 교체

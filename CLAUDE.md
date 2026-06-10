@@ -60,7 +60,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 | `kis_api/` | 패키지(23) | KIS/DART/Yahoo API, 데이터 I/O, WebSocket, 매크로, 백업, 미국 애널, NPS/13F. 기반: `_config`·`_session`·`_files`·`_helpers`·`_db`. 도메인: `kr_stock`·`us_stock`·`consensus`·`regime`·`news`·`macro`·`dart`·`fmp`·`polymarket`·`pension`·`portfolio`·`ranks`·`sec_edgar`·`universe`·`us_ratings`·`backup`·`websocket`. `from kis_api import *`로 공개 API 노출 |
 | `mcp_tools/` | 패키지 | `__init__`=`MCP_TOOLS` 스키마 배열(47개), `_registry`=`TOOL_HANDLERS` dict + `execute_tool`(elif 체인 폐기), `_execute`=`_execute_tool` 래퍼, `server`=JSON-RPC/SSE, `tools/*.py`=도구별 핸들러(20). 각 핸들러는 `from kis_api import *` |
 | `main.py` + `main_pkg/` | shim + 패키지 | `main.py`(~7줄)=진입점 shim. 로직은 `main_pkg/`: `telegram_bot`·`_entry`·`_ctx`·`schedule` + `jobs/`(23 잡파일). 텔레그램 봇 + 자동알림 스케줄 |
-| `db_collector.py` | 단일파일(~4400) | KIS API + KRX OPEN API 풀수집 + SQLite DB + 기술지표 + 스캐너 |
+| `db_collector/` | 패키지(14) | KIS+KRX 풀수집·SQLite·기술지표·스캐너·F/M/FCF·US애널 (2026-06 분해). `_db`=`db_write_lock`·`_get_db`, `collect`=일일 파이프라인, `scan`·`technicals`·`financial`·`alpha` 등. `__init__` 프록시가 `setattr(db_collector, X)`를 백킹 모듈 전체로 전파(monkeypatch 투명성 — 서브모듈 직접 패치 금지). 상세 → `.claude/rules/file-structure.md` |
 | `krx_crawler.py` | 단일파일(~1500) | db_collector 호환 wrapper (레거시 fallback) |
 | `dashboard.py` | 단일파일(~3700) | 구 `/dash` 웹 대시보드 (HTML 렌더링) |
 | `dashboard_home.py` | 단일파일(~5300) | 신 `/home` 대시보드 (2026-06 재구축, JSON API) |
@@ -129,7 +129,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 
 ## 코딩 규칙
 
-- **6파일 구조**: API/데이터 → `kis_api.py`, 텔레그램+스케줄 → `main.py`, 웹 대시보드 → `dashboard.py`, MCP → `mcp_tools.py`, KIS API 배치 수집+SQLite → `db_collector.py`, krx 호환 wrapper → `krx_crawler.py`. **dashboard.py 는 main 만 import** (단방향, shadow trap 방지).
+- **모듈 경계**: API/데이터 → `kis_api/`, 텔레그램+스케줄 → `main_pkg/`, 웹 대시보드 → `dashboard.py`(/dash-classic)·`dashboard_home.py`(/home), MCP → `mcp_tools/`, KIS 배치 수집+SQLite → `db_collector/`, krx 호환 wrapper → `krx_crawler.py`. **dashboard.py 는 main 만 import** (단방향, shadow trap 방지).
 - **KIS API 신 방식**: 새 함수는 반드시 `_kis_get()` 래퍼 사용 (구 방식 `get_stock_price()` 패턴 사용 금지).
 - **에러 처리**: 개별 종목 루프 내부는 `try/except Exception: pass` 패턴으로 한 종목 오류가 전체 중단 방지.
 - **KIS API rate limit**: 초당 10건 제한. 연속 호출 시 `await asyncio.sleep(0.3)` 삽입 (실사용 초당 ~3.3건).

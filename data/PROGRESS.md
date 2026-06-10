@@ -1,3 +1,21 @@
+## 📄 2026-06-10 db_collector.py 분해 — 단일파일 4,439줄 → db_collector/ 14모듈 패키지 (사용자 "진행하자, 에이전트 팀으로")
+
+**모놀리스 분해 1호** (남은 후보였던 dashboard.py=무수정 영역·dashboard_home.py=사용자 활발 편집이라 db_collector 선정). **worktree 격리**(`refactor/db-collector-pkg`, 사용자 동시 세션과 트리 충돌 방지) + 에이전트 팀(developer Sonnet ×5 phase / code-reviewer Opus ×2 / critic·verifier **Fable**) + 새 인프라 첫 실전(characterization-first·fast_gate 훅).
+
+**Phase 구성** (phase별 커밋, 전 구간 696 passed/17 skipped 유지):
+- P0: characterization 71개 추가(순수 헬퍼 골든값) — 분해 중 read-only 안전망
+- P1: verbatim 셸 — db_collector.py→`db_collector/core.py` git mv + `__init__` 표면 동결 + **`_PackageModule` 프록시**(`setattr(db_collector,X)`를 백킹 모듈 전체로 전파 → 기존 테스트 monkeypatch 투명성 보존) + `_init_schema` `__file__` 경로 수정
+- P2~P4: 도메인 박리 13모듈(`_config`/`_db`(db_write_lock)/`krx`/`sector`/`master`/`technicals`/`scan`/`dividends`/`alpha`/`financial`/`us_analysts`/`backup`/`collect`) → core.py 소멸
+- 설계 포인트: `_RATE_SEM`은 setter/reader 동거 원칙(collect)+financial 독립 사본(순환 import 회피, 원본도 잡별 자체 초기화라 동작 동일·오히려 잡 간 세마포어 교체 레이스 제거). 박리 모듈은 core 상위 import 금지(순환 방지)
+
+**게이트 결과**: code-reviewer(Opus) 2회 — P1 APPROVE(프록시 6엣지 실측+P2+ 다중포워딩 권고), P2-P4 "Safe to merge"(67/67 함수·고위험 8개 byte-identical·락 싱글톤·DAG 무순환, verbatim NIT 3 수정). **critic(Fable) ACCEPT-WITH-RESERVATIONS**(CRITICAL 0, MAJOR 1=docs 미동기→이 커밋으로 해소, ops 함정 전수 클린: pyc 섀도잉·파일경로 참조·reload·launchd 전부 실측). **verifier(Fable) PASS**(9/9: 실DB 761k행 smoke·라이브 스캐너·monkeypatch 전파·67함수 census).
+
+**잔여 리스크(정직)**: 라이브 네트워크 잡(collect_daily 풀런·financial weekly)은 스위트 미실행 — **머지+재시작 후 첫 18:30 daily_collect가 실증**, 19:15/20:15/21:15/22:15 sanity 4중 백스톱. 일요일 6/14 lock 검증 스케줄과 합동 판정.
+
+**머지 절차**(critic 처방): ① fix 브랜치에 92cbb0e 이후 db_collector.py 수정 유무 확인(있으면 owning 모듈로 포팅) ② 머지 ③ **머지 결과물에서 풀스위트** ④ `launchctl kickstart -k`(18:30-19:35 피크 회피) ⑤ 루트 고아 `__pycache__/db_collector.cpython-312.pyc` 삭제 ⑥ 로그 ImportError 스모크.
+
+---
+
 ## 📄 2026-06-10 리팩토링 에이전트 조사 + 고스타 레포 스틸맨 → 발췌 채택 적용 (사용자 "적용할거 다 적용해")
 
 **발단**: 사용자 "리팩토링용 에이전트 깃허브에 좋은 거 있어?" → 1차 조사(4렌즈 웹 리서치) 결론: **"리팩토링 전용 에이전트"는 사실상 부재** — 검색되는 건 (a)범용 코딩 에이전트(수평이동), (b)마크다운 프롬프트 컬렉션, (c)사망 프로젝트(Aider 휴면·Roo/Refact/Bowler 아카이브). 현 셋업(Claude Code+에이전트팀+green 테스트)이 수렴점. 진짜 추천 = 결정적 공구 추가(Serena/ast-grep/LibCST) + strangler-fig 패턴.

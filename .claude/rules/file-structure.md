@@ -1,6 +1,6 @@
 # 파일별 함수 구조 상세
 
-> ⚠️ **STALE (2026-05 리팩터)**: 아래 `kis_api.py`·`main.py`·`mcp_tools.py` 단일파일 구조/라인범위 맵은 **더 이상 유효하지 않음** — 패키지로 분리됨(`kis_api/` 23파일, `mcp_tools/` = `__init__`·`_registry`·`_execute`·`server`·`tools/*`, `main_pkg/` = `telegram_bot`·`_entry`·`_ctx`·`schedule`·`jobs/*`; `main.py`는 7줄 shim). **함수 위치는 `grep -rn "def <name>" <pkg>/`로 확인할 것.** `db_collector.py` 구조 맵은 단일파일이라 아직 유효.
+> ⚠️ **STALE (2026-05 리팩터)**: 아래 `kis_api.py`·`main.py`·`mcp_tools.py` 단일파일 구조/라인범위 맵은 **더 이상 유효하지 않음** — 패키지로 분리됨(`kis_api/` 23파일, `mcp_tools/` = `__init__`·`_registry`·`_execute`·`server`·`tools/*`, `main_pkg/` = `telegram_bot`·`_entry`·`_ctx`·`schedule`·`jobs/*`; `main.py`는 7줄 shim). **함수 위치는 `grep -rn "def <name>" <pkg>/`로 확인할 것.** `db_collector.py`도 2026-06 `db_collector/` 패키지(14모듈)로 분리됨 — 아래 패키지 맵 참조 (구 단일파일 라인맵 폐기).
 
 ## kis_api.py 구조 (위→아래) — ⚠️ STALE, kis_api/ 패키지로 분리됨
 
@@ -52,22 +52,23 @@
 [끝]        MCP 서버 (_handle_jsonrpc, SSE, messages)
 ```
 
-## db_collector.py 구조
+## db_collector/ 패키지 구조 (2026-06 분해, 단일파일 4,439줄 → 14모듈)
 
-```
-[1~55]      imports, 상수 (DB_PATH, KST, _DATA_DIR)
-[56~82]     SQLite 연결 (_get_db, _init_schema)
-[83~210]    KRX OPEN API + 파싱 (_krx_openapi_get, _krx_post, _parse_market_records, fetch_krx_market_data)
-[210~362]   섹터 매핑 (_classify_sector, _load_std_sector_map, KIS 기본정보 수집 헬퍼)
-[363~402]   stock_master 관리 (_sync_stock_master, _update_master_from_basic)
-[403~523]   배치 수집 (_collect_phase, _store_daily_snapshot)
-[524~661]   collect_daily() 메인 함수
-[662~827]   기술지표 헬퍼 (_ma, _rsi, _calc_vp, _volume_ratio, _spread_at, _rsi_at, _macd, _atr, _volatility_20d)
-[829~1051]  히스토리 로드 & 기술지표 계산 (_load_history_from_db, _compute_technicals_sqlite)
-[1052~1120] 기술지표 DB 저장 (_compute_and_update)
-[1121~1221] load_krx_db() 하위호환 함수
-[1222~1312] 스캐너 헬퍼 (_load_history, _get_foreign_streak_data_db, _summarize_filters)
-[1313~1466] scan_stocks() 스캐너 (15개 프리셋 + 복합 필터)
-[1467~1646] collect_financial_weekly() + _update_financial_derived()
-[1647~1699] backup_to_icloud()
-```
+| 모듈 | 소유 |
+|------|------|
+| `__init__.py` | 패키지 표면 동결 + `_PackageModule` 프록시 — `setattr(db_collector, X)`가 `_BACKING` 전 모듈로 전파(monkeypatch 투명성). **테스트는 패키지 네임스페이스를 패치할 것(서브모듈 직접 패치 금지)** |
+| `_config.py` | 상수 (DB_PATH, KST, KRX_OPENAPI_*, `_KR_MARKET_HOLIDAYS`, `_is_kr_trading_day`) |
+| `_db.py` | `_get_db`, `_init_schema`, **`db_write_lock`** (쓰기 직렬화 싱글톤) |
+| `krx.py` | KRX OPEN API (_pi/_pf/_krx_openapi_get/_krx_post/_parse_market_records/fetch_krx_market_data) |
+| `sector.py` | 섹터 분류 (dicts + _classify_sector/_load_std_sector_map) |
+| `master.py` | stock_master (_sync_stock_master/_update_master_from_basic) |
+| `collect.py` | 수집 파이프라인 (collect_daily/_collect_phase/_store_daily_snapshot/backfill 2종/_compute_and_update + `_RATE_SEM`) |
+| `technicals.py` | 기술지표 (_ma/_rsi/_macd/_atr/_calc_vp 등 + _load_history_from_db/_compute_technicals_sqlite) |
+| `scan.py` | 스캐너 (PRESETS/scan_stocks/load_krx_db/_load_history/_summarize_filters) |
+| `financial.py` | 재무 수집 (collect_financial_weekly/on_disclosure/DART batch/수급·컨센 writer + 독립 `_RATE_SEM` 사본) |
+| `dividends.py` | 배당 (collect_dividends/_recompute_div_yield_from_events) |
+| `alpha.py` | F/M/FCF 알파 엔진 (TTM/update_all_alpha_metrics/collect_shares_historical) |
+| `us_analysts.py` | 미국 애널 (sync_us_analyst_master/is_tier_s_analyst/find_us_buy_candidates) |
+| `backup.py` | backup_to_icloud |
+
+> 함수 위치: `grep -rn "def <name>" db_collector/`. 박리 모듈은 core 미존재 — 외부는 항상 `from db_collector import X` (패키지 표면).
