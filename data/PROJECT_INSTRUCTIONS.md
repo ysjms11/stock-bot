@@ -110,7 +110,7 @@ Core 포지션 악재 발생 시 **최대 3거래일 쿨링** 후 판단 (단 th
 
 **Thesis**: 1-2줄 자연어 문장
 
-정식 딥서치(KR/US_DEEPSEARCH 10 STEP, KR/US_EXIT 8 STEP)에서는 해당 문서의 출력 형식을 따른다.
+정식 딥서치(KR_DEEPSEARCH 10 STEP / US_DEEPSEARCH 5-Stage, KR/US_EXIT STEP 0~8)에서는 해당 문서의 출력 형식을 따른다.
 </output_format>
 
 <research_discipline>

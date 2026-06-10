@@ -1,5 +1,5 @@
 # Stock-Bot MCP 도구 가이드
-> 업데이트: 2026-04-16 | 총 33개 도구
+> 업데이트: 2026-04-16 | 총 47개 도구
 >
 > **이 문서**: 도구 무엇을 언제 쓰는지 (용도·타이밍). 파라미터 상세 → `bot_reference.txt`, 실전 조합 워크플로우 → `bot_scenarios.md`, 입출력 예시 → `bot_samples.md`.
 
@@ -9,7 +9,7 @@
 
 | 도구 | 명령 | 용도 |
 |---|---|---|
-| **get_regime** | `get_regime` | 🔴🟡🟢 레짐 판정 (복합점수 0~100) |
+| **get_regime** | `get_regime` | KR/US 분리 현금 다이얼 — KR=KOSPI 실현변동성 252일 %ile+200MA거리, US=S&P 200MA+VIX 252일 %ile. 🟢평상(5~8%)/🟡경계(8~15%)/🔴발사(풀투자) |
 | **get_alerts** | `get_alerts(brief=true)` | 손절/목표 근접 + 매수감시 + 최근 decision |
 
 → 변화 없으면 끝. KOSPI ±3% or 보유 ±5% 시 풀 점검.
@@ -89,7 +89,7 @@
 | `golden_cross` | 골든크로스 발생 | MA5>MA20 전환 |
 | `sector_leader` | 섹터 내 최강 | 업종 대비 +5% 초과 |
 | `w52_breakout` | 52주 신고가 근접 | 52주 위치 >95% |
-| `short_squeeze` | 숏커버 진행 | 공매도 10일 -30% |
+| `short_squeeze` | 숏커버 진행 | 공매도 20일 -30% |
 | `credit_unwind` | 신용 정리 중 | 신용잔고 5일 연속 감소 |
 | `foreign_reversal` | 외인 매수 전환 | 5일 매도→매수 |
 | `foreign_accumulation` | 외인 보유비율 급증 | 5일 +1%p |
@@ -124,7 +124,7 @@
 | | `mode=op_turnaround` | 적자→흑자 전환 |
 | | `mode=dart_op_growth` | DART 기반 연간 OP 성장률 |
 | | `mode=dart_turnaround` | DART 기반 적자→흑자 |
-| **get_sector** | `mode=flow` | 업종별 외인+기관 순매수 (92개 실용 섹터: 반도체/조선/전력기기 등) |
+| **get_sector** | `mode=flow` | 업종별 외인+기관 순매수 (WI26 업종 코드: 반도체/조선/전력기기/방산/2차전지/건설/바이오) |
 | | `mode=rotation` | 섹터 로테이션 감지 |
 | **get_finance_rank** | | 전종목 재무비율 순위 (PER/PBR/ROE 등) |
 | **get_highlow** | | 52주 신고가/신저가 근접 종목 |
@@ -196,17 +196,17 @@
 
 ## 🗄️ 데이터 수집 (KRX DB v2)
 
-매일 15:55 KST 자동 수집 → data/krx_db/YYYYMMDD.json
+평일 18:30 KST `daily_collect` 자동 수집 → SQLite data/stock.db
 
 | 카테고리 | 필드 | 소스 |
 |---|---|---|
 | 시세 | 종가/시고저/등락률/거래량/시총 | KRX OPEN API |
 | 종목정보 | 업종/상장주식수 | KRX OPEN API |
-| 밸류 | PER/PBR/EPS/BPS/배당수익률 | KRX 크롤링 (Safari) |
-| 수급 | 외인/기관/개인 순매수 | KRX 크롤링 |
-| 공매도 | 잔고/비중 | KRX 크롤링 |
-| 외인보유 | 보유비율/한도소진율 | KRX 크롤링 |
-| 신용/대차 | 신용잔고/대차잔고 | KRX 크롤링 |
+| 밸류 | PER/PBR/EPS/BPS/배당수익률 | KRX OPEN API + KIS fallback |
+| 수급 | 외인/기관/개인 순매수 | KRX OPEN API + KIS fallback |
+| 공매도 | 잔고/비중 | KRX OPEN API + KIS fallback |
+| 외인보유 | 보유비율/한도소진율 | KRX OPEN API + KIS fallback |
+| 신용/대차 | 신용잔고/대차잔고 | KRX OPEN API + KIS fallback |
 | 컨센서스 | 목표가/괴리율 | FnGuide |
 | 이평선 | MA5/10/20/60/120/200 | 계산 |
 | 기술지표 | RSI(14)/볼린저/MA spread | 계산 |
@@ -224,16 +224,20 @@
 
 | 시간 | 알림 |
 |---|---|
-| 07:00 | 실적 캘린더 + 배당 캘린더 + 리포트 수집 (평일) |
+| 07:02 | 실적 캘린더 (평일) |
+| 07:03 | 배당 캘린더 (평일) |
 | 07:10 | 미국 실적 캘린더 (평일) |
+| 08:30 | 리포트 수집 (평일) |
 | 15:40 | 한국 장마감 요약 (포트변동/섹터ETF/감시접근) |
 | 15:50 | 포트폴리오 스냅샷 + 드로다운 체크 (평일) |
 | 16:30 | 모멘텀 경고 (5가지 조건 중 2개+) |
 | 19:00 | 워치 변화 감지 (평일) |
-| 06:00 | 미국 장마감 요약 (S&P/나스닥/보유종목/손절경고) |
-| 18:00 | 매크로 대시보드 (매일) |
+| 05:05(DST)/06:05(표준시) | 미국 장마감 요약 (S&P/나스닥/보유종목/손절경고) |
+| 06:00 | 매크로 대시보드 macro_am (매일) |
+| 18:55 | 매크로 대시보드 (매일, daily_collect 18:30 완료 후) |
 | 22:00 | Gist 자동 백업 (매일) |
-| 일요일 07:00 | 유니버스 + 컨센서스 갱신 |
+| 월요일 07:01 | 유니버스 갱신 |
+| 일요일 07:05 | 컨센서스 갱신 |
 | 일요일 19:00 | Sunday 30 리마인더 |
 | 수시 | 손절가/목표가/매수감시 도달 알림 |
 | 수시 | DART 공시 알림 ([긴급]/[주의]/[참고]) |
@@ -247,7 +251,7 @@
 | 도구 | 명령 | 용도 |
 |---|---|---|
 | **git_status** | `git_status` | 브랜치/staged/modified/untracked 조회 |
-| **git_diff** | `git_diff(path="kis_api.py")` | 변경 내용 확인 (staged 옵션 지원) |
+| **git_diff** | `git_diff(path="kis_api/regime.py")` | 변경 내용 확인 (staged 옵션 지원) |
 | **git_log** | `git_log(n=10)` | 최근 커밋 히스토리 (path 옵션 지원) |
-| **git_commit** | `git_commit(files=["main.py"], message="fix: ...")` | 파일 지정 커밋 (.py/.env 차단) |
+| **git_commit** | `git_commit(files=["data/TODO_dev.md"], message="fix: ...")` | 파일 지정 커밋 (.py/.env 차단) |
 | **git_push** | `git_push` | origin/main push |

@@ -192,6 +192,15 @@
 - `data/reports.db`(0바이트 고아) 삭제 + .gitignore에 `data/*.db` 패턴 추가.
 - 봇 health 200, launchd 정상.
 
+---
+## 2026-06-04 투자규칙 6/1 세대 정렬 완료
+- 발견: 규칙이 2세대로 분기·모순 (EXIT 6/1 신세대=전량이진·공통동인·경로3 vs 마스터·DEEPSEARCH v4 구세대=부분정리·유포리아·경로3 없음). 매세션 로드 요약본이 구세대였음 → 디폴트로 낡은 프레임 작동 중이었음.
+- 조치: INVESTMENT_RULES → 3경로+전량이진+절대원칙0(가격≠매도)+공통동인(AI capex)+능동 경로3+dry-powder+단일 25%하드캡+클러스터 35%소프트+문서우선순위 조항. 프로젝트 지침 → sell_three_paths 교체(사용자 직접). PROJECT_INSTRUCTIONS.md 미러 신설.
+- 커밋: 660e84d / ae74b61 / 008fb56 / main반영 870f7b9.
+- 핵심: 경로3 능동 재배치 활성화 = "갈아탈 용기" 시스템화 (풀투자+검증 A급후보 → 자동 재배치 스캔, 재원=최저RR/최약thesis, 양쪽 PDF분해 RR 비교, 20거래일 빈도제한, 세제게이트).
+- 잔여(선택): DEEPSEARCH/EXIT 텍스트 청소는 우선순위 조항이 덮어 cosmetic. 도구 레퍼런스(get_sector flow 등) 현행 스키마 확인 과제.
+---
+
 ### 다음 세션 할 일 (우선순위)
 1. **SEC EDGAR Phase 2** — sec_polling 잡(10분) + 8-K/EFFECT 텔레그램 알림 (Phase 1만 완료됨)
 2. `_split_kis_api.py` 삭제 검토(리팩토링 끝난 1회용)

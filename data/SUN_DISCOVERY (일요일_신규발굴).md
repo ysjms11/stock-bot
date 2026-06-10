@@ -39,7 +39,7 @@
 
 > **이 단계가 일요일의 본진. 시간의 50~60%.**
 
-- [ ] `manage_watch(list)` → 영구 워치 15±5개 전수
+- [ ] `get_alerts` → 영구 워치 15±5개 + 매수감시 전수 (manage_watch는 add/remove 전용)
 - [ ] `get_stock_detail(tickers="워치 전체")` (batch) → 현재가 vs entry price
 - [ ] `get_alpha_metrics(tickers="워치 전체")` → F-Score 변화
 - [ ] `get_news(tickers="워치 전체")` → thesis 영향 헤드라인
