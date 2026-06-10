@@ -89,7 +89,7 @@ def _get_db() -> sqlite3.Connection:
 
 def _init_schema(conn: sqlite3.Connection):
     """data/db_schema.sql 실행."""
-    schema_path = os.path.join(os.path.dirname(__file__), "data", "db_schema.sql")
+    schema_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "db_schema.sql")
     with open(schema_path, encoding="utf-8") as f:
         conn.executescript(f.read())
     # 기존 DB 마이그레이션: 누락 컬럼 추가 (SQLite ADD COLUMN IF NOT EXISTS 미지원 → try/except)
