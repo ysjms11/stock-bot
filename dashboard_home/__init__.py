@@ -1,6 +1,16 @@
-# dashboard_home 패키지 셸 (2026-06 분해 P1→P2) — re-export 표면.
-# P2: 템플릿/JS 자산 상수 → _assets.py 소유. core.py는 로직 전용.
-# 외부 표면은 main_pkg/_entry.py가 쓰는 2심볼 + characterization test 전체.
+"""dashboard_home — 새 대시보드 P0/P1/P2/P3a/P3b.
+
+/home 경로에 서빙. /dash(dashboard.py)는 무수정.
+P0: HTML 쉘 + Alpine 탭 네비 + 빈 패널.
+P1: JSON API (/api/home, /api/regime, /api/alerts, /api/portfolio) + 홈 화면 실데이터 바인딩.
+P2: 포트폴리오 + 워치·알림 탭.
+P3a: Whale 탭 — /api/whale?p=<preset> + Alpine 서브탭 5개.
+P3b: 리포트 탭 — /api/reports + /api/reports/{ticker}, 기록 탭 — /api/decisions + /api/trades + /api/invest_todo.
+"""
+# dashboard_home 패키지 (2026-06 분해 P1→P4) — re-export 표면.
+# P2: _assets.py (템플릿/JS 상수).
+# P3: _helpers.py, reports.py, whale.py, payloads.py, routes.py.
+# P4: core.py 소멸 — 모든 심볼이 owning 모듈에 직접 소유됨.
 
 # ── 대형 문자열 상수 (characterization hash 잠금 13개, 소유: _assets) ────────
 from ._assets import (
@@ -18,19 +28,21 @@ from ._assets import (
     _WHALE_PANEL_REMOVED,
 )
 
-# ── 로직 심볼 (소유: core) ────────────────────────────────────────────────────
-from .core import (
-    # 공개 표면 (main_pkg/_entry.py 등 외부 소비자)
-    register_home_routes,
-    warm_caches,
-
-    # DB 헬퍼 (characterization test 직접 호출)
+# ── 캐시/DB 헬퍼 (소유: _helpers) ─────────────────────────────────────────────
+from ._helpers import (
     _open_db,
+)
+
+# ── 리포트 빌더 (소유: reports) ───────────────────────────────────────────────
+from .reports import (
     _sync_reports_payload,
     _sync_reports_by_ticker,
     _reports_by_ticker,
+    build_reports_payload,
+)
 
-    # Whale 빌더 (characterization test 직접 호출)
+# ── Whale 빌더 (소유: whale) ──────────────────────────────────────────────────
+from .whale import (
     _whale_home,
     _whale_kr_5pct,
     _whale_kr_full,
@@ -38,11 +50,10 @@ from .core import (
     _whale_pension,
     _whale_insider,
     build_whale_payload,
-
-    # 추가 공개 빌더 (상위 소비자용)
-    build_reports_payload,
 )
 
-# __doc__: core 모듈 독스트링을 패키지 네임스페이스에 그대로 노출
-# → characterization test의 __doc__ sha256 검증 통과
-from .core import __doc__
+# ── 공개 표면 (main_pkg/_entry.py 등 외부 소비자, 소유: routes) ───────────────
+from .routes import (
+    register_home_routes,
+    warm_caches,
+)
