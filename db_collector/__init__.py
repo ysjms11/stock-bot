@@ -16,10 +16,14 @@ from . import technicals  # noqa: F401 — P2b-2 박리
 from . import sector  # noqa: F401 — P2b-3 박리
 from . import krx  # noqa: F401 — P2b-4 박리
 from . import _db  # noqa: F401 — P3-1 박리
+from . import master  # noqa: F401 — P3-2 박리
+from . import scan  # noqa: F401 — P3-3 박리
+from . import dividends  # noqa: F401 — P3-4 박리
+from . import alpha  # noqa: F401 — P3-5 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core, _config, technicals, sector, krx, _db]
+_BACKING: list = [core, _config, technicals, sector, krx, _db, master, scan, dividends, alpha]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
@@ -59,6 +63,39 @@ from ._db import (  # noqa: F401
     _get_db,
 )
 
+# 스캐너 / 히스토리 / load_krx_db — scan.py 가 실소유자 (P3-3)
+from .scan import (  # noqa: F401
+    PRESETS,
+    load_krx_db,
+    _load_history,
+    _get_foreign_streak_data_db,
+    _summarize_filters,
+    scan_stocks,
+)
+
+# 배당 — dividends.py 가 실소유자 (P3-4)
+from .dividends import (  # noqa: F401
+    _div_num,
+    _recompute_div_yield_from_events,
+    collect_dividends,
+)
+
+# 알파 메트릭 엔진 — alpha.py 가 실소유자 (P3-5)
+from .alpha import (  # noqa: F401
+    _parse_period,
+    _build_period,
+    _prev_yoy_period,
+    _safe_div,
+    _pick_net_income,
+    _compute_ttm,
+    _compute_fscore,
+    _compute_mscore,
+    _compute_fcf_metrics,
+    _update_alpha_metrics,
+    _ensure_alpha_columns,
+    update_all_alpha_metrics,
+)
+
 from .core import (  # noqa: F401
     # DART 간격 (core에 남아 있음)
     _DART_INTERVAL,
@@ -66,39 +103,12 @@ from .core import (  # noqa: F401
     # 섹터 분류 — sector.py 가 실소유자, core re-import로 이 블록에서 가져옴
     _classify_sector,
 
-    # 스캐너 / 히스토리
-    _load_history,
-    _summarize_filters,
-    PRESETS,
-
-    # 날짜 / 기간 헬퍼
-    _parse_period,
-    _build_period,
-    _prev_yoy_period,
-
-    # 재무 계산 헬퍼
-    _safe_div,
-    _pick_net_income,
-    _div_num,
-    _compute_ttm,
-
-    # 알파 메트릭
-    _compute_fscore,
-    _compute_mscore,
-    _compute_fcf_metrics,
-    _update_alpha_metrics,
-    _ensure_alpha_columns,
-    update_all_alpha_metrics,
-
     # DART 내부 배치
     _collect_dart_full_batch,
 
     # 공개 함수 (외부 직접 import)
-    load_krx_db,
-    scan_stocks,
     collect_daily,
     collect_financial_weekly,
-    collect_dividends,
     collect_financial_on_disclosure,
     backup_to_icloud,
     backfill_day_via_chart,
