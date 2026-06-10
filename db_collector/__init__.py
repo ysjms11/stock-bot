@@ -13,10 +13,11 @@ import types
 from . import core  # noqa: F401 — submodule must be importable
 from . import _config  # noqa: F401 — P2b-1 박리
 from . import technicals  # noqa: F401 — P2b-2 박리
+from . import sector  # noqa: F401 — P2b-3 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core, _config, technicals]
+_BACKING: list = [core, _config, technicals, sector]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
@@ -58,7 +59,7 @@ from .core import (  # noqa: F401
     _pf,
     _parse_market_records,
 
-    # 섹터 분류
+    # 섹터 분류 — sector.py 가 실소유자, core re-import로 이 블록에서 가져옴
     _classify_sector,
 
     # 스캐너 / 히스토리
