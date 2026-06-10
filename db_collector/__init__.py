@@ -15,10 +15,11 @@ from . import _config  # noqa: F401 — P2b-1 박리
 from . import technicals  # noqa: F401 — P2b-2 박리
 from . import sector  # noqa: F401 — P2b-3 박리
 from . import krx  # noqa: F401 — P2b-4 박리
+from . import _db  # noqa: F401 — P3-1 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core, _config, technicals, sector, krx]
+_BACKING: list = [core, _config, technicals, sector, krx, _db]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
@@ -52,15 +53,15 @@ from .technicals import (  # noqa: F401
     _rsi_at,
 )
 
+# 비동기 락 / DB 접근 — _db.py 가 실소유자 (P3-1)
+from ._db import (  # noqa: F401
+    db_write_lock,
+    _get_db,
+)
+
 from .core import (  # noqa: F401
     # DART 간격 (core에 남아 있음)
     _DART_INTERVAL,
-
-    # 비동기 락
-    db_write_lock,
-
-    # DB 접근
-    _get_db,
 
     # 섹터 분류 — sector.py 가 실소유자, core re-import로 이 블록에서 가져옴
     _classify_sector,
