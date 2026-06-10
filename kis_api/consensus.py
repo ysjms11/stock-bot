@@ -320,7 +320,7 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
     else:
         us_tickers = {}  # 부분 업데이트 시 US 수집 건너뜀
 
-    loop = _aio.get_event_loop()
+    loop = _aio.get_running_loop()
 
     # 한국 컨센서스 (FnGuide, 동기 → executor)
     new_kr: dict = {}

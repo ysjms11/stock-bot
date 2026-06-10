@@ -556,7 +556,7 @@ def _kr_sector_heatmap_from_db() -> dict:
 
 async def _build_sector_heatmap_payload() -> dict:
     """섹터 히트맵 payload — 동기 DB 조회를 executor로 래핑."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _kr_sector_heatmap_from_db)
 
 
@@ -685,7 +685,7 @@ def _kr_marketmap_from_db(market: str = "kospi") -> dict:
 
 async def _build_marketmap_payload(market: str = "kospi") -> dict:
     """마켓맵 payload — 동기 DB 조회를 executor로 래핑."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _kr_marketmap_from_db, market)
 
 
@@ -5739,7 +5739,7 @@ def _sync_reports_payload() -> dict:
 
 async def build_reports_payload() -> dict:
     """_sync_reports_payload를 executor에서 실행 (whale과 동일 패턴)."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _sync_reports_payload)
 
 
@@ -5768,7 +5768,7 @@ def _sync_reports_by_ticker(ticker: str) -> list:
 
 async def _reports_by_ticker(ticker: str) -> list:
     """_sync_reports_by_ticker를 executor에서 실행 (whale과 동일 패턴)."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _sync_reports_by_ticker, ticker)
 
 
@@ -6009,7 +6009,7 @@ def _whale_insider() -> list:
 
 async def build_whale_payload(preset: str) -> dict | list:
     """preset ∈ home|kr_5pct|kr_full|us_13f|pension|insider — 구조화 데이터 반환."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     if preset == "home":
         return await loop.run_in_executor(None, _whale_home)
     elif preset == "kr_5pct":
@@ -6661,7 +6661,7 @@ async def _handle_api_stock_detail(request: web.Request) -> web.Response:
             return raw
 
         # 캔들 + 컨센서스 히스토리 (KR만, US는 빈 배열)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         if is_us:
             candles = []
             consensus_history = []
@@ -6744,7 +6744,7 @@ async def _handle_api_portfolio_history(request: web.Request) -> web.Response:
             return {"snapshots": [], "count": 0, "_error": str(e)}
 
     async def _factory():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _load_sync)
 
     return await _api(_cached("portfolio_history", 300.0, _factory))

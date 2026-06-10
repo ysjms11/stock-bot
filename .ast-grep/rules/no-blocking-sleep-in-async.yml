@@ -1,0 +1,14 @@
+id: no-blocking-sleep-in-async
+language: python
+rule:
+  any:
+    - pattern: time.sleep($ARG)
+    - pattern: _time.sleep($ARG)
+  inside:
+    pattern: "async def $FUNC($$$ARGS): $$$BODY"
+    stopBy: end
+message: >
+  Blocking time.sleep() inside an async def stalls the entire event loop.
+  Use `await asyncio.sleep(...)` instead, or offload to a thread with
+  `await asyncio.to_thread(time.sleep, ...)` only if truly needed.
+severity: warning

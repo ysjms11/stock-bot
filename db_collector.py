@@ -2128,7 +2128,7 @@ async def collect_financial_weekly(date: str = None) -> dict:
 
     # Phase A: 손익계산서
     print(f"[Finance] Phase A — 손익계산서 {len(tickers)}종목 시작", flush=True)
-    _phase_start = asyncio.get_event_loop().time()
+    _phase_start = asyncio.get_running_loop().time()
     for i, ticker in enumerate(tickers):
         try:
             from kis_api import kis_income_statement
@@ -2159,14 +2159,14 @@ async def collect_financial_weekly(date: str = None) -> dict:
         except Exception as e:
             print(f"[Finance] {ticker} 손익계산서 수집 실패 (무시): {e}")
         if (i + 1) % _PROGRESS_EVERY == 0:
-            elapsed = asyncio.get_event_loop().time() - _phase_start
+            elapsed = asyncio.get_running_loop().time() - _phase_start
             print(f"[Finance] 손익: {i+1}/{len(tickers)} (성공 {success_is}, 타임아웃 {_timeout_count['is']}, {elapsed:.0f}s)", flush=True)
-    elapsed_a = asyncio.get_event_loop().time() - _phase_start
+    elapsed_a = asyncio.get_running_loop().time() - _phase_start
     print(f"[Finance] Phase A 완료 — 성공 {success_is}/{len(tickers)}, 타임아웃 {_timeout_count['is']}, {elapsed_a:.0f}s", flush=True)
 
     # Phase B: 대차대조표
     print(f"[Finance] Phase B — 대차대조표 {len(tickers)}종목 시작", flush=True)
-    _phase_start = asyncio.get_event_loop().time()
+    _phase_start = asyncio.get_running_loop().time()
     for i, ticker in enumerate(tickers):
         try:
             from kis_api import kis_balance_sheet
@@ -2200,9 +2200,9 @@ async def collect_financial_weekly(date: str = None) -> dict:
         except Exception:
             pass
         if (i + 1) % _PROGRESS_EVERY == 0:
-            elapsed = asyncio.get_event_loop().time() - _phase_start
+            elapsed = asyncio.get_running_loop().time() - _phase_start
             print(f"[Finance] 대차: {i+1}/{len(tickers)} (성공 {success_bs}, 타임아웃 {_timeout_count['bs']}, {elapsed:.0f}s)", flush=True)
-    elapsed_b = asyncio.get_event_loop().time() - _phase_start
+    elapsed_b = asyncio.get_running_loop().time() - _phase_start
     print(f"[Finance] Phase B 완료 — 성공 {success_bs}/{len(tickers)}, 타임아웃 {_timeout_count['bs']}, {elapsed_b:.0f}s", flush=True)
 
     # Phase C: DART 현금흐름표 + 지배귀속 + 판관비/매출채권/재고 (최신 4분기)

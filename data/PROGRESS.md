@@ -1,3 +1,20 @@
+## 📄 2026-06-10 리팩토링 에이전트 조사 + 고스타 레포 스틸맨 → 발췌 채택 적용 (사용자 "적용할거 다 적용해")
+
+**발단**: 사용자 "리팩토링용 에이전트 깃허브에 좋은 거 있어?" → 1차 조사(4렌즈 웹 리서치) 결론: **"리팩토링 전용 에이전트"는 사실상 부재** — 검색되는 건 (a)범용 코딩 에이전트(수평이동), (b)마크다운 프롬프트 컬렉션, (c)사망 프로젝트(Aider 휴면·Roo/Refact/Bowler 아카이브). 현 셋업(Claude Code+에이전트팀+green 테스트)이 수렴점. 진짜 추천 = 결정적 공구 추가(Serena/ast-grep/LibCST) + strangler-fig 패턴.
+
+**사용자 "그래도 스타 많은 애들 이유 있을 것" → 스틸맨 2차 조사(레포 실fetch)**: 절반 인정 — OpenHands 76k★(클로즈율 96.5%)·Serena 25k★(유기성장)·ast-grep 14k★는 진짜, **opencode 172k★=시류·claude-flow 58.7k★=기능 97% 스텁(독립감사, neural=Math.random)**. 스타 신뢰서열: 이슈클로즈율>기여자분포>릴리스>스타. 그리고 조사가 **우리 구멍 발견**: code-reviewer.md에 tools 제한 누락(OMC 이슈트래커의 'verifier가 Write 가지면 self-approve' 실버그와 동일 상태).
+
+**적용 (프레임워크 설치 0, 발췌 채택)**:
+1. **에이전트 md 4개 업그레이드**: code-reviewer(tools 제한 추가·안티인플레이션 계약·도메인 심각도 하한표·이번주 실사고 패턴 3종[db_write_lock 경계/async내 blocking/패치 네임스페이스]), critic(stale 5-file→패키지·하한·정직한 ACCEPT), verifier("테스트 없음"→625 스위트 표준화·다중리뷰어 머지규칙), python-developer(**Railway 화석 제거**→맥미니 launchd·elif→TOOL_HANDLERS·리팩터링 계약[phase 롤백/shim/PROGRESS 의무]·db_write_lock 불변식·침묵-0 금지)
+2. **훅 2개** (.claude/settings.json + scripts/hooks/): SubagentStop `fast_gate.sh`(변경 .py py_compile 서브초 게이트, exit2=자가수정 루프 — 원안 pytest-on-stop은 2분×매종료라 의도적 다운그레이드, 풀회귀는 verifier 담당) + PostToolUse `wip_autocommit.sh`(**wip/·refactor/ 브랜치에서만** 작동, git add -u로 시크릿 제외 — Aider 규율 백포트). 단독 실행 검증 완료(exit 0/0/2/no-op)
+3. **Serena MCP 설치**(local scope, uvx) + **pyright-lsp 공식 플러그인**(user scope) + pyright 1.1.410 npm 설치
+4. **ast-grep 0.43 + 룰 2개** (sgconfig.yml + .ast-grep/rules/): no-blocking-sleep-in-async(probe 4케이스 FP 0 — 단 to_thread용 중첩 sync def는 알려진 FP, advisory 전용), no-asyncio-get-event-loop(alias `_aio.` 포함) → **즉시 수확: 프로덕션 20곳 발견·수정**(19곳 일괄 + 리뷰어가 잡은 alias 1곳 consensus.py:323 — 3.12 deprecated, 이번주 테스트 터진 그 클래스) → 전부 get_running_loop()
+5. **scripts/star_forensics.sh** + 메모리 [[star-forensics]] — 도구 도입 전 5분 검증 루틴
+
+**참고**: 사용자 동시 세션 활발(딥서치 커밋 360d4b7 등) — 전 과정 명시적 스테이징 유지.
+
+---
+
 ## 📄 2026-06-07 시스템 전체 점검 + SQLite 쓰기 직렬화 (사용자 "전체 점검 → 할 수 있는 거 다 해, 코드리뷰 잊지마")
 
 **시스템 점검 결과 — 전반 건강**: main+cloudflared running, health(로컬/공개/MCP) 200, DB 최신 거래일 20260605(2864종목) 수집 정상, 백업 iCloud 오늘자 current/previous 정상, 디스크 115G 여유(45%), git 동기화. 봇 활발히 로깅.

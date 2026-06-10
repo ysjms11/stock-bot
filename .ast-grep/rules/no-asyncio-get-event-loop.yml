@@ -1,0 +1,14 @@
+id: no-asyncio-get-event-loop
+language: python
+rule:
+  any:
+    - pattern: asyncio.get_event_loop()
+    # alias import 커버 (예: import asyncio as _aio — kis_api/consensus.py 에서 실사용)
+    - pattern: _aio.get_event_loop()
+    - pattern: _asyncio.get_event_loop()
+message: >
+  asyncio.get_event_loop() is deprecated and raises "There is no current event
+  loop" on Python 3.12+ in new threads (e.g. ThreadPoolExecutor, APScheduler).
+  Use `asyncio.get_running_loop()` when inside a coroutine, or wrap entry points
+  with `asyncio.run(...)` instead.
+severity: warning

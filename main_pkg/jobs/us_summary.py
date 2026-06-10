@@ -183,7 +183,7 @@ async def us_market_summary(context: ContextTypes.DEFAULT_TYPE):
             # 컨센서스 배치 수집
             us_stops = load_stoploss().get("us_stocks", {})
             us_consensus_map = {}
-            loop_c = asyncio.get_event_loop()
+            loop_c = asyncio.get_running_loop()
             for sym in us_port:
                 try:
                     c = await asyncio.wait_for(
