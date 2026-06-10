@@ -72,3 +72,17 @@
 | `backup.py` | backup_to_icloud |
 
 > 함수 위치: `grep -rn "def <name>" db_collector/`. 박리 모듈은 core 미존재 — 외부는 항상 `from db_collector import X` (패키지 표면).
+
+## dashboard_home/ 패키지 구조 (2026-06 분해, 단일파일 ~6,700줄 → 7모듈)
+
+| 모듈 | 줄수 | 소유 |
+|------|------|------|
+| `__init__.py` | 59 | 표면 동결 (외부 소비자는 `register_home_routes`·`warm_caches` 2심볼 — main_pkg/_entry.py) |
+| `_assets.py` | 5,133 | 템플릿/JS 상수 11종 + `_HOME_SHELL` 조립 — **sha256 characterization 골든으로 byte 동결** (r-string 재이스케이프 절대 금지) |
+| `_helpers.py` | ~105 | SWR 캐시 인프라 (`_cache`/`_refreshing`/`_cached`) + `_open_db`. 다른 서브모듈 import 금지 (cycle) |
+| `payloads.py` | ~1,495 | 네트워크/DB payload 빌더 전부 (home/market/macro/portfolio/watch/signals/US/records) |
+| `reports.py` | 150 | 리포트 payload (SQLite) |
+| `whale.py` | 276 | Whale 6종 + build_whale_payload |
+| `routes.py` | 431 | `_handle_*` 29개 + `register_home_routes` + `warm_caches` 정본 |
+
+> characterization: `tests/test_dashboard_home_characterization.py` (템플릿 해시 13·라우트 57·payload 키셋). 템플릿 수정 시 해시 골든도 함께 갱신해야 함 (의도된 변경만).

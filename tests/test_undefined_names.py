@@ -21,8 +21,8 @@ import builtins
 import importlib
 import pkgutil
 
-PACKAGES = ["main_pkg", "mcp_tools", "kis_api"]
-MODULES = ["db_collector", "report_crawler", "dashboard"]
+PACKAGES = ["main_pkg", "mcp_tools", "kis_api", "db_collector", "dashboard_home"]
+MODULES = ["report_crawler", "dashboard"]
 _BUILTINS = set(dir(builtins))
 
 

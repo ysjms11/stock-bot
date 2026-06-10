@@ -60,40 +60,8 @@ async def _cached(key: str, ttl: float, factory):
     return data
 
 
-async def warm_caches() -> None:
-    """서버 시작 직후 주요 캐시를 백그라운드에서 미리 채움.
-
-    core 4개(home/portfolio/watch/market)를 먼저 순차 워밍 후,
-    무거운 것(macro_panel ~40s, us_candidates ~40s)을 순차 워밍.
-    각 소스 독립 try/except — 일부 실패해도 나머지 계속 진행.
-    asyncio.create_task로 호출 → 봇 기동을 블로킹하지 않음.
-    """
-    print("[cache] warm_caches 시작 — core 4개 프리워밍")
-    for label, key, factory in [
-        ("home",      "home",      lambda: build_home_payload()),
-        ("portfolio", "portfolio", lambda: _build_portfolio_with_grand()),
-        ("watch",     "watch",     lambda: _build_watch_payload()),
-        ("market",    "market",    lambda: build_market_payload()),
-    ]:
-        try:
-            data = await factory()
-            _cache[key] = {"ts": time.monotonic(), "data": data}
-            print(f"[cache] warm OK: {label}")
-        except Exception as e:
-            print(f"[cache] warm FAIL: {label} — {e}")
-
-    # core 완료 후 무거운 엔드포인트 추가 프리워밍 (~40s 각)
-    print("[cache] warm_caches — 무거운 것(macro_panel, us_candidates) 프리워밍 시작")
-    for label, key, factory in [
-        ("macro_panel",   "macro_panel",   lambda: build_macro_panel_payload()),
-        ("us_candidates", "us_candidates", lambda: _build_us_candidates_payload()),
-    ]:
-        try:
-            data = await factory()
-            _cache[key] = {"ts": time.monotonic(), "data": data}
-            print(f"[cache] warm OK: {label}")
-        except Exception as e:
-            print(f"[cache] warm FAIL: {label} — {e}")
+# (warm_caches 정본은 routes.py — P3 박리 잔재 사본은 리뷰에서 제거됨.
+#  이 모듈은 다른 dashboard_home 서브모듈을 import하지 않으므로 빌더 참조 불가)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

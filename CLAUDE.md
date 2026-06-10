@@ -63,7 +63,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 | `db_collector/` | 패키지(14) | KIS+KRX 풀수집·SQLite·기술지표·스캐너·F/M/FCF·US애널 (2026-06 분해). `_db`=`db_write_lock`·`_get_db`, `collect`=일일 파이프라인, `scan`·`technicals`·`financial`·`alpha` 등. `__init__` 프록시가 `setattr(db_collector, X)`를 백킹 모듈 전체로 전파(monkeypatch 투명성 — 서브모듈 직접 패치 금지). 상세 → `.claude/rules/file-structure.md` |
 | `krx_crawler.py` | 단일파일(~1500) | db_collector 호환 wrapper (레거시 fallback) |
 | `dashboard.py` | 단일파일(~3700) | 구 `/dash` 웹 대시보드 (HTML 렌더링) |
-| `dashboard_home.py` | 단일파일(~5300) | 신 `/home` 대시보드 (2026-06 재구축, JSON API) |
+| `dashboard_home/` | 패키지(7) | 신 `/home` 대시보드 (2026-06 재구축→분해). `_assets`=템플릿/JS 상수+`_HOME_SHELL` 조립(sha256 골든 동결), `payloads`=빌더, `routes`=핸들러+`register_home_routes`+`warm_caches`, `reports`/`whale`/`_helpers`(SWR 캐시). 표면=`register_home_routes`·`warm_caches` 2심볼 |
 
 기타 파일:
 
