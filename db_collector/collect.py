@@ -529,9 +529,6 @@ async def collect_daily_backfill(date_str: str, *, _limit: int = 0, kis_history:
     import time as _time
     t0 = _time.monotonic()
 
-    global _RATE_SEM
-    _RATE_SEM = asyncio.Semaphore(8)
-
     # 주말 가드
     dt = datetime.strptime(date_str, "%Y%m%d")
     if dt.weekday() >= 5:
