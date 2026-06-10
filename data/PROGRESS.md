@@ -6,7 +6,8 @@
 - **P1~P4**: verbatim 셸 → `_assets.py`(5,133줄 — 템플릿 전부) → 도메인 5모듈(`_helpers` SWR캐시/`reports`/`whale`/`payloads` 1,495/`routes` 431) → core 소멸. 프록시 불필요(monkeypatch 소비자 0). `__doc__`도 해시 골든이라 `from .core import __doc__` 트릭으로 보존.
 - **게이트**: design-reviewer(Opus) — 캐시 동일성(SWR dict 단일 인스턴스)·서빙경로(GET /home 200 + body==_HOME_SHELL byte-exact 로컬 스모크)·import 부작용 전수 클린. code-reviewer(Opus) — 72함수 census 완전·바디 byte-identical.
 - **리뷰 수확 3건 수정**: ① `_helpers`의 죽은+깨진 `warm_caches` 중복본 제거(P3 잔재 — wire되면 즉시 NameError였음) ② **`test_undefined_names` 가드 확장**: PACKAGES에 `db_collector`(패키지화로 MODULES에선 __init__만 스캔되던 사각) + `dashboard_home` 추가 — 5/29 분할회귀 가드가 새 패키지 21개 서브모듈 커버 ③ **진짜 잠복버그 발굴·수정**: `payloads.py` `load_watchlist` 미import → market-signal 패널(short_sale/credit/lending)이 **원본부터 워치리스트 무시하고 005930 고정**이던 것(try/except이 삼켜온 silent bug) — import 1줄로 해소.
-- 잔여: `_WHALE_PANEL_REMOVED` 죽은 템플릿 ~380줄 verbatim 보존(삭제는 별도 결정), reports/whale의 미사용 `_sqlite3` import(cosmetic).
+- ~~잔여~~ → **6/11 전부 해소(cc23d21)**: `_WHALE_PANEL_REMOVED` 삭제(-376줄, `_HOME_SHELL` 해시 불변 검증), `_sqlite3` 미사용 import 2건, stale docstring. worktree 2개·refactor 브랜치 정리 완료.
+- **✅ 6/11 첫 밤 실증 (07:42 확인)**: 재시작 후 10,730줄 활동 — 구조적 에러 0·lock 0. 새 패키지 실기록 확인: dart_disclosure가 pension.py 경로로 169행 insert, us_ratings 신규 10건(예전 lock 33건→실패 1), 대시보드 warm 6종 전부 OK(미실증이던 네트워크 빌더 macro_panel·us_candidates 포함). 마지막 미실증 = 6/11 18:30 daily_collect → **19:45 자동 검증 예약됨**.
 
 ---
 
