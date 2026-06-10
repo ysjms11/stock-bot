@@ -5,7 +5,6 @@ _whale_pension, _whale_insider, build_whale_payload.
 """
 
 import asyncio
-import sqlite3 as _sqlite3
 from datetime import datetime, timedelta
 
 from kis_api import (

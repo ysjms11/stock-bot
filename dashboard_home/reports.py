@@ -6,7 +6,6 @@ _sync_reports_by_ticker, _reports_by_ticker.
 
 import asyncio
 import os
-import sqlite3 as _sqlite3
 
 from kis_api import _DATA_DIR
 

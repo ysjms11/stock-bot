@@ -25,7 +25,6 @@ from ._assets import (
     _US_PANEL,
     _WATCH_PANEL,
     _WHALE_PANEL,
-    _WHALE_PANEL_REMOVED,
 )
 
 # ── 캐시/DB 헬퍼 (소유: _helpers) ─────────────────────────────────────────────

@@ -281,7 +281,7 @@ async def _handle_api_invest_todo(request: web.Request) -> web.Response:
     return await _api(_cached("invest_todo", 120.0, _build_invest_todo))
 
 async def _handle_api_signals(request: web.Request) -> web.Response:
-    """GET /api/signals — 시그널 피드 (30s TTL, 실시간성 우선)."""
+    """GET /api/signals — 시그널 피드 (240s TTL)."""
     return await _api(_cached("signals", 240.0, _build_signals_payload))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

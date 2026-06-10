@@ -74,11 +74,6 @@ _CONSTANT_GOLDENS: dict[str, tuple[str, int]] = {
         "bb29e39eb8c1d2d67cec1115c9eec41050f9d3b311670922ebdb538c698c2c52",
         20033,
     ),
-    # Dead code — kept verbatim; deletion is a separate decision.
-    "_WHALE_PANEL_REMOVED": (
-        "a9bd7397c7e25c95241206b9bc8342fb752a75d2b0dcb7910519908506f0de53",
-        20054,
-    ),
     "__doc__": (
         "d01300d584cb367f6238d9946934f883a876e09811abe5dde5bcc5473231cb54",
         382,
@@ -86,7 +81,7 @@ _CONSTANT_GOLDENS: dict[str, tuple[str, int]] = {
 }
 
 # Exact count of large string constants
-_EXPECTED_CONSTANT_COUNT = 13
+_EXPECTED_CONSTANT_COUNT = 12
 
 
 def _sha256(s: str) -> str:
