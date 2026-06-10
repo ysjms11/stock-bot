@@ -1,16 +1,20 @@
-# 패키지 셸 (2026-06 분해 P1) — core.py는 구 단일파일 verbatim,
+# 패키지 셸 (2026-06 분해 P2) — core.py는 구 단일파일 verbatim,
 # 이후 phase에서 도메인 모듈로 분리 예정.
 # 외부 인터페이스(import 표면)는 이 __init__이 동결.
 #
-# monkeypatch 투명성: tests가 `import db_collector as _dbc` 후
-# `monkeypatch.setattr(_dbc, "DB_PATH", ...)` 등으로 core.py의 globals를
-# 패치하던 동작을 그대로 보존하기 위해, setattr을 core 모듈로 전달한다.
+# monkeypatch 투명성 (P2a):
+# 다중 모듈 포워딩 — monkeypatch.setattr(db_collector, X)가 X를 정의한
+# 모든 백킹 모듈에 전파, 콜사이트가 어느 모듈에 있든 패치 보임.
+# _BACKING = [core, ...] — core를 항상 첫 원소로; 모듈 박리 시 append.
 
 import sys
 import types
 
 from . import core  # noqa: F401 — submodule must be importable
 from .core import *  # noqa: F401, F403
+
+# 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
+_BACKING: list = [core]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
@@ -91,24 +95,41 @@ from .core import (  # noqa: F401
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# monkeypatch 투명성 — setattr을 core 모듈로 전달하는 모듈 서브클래스
+# monkeypatch 투명성 — 다중 모듈 포워딩
 # tests가 `monkeypatch.setattr(_dbc, "DB_PATH", ...)` 식으로 패치할 때
-# db_collector.core 의 globals도 동시에 갱신하여 core.py 내부 참조가
-# 새 값을 읽도록 보장한다 (Python 3.7+ ModuleType 서브클래스 패턴).
+# _BACKING 리스트의 모든 모듈에 이름이 있으면 동시에 갱신한다.
+# 이로써 코어 내부 참조든, 박리된 서브모듈 내부 참조든 패치가 동일하게 보인다.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class _PackageModule(types.ModuleType):
-    """db_collector 패키지 모듈 — setattr을 core로 전파."""
+    """db_collector 패키지 모듈 — setattr을 _BACKING 전 모듈로 전파.
+
+    다중 모듈 포워딩 — monkeypatch.setattr(db_collector, X)가 X를 정의한
+    모든 백킹 모듈에 전파, 콜사이트가 어느 모듈에 있든 패치 보임.
+    """
 
     def __setattr__(self, name: str, value):
         super().__setattr__(name, value)
-        # core 모듈에도 동일하게 적용 (테스트 monkeypatch 투명성)
-        if hasattr(core, name):
-            setattr(core, name, value)
+        # _BACKING 전체에 전파 (이름이 존재하는 모든 모듈 대상)
+        for mod in _BACKING:
+            if hasattr(mod, name):
+                setattr(mod, name, value)
 
     def __delattr__(self, name: str):
         super().__delattr__(name)
-        if hasattr(core, name):
-            delattr(core, name)
+        for mod in _BACKING:
+            if hasattr(mod, name):
+                delattr(mod, name)
+
+    def __getattr__(self, name: str):
+        # 명시 re-export 또는 from .core import * 로 이미 바인딩된 이름은
+        # 여기까지 오지 않는다 (ModuleType.__getattribute__가 먼저 처리).
+        # 폴스루 안전망: 박리 후 re-export를 누락했을 때도 _BACKING 순서대로 탐색.
+        for mod in _BACKING:
+            try:
+                return getattr(mod, name)
+            except AttributeError:
+                continue
+        raise AttributeError(f"module 'db_collector' has no attribute '{name!r}'")
 
 
 # 현재 패키지 모듈 객체를 서브클래스 인스턴스로 교체
