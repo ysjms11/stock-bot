@@ -21,7 +21,7 @@
 | **kis_api.py** | KIS/DART/Yahoo API + 파일 I/O + WebSocket + 매크로 (~4200줄) |
 | **main.py** | 텔레그램 봇 + 자동알림 스케줄 + 진입점 (~3500줄) |
 | **mcp_tools.py** | MCP 도구 스키마 35개 + 실행 로직 + SSE 서버 (~3800줄) |
-| **db_collector.py** | KIS + DART 수집 + SQLite DB + 기술지표 + 스캐너 + **F/M/FCF 계산** (~2900줄) |
+| **db_collector/** | KIS + DART 수집 + SQLite DB + 기술지표 + 스캐너 + **F/M/FCF 계산** (2026-06 패키지 분해, 14모듈 — 상세 `.claude/rules/file-structure.md`) |
 | **krx_crawler.py** | KRX DB 로드 (레거시 JSON 호환) (~400줄) |
 | **data/stock.db** | SQLite DB (310MB, 7개 테이블: stock_master/daily_snapshot/financial_quarterly/consensus_history/reports/insider_transactions/sqlite_sequence) |
 | **data/db_schema.sql** | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) |

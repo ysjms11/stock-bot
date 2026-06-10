@@ -63,8 +63,8 @@ flowchart TB
 
     subgraph COLLECT["📥 1단계: 수집"]
         K[kis_api.py]
-        X[krx_crawler.py<br/>db_collector.py 호환 wrapper (SQLite 마이그레이션 완료)]
-        C[db_collector.py<br/>⏰매일 자동수집]
+        X[krx_crawler.py<br/>db_collector 호환 wrapper (SQLite 마이그레이션 완료)]
+        C[db_collector/ 패키지<br/>⏰매일 자동수집 (2026-06 14모듈 분해)]
         R[report_crawler.py<br/>⚠️ 와이즈리포트 차단]
     end
 
@@ -132,8 +132,8 @@ flowchart LR
 | 파일 | 역할 | 상태 |
 |---|---|---|
 | `kis_api.py` 364KB | 한국투자증권 API 래퍼 (시세, 수급, 주문) | ✅ |
-| `krx_crawler.py` 60KB | db_collector.py 호환 wrapper (SQLite 마이그레이션 완료) | ✅ |
-| `db_collector.py` 138KB | 위 두 개 돌려서 매일 DB에 쌓는 수집기 | ✅ |
+| `krx_crawler.py` 60KB | db_collector 호환 wrapper (SQLite 마이그레이션 완료) | ✅ |
+| `db_collector/` 패키지 | 위 두 개 돌려서 매일 DB에 쌓는 수집기 (2026-06 14모듈 분해) | ✅ |
 | `report_crawler.py` 47KB | 증권사 리포트 PDF 다운로드 | ⚠️ 와이즈리포트 차단 (성공률 4.2%) |
 
 ### 💾 저장 레이어 (data/)
