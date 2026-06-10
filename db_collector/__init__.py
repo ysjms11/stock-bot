@@ -20,10 +20,14 @@ from . import master  # noqa: F401 — P3-2 박리
 from . import scan  # noqa: F401 — P3-3 박리
 from . import dividends  # noqa: F401 — P3-4 박리
 from . import alpha  # noqa: F401 — P3-5 박리
+from . import financial  # noqa: F401 — P3-6 박리
+from . import us_analysts  # noqa: F401 — P3-7 박리
+from . import backup  # noqa: F401 — P3-8 박리
 from .core import *  # noqa: F401, F403
 
 # 현재 백킹 모듈 목록.  박리된 모듈은 여기에 append하고 명시 re-export도 갱신.
-_BACKING: list = [core, _config, technicals, sector, krx, _db, master, scan, dividends, alpha]
+_BACKING: list = [core, _config, technicals, sector, krx, _db,
+                  master, scan, dividends, alpha, financial, us_analysts, backup]
 
 
 # 외부 코드·테스트가 직접 참조하는 private/dunder 심볼 명시 재수출.
@@ -96,25 +100,31 @@ from .alpha import (  # noqa: F401
     update_all_alpha_metrics,
 )
 
-from .core import (  # noqa: F401
-    # DART 간격 (core에 남아 있음)
+# 재무 수집 — financial.py 가 실소유자 (P3-6)
+from .financial import (  # noqa: F401
     _DART_INTERVAL,
-
-    # 섹터 분류 — sector.py 가 실소유자, core re-import로 이 블록에서 가져옴
-    _classify_sector,
-
-    # DART 내부 배치
     _collect_dart_full_batch,
-
-    # 공개 함수 (외부 직접 import)
-    collect_daily,
     collect_financial_weekly,
     collect_financial_on_disclosure,
-    backup_to_icloud,
-    backfill_day_via_chart,
+)
+
+# iCloud 백업 — backup.py 가 실소유자 (P3-8)
+from .backup import backup_to_icloud  # noqa: F401
+
+# 미국 애널 마스터 / 매수 후보 — us_analysts.py 가 실소유자 (P3-7)
+from .us_analysts import (  # noqa: F401
     sync_us_analyst_master,
     is_tier_s_analyst,
     find_us_buy_candidates,
+)
+
+from .core import (  # noqa: F401
+    # 섹터 분류 — sector.py 가 실소유자, core re-import로 이 블록에서 가져옴
+    _classify_sector,
+
+    # 공개 함수 (외부 직접 import)
+    collect_daily,
+    backfill_day_via_chart,
 )
 
 
