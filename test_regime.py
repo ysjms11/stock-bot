@@ -19,13 +19,11 @@ kis_api.PORTFOLIO_FILE = "/tmp/test_data/portfolio.json"
 from kis_api import (
     _calc_zscore, _rolling_ma_pct, _rolling_momentum,
     _realized_vol, _rolling_realized_vol, _sig_entry,
-    _regime_label, apply_debounce,
-    compute_turbulence, cmd_regime,
+    cmd_regime,
     load_json, save_json,
     REGIME_STATE_FILE,
 )
 from kis_api.regime import (
-    _REGIME_ORDER,
     _apply_regime_debounce,
     _pct_rank,
     _realized_vol_series,
@@ -95,140 +93,6 @@ class TestScoreConversion(unittest.TestCase):
         score = norm.cdf(-2) * 100
         self.assertAlmostEqual(score, 2.28, places=1)
 
-
-class TestRegimeLabel(unittest.TestCase):
-    """레짐 분류 경계값."""
-
-    def test_offensive(self):
-        e, k, en = _regime_label(70)
-        self.assertEqual(en, "offensive")
-
-    def test_neutral_upper(self):
-        e, k, en = _regime_label(69.9)
-        self.assertEqual(en, "neutral")
-
-    def test_neutral_lower(self):
-        e, k, en = _regime_label(40)
-        self.assertEqual(en, "neutral")
-
-    def test_defensive(self):
-        e, k, en = _regime_label(39.9)
-        self.assertEqual(en, "defensive")
-
-    def test_extreme_high(self):
-        e, k, en = _regime_label(100)
-        self.assertEqual(en, "offensive")
-        self.assertEqual(e, "🟢")
-
-    def test_extreme_low(self):
-        e, k, en = _regime_label(0)
-        self.assertEqual(en, "defensive")
-        self.assertEqual(e, "🔴")
-
-
-class TestDebounce(unittest.TestCase):
-    """디바운스 로직 — 악화 2일, 회복 3일."""
-
-    def _make_state(self, regime="neutral", consecutive=5,
-                    pending="", pending_days=0):
-        return {
-            "regime": regime, "consecutive_days": consecutive,
-            "pending_regime": pending, "pending_days": pending_days,
-            "date": "2026-03-30",
-        }
-
-    def test_same_regime_stays(self):
-        """동일 레짐 → 일수만 증가."""
-        st = self._make_state("neutral", 5)
-        st = apply_debounce(55.0, st)  # neutral
-        self.assertEqual(st["regime"], "neutral")
-        self.assertEqual(st["consecutive_days"], 6)
-        self.assertEqual(st["pending_regime"], "")
-
-    def test_deterioration_day1(self):
-        """악화 1일차 → 전환 안 됨."""
-        st = self._make_state("neutral", 5)
-        st = apply_debounce(30.0, st)  # defensive
-        self.assertEqual(st["regime"], "neutral")  # 아직 유지
-        self.assertEqual(st["pending_regime"], "defensive")
-        self.assertEqual(st["pending_days"], 1)
-
-    def test_deterioration_day2_confirms(self):
-        """악화 2일차 → 전환 확정."""
-        st = self._make_state("neutral", 5, pending="defensive", pending_days=1)
-        st = apply_debounce(30.0, st)
-        self.assertEqual(st["regime"], "defensive")
-        self.assertEqual(st["pending_regime"], "")
-
-    def test_recovery_day2_not_yet(self):
-        """회복 2일차 → 아직 미확정."""
-        st = self._make_state("defensive", 5, pending="neutral", pending_days=1)
-        st = apply_debounce(55.0, st)
-        self.assertEqual(st["regime"], "defensive")  # 아직 유지
-        self.assertEqual(st["pending_days"], 2)
-
-    def test_recovery_day3_confirms(self):
-        """회복 3일차 → 전환 확정."""
-        st = self._make_state("defensive", 5, pending="neutral", pending_days=2)
-        st = apply_debounce(55.0, st)
-        self.assertEqual(st["regime"], "neutral")
-
-    def test_pending_regime_changes(self):
-        """대기 중 다른 레짐 → 새 대기 시작."""
-        st = self._make_state("neutral", 5, pending="defensive", pending_days=1)
-        st = apply_debounce(80.0, st)  # offensive
-        self.assertEqual(st["regime"], "neutral")
-        self.assertEqual(st["pending_regime"], "offensive")
-        self.assertEqual(st["pending_days"], 1)
-
-    def test_offensive_to_defensive_2days(self):
-        """공격→위기 (2단계 악화)도 2일이면 확정."""
-        st = self._make_state("offensive", 10, pending="defensive", pending_days=1)
-        st = apply_debounce(20.0, st)
-        self.assertEqual(st["regime"], "defensive")
-
-
-class TestTurbulence(unittest.TestCase):
-    """Turbulence Index 계산."""
-
-    def test_normal_data(self):
-        """정상 데이터 → dict 반환, alert=False expected (랜덤이라 보장 못 함)."""
-        import numpy as np
-        np.random.seed(42)
-        n = 200
-        sp = list(np.cumsum(np.random.randn(n) * 0.01) + 100)
-        kospi = list(np.cumsum(np.random.randn(n) * 0.01) + 2500)
-        usdkrw = list(np.cumsum(np.random.randn(n) * 0.001) + 1400)
-        wti = list(np.cumsum(np.random.randn(n) * 0.01) + 70)
-        result = compute_turbulence(sp, kospi, usdkrw, wti)
-        self.assertIsNotNone(result)
-        self.assertIn("value", result)
-        self.assertIn("threshold_95", result)
-        self.assertIn("alert", result)
-        self.assertIsInstance(result["alert"], bool)
-
-    def test_insufficient_data(self):
-        """데이터 부족 → None."""
-        result = compute_turbulence([1, 2, 3], [1, 2, 3], [1, 2, 3], [1, 2, 3])
-        self.assertIsNone(result)
-
-    def test_shock_triggers_alert(self):
-        """큰 충격 → alert=True."""
-        import numpy as np
-        np.random.seed(42)
-        n = 200
-        sp = list(np.cumsum(np.random.randn(n) * 0.005) + 100)
-        kospi = list(np.cumsum(np.random.randn(n) * 0.005) + 2500)
-        usdkrw = list(np.cumsum(np.random.randn(n) * 0.001) + 1400)
-        wti = list(np.cumsum(np.random.randn(n) * 0.005) + 70)
-        # 마지막 날 극단적 움직임
-        sp[-1] = sp[-2] * 1.10  # +10%
-        kospi[-1] = kospi[-2] * 0.90
-        usdkrw[-1] = usdkrw[-2] * 1.05
-        wti[-1] = wti[-2] * 0.85
-        result = compute_turbulence(sp, kospi, usdkrw, wti)
-        self.assertIsNotNone(result)
-        self.assertTrue(result["alert"])
 
 
 class TestOverrideMode(unittest.TestCase):

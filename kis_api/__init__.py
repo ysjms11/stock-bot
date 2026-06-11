@@ -172,8 +172,8 @@ from .news import (
 
 # ━━ 시장 국면 ━━
 from .regime import (
-    compute_turbulence, _regime_label, apply_debounce, _calc_regime_v2,
-    _regime_emoji, _fetch_usd_krw_value, _calc_tranche_level, cmd_regime,
+    _calc_regime_v2, _regime_emoji, cmd_regime,
+    calc_kr_regime, calc_us_regime, _apply_regime_debounce,
 )
 
 # ━━ FMP + YouTube ━━

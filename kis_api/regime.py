@@ -41,96 +41,6 @@ from .us_stock import get_yahoo_quote
 from .news import _yf_history
 
 
-def compute_turbulence(sp: list, kospi: list,
-                       usdkrw: list, wti: list,
-                       window: int = 60):
-    """Turbulence Index (마할라노비스 거리). Returns dict or None."""
-    import numpy as np
-    ml = min(len(sp), len(kospi), len(usdkrw), len(wti))
-    if ml < window + 2:
-        return None
-
-    def _ret(arr):
-        return np.diff(np.log(np.array(arr[-ml:], dtype=float)))
-
-    R = np.column_stack([_ret(sp), _ret(kospi), _ret(usdkrw), _ret(wti)])
-    n = len(R)
-    if n < window + 1:
-        return None
-
-    cov_win = R[-(window + 1):-1]
-    cov_mat = np.cov(cov_win, rowvar=False)
-    try:
-        cov_inv = np.linalg.inv(cov_mat)
-    except np.linalg.LinAlgError:
-        cov_inv = np.linalg.pinv(cov_mat)
-
-    mean_v = np.mean(cov_win, axis=0)
-    diff = R[-1] - mean_v
-    turb = float(diff @ cov_inv @ diff)
-
-    # 히스토리 95퍼센타일
-    turb_hist = []
-    for i in range(window + 1, n):
-        cw = R[i - window:i]
-        cm = np.cov(cw, rowvar=False)
-        try:
-            ci = np.linalg.inv(cm)
-        except np.linalg.LinAlgError:
-            ci = np.linalg.pinv(cm)
-        mv = np.mean(cw, axis=0)
-        d = R[i] - mv
-        turb_hist.append(float(d @ ci @ d))
-
-    p95 = float(np.percentile(turb_hist, 95)) if turb_hist else turb * 2
-    return {"value": round(turb, 2), "threshold_95": round(p95, 2),
-            "alert": turb > p95}
-
-
-def _regime_label(score: float) -> tuple:
-    """점수 → (emoji, 한글, 영문)"""
-    if score >= 70:
-        return ("🟢", "공격", "offensive")
-    elif score >= 40:
-        return ("🟡", "중립", "neutral")
-    else:
-        return ("🔴", "위기", "defensive")
-
-
-_REGIME_ORDER = {"offensive": 2, "neutral": 1, "defensive": 0}
-
-
-def apply_debounce(new_score: float, state: dict) -> dict:
-    """디바운스 적용 → state 업데이트 반환."""
-    today = datetime.now(KST).strftime("%Y-%m-%d")
-    _, _, new_regime = _regime_label(new_score)
-    prev_regime = state.get("regime", new_regime)
-    prev_pending = state.get("pending_regime", "")
-
-    if new_regime == prev_regime:
-        state["regime"] = new_regime
-        state["consecutive_days"] = state.get("consecutive_days", 0) + 1
-        state["pending_regime"] = ""
-        state["pending_days"] = 0
-    elif new_regime == prev_pending:
-        pd = state.get("pending_days", 0) + 1
-        state["pending_days"] = pd
-        is_worse = _REGIME_ORDER.get(new_regime, 1) < _REGIME_ORDER.get(prev_regime, 1)
-        threshold = 2 if is_worse else 3
-        if pd >= threshold:
-            state["regime"] = new_regime
-            state["consecutive_days"] = pd
-            state["pending_regime"] = ""
-            state["pending_days"] = 0
-    else:
-        state.setdefault("regime", prev_regime)
-        state["pending_regime"] = new_regime
-        state["pending_days"] = 1
-
-    state["date"] = today
-    return state
-
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 공통 헬퍼 (무인증, FDR + yfinance)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -190,34 +100,6 @@ def _dist_from_ma(closes: list, w: int = 200) -> float | None:
 
 def _regime_emoji(regime_en: str) -> str:
     return {"offensive": "🟢 탐욕", "neutral": "🟡 중립", "crisis": "🔴 공포"}.get(regime_en, "🟡 중립")
-
-
-async def _fetch_usd_krw_value() -> dict:
-    """USD/KRW 환율 (참고용, 레짐 판정에 미사용)."""
-    usd_krw = None
-    try:
-        fx = await get_yahoo_quote("KRW=X")
-        if fx:
-            usd_krw = float(fx.get("price", 0) or 0)
-    except Exception as e:
-        print(f"[regime] USD/KRW 조회 실패 (무시): {e}")
-    return {
-        "value": round(usd_krw, 1) if usd_krw else None,
-        "note": "참고용 (레짐 판정에 미사용)",
-    }
-
-
-def _calc_tranche_level(vix_val: float | None) -> int | None:
-    """VIX 트랜치 레벨 (🔴 내부 단계). VIX 30~40=1, 40~50=2, 50+=3."""
-    if vix_val is None:
-        return None
-    if vix_val < 30:
-        return None
-    if vix_val < 40:
-        return 1
-    if vix_val < 50:
-        return 2
-    return 3
 
 
 def _calc_regime_v2() -> dict:
