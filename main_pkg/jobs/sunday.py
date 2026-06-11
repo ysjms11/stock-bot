@@ -54,13 +54,27 @@ async def sunday_30_reminder(context: ContextTypes.DEFAULT_TYPE):
 
         # 포트 건강 위반
         warnings = []
-        total_asset = kr_total + cash_k  # 간이
+        try:
+            fx = await get_yahoo_quote("KRW=X") or {}
+            krw = float(fx.get("price", 0) or 0)
+        except Exception:
+            krw = 0.0
+        if krw > 0:
+            total_asset = kr_total + cash_k + (us_total + cash_u) * krw  # 취득가 기준, US 포함 환산
+        else:
+            total_asset = kr_total + cash_k  # FX 실패 시 KR만
         if total_asset > 0:
             for t, v in {k: v for k, v in pf.items() if k not in ("us_stocks", "cash_krw", "cash_usd") and isinstance(v, dict)}.items():
                 val = float(v.get("avg_price", 0)) * float(v.get("qty", 0))
                 pct = val / total_asset * 100
                 if pct > 25:
                     warnings.append(f"• {v.get('name', t)} {pct:.0f}% → 단일 25% 하드캡 초과")
+            if krw > 0:
+                for t, v in us_pf.items():
+                    val = float(v.get("avg_price", 0)) * float(v.get("qty", 0)) * krw
+                    pct = val / total_asset * 100
+                    if pct > 25:
+                        warnings.append(f"• {v.get('name', t)} {pct:.0f}% → 단일 25% 하드캡 초과 (US)")
 
         if warnings:
             msg += "\n⚠️ 점검 필요:\n" + "\n".join(warnings) + "\n"
