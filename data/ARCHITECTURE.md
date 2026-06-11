@@ -63,8 +63,8 @@ flowchart TB
 
     subgraph COLLECT["📥 1단계: 수집"]
         K[kis_api.py]
-        X[krx_crawler.py<br/>db_collector.py 호환 wrapper (SQLite 마이그레이션 완료)]
-        C[db_collector.py<br/>⏰매일 자동수집]
+        X[krx_crawler.py<br/>db_collector 호환 wrapper (SQLite 마이그레이션 완료)]
+        C[db_collector/ 패키지<br/>⏰매일 자동수집 (2026-06 14모듈 분해)]
         R[report_crawler.py<br/>⚠️ 와이즈리포트 차단]
     end
 
@@ -77,11 +77,13 @@ flowchart TB
     subgraph BRAIN["🧠 3단계: 두뇌"]
         M[main.py 419KB<br/>알람시계 ⏰]
         MC[mcp_tools.py 258KB<br/>비서 💬]
+        DH[dashboard_home/ 패키지 + dashboard.py<br/>웹 대시보드 🖥️]
     end
 
     subgraph OUT["📤 4단계: 출력"]
         T[📱 텔레그램]
         CL[💬 Claude 채팅]
+        W[🌐 웹 대시보드<br/>bot.arcbot-server.org/home]
     end
 
     EXT --> COLLECT
@@ -89,6 +91,7 @@ flowchart TB
     STORE --> BRAIN
     M --> T
     MC --> CL
+    DH --> W
 ```
 
 ---
@@ -132,8 +135,8 @@ flowchart LR
 | 파일 | 역할 | 상태 |
 |---|---|---|
 | `kis_api.py` 364KB | 한국투자증권 API 래퍼 (시세, 수급, 주문) | ✅ |
-| `krx_crawler.py` 60KB | db_collector.py 호환 wrapper (SQLite 마이그레이션 완료) | ✅ |
-| `db_collector.py` 138KB | 위 두 개 돌려서 매일 DB에 쌓는 수집기 | ✅ |
+| `krx_crawler.py` 60KB | db_collector 호환 wrapper (SQLite 마이그레이션 완료) | ✅ |
+| `db_collector/` 패키지 | 위 두 개 돌려서 매일 DB에 쌓는 수집기 (2026-06 14모듈 분해) | ✅ |
 | `report_crawler.py` 47KB | 증권사 리포트 PDF 다운로드 | ⚠️ 와이즈리포트 차단 (성공률 4.2%) |
 
 ### 💾 저장 레이어 (data/)
@@ -159,6 +162,8 @@ flowchart LR
 |---|---|
 | `main.py` (419KB) | **텔레그램봇 + 스케줄러**. 정해진 시간에 알림 쏨 |
 | `mcp_tools.py` (258KB) | **Claude 대화창구**. MCP 도구 정의 (get_*, set_*) |
+| `dashboard_home/` 패키지 (7모듈, 7,272줄) | **신 웹 대시보드** `/home` (2026-06 재구축). aiohttp 29라우트 (/home + JSON API `/api/*`) |
+| `dashboard.py` | **구 웹 대시보드** `/dash-classic` (HTML 렌더링). `/dash`는 /home 리다이렉트 |
 
 ### 📚 운영 문서 (data/)
 | 파일 | 역할 |
@@ -178,6 +183,7 @@ flowchart LR
 ### 📤 출력
 - **텔레그램** ← `main.py`가 자동으로 (안 시켜도 알아서)
 - **Claude 채팅** ← `mcp_tools.py`가 네 요청 받아서 (물어볼 때만)
+- **웹 대시보드** ← `dashboard_home/`(/home) + `dashboard.py`(/dash-classic), bot.arcbot-server.org (Cloudflare Access PIN)
 
 ---
 
@@ -266,6 +272,7 @@ set_alert(log_type="trade", side="buy", ticker="058610", qty=33, price=99000)
 
 ## 변경 이력
 
+- **2026-06-11 v6**: 웹 대시보드 노드 추가 — `dashboard_home/`(/home, 2026-06 7모듈) + `dashboard.py`(/dash-classic, /dash→/home 리다이렉트). 다이어그램·두뇌 표·출력 제3 채널 반영
 - **2026-05-29 v5**: PENDING #6 실측 업데이트 — PDF 확보율 48.4%/57.0%(60일) 측정, 목표 20% 초과달성 확정. 잔여 386건 wisereport_paid 갭은 유료 구독만이 lever.
 - **2026-05-27 v4**: PENDING #6 정정 — pdf_collectors.py 폐기, 한경 365일 + naver 캐시로 대체
 - **2026-05-26 v3**: KRX 데이터 상태 정정 (SQLite 마이그레이션 완료 반영), supply_history.json 역할 추가

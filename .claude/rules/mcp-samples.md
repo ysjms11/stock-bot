@@ -1,1 +1,1 @@
-MCP 도구 입출력 샘플은 `data/bot_samples.md` 참조. 33개 도구의 실제 호출 결과와 응답 구조가 기록되어 있음.
+MCP 도구 입출력 샘플은 `data/bot_samples.md` 참조. 39개 도구의 실제 호출 결과와 응답 구조가 기록되어 있음 (4/23 기준 — 이후 신규 8종 get_us_earnings_transcript·get_us_analyst_research·get_polymarket·get_macro_external·get_pension_flow·get_us_buy_candidates·get_youtube_transcript·get_sec_filings 샘플 미수록).

@@ -2,17 +2,17 @@
 
 ## 호출 패턴
 
-모든 신규 함수는 `_kis_get()` 래퍼 사용:
+모든 신규 함수는 `_kis_get()` 래퍼 + 공유 세션 `_get_session()` 사용 (공유 세션은 close 금지):
 
 ```python
 async def kis_some_api(ticker: str, token: str) -> dict:
-    async with aiohttp.ClientSession() as s:
-        _, d = await _kis_get(s, "/uapi/domestic-stock/v1/...",
-            "TR_ID_HERE", token, {"param1": "val1"})
-        return d.get("output", {})
+    s = _get_session()
+    _, d = await _kis_get(s, "/uapi/domestic-stock/v1/...",
+        "TR_ID_HERE", token, {"param1": "val1"})
+    return d.get("output", {})
 ```
 
-## 국내 TR_ID (31개)
+## 국내 TR_ID (35개)
 
 | TR_ID | 용도 | 함수 |
 |-------|------|------|
@@ -23,6 +23,8 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | `FHKST01010900` | 국내 수급 | `kis_investor_trend()` |
 | `FHKST01011800` | 종목 뉴스 | `kis_news_title()` |
 | `FHKST03010100` | 일봉 차트 | `kis_daily_volumes()` / `kis_daily_closes()` |
+| `FHKST66430100` | 대차대조표 (분기) | `kis_balance_sheet()` |
+| `FHKST66430200` | 손익계산서 (분기) | `kis_income_statement()` |
 | `FHPST01390000` | VI 발동 | `kis_vi_status()` |
 | `FHPST01680000` | 체결강도 상위 | `kis_volume_power_rank()` |
 | `FHPST01700000` | 등락률 순위 | `kis_fluctuation_rank()` |
@@ -32,9 +34,11 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | `FHPST01860000` | 증권사별 매매종목 | `kis_traded_by_company()` |
 | `FHPST01870000` | 52주 신고저 근접 | `kis_near_new_highlow()` |
 | `FHPST02300000` | 시간외 현재가 | `kis_overtime_price()` |
+| `FHPST02320000` | 시간외 일자별 주가 | `kis_overtime_daily()` |
 | `FHPST02340000` | 시간외 등락률 | `kis_overtime_fluctuation()` |
 | `FHPST04760000` | 신용잔고 일별추이 | `kis_daily_credit_balance()` |
 | `FHPST04830000` | 공매도 일별추이 | `kis_daily_short_sale()` |
+| `FHPTJ04040000` | 시장별 투자자매매동향 (일별) | `_fetch_market_investor_flow()` |
 | `FHPTJ04060100` | 외국인 순매수 상위 | `kis_foreigner_trend()` |
 | `FHPTJ04160001` | 투자자별 수급 히스토리 | `kis_investor_trend_history()` |
 | `FHPTJ04400000` | 외인+기관 합산 | `kis_foreign_institution_total()` |
@@ -46,6 +50,7 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 | `HHKST668300C0` | 종목추정실적 | `kis_estimate_perform()` |
 | `HHPST074500C0` | 대차거래 일별추이 | `kis_daily_loan_trans()` |
 | `HHKDB13470100` | 배당수익률 순위 | `kis_dividend_rate_rank()` |
+| `HHKDB669102C0` | 예탁원 배당일정 | `kis_dividend_schedule()` |
 
 ## 해외 TR_ID (3개)
 
@@ -59,3 +64,14 @@ async def kis_some_api(ticker: str, token: str) -> dict:
 
 - 현재가: `last`(현재가), `rate`(등락률%), `tvol`(거래량), `base`(전일종가)
 - 상세: `perx`(PER), `pbrx`(PBR), `epsx`(EPS), `tomv`(시총), `h52p`/`l52p`(52주고저)
+
+## WebSocket TR (4개)
+
+> `kis_api/websocket.py` (`KisRealtimeManager`) 기준. 미국 체결 TR(`HDFSCNT0`)도 정의됨 — 사용처는 websocket.py 확인.
+
+| TR_ID | 용도 | 비고 |
+|-------|------|------|
+| `H0UNCNT0` | KR 통합 체결가 (KRX+NXT) | 실구독 |
+| `HDFSCNT0` | 미국 체결가 | 실구독, tr_key=`D{거래소코드}{티커}` |
+| `H0STCNT0` | KRX 단독 체결가 | 파싱 허용만, 구독 안 함 |
+| `H0STOUP0` | 시간외 단일가 (16:00~18:00) | 파싱 허용만, 구독 안 함 |
