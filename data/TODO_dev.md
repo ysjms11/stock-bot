@@ -1,5 +1,16 @@
-# 봇 개발 TODO — 2026-05-05
+# 봇 개발 TODO — 2026-06-11 갱신
 > 레포: ysjms11/stock-bot | 서버: 맥미니 M4 + Cloudflare Tunnel (arcbot-server.org)
+
+---
+
+## 🆕 6/11 — 당장가능 일괄 처리분
+
+- [x] **sunday_30 US 보유 캡 사각 해소** (c0261fd) — FX 환산 분모 교정 + us_stocks 25% 루프, FX 실패 시 KR-only 폴백
+- [x] **regime 죽은코드 정리 −256줄** (c6965ae) — compute_turbulence·apply_debounce·_regime_label·_REGIME_ORDER·_calc_tranche_level·_fetch_usd_krw_value + export·구테스트 16케이스
+- [ ] **봇 재시작** — sunday.py(25%·US캡) + db_collector 패키지(15e24df) 로드용. ⚠️ 동시 리팩터 세션 완료 확인 후 `launchctl kickstart -k com.stock-bot.main` (토 09:00 前)
+- [ ] **알림 데이터 정리 (사용자 판단)** — 매수감시 stale 4건(CEG·UHAL.B·PANW·ROK cur_price=0) + 비보유 유령 손절 5건(세아베스틸·삼양식품·티씨케이·덕산네오룩스·LITE)
+- [ ] **XNDU ATM 8-K/6-K 자동 감시** 후보 — 현재 수동 SEC 모니터링 의존 (청산 트리거 2)
+- [ ] **레짐 정책 검토 (사용자)** — 멜트업(vol 80~92%ile+상승) 🟢→🟡 격상 여부 · 2024.8형 1일 플래시 미포착(E하이브리드 트레이드오프)
 
 ---
 
@@ -26,11 +37,11 @@
 - [ ] 감시종목 US 현재가 (장중)
 - [ ] DART 공시 알림 (워치+포트, 5분 주기)
 
-**5/5 fix 후 검증 대기:**
-- [ ] **5/6 (수) 19:00** `watch_change_detect` — 임계값 강화 (29%→6%) + load_krx_db SQLite 5/5 데이터 정확성 확인. 알림 18개 → 5~7개 압축 검증.
-- [ ] **5/10 (일) 04:00** `weekly_us_analyst_sync` — 4/27 첫 자동 KeyError 후 5/5 fix. 텔레그램 메시지 도착 확인.
-- [ ] **5/10 (일) 07:15** `weekly_financial` — 30→60분 + per-ticker wait_for(10s) + Phase별 elapsed 로그. 정상 완료 + dict 알림 도착.
-- [ ] **5/11 (월) 07:00** `weekly_universe_update` — KIS 페이지네이션 헤더 (M → F or M) fix. KOSPI 250 + KOSDAQ 350 회복 (60종목 → ~600).
+**5/5 fix 후 검증 — ✅ 완료 (6/11 일괄 확인: 1개월 운영 무사고 + universe 600종목 실측):**
+- [x] **5/6 (수) 19:00** `watch_change_detect` — 임계값 강화 (29%→6%) + load_krx_db SQLite 5/5 데이터 정확성 확인. 알림 18개 → 5~7개 압축 검증.
+- [x] **5/10 (일) 04:00** `weekly_us_analyst_sync` — 4/27 첫 자동 KeyError 후 5/5 fix. 텔레그램 메시지 도착 확인.
+- [x] **5/10 (일) 07:15** `weekly_financial` — 30→60분 + per-ticker wait_for(10s) + Phase별 elapsed 로그. 정상 완료 + dict 알림 도착.
+- [x] **5/11 (월) 07:00** `weekly_universe_update` — KIS 페이지네이션 헤더 (M → F or M) fix. KOSPI 250 + KOSDAQ 350 회복 (60종목 → ~600).
 
 ---
 
@@ -50,7 +61,7 @@
 
 ## 🟡 P1 — 신규 (5/5 학습 기반)
 
-- [ ] **🆕 Silent failure visible escalation** (학습 #27) — 가드/타임아웃이 silent skip하면 알림 인플레이션으로 시그널 묻힘. 5/5 발견 사고 패턴:
+- [x] **🆕 Silent failure visible escalation** (학습 #27) — ✅ 구현 완료 확인 (6/11): `_track/_alert_silent_failure`(_ctx.py:78/100) + 5개 잡 적용 + silent_failure_log.json 활성 — 가드/타임아웃이 silent skip하면 알림 인플레이션으로 시그널 묻힘. 5/5 발견 사고 패턴:
   - **universe 3주 stale**: "60 < 100 → 기존 유지" 가드 정상 작동, 그러나 알림 0
   - **weekly_financial 반복 60분 타임아웃**: 매주 같은 메시지 반복 → 둔감화
   - 방어 디자인:
@@ -108,11 +119,7 @@
   - `manage_report(category=, ...)` MCP 다중 카테고리 + 카테고리별 collect 지원
   - 일일 잡 08:30 자동 통합 (`collect_market_reports`)
   - **매주 일요일 19:07 `weekly_report_digest_notify`** — 통계 + Claude.ai 프롬프트 템플릿 텔레그램 push (봇 판단 X)
-- [ ] **한국 리포트 PDF 입수 경로 확장 (종목분석)** — 와이즈리포트 미수집 1,990건 (KB 182 / 한투 164 / 삼성 149 / 신한 138 / NH 134 / 다올 122 / 메리츠 90 ...). 메리츠 가입 막힘 (공동인증서 + 보안프로그램). **현재 보류**. 3옵션:
-  - A 무료 영구: 키움/유안타 쿠키 + 무로그인 소형 → 회수율 50~60%
-  - B 무료 월10분: A + 한투/KB/삼성 쿠키 (인증서 2~4주 만료) → 회수율 80~90%
-  - C 유료 와이즈리포트 (월 20~30만) → 100%
-  - SMB Z 드라이브 셋업 완료 (`\\192.168.0.36\kreuzer`, SMB-NT 해시 등록 후), 쿠키 전송 통로 확보. 진행 시점에 broker 결정.
+- [ ] 한국 리포트 PDF 입수 경로 확장 → **🟠 사용자 결정 펜딩 섹션 참조** (중복 통합 6/11)
 - [x] **MCP Streamable HTTP** — Claude.ai 연결 안정화, SSE 병행
 - [x] **Gist 백업 409 수정** — 손상 Gist 교체, 신규 생성
 - [x] **KRX OPEN API** — 승인됨. KIS API + SQLite로 대체되어 전환 불필요. GitHub Actions KRX 크롤링은 보조 데이터로 유지.
@@ -123,7 +130,7 @@
 
 ## 🟢 P2 — 알파 도구 (Tier 1, 즉시 구현)
 
-- [x] **F-Score / M-Score / FCF 메트릭** — TTM 기반, 12분기 DART 소급 26,584행 수집 (4/16). MCP `get_alpha_metrics` + `get_finance_rank(fscore/mscore_safe/fcf_yield)`. **남은 작업**: shares_out 재시도(자정 KST 후), main.py 일일 자동화 스케줄 1줄.
+- [x] **F-Score / M-Score / FCF 메트릭** — TTM 기반, 12분기 DART 소급 26,584행 수집 (4/16). MCP `get_alpha_metrics` + `get_finance_rank(fscore/mscore_safe/fcf_yield)`. **남은 작업 해소 (6/11 확인)**: 일일 자동화는 daily collect 내 `update_all_alpha_metrics`(db_collector/collect.py:420) + weekly financial 재계산으로 이미 연결됨.
 - [x] **내부자 거래 추적** — DART elestock.json, insider_transactions 테이블, 매일 20:00 체크, 30일 3명+ 매수 + 순매수 시 텔레그램 플래그. MCP `get_dart(mode='insider')` 추가 (4/15)
 - [x] **FCF 메트릭** — F-Score/M-Score와 일괄 구축 완료 (위 항목 참조)
 
