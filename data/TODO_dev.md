@@ -10,6 +10,7 @@
 - [ ] **봇 재시작** — sunday.py(25%·US캡) + db_collector 패키지(15e24df) 로드용. ⚠️ 동시 리팩터 세션 완료 확인 후 `launchctl kickstart -k com.stock-bot.main` (토 09:00 前)
 - [ ] **알림 데이터 정리 (사용자 판단)** — 매수감시 stale 4건(CEG·UHAL.B·PANW·ROK cur_price=0) + 비보유 유령 손절 5건(세아베스틸·삼양식품·티씨케이·덕산네오룩스·LITE)
 - [ ] **XNDU ATM 8-K/6-K 자동 감시** 후보 — 현재 수동 SEC 모니터링 의존 (청산 트리거 2)
+- [ ] **main 테스트 스위트 노후 (발견 6/11)** — main의 test_mcp_schema 등 구판이 삭제된 모놀리스('mcp_tools.py') 참조로 7 fail. fix의 테스트 복구(8c03774, 595 passed) 미포팅 — 다음 풀 reconcile(대시보드 머지) 때 일괄. 봇·운영은 fix 기준이라 무영향
 - [ ] **레짐 정책 검토 (사용자)** — 멜트업(vol 80~92%ile+상승) 🟢→🟡 격상 여부 · 2024.8형 1일 플래시 미포착(E하이브리드 트레이드오프)
 
 ---
