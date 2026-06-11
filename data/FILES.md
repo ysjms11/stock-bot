@@ -18,11 +18,14 @@
 
 | 파일 | 내용 |
 |------|------|
-| **kis_api.py** | KIS/DART/Yahoo API + 파일 I/O + WebSocket + 매크로 (~4200줄) |
-| **main.py** | 텔레그램 봇 + 자동알림 스케줄 + 진입점 (~3500줄) |
-| **mcp_tools.py** | MCP 도구 스키마 35개 + 실행 로직 + SSE 서버 (~3800줄) |
+| **kis_api/** | KIS/DART/Yahoo API + 파일 I/O + WebSocket + 매크로 (2026-05 패키지 분해, 23모듈) |
+| **main.py** + **main_pkg/** | main.py(7줄)=진입점 shim. 텔레그램 봇 + 자동알림 스케줄은 main_pkg/ (`telegram_bot`·`_entry`·`_ctx`·`schedule` + `jobs/` 22 잡모듈) |
+| **mcp_tools/** | MCP 도구 스키마 47개 + 실행 로직 + SSE 서버 (패키지: `__init__`·`_registry`·`server` + `tools/` 핸들러 20) |
 | **db_collector/** | KIS + DART 수집 + SQLite DB + 기술지표 + 스캐너 + **F/M/FCF 계산** (2026-06 패키지 분해, 14모듈 — 상세 `.claude/rules/file-structure.md`) |
-| **krx_crawler.py** | KRX DB 로드 (레거시 JSON 호환) (~400줄) |
+| **dashboard_home/** | 신 `/home` 웹 대시보드 + JSON API (2026-06 패키지 분해, 7모듈) |
+| **dashboard.py** | 구 `/dash-classic` 대시보드 (~3,700줄, 무수정 레거시) |
+| **report_crawler.py** | 증권사 리포트 수집 (한경컨센서스→네이버리서치→와이즈 우선순위 통합) + reports DB (~1,400줄, 08:30 `report_collect` 잡 본체 + `read_report_pdf` 소스) |
+| **krx_crawler.py** | KRX DB 로드 (db_collector 호환 wrapper, 레거시 JSON fallback) (~1,500줄) |
 | **data/stock.db** | SQLite DB (310MB, 7개 테이블: stock_master/daily_snapshot/financial_quarterly/consensus_history/reports/insider_transactions/sqlite_sequence) |
 | **data/db_schema.sql** | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) |
 

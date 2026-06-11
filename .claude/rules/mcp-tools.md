@@ -22,7 +22,7 @@
 | | | mode=combined_rank | 외인+기관 합산 순매수 상위 |
 | | | mode=broker_rank | 증권사별 매매종목 상위 (매수/매도) |
 | 5 | `get_dart` | | DART 공시 (워치 3일, report/report_list/read/disclosure_list/disclosure_read/insider 모드). disclosure_list: 종목별 최근 N일 수시공시 목록 (ticker 필수, days 기본 7). disclosure_read: 특정 rcept_no 공시 본문 다운로드·캐시 (ticker+rcept_no 필수). insider: 임원·주요주주 N일 매수/매도 집계 + cluster_flag(3명+매수 AND 순매수>0) |
-| 6 | `get_macro` | | 매크로 지표 (dashboard/sector_etf/convergence/op_growth 등) |
+| 6 | `get_macro` | | 매크로 지표 (dashboard/sector_etf/us_sector/convergence/convergence2/op_growth/op_turnaround/dart_op_growth/dart_turnaround, 생략 시 KOSPI·KOSDAQ·환율) |
 | 7 | `get_sector` | | 업종별 외인+기관 순매수, 업종 로테이션 분석 |
 | 8 | `manage_watch` | | 워치리스트 조회/추가/제거 (한국+미국, 매수감시 포함) |
 | 9 | `get_alerts` | | 손절가/목표가 목록 + 현재가 대비 % + 매수감시 |
@@ -42,7 +42,7 @@
 | 19 | `manage_report` | action=list/collect/tickers | 리포트 관리. `category=company/industry/market/strategy/economy/bond` 필터 (4/26 신규). collect 시 비종목 카테고리 자동 수집. |
 | 20 | `get_regime` | | 시장 국면 판단 (매크로 기반) |
 | 21 | `get_scan` | | KRX 전종목 스크리너 (시총/PER/PBR/수급/회전율, 6개 프리셋) |
-| 22 | `get_finance_rank` | (기본) | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/부채비율/매출성장률) |
+| 22 | `get_finance_rank` | (기본) | 전종목 재무비율 순위 (PER/PBR/ROE/영업이익률/순이익률/부채비율/매출성장률) |
 | | | rank_type=fscore | F-Score >=7 우량 순위 (daily_snapshot, F/M/FCF Phase4) |
 | | | rank_type=mscore_safe | M-Score <=-2.22 안전 순위 (오름차순, F/M/FCF Phase4) |
 | | | rank_type=fcf_yield | FCF/EV 내림차순 순위 (F/M/FCF Phase4) |
@@ -51,7 +51,7 @@
 | 25 | `read_file` | | stock-bot 디렉토리 내 파일 읽기 (.md/.py/.json/.txt, 100KB, ../ 차단) |
 | 26 | `write_file` | | stock-bot 디렉토리 내 파일 쓰기 (.md/.json/.txt, .py/.env 불가, 200KB, ../ 차단) |
 | 27 | `list_files` | | stock-bot 디렉토리 내 파일/폴더 목록 (이름·크기·수정일, depth 2, ../ 차단) |
-| 28 | `read_report_pdf` | | 리포트 PDF 페이지 이미지 렌더링 (report_crawler DB 기반) |
+| 28 | `read_report_pdf` | | 리포트 PDF 읽기 (mode=image/text/pdf, pages 비연속 범위 예 '1-3,10,20-25', image 자동 합치기 ≤50p 1p/img·51p+ 2p/img 최대 50장=100p, report_crawler DB 기반) |
 | 29 | `get_change_scan` | preset= | 변화 감지 스캔 (ma_convergence/volume_spike/earnings_disconnect/consensus_undervalued/oversold_bounce/vp_support/golden_cross/sector_leader/w52_breakout/short_squeeze/credit_unwind/foreign_reversal/foreign_accumulation/turnaround/fscore_jump/insider_cluster_buy, 복합 콤마 구분) |
 | 30 | `git_status` | | Git 브랜치/변경파일 조회 |
 | 31 | `git_diff` | | 변경내용 조회 (path, staged 옵션) |
@@ -66,12 +66,12 @@
 | | | mode=discovery | 감시 밖 관심 종목 발굴 (min_upgrades 상향 임계값) |
 | | | mode=sector | 섹터별 레이팅 모멘텀 |
 | 38 | `get_us_analyst` | | 미국 애널 개인/그룹 조회 (name=개별, 없으면 top 리스트, firm/sector 필터) |
-| 39 | `get_youtube_transcript` | | 유튜브 자막 추출 (URL/ID, ko 우선 en fallback, 자막 없으면 에러) |
-| 40 | `get_us_buy_candidates` | | 톱 애널 추천 + TP 업사이드 충족 미국 매수 후보 (raw 데이터, watched=1 풀 254명, Tier S/A 카운트 포함, 기본 180일/1명+/+20%/limit 50) |
-| 41 | `get_us_earnings_transcript` | | FMP 실적 컨퍼런스콜 본문 (CEO/CFO 발언 + 톱애널 Q&A, 분기당 5만자, max_chars 절삭 옵션) |
-| 42 | `get_us_analyst_research` | | FMP 분석가 통합: Price Target Summary + Estimates(향후 5년 매출/EBITDA/순이익) + Grades(등급 변경 이력) |
-| 43 | `get_polymarket` | | Polymarket prediction market — 매크로/지정학/정치/Fed/이란/관세/대선 베팅 컨센서스. 24h 거래량 정렬, sports/esports/pop culture 자동 컷, $500K 미만 노이즈 제외. (4/27 신규) |
-| 44 | `get_macro_external` | | 외부 매크로 시그널 통합 — Polymarket Fed decision + Treasury 수익률 곡선 (Estrella-Mishkin 1998 침체 선행지표). 매크로 대시보드/SAT-SUN/D-1 자동 호출. (4/27 신규) |
-| 45 | `watch_analyst` | | 미국 톱 애널 확정/해제 (slug 지정 + watched=true/false, discovery 모드에서 사용) |
-| 46 | `get_pension_flow` | | 연기금(NPS 60~80% 비중) 종목별 N일 누적 매수/매도 — pykrx + KRX 인증, NPS 단독 시그널 근사치, 양방향 (매수 TOP + 매도 TOP + 보유/워치 양방향) |
+| 39 | `watch_analyst` | | 미국 톱 애널 확정/해제 (slug 지정 + watched=true/false, discovery 모드에서 사용) |
+| 40 | `get_us_earnings_transcript` | | FMP 실적 컨퍼런스콜 본문 (CEO/CFO 발언 + 톱애널 Q&A, 분기당 5만자, max_chars 절삭 옵션) |
+| 41 | `get_us_analyst_research` | | FMP 분석가 통합: Price Target Summary + Estimates(향후 5년 매출/EBITDA/순이익) + Grades(등급 변경 이력) |
+| 42 | `get_polymarket` | | Polymarket prediction market — 매크로/지정학/정치/Fed/이란/관세/대선 베팅 컨센서스. 24h 거래량 정렬, sports/esports/pop culture 자동 컷, $500K 미만 노이즈 제외. (4/27 신규) |
+| 43 | `get_macro_external` | | 외부 매크로 시그널 통합 — Polymarket Fed decision + Treasury 수익률 곡선 (Estrella-Mishkin 1998 침체 선행지표). 매크로 대시보드/SAT-SUN/D-1 자동 호출. (4/27 신규) |
+| 44 | `get_pension_flow` | | 연기금(NPS 60~80% 비중) 종목별 N일 누적 매수/매도 — pykrx + KRX 인증, NPS 단독 시그널 근사치, 양방향 (매수 TOP + 매도 TOP + 보유/워치 양방향) |
+| 45 | `get_us_buy_candidates` | | 톱 애널 추천 + TP 업사이드 충족 미국 매수 후보 (raw 데이터, watched=1 풀 254명, Tier S/A 카운트 포함, 기본 180일/1명+/+20%/limit 50) |
+| 46 | `get_youtube_transcript` | | 유튜브 자막 추출 (URL/ID, ko 우선 en fallback, 자막 없으면 에러) |
 | 47 | `get_sec_filings` | | SEC EDGAR 1차 공시 조회 — de-SPAC/IPO 희석 위험 탐지용 (8-K/F-1/S-1/424B3/EFFECT/6-K 등). ticker 지정 시 SEC API 실시간 조회 + DB 저장, db_only=true 시 DB 캐시만 반환 |

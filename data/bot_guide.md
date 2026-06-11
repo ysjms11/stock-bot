@@ -1,7 +1,9 @@
 # Stock-Bot MCP 도구 가이드
-> 업데이트: 2026-04-16 | 총 47개 도구
+> 업데이트: 2026-06-11 | 총 47개 도구
 >
 > **이 문서**: 도구 무엇을 언제 쓰는지 (용도·타이밍). 파라미터 상세 → `bot_reference.txt`, 실전 조합 워크플로우 → `bot_scenarios.md`, 입출력 예시 → `bot_samples.md`.
+>
+> **본문 미수록 14개** (미국 분석·연기금·SEC·외부시그널·순위): get_rank · get_alpha_metrics · get_us_ratings · get_us_scan · get_us_analyst · watch_analyst · get_us_buy_candidates · get_us_earnings_transcript · get_us_analyst_research · get_polymarket · get_macro_external · get_pension_flow · get_youtube_transcript · get_sec_filings — 스키마는 `mcp_tools/__init__.py`, 일부 입출력 샘플은 `bot_samples.md`.
 
 ---
 
@@ -84,7 +86,7 @@
 | `volume_spike` | 거래량 폭발 | 10일 평균 대비 2배+ |
 | `earnings_disconnect` | 실적 좋은데 주가 안 오름 | EPS +30%인데 주가 보합 |
 | `consensus_undervalued` | 컨센서스 대비 저평가 | 목표가 괴리 40%+ |
-| `oversold_bounce` | 과매도 반등 시작 | RSI <30에서 상승 전환 |
+| `oversold_bounce` | 과매도 스크린 | RSI(14) <30 과매도 (rsi_max 조정 가능) |
 | `vp_support` | 매물대 지지 구간 | VP position <0.2 |
 | `golden_cross` | 골든크로스 발생 | MA5>MA20 전환 |
 | `sector_leader` | 섹터 내 최강 | 업종 대비 +5% 초과 |
@@ -93,6 +95,9 @@
 | `credit_unwind` | 신용 정리 중 | 신용잔고 5일 연속 감소 |
 | `foreign_reversal` | 외인 매수 전환 | 5일 매도→매수 |
 | `foreign_accumulation` | 외인 보유비율 급증 | 5일 +1%p |
+| `turnaround` | 적자→흑자 전환 | 최신 분기 영업이익>0 AND 직전 분기<0 |
+| `fscore_jump` | F-Score 도약 | 90일 전 대비 ΔF≥2 (4/17 Phase4부터 기록, ~7/15까지 결과 빈약 가능) |
+| `insider_cluster_buy` | 내부자 군집매수 | 30일 내 보고자 3명+ AND 순매수>0 |
 | 파라미터화 | 모든 임계값 변경 가능 | `spread_max=5, ratio_min=3.0` |
 
 ---
@@ -185,11 +190,14 @@
 |---|---|---|
 | **get_dart** | (생략) | 워치리스트 최근 3일 공시 |
 | | `mode=report, ticker` | 사업보고서 txt 저장 |
+| | `mode=report_list` | 저장된 사업보고서 txt 파일 목록 |
 | | `mode=read, ticker` | 저장된 사업보고서 읽기 |
+| | `mode=disclosure_list, ticker, days=7` | 종목별 최근 N일 수시공시 목록 (ticker 필수) |
+| | `mode=disclosure_read, ticker, rcept_no` | 공시 본문 다운로드·캐시 (둘 다 필수) |
 | | `mode=insider, ticker, days=30` | 내부자 거래 30일 집계 + cluster_flag |
 | **backup_data** | | Gist 백업/복원 |
 | **read_file** | `path="CLAUDE.md"` | 봇 디렉토리 파일 읽기 |
-| **write_file** | `path="TODO.md", content="..."` | 파일 쓰기 (.md/.json/.txt) |
+| **write_file** | `path="data/TODO_dev.md", content="..."` | 파일 쓰기 (.md/.json/.txt) |
 | **list_files** | `path="data"` | 디렉토리 목록 조회 |
 
 ---
@@ -216,7 +224,7 @@
 | 섹터강도 | 업종 내 순위/상대강도 | 계산 |
 | 52주 위치 | 고가/저가/position | 계산 |
 
-보관: 무제한 | 일별 ~4.6MB | 연간 ~1.1GB
+보관: SQLite data/stock.db 단일 파일 무제한 누적 (~455MB, 2026-06 기준 · daily_snapshot ~2,860종목/거래일)
 
 ---
 
@@ -227,22 +235,31 @@
 | 07:02 | 실적 캘린더 (평일) |
 | 07:03 | 배당 캘린더 (평일) |
 | 07:10 | 미국 실적 캘린더 (평일) |
+| 07:30 | 미국 애널 레이팅 스캔 (매일) |
 | 08:30 | 리포트 수집 (평일) |
 | 15:40 | 한국 장마감 요약 (포트변동/섹터ETF/감시접근) |
 | 15:50 | 포트폴리오 스냅샷 + 드로다운 체크 (평일) |
 | 16:30 | 모멘텀 경고 (5가지 조건 중 2개+) |
 | 19:00 | 워치 변화 감지 (평일) |
+| 19:01 | 연기금(NPS) 5일 누적 매매 알림 (평일) |
+| 19:05 | 발굴 알림 — turnaround/fscore_jump/insider_cluster_buy (평일) |
+| 19:30 | 컨센서스 상향 체크 (평일) |
+| 19:31 | D-1 이벤트 알림 (매일, events.json+Polymarket+Treasury) |
+| 20:00 | 내부자 군집 감지 (워치종목, 평일) |
 | 05:05(DST)/06:05(표준시) | 미국 장마감 요약 (S&P/나스닥/보유종목/손절경고) |
 | 06:00 | 매크로 대시보드 macro_am (매일) |
 | 18:55 | 매크로 대시보드 (매일, daily_collect 18:30 완료 후) |
 | 22:00 | Gist 자동 백업 (매일) |
 | 월요일 07:01 | 유니버스 갱신 |
 | 일요일 07:05 | 컨센서스 갱신 |
-| 일요일 19:00 | Sunday 30 리마인더 |
+| 일요일 19:02 | Sunday 30 리마인더 |
 | 수시 | 손절가/목표가/매수감시 도달 알림 |
-| 수시 | DART 공시 알림 ([긴급]/[주의]/[참고]) |
-| 수시 | 수급 이탈 경고 (외인 3일 연속 순매도) |
-| 수시 | 주간 손실 한도 경고 (-3%/-4%) |
+| 60분 주기 | 시장 레짐 전환 알림 |
+| 5분 주기 | DART 공시 알림 (워치+포트+매수감시, 평일 8~20시, 잠정실적/자사주/배당/풍문해명은 요약 포함) |
+| 15:42 | 수급 이탈 경고 (외인 3일 연속 순매도, 평일) |
+| 평일 15:40 (KR요약 내) | 주간 손실 한도 경고 (-3%/-4%) |
+
+> 핵심만 발췌 — 전체 잡 타임라인(50건)은 `.claude/rules/schedule.md` 참조.
 
 ---
 

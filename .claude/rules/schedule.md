@@ -1,11 +1,11 @@
 # 스케줄 타임라인 (자동 잡)
 
-> `main.py` 후반부 `jq.run_daily` / `jq.run_repeating` 등록부의 전체 뷰.
+> `main_pkg/schedule.py`의 `register_all_schedules()` — `jq.run_daily` / `jq.run_repeating` 등록 50건의 전체 뷰.
 > 새 잡 추가/삭제/시각 변경 시 **이 표도 함께 업데이트** (동일 커밋에 포함).
 
 **표 읽는 법**
 - `D` = 요일 필터: `평일`(월~금), `주말`, `토`, `일`, `월`, `화~토`, `전체`
-- `담당 함수`는 `main.py` 내부
+- `담당 함수`는 `main_pkg/jobs/*.py` (US 레이팅·sanity·log_rotate 7개는 `main_pkg/telegram_bot.py`). 위치는 `grep -rn "def <name>" main_pkg/`로 확인
 - `최근 변경`은 기능 변경된 날짜만 기록 (시간 미세 조정 제외)
 
 ---
@@ -37,7 +37,7 @@
 | 06:00 | 전체 | `macro_am` | `macro_dashboard` | 매크로 대시보드 (미국장 마감 후) | — |
 | 06:05 | 화~토 | `us_summary_std` | `us_market_summary` | 미국 장 마감 요약 (표준시, 내부 가드로 중복 방지) | — |
 
-### 오전 (07:00 ~ 08:59 KST)
+### 오전 (07:00 ~ 09:59 KST)
 
 | 시간 | D | 잡 이름 | 담당 함수 | 핵심 동작 | 최근 변경 |
 |------|---|---------|-----------|-----------|-----------|
@@ -49,8 +49,11 @@
 | 07:06 | 일 | `weekly_sanity` | `weekly_sanity_check` | daily_snapshot 영업일 누락 감시 | 5/28 +1m stagger (weekly_consensus 07:05 충돌) |
 | 07:10 | 평일 | `us_earnings_cal` | `check_us_earnings_calendar` | 미국 실적 캘린더 체크 | — |
 | 07:15 | 일 | `weekly_financial` | `weekly_financial_job` | 주간 재무 수집 (DART) | — |
+| 07:20 | 일 | `weekly_dividend` | `weekly_dividend_job` | KIS 예탁원 DPS → dividend_events → div_yield 주간 갱신 (KRX 불필요) | 6/4 신규 |
 | 07:30 | 전체 | `us_ratings` | `daily_us_rating_scan` | 미국 애널 레이팅 스캔 | 4/18 신규 |
 | 08:30 | 평일 | `report_collect` | `collect_reports_daily` | 증권사 리포트 수집 | — |
+| 09:00 | 토 | `weekly_sat_port_check` | `weekly_sat_port_check_notify` | SAT_PORT_CHECK 시작 알림 (토요일 포트관리 v2) | 4/27 신규 |
+| 09:00 | 일 | `weekly_sun_discovery` | `weekly_sun_discovery_notify` | SUN_DISCOVERY 시작 알림 (일요일 신규발굴 v2) | 4/27 신규 |
 
 ### 오후 (12:00 ~ 16:59)
 
@@ -62,25 +65,23 @@
 | 15:50 | KST | 평일 | `snapshot_dd` | `snapshot_and_drawdown` | 포트폴리오 스냅샷 + 드로다운 체크 | — |
 | 16:30 | KST | 평일 | `momentum_check` | `momentum_exit_check` | 모멘텀 이탈 체크 | — |
 | 16:30 | ET | 평일 | `us_holdings_close` | `hourly_us_holdings_check` | 미국 장 마감 애널 레이팅 감시 | 4/18 신규 |
+| 16:32 | KST | 평일 | `pension_collect` | `daily_pension_collect` | 연기금 (NPS) 종목별 매매 수집 → pension_flow_daily DB | 5/28 +2m stagger |
 
-### 저녁 (18:30 ~ 22:00 KST) ★ 피크 타임
+### 저녁 (18:30 ~ 23:30 KST) ★ 피크 타임
 
 | 시간 | D | 잡 이름 | 담당 함수 | 핵심 동작 | 최근 변경 |
 |------|---|---------|-----------|-----------|-----------|
 | 18:30 | 평일 | `daily_collect` | `daily_collect_job` ★ | **KRX 전종목 DB 수집** (18:30 + post_init retry + 주간 무결성) | 4/18 안전장치 3종 |
 | 18:55 | 전체 | `macro_pm` | `macro_dashboard` | 매크로 대시보드 저녁 (수집 완료 후) | — |
 | 19:00 | 평일 | `watch_change` | `watch_change_detect` | 워치리스트 변경 감지 | — |
-| 19:02 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | 5/28 +2m stagger |
 | 19:00 | 일 | `weekly_us_analyst` | `weekly_us_analyst_report` | 다음주 월요일 준비용 미국 애널 리포트 | 5/8 신규 |
-| 19:07 | 일 | `weekly_report_digest` | `weekly_report_digest_notify` | 비종목 리포트 분석 시간 알림 (통계 + Claude.ai 프롬프트 템플릿, 봇 판단 X) | 4/26 신규 |
-| 09:00 | 토 | `weekly_sat_port_check` | `weekly_sat_port_check_notify` | SAT_PORT_CHECK 시작 알림 (토요일 포트관리 v2) | 4/27 신규 |
-| 09:00 | 일 | `weekly_sun_discovery` | `weekly_sun_discovery_notify` | SUN_DISCOVERY 시작 알림 (일요일 신규발굴 v2) | 4/27 신규 |
-| 19:31 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 5/28 +1m stagger |
-| 16:32 | 평일 | `pension_collect` | `daily_pension_collect` | 연기금 (NPS) 종목별 매매 수집 → pension_flow_daily DB | 5/28 +2m stagger |
 | 19:01 | 평일 | `pension_alert` | `daily_pension_alert` | 연기금 5일 누적 매매 알림 (시총% 기준, 보유/워치 양방향 + 발굴 매수 TOP) | 5/28 +1m stagger |
+| 19:02 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | 5/28 +2m stagger |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
+| 19:07 | 일 | `weekly_report_digest` | `weekly_report_digest_notify` | 비종목 리포트 분석 시간 알림 (통계 + Claude.ai 프롬프트 템플릿, 봇 판단 X) | 4/26 신규 |
 | 19:15 | 평일 | `collect_sanity_1` | `daily_collect_sanity_check` | 자가진단 — 당일 snapshot 0건이면 collect_daily 재실행 | 4/25 신규 |
 | 19:30 | 평일 | `daily_consensus` | `daily_consensus_check` | 컨센서스 상향 체크 | — |
+| 19:31 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 5/28 +1m stagger |
 | 20:00 | 평일 | `insider_cluster` | `check_insider_cluster` | 내부자 군집 감지 (워치종목) | 4/15 신규 |
 | 20:15 | 평일 | `collect_sanity_2` | `daily_collect_sanity_check` | 자가진단 2차 | 4/25 신규 |
 | 21:15 | 평일 | `collect_sanity_3` | `daily_collect_sanity_check` | 자가진단 3차 | 4/25 신규 |
@@ -109,7 +110,7 @@
 22:00  auto_backup (전체 일괄)
 ```
 
-**1~2분 stagger**로 동시 잡 충돌 회피. 신규 잡 추가 시 **19:10~19:25 구간** 비어 있음.
+**1~2분 stagger**로 동시 잡 충돌 회피. 신규 잡 추가 시 **19:08~19:14 / 19:16~19:29 구간** 비어 있음 (19:15는 `collect_sanity_1`).
 
 ## 주말 활동
 
@@ -117,8 +118,9 @@
 - **일 03:00**: `weekly_us_harvest` (S&P 500 ∪ Russell 1000 유니버스 애널 레이팅 수집, ~1000종목, ~33분)
 - **일 07:05**: `consensus_update` + `weekly_sanity`
 - **일 07:15**: `weekly_financial`
-- **일 19:00**: `sunday_30`
-- 매일 돌아가는 것: `dart_incremental` (02:00), `us_ratings` (07:30), `macro_am` (06:00), `macro_pm` (18:55), `auto_backup` (22:00), 반복잡 4종
+- **일 07:20**: `weekly_dividend`
+- **일 19:02**: `sunday_30`
+- 매일 돌아가는 것: `dart_incremental` (02:00), `nps_dart_inc` (04:02), `dart_disclosure` (04:05), `macro_am` (06:00), `us_ratings` (07:30), `macro_pm` (18:55), `event_d1` (19:31), `auto_backup` (22:00), 반복잡 4종
 
 ## 타임존 메모
 
@@ -127,8 +129,8 @@
 
 ## 신규 잡 추가 절차
 
-1. `main.py` 함수 작성 (`async def daily_XXX(context): ...`)
-2. `main.py` `main()` 의 `jq.run_daily(...)` 등록 (시간대/요일/name)
+1. `main_pkg/jobs/<모듈>.py`에 함수 작성 (`async def daily_XXX(context): ...`) — 새 모듈이면 파일 신규 생성
+2. `main_pkg/schedule.py` 상단 import에 추가 + `register_all_schedules()` 내부에 `jq.run_daily(...)` 1줄 등록 (시간대/요일/name)
 3. **이 표에 1줄 추가** (같은 커밋)
 4. `data/PROGRESS.md` "주요 아키텍처 결정" 표에 신규 스케줄 기록 (변경일, 이유)
 5. **충돌 회피**: 동일 시각(HH:MM)에 다른 잡 존재 시 ±1~3분 stagger 적용.
