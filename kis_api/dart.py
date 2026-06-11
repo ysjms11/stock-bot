@@ -126,13 +126,14 @@ async def get_dart_corp_map(universe: dict) -> dict:
     """dart_corp_map.json 로드. 파일 없으면 빈 dict 반환 (다운로드 시도 안 함).
 
     파일 탐색 순서:
-      1. /data/dart_corp_map.json  (Railway Volume)
-      2. <kis_api.py 디렉토리>/dart_corp_map.json  (레포 커밋 파일)
+      1. /data/dart_corp_map.json  (DATA_DIR 운영 오버라이드)
+      2. <레포 루트>/dart_corp_map.json  (커밋 파일)
     """
     import os
     candidates = [
         DART_CORP_MAP_FILE,
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "dart_corp_map.json"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "dart_corp_map.json"),
     ]
     for path in candidates:
         try:
