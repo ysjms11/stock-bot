@@ -9,8 +9,10 @@ load_dotenv(override=True)  # .env를 단일 진실원천으로 — 옛 launchct
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 & 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID        = os.environ.get("CHAT_ID")
+TELEGRAM_TOKEN      = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID             = os.environ.get("CHAT_ID")
+DART_TELEGRAM_TOKEN = os.environ.get("DART_TELEGRAM_TOKEN", "")  # DART 전용 봇 (미설정 시 메인 봇)
+DART_CHAT_ID        = os.environ.get("DART_CHAT_ID", "")          # DART 전용 채팅 (미설정 시 CHAT_ID)
 KIS_APP_KEY    = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 DART_API_KEY   = os.environ.get("DART_API_KEY", "")

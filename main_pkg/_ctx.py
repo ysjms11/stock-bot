@@ -11,7 +11,7 @@ from kis_api import (
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
-from kis_api._config import SILENT_FAILURE_LOG
+from kis_api._config import SILENT_FAILURE_LOG, DART_TELEGRAM_TOKEN, DART_CHAT_ID
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TELEGRAM 설정
@@ -73,6 +73,81 @@ async def _safe_send(context, text: str, parse_mode: str = "Markdown", **kwargs)
         else:
             print(f"[telegram] 발송 실패: {e}")
             return False
+
+
+async def _safe_send_dart(context, text: str, parse_mode: str = "Markdown", **kwargs) -> bool:
+    """DART 알림 전용 발송 — DART_TELEGRAM_TOKEN/DART_CHAT_ID 설정 시 분리 채널, 미설정 시 메인(_safe_send) 폴백.
+
+    동작 3분기:
+    1) 둘 다 미설정 → _safe_send 폴백 (현행 그대로)
+    2) DART_CHAT_ID만 설정 → context.bot.send_message(chat_id=DART_CHAT_ID) + Markdown→plain 폴백
+    3) DART_TELEGRAM_TOKEN 설정 → aiohttp raw HTTP POST (별도 봇)
+    """
+    # 분기 1: 완전 미설정 → 메인 채널 폴백
+    if not DART_TELEGRAM_TOKEN and not DART_CHAT_ID:
+        return await _safe_send(context, text, parse_mode=parse_mode, **kwargs)
+
+    # 분기 2: 같은 봇, 다른 채팅방
+    if not DART_TELEGRAM_TOKEN:
+        target_chat = DART_CHAT_ID
+        dw_kwargs = {k: v for k, v in kwargs.items()}
+        try:
+            await context.bot.send_message(
+                chat_id=target_chat, text=text, parse_mode=parse_mode, **dw_kwargs
+            )
+            return True
+        except Exception as e:
+            emsg = str(e).lower()
+            if "parse entities" in emsg or "can't find end of the entity" in emsg or "can't parse entities" in emsg:
+                try:
+                    await context.bot.send_message(chat_id=target_chat, text=text, **dw_kwargs)
+                    print(f"[dart_telegram] Markdown 파싱 실패 → plain text 발송 (offset 추적: {str(e)[:80]})")
+                    return True
+                except Exception as e2:
+                    print(f"[dart_telegram] plain text fallback 실패: {e2}")
+                    return False
+            else:
+                print(f"[dart_telegram] 발송 실패: {e}")
+                return False
+
+    # 분기 3: 별도 봇 토큰 → aiohttp raw HTTP
+    import aiohttp
+    target_chat = DART_CHAT_ID or CHAT_ID
+    url = f"https://api.telegram.org/bot{DART_TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": target_chat, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if kwargs.get("disable_web_page_preview"):
+        payload["disable_web_page_preview"] = True
+
+    async def _post(pm_payload):
+        timeout = aiohttp.ClientTimeout(total=15)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                async with s.post(url, json=pm_payload) as resp:
+                    data = await resp.json(content_type=None)
+                    return data
+        except Exception as e:
+            print(f"[dart_telegram] HTTP 요청 실패: {e}")
+            return None
+
+    data = await _post(payload)
+    if data is None:
+        return False
+    if not data.get("ok"):
+        desc = (data.get("description") or "").lower()
+        if "parse" in desc or "entities" in desc:
+            # parse_mode 제거 후 1회 재시도
+            payload2 = {k: v for k, v in payload.items() if k != "parse_mode"}
+            data2 = await _post(payload2)
+            if data2 and data2.get("ok"):
+                print(f"[dart_telegram] Markdown 파싱 실패 → plain text 재시도 성공")
+                return True
+            print(f"[dart_telegram] plain text 재시도 실패: {data2}")
+            return False
+        print(f"[dart_telegram] sendMessage 실패: {data.get('description')}")
+        return False
+    return True
 
 
 def _track_silent_failure(key: str, threshold: int = 3) -> int:
