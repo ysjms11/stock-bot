@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from main_pkg._ctx import (
     _KR_SECTORS, _SECTOR_LIMIT, _STOCK_LIMIT,
-    _is_kr_trading_time, _read_regime, _safe_send,
+    _is_kr_trading_time, _read_regime, _safe_send, _safe_send_dart,
     _track_silent_failure, _reset_silent_failure, _alert_silent_failure,
     _extract_grade, _grade_arrow,
 )
@@ -108,7 +108,7 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
         seen_list = list(seen_ids)[-500:]
         save_json(DART_SEEN_FILE, {"ids": seen_list})
 
-        await _safe_send(context, msg, disable_web_page_preview=True)
+        await _safe_send_dart(context, msg, disable_web_page_preview=True)
 
     except Exception as e:
         print(f"DART 체크 오류: {e}")

@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from main_pkg._ctx import (
     _KR_SECTORS, _SECTOR_LIMIT, _STOCK_LIMIT,
-    _is_kr_trading_time, _read_regime, _safe_send,
+    _is_kr_trading_time, _read_regime, _safe_send, _safe_send_dart,
     _track_silent_failure, _reset_silent_failure, _alert_silent_failure,
     _extract_grade, _grade_arrow,
 )
@@ -61,10 +61,7 @@ async def daily_dart_incremental(context):
     except asyncio.TimeoutError:
         print("[dart_incr] 20분 타임아웃")
         try:
-            await context.bot.send_message(
-                chat_id=CHAT_ID,
-                text="⚠️ DART 증분 수집 20분 초과 타임아웃",
-            )
+            await _safe_send_dart(context, "⚠️ DART 증분 수집 20분 초과 타임아웃", parse_mode=None)
         except Exception:
             pass
         return
@@ -104,7 +101,7 @@ async def daily_dart_incremental(context):
         f"{alpha_line}"
     )
     try:
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        await _safe_send_dart(context, msg, parse_mode=None)
     except Exception as e:
         print(f"[dart_incr] 텔레그램 전송 실패: {e}")
 
@@ -199,7 +196,7 @@ async def collect_reports_daily(context: ContextTypes.DEFAULT_TYPE):
                                          for c, n in cat_count.most_common())
                 msg += f"\n\n*비종목 ({len(market_reports)}건)*: {cat_summary}"
 
-            await _safe_send(context, msg)
+            await _safe_send_dart(context, msg)
 
             # 발송 기록
             _rpt_sent["report"] = _rpt_key
