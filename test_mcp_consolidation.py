@@ -17,6 +17,8 @@ ext_stub.CommandHandler = object
 ext_stub.MessageHandler = object
 ext_stub.filters = type("filters", (), {"TEXT": None, "Regex": staticmethod(lambda x: x)})()
 ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
+ext_stub.TypeHandler = object
+ext_stub.ApplicationHandlerStop = type("ApplicationHandlerStop", (Exception,), {})
 sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
 
