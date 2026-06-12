@@ -103,12 +103,12 @@ async def check_dart_disclosure(context: ContextTypes.DEFAULT_TYPE):
 
         msg += "💡 Claude에서 영향 분석하세요"
 
-        # 발송 전에 먼저 저장 (중복 발송 방지)
-        seen_ids.update(new_ids)
-        seen_list = list(seen_ids)[-500:]
-        save_json(DART_SEEN_FILE, {"ids": seen_list})
-
-        await _safe_send_dart(context, msg, disable_web_page_preview=True)
+        # 발송 성공 후에만 seen_ids 저장 (중복 발송 방지)
+        ok = await _safe_send_dart(context, msg, disable_web_page_preview=True)
+        if ok:
+            seen_ids.update(new_ids)
+            seen_list = list(seen_ids)[-500:]
+            save_json(DART_SEEN_FILE, {"ids": seen_list})
 
     except Exception as e:
         print(f"DART 체크 오류: {e}")

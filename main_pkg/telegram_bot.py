@@ -941,7 +941,10 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 텔레그램 메시지 길이 제한
     if len(msg) > 4000:
         msg = msg[:3950] + "\n\n_(일부 생략)_"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    try:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception:
+        await update.message.reply_text(msg)
 
 
 async def manual_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1110,7 +1113,7 @@ async def weekly_sanity_check(context):
         missing = [b for b in bizdays if b not in have]
         if missing:
             msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+            await _safe_send(context, msg)
 
             # 누락 영업일 감지 후 자동 백필 (학습 #28 영구 대응)
             try:

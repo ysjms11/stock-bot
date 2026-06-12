@@ -235,20 +235,22 @@ def _reset_silent_failure(key: str) -> None:
 
 
 async def _alert_silent_failure(context, key: str, count: int, message: str) -> None:
-    """텔레그램 알림 + last_alerted 갱신 (24h cooldown)."""
-    log = load_json(SILENT_FAILURE_LOG, {})
+    """텔레그램 알림 + last_alerted 갱신 (24h cooldown).
+
+    send 성공 시에만 last_alerted를 기록해 cooldown을 소비한다.
+    send 실패 시에는 cooldown을 소비하지 않아 다음 사이클에 재시도한다.
+    """
     today = datetime.now(KST).strftime("%Y-%m-%d")
-    if key in log:
-        log[key]["last_alerted"] = today
-        save_json(SILENT_FAILURE_LOG, log)
-    try:
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text=f"🚨 *Silent failure 감지*\n\n{message}\n\n_{count}일/회 연속 누적_",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"[silent_failure] 알림 전송 실패: {e}")
+    ok = await _safe_send(
+        context,
+        f"🚨 *Silent failure 감지*\n\n{message}\n\n_{count}일/회 연속 누적_",
+        parse_mode="Markdown",
+    )
+    if ok:
+        log = load_json(SILENT_FAILURE_LOG, {})
+        if key in log:
+            log[key]["last_alerted"] = today
+            save_json(SILENT_FAILURE_LOG, log)
 
 
 def _extract_grade(entry: dict, ticker: str, name: str) -> str | None:
