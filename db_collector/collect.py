@@ -203,12 +203,13 @@ def _store_daily_snapshot(conn: sqlite3.Connection, date: str,
                 d_qty,
                 d_amt,
                 # 공매도 (FHPST04830000 응답 필드)
-                int(short.get("short_vol", 0) or 0),
-                float(short.get("short_ratio", 0) or 0),
-                # 시간외 (kis_overtime_daily 반환 필드)
-                int(overtime.get("ovtm_close", 0) or 0),
-                float(overtime.get("ovtm_change_pct", 0) or 0),
-                int(overtime.get("ovtm_volume", 0) or 0),
+                # 부재(HTTP-500 재시도 소진) 시 NULL — 실제 0 공매도와 구분. _has_supply 패턴 동일.
+                int(short.get("short_vol", 0) or 0) if bool(short) else None,
+                float(short.get("short_ratio", 0) or 0) if bool(short) else None,
+                # 시간외 (kis_overtime_daily 반환 필드) — 부재 시 NULL
+                int(overtime.get("ovtm_close", 0) or 0) if bool(overtime) else None,
+                float(overtime.get("ovtm_change_pct", 0) or 0) if bool(overtime) else None,
+                int(overtime.get("ovtm_volume", 0) or 0) if bool(overtime) else None,
             ))
         except Exception as e:
             print(f"[DB] {ticker} snapshot INSERT 실패: {e}")
@@ -403,7 +404,7 @@ async def collect_daily(date: str = None) -> dict:
     # 여기서는 KRX 가용 시 정확한 원(KRW)으로 덮어쓰기만 한다(실패해도 1차값 보존).
     # ⚠️ _fetch_supply_data는 blocking pykrx HTTP+sleep → 반드시 lock 밖에서 실행.
     try:
-        supply_fetched = _fetch_supply_data(date)
+        supply_fetched = await asyncio.to_thread(_fetch_supply_data, date)
         async with db_write_lock:
             s_res = _write_supply_to_snapshot(conn, date, supply_fetched)
             conn.commit()
