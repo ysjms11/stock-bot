@@ -80,37 +80,6 @@ async def get_kis_index(token, index_code="0001"):
         return (await resp.json()).get("output", {})
 
 
-def _kis_headers(token, tr_id):
-    return {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET,
-        "tr_id": tr_id,
-    }
-
-
-async def _kis_get(session, path, tr_id, token, params):
-    """KIS API GET 호출 (429/5xx 자동 재시도, 공유 세션 fallback)."""
-    s = session if session and not getattr(session, 'closed', False) else _get_session()
-    url = f"{KIS_BASE_URL}{path}"
-    headers = _kis_headers(token, tr_id)
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        async with s.get(url, headers=headers, params=params) as r:
-            if r.status == 429 and attempt < max_retries:
-                print(f"[RETRY] {path} → 429, attempt {attempt}/{max_retries}")
-                await asyncio.sleep(1.0 * attempt)
-                continue
-            if r.status in (500, 502, 503) and attempt < max_retries:
-                print(f"[RETRY] {path} → {r.status}, attempt {attempt}/{max_retries}")
-                await asyncio.sleep(2.0)
-                continue
-            data = await r.json(content_type=None)
-            return r.status, data
-    return 500, {}
-
-
 async def kis_stock_price(ticker, token, session=None):
     s = session or aiohttp.ClientSession()
     try:

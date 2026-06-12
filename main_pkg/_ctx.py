@@ -11,7 +11,7 @@ from kis_api import (
     fetch_us_earnings_calendar, fetch_us_sector_etf,
     fetch_and_cache_disclosure, parse_disclosure_summary,
 )
-from kis_api._config import SILENT_FAILURE_LOG, DART_TELEGRAM_TOKEN, DART_CHAT_ID
+from kis_api import SILENT_FAILURE_LOG, DART_TELEGRAM_TOKEN, DART_CHAT_ID
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TELEGRAM 설정
