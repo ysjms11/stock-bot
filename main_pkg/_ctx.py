@@ -50,29 +50,69 @@ def _read_regime() -> tuple[str, str]:
     return regime_en, _REGIME_EMOJI.get(regime_en, "⚪")
 
 
+_TG_LIMIT = 3500  # Telegram hard limit 4096; safety margin for markdown entities + surrogate-pair emoji
+
+
+def _split_for_telegram(text: str, limit: int = _TG_LIMIT) -> list:
+    """Split text into <=limit-char chunks, preferring newline boundaries.
+    A single line longer than limit is hard-sliced. Returns >=1 chunk."""
+    if text is None:
+        text = ""
+    if len(text) <= limit:
+        return [text]
+    chunks, buf = [], ""
+    for line in text.split("\n"):
+        # a single oversized line: flush buf, then hard-slice the line
+        if len(line) > limit:
+            if buf:
+                chunks.append(buf); buf = ""
+            for i in range(0, len(line), limit):
+                chunks.append(line[i:i+limit])
+            continue
+        cand = line if not buf else buf + "\n" + line
+        if len(cand) > limit:
+            chunks.append(buf); buf = line
+        else:
+            buf = cand
+    if buf:
+        chunks.append(buf)
+    return chunks or [""]
+
+
 async def _safe_send(context, text: str, parse_mode: str = "Markdown", **kwargs) -> bool:
     """텔레그램 메시지 안전 발송.
+    - 긴 메시지는 청크로 분할 (3500자 기준)
     - 1차: parse_mode 시도
     - 2차: parse 실패 시 plain text fallback
-    Returns: 발송 성공 시 True
+    Returns: 모든 청크 발송 성공 시 True
     """
-    try:
-        await context.bot.send_message(chat_id=CHAT_ID, text=text,
-                                       parse_mode=parse_mode, **kwargs)
-        return True
-    except Exception as e:
-        emsg = str(e).lower()
-        if "parse entities" in emsg or "can't find end of the entity" in emsg or "can't parse entities" in emsg:
-            try:
-                await context.bot.send_message(chat_id=CHAT_ID, text=text, **kwargs)
-                print(f"[telegram] Markdown 파싱 실패 → plain text 발송 (offset 추적: {str(e)[:80]})")
-                return True
-            except Exception as e2:
-                print(f"[telegram] plain text fallback 실패: {e2}")
+    async def _send_one(chunk: str) -> bool:
+        try:
+            await context.bot.send_message(chat_id=CHAT_ID, text=chunk,
+                                           parse_mode=parse_mode, **kwargs)
+            return True
+        except Exception as e:
+            emsg = str(e).lower()
+            if "parse entities" in emsg or "can't find end of the entity" in emsg or "can't parse entities" in emsg:
+                try:
+                    await context.bot.send_message(chat_id=CHAT_ID, text=chunk, **kwargs)
+                    print(f"[telegram] Markdown 파싱 실패 → plain text 발송 (offset 추적: {str(e)[:80]})")
+                    return True
+                except Exception as e2:
+                    print(f"[telegram] plain text fallback 실패: {e2}")
+                    return False
+            else:
+                print(f"[telegram] 발송 실패: {e}")
                 return False
-        else:
-            print(f"[telegram] 발송 실패: {e}")
-            return False
+
+    chunks = _split_for_telegram(text)
+    ok = True
+    for i, ch in enumerate(chunks):
+        if not await _send_one(ch):
+            ok = False
+        if i < len(chunks) - 1:
+            await asyncio.sleep(0.3)
+    return ok
 
 
 async def _safe_send_dart(context, text: str, parse_mode: str = "Markdown", **kwargs) -> bool:
@@ -91,34 +131,43 @@ async def _safe_send_dart(context, text: str, parse_mode: str = "Markdown", **kw
     if not DART_TELEGRAM_TOKEN:
         target_chat = DART_CHAT_ID
         dw_kwargs = {k: v for k, v in kwargs.items()}
-        try:
-            await context.bot.send_message(
-                chat_id=target_chat, text=text, parse_mode=parse_mode, **dw_kwargs
-            )
-            return True
-        except Exception as e:
-            emsg = str(e).lower()
-            if "parse entities" in emsg or "can't find end of the entity" in emsg or "can't parse entities" in emsg:
-                try:
-                    await context.bot.send_message(chat_id=target_chat, text=text, **dw_kwargs)
-                    print(f"[dart_telegram] Markdown 파싱 실패 → plain text 발송 (offset 추적: {str(e)[:80]})")
-                    return True
-                except Exception as e2:
-                    print(f"[dart_telegram] plain text fallback 실패: {e2}")
+
+        async def _dart_send_one(chunk: str) -> bool:
+            try:
+                await context.bot.send_message(
+                    chat_id=target_chat, text=chunk, parse_mode=parse_mode, **dw_kwargs
+                )
+                return True
+            except Exception as e:
+                emsg = str(e).lower()
+                if "parse entities" in emsg or "can't find end of the entity" in emsg or "can't parse entities" in emsg:
+                    try:
+                        await context.bot.send_message(chat_id=target_chat, text=chunk, **dw_kwargs)
+                        print(f"[dart_telegram] Markdown 파싱 실패 → plain text 발송 (offset 추적: {str(e)[:80]})")
+                        return True
+                    except Exception as e2:
+                        print(f"[dart_telegram] plain text fallback 실패: {e2}")
+                        return False
+                else:
+                    print(f"[dart_telegram] 발송 실패: {e}")
                     return False
-            else:
-                print(f"[dart_telegram] 발송 실패: {e}")
-                return False
+
+        chunks = _split_for_telegram(text)
+        ok = True
+        for i, ch in enumerate(chunks):
+            if not await _dart_send_one(ch):
+                ok = False
+            if i < len(chunks) - 1:
+                await asyncio.sleep(0.3)
+        return ok
 
     # 분기 3: 별도 봇 토큰 → aiohttp raw HTTP
     import aiohttp
     target_chat = DART_CHAT_ID or CHAT_ID
     url = f"https://api.telegram.org/bot{DART_TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": target_chat, "text": text}
-    if parse_mode:
-        payload["parse_mode"] = parse_mode
+    base_kwargs_flags = {}
     if kwargs.get("disable_web_page_preview"):
-        payload["disable_web_page_preview"] = True
+        base_kwargs_flags["disable_web_page_preview"] = True
 
     async def _post(pm_payload):
         timeout = aiohttp.ClientTimeout(total=15)
@@ -131,23 +180,36 @@ async def _safe_send_dart(context, text: str, parse_mode: str = "Markdown", **kw
             print(f"[dart_telegram] HTTP 요청 실패: {e}")
             return None
 
-    data = await _post(payload)
-    if data is None:
-        return False
-    if not data.get("ok"):
-        desc = (data.get("description") or "").lower()
-        if "parse" in desc or "entities" in desc:
-            # parse_mode 제거 후 1회 재시도
-            payload2 = {k: v for k, v in payload.items() if k != "parse_mode"}
-            data2 = await _post(payload2)
-            if data2 and data2.get("ok"):
-                print(f"[dart_telegram] Markdown 파싱 실패 → plain text 재시도 성공")
-                return True
-            print(f"[dart_telegram] plain text 재시도 실패: {data2}")
+    async def _post_one_chunk(chunk: str) -> bool:
+        payload = {"chat_id": target_chat, "text": chunk, **base_kwargs_flags}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        data = await _post(payload)
+        if data is None:
             return False
-        print(f"[dart_telegram] sendMessage 실패: {data.get('description')}")
-        return False
-    return True
+        if not data.get("ok"):
+            desc = (data.get("description") or "").lower()
+            if "parse" in desc or "entities" in desc:
+                # parse_mode 제거 후 1회 재시도
+                payload2 = {k: v for k, v in payload.items() if k != "parse_mode"}
+                data2 = await _post(payload2)
+                if data2 and data2.get("ok"):
+                    print(f"[dart_telegram] Markdown 파싱 실패 → plain text 재시도 성공")
+                    return True
+                print(f"[dart_telegram] plain text 재시도 실패: {data2}")
+                return False
+            print(f"[dart_telegram] sendMessage 실패: {data.get('description')}")
+            return False
+        return True
+
+    chunks = _split_for_telegram(text)
+    ok = True
+    for i, ch in enumerate(chunks):
+        if not await _post_one_chunk(ch):
+            ok = False
+        if i < len(chunks) - 1:
+            await asyncio.sleep(0.3)
+    return ok
 
 
 def _track_silent_failure(key: str, threshold: int = 3) -> int:
