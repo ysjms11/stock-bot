@@ -40,7 +40,10 @@ from kis_api import (
     DECISION_LOG_FILE, COMPARE_LOG_FILE, WATCHALERT_FILE,
 )
 from db_collector import load_krx_db, scan_stocks, _load_history
-from mcp_tools._helpers import _parse_page_range, _render_pdf_pages, _extract_pdf_text, _embed_pdf_resource
+from mcp_tools._helpers import (
+    _parse_page_range, _render_pdf_pages, _extract_pdf_text, _embed_pdf_resource,
+    _is_sensitive_path,
+)
 
 try:
     from report_crawler import (
@@ -60,6 +63,8 @@ async def handle_read_file(arguments: dict) -> dict | list:
         result = {"error": "path는 필수입니다"}
     elif ".." in rel or rel.startswith("/"):
         result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
+    elif _is_sensitive_path(rel):
+        result = {"error": "거부: 보안상 보호된 경로입니다"}
     else:
         _allowed_ext = (".md", ".py", ".json", ".txt", ".pdf")
         if not any(rel.endswith(ext) for ext in _allowed_ext):
@@ -113,6 +118,8 @@ async def handle_write_file(arguments: dict) -> dict | list:
         result = {"error": "path는 필수입니다"}
     elif ".." in rel or rel.startswith("/"):
         result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
+    elif _is_sensitive_path(rel):
+        result = {"error": "거부: 보안상 보호된 경로입니다"}
     else:
         _write_allowed = (".md", ".json", ".txt")
         _write_blocked = (".py", ".env")
@@ -243,7 +250,16 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
                 _pdf_path = os.path.realpath(_row["pdf_path"])
                 _data_base = os.path.realpath(_DATA_DIR) if _DATA_DIR else ""
                 _bot_base  = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-                _allowed   = _data_base and _pdf_path.startswith(_data_base) or _pdf_path.startswith(_bot_base)
+                # Fix: explicit parens + os.sep boundary so that neither branch
+                # is dead and a sibling directory (e.g. /…/stock-bot-evil) cannot
+                # pass via a prefix match without the separator boundary.
+                _in_data = bool(_data_base) and (
+                    _pdf_path == _data_base or _pdf_path.startswith(_data_base + os.sep)
+                )
+                _in_bot = (
+                    _pdf_path == _bot_base or _pdf_path.startswith(_bot_base + os.sep)
+                )
+                _allowed = _in_data or _in_bot
                 if not _allowed:
                     result = {"error": "PDF 경로가 허용 디렉토리 밖입니다"}
                 elif not os.path.isfile(_pdf_path):

@@ -12,6 +12,11 @@ from kis_api import (
 )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 레포 루트 (helpers.py → mcp_tools/ → repo root)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # MCP 인증
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 _MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
@@ -852,6 +857,98 @@ def _validate_git_path(raw: str) -> str:
     if not str(resolved).startswith(str(repo_resolved)):
         raise ValueError(f"저장소 외부 경로 차단: {raw!r}")
     return raw
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 민감 경로 denylist — write_file / read_file / git_commit 공용
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+def _is_sensitive_path(path_input: str) -> bool:
+    """Return True (= BLOCK) when the path points at a security-sensitive location.
+
+    Fully canonicalizes the input — resolves symlinks, absolute paths, case
+    variants (via casefold), traversal sequences, backslash separators, and
+    trailing-dot/space filename tricks — before applying the denylist.
+    Paths outside the repo root are also blocked as defense-in-depth.
+
+    Case-variant defense relies on the explicit casefold() of each path
+    component below — do NOT remove it (realpath does NOT case-fold on
+    macOS/APFS; casefold is the sole guard against `.CLAUDE/settings.json`
+    and similar RCE bypasses). realpath is used to resolve symlinks and `..`
+    and to relativize absolute paths to the repo root.
+
+    Blocked cases
+    -------------
+    - Under .git/         (any depth) — defense-in-depth (git objects/hooks)
+    - Under .claude/      (any depth) — hooks = RCE
+    - Under .github/                  — workflow injection
+    - Under scripts/hooks/            — shell hooks
+    - CLAUDE.md at any depth          — agent prompt injection (case-insensitive)
+    - Extension in {.sh, .yml, .yaml} (case-insensitive)
+    - .env or .env* variants          — credentials (case-insensitive)
+    - data/token_cache.json           — live KIS OAuth bearer token
+    - Outside repo root               — blocked unconditionally
+    """
+    # Step 1 — normalize backslash separators first
+    path_input = path_input.replace("\\", "/")
+
+    # Step 2 — resolve to an absolute real path (resolves symlinks + ..)
+    if os.path.isabs(path_input):
+        p = os.path.realpath(path_input)
+    else:
+        p = os.path.realpath(os.path.join(_REPO_ROOT, path_input))
+
+    # Step 3 — make repo-relative; block anything outside the repo
+    try:
+        rel = os.path.relpath(p, _REPO_ROOT)
+    except ValueError:
+        # Different drive/volume on Windows (shouldn't happen on macOS, but safe)
+        return True
+
+    # relpath returns ".." prefix for paths above the repo root
+    if rel.startswith("..") or os.path.isabs(rel):
+        return True
+
+    # Step 4 — split into parts for component-level matching (casefold throughout)
+    # NOTE: casefold() here is the ONLY case-variant defense — do NOT remove.
+    parts = rel.replace("\\", "/").split("/")
+    lower_parts = [part.casefold() for part in parts]
+
+    # Step 5a — prefix-based blocks (first component, case-insensitive)
+    first = lower_parts[0] if lower_parts else ""
+
+    if first == ".git":
+        return True
+    if first == ".claude":
+        return True
+    if first == ".github":
+        return True
+    # scripts/hooks/
+    if first == "scripts" and len(lower_parts) >= 2 and lower_parts[1] == "hooks":
+        return True
+
+    # Step 5b — filename-based blocks (any depth, strip trailing dots/spaces first)
+    raw_filename = parts[-1] if parts else ""
+    filename = raw_filename.rstrip(" .").casefold()
+
+    if filename == "claude.md":
+        return True
+
+    # Step 5c — extension-based blocks (.sh / .yml / .yaml — case-insensitive)
+    _, ext = os.path.splitext(filename)
+    if ext.lower() in {".sh", ".yml", ".yaml"}:
+        return True
+
+    # Step 5d — .env / .env* (case-insensitive)
+    # e.g. ".env", ".ENV", ".env.bak2", ".env_20260603"
+    if filename == ".env" or filename.startswith(".env.") or filename.startswith(".env_"):
+        return True
+
+    # Step 5e — exact secret file (casefolded rel path)
+    norm_rel = "/".join(lower_parts)
+    if norm_rel == "data/token_cache.json":
+        return True
+
+    return False
 
 
 # _NO_TOKEN_TOOLS: token 불필요 도구 목록

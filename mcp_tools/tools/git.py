@@ -40,7 +40,7 @@ from kis_api import (
     DECISION_LOG_FILE, COMPARE_LOG_FILE, WATCHALERT_FILE,
 )
 from db_collector import load_krx_db, scan_stocks, _load_history
-from mcp_tools._helpers import _run_git, _validate_git_path
+from mcp_tools._helpers import _run_git, _validate_git_path, _is_sensitive_path
 
 try:
     from report_crawler import (
@@ -157,6 +157,10 @@ async def handle_git_commit(arguments: dict) -> dict | list:
         blocked = [f for f in files if f.endswith(".py") or f.endswith(".env")]
         if blocked:
             result = {"error": f".py/.env 파일 커밋 불가: {blocked}"}
+        # 보안 민감 경로 차단 — .claude/, .github/, hooks, CLAUDE.md, .env*, .sh, .yml/yaml, token_cache
+        elif any(_is_sensitive_path(f) for f in files):
+            sensitive = [f for f in files if _is_sensitive_path(f)]
+            result = {"error": f"거부: 보안상 보호된 경로가 포함되어 있습니다: {sensitive}"}
         else:
             try:
                 validated_files = [_validate_git_path(f) for f in files]
