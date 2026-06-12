@@ -1,3 +1,24 @@
+## 📄 2026-06-12 디버깅 배치 — 검증된 실버그 10건 수정·배포 (사용자 "리펙토링 디버깅 취약점 고쳐줘 / 디버깅 진행")
+
+**발단**: 사용자가 리팩토링·디버깅·취약점 셋 다 요청 → 우선 **디버깅** 트랙 착수. 확정단서(로그 9회+ `[telegram] 발송 실패: Message is too long`)부터 root-cause → 읽기전용 정찰 워크플로(debug-recon, 6렌즈×반증검증×랭킹, 21에이전트)로 형제버그 색출.
+
+**P0 (선처리, e520092)**: `_safe_send`/`_safe_send_dart` 3분기 전부 4096 길이처리 부재 → 초과 메시지 영구 드롭(손절·이벤트·매크로 알림 유실). 전송 choke point에 `_split_for_telegram`(개행경계 분할, limit=3500=UTF-16 이모지 마진) 추가. code-review CLEAN.
+
+**정찰 결과 검증 11건 → 9백로그(3건 반증 제외)**, 파일 disjoint라 developer 8명 병렬 → 통합 Opus 리뷰 → Opus verifier → 4 원자커밋:
+- **알림 유실 클러스터 (d892045, P1×2+P3)** 공통근본원인=*발송 성공 전* dedup/쿨다운 기록: ① `dart_check.py` seen_ids를 `_safe_send_dart` 전 저장 → 보유/워치 공시알림 영구억제 → `ok` 시에만 저장 ② `_ctx.py:_alert_silent_failure` 워치독이 발송 전 24h 쿨다운 소진+raw {e} Markdown 무폴백 → `_safe_send` 경유+`ok` 시에만 쿨다운 ③ `telegram_bot.py` /reports 엔티티 절단 무응답 + weekly_sanity bare send → try/plain·`_safe_send`.
+- **이벤트루프 블로킹 (daf7113+601a9f3, P2×3)** 동기 fdr/yf/pykrx가 단일루프 동결→손절(10분)·DART(5분) 폴러 굶김: `regime.py`(gather+to_thread 병렬), `macro.py`(yf to_thread), `collect.py`(_fetch_supply_data to_thread, db_write_lock 밖 유지).
+- **데이터정합/경쟁/락 (601a9f3+7be2e7e, P2×2+P3)**: `collect.py` short/ovtm 실패시 침묵-0→NULL(_has_supply 미러, 244종목/일 오인 해소, 실0 보존), `macro_job.py` macro_sent lost-update 경쟁→save 직전 fresh reload+merge, `sec.py` upsert db_write_lock 누락→`async with` 래핑(fetch는 락 밖).
+
+**게이트**: code-reviewer(Opus) **SHIP**(블로커0/중요0/NIT3) — #4 NULL-vs-0·컬럼순서, #5 calc_kr/us 스레드안전성(sync확정·공유가변상태0), sec 순환import없음·락동일성 정밀검토. verifier(Opus) **SHIP** — pytest **720 passed/17 skipped/0 failed**(베이스라인 동일), 8파일 parse+import, 스플리터·NULL가드 repro 통과.
+
+**배포**: e520092+4커밋 push(d30e58b..7be2e7e FF, ahead5/behind0) → `launchctl kickstart -k`(5949→36888). **실증 클린**: /health ok, warm_caches 6종 OK, WS·잡 기동, 트레이스백0, 재시작루프 0(최근 startup 이후 SIGTERM 0). 500-retry는 만성/외부(KIS API, 로그 90%=198,400건, 내 변경과 무관).
+
+**반증 제외 3건(skip)**: financial.py 0-instead-of-NULL(소비자 없음·raw 미읽힘), backfill supply 0(읽기 시 대칭 `or 0`), collect_shares_historical 락누락(데드코드). NIT: backfill path(collect.py:800) 0-instead-of-NULL 잔존(만성·무소비자, 정합성 코멘트만 권고).
+
+**남은 요청**: 리팩토링·취약점(공개 터널 /mcp 인증 등) 트랙 미착수 — 사용자 지시 대기.
+
+---
+
 ## 📄 2026-06-10 dashboard_home.py 분해 — 단일파일 ~6,700줄 → dashboard_home/ 7모듈 패키지 (사용자 "계속해")
 
 **모놀리스 분해 2호** (db_collector 직후 동일 플레이북, worktree `refactor/dashboard-home-pkg`). 조건: 소비자 단 1곳(_entry.py — `register_home_routes`+`warm_caches` 2심볼), 테스트 0 → characterization 전략 재설계.
