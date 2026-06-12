@@ -1,3 +1,25 @@
+## 📄 2026-06-12 취약점 + 리팩토링 배치 — 공개 터널 보안 + 데드코드 정리 (사용자 "리펙토링 디버그 취약점 찾고 수정해줘")
+
+**발단**: 디버깅 완료 후 취약점+리팩토링 트랙. 읽기전용 정찰 워크플로(sec-refactor-recon, 10렌즈[MCP인증/파일툴탈출/인젝션/시크릿/텔레그램인증/네트워크 + 데드코드/모놀리스/중복/일관성]×반증검증×트랙별랭킹, 57에이전트) → 보안 29건/리팩토링 10건 검증.
+
+**🔴 핵심 발견 — 전체 control plane 미인증 공개노출**: /mcp(MCP_AUTH_TOKEN 미설정→fail-open)로 47개 도구 익명 호출 가능 = write_file로 .claude/settings.json hooks 덮어쓰기 RCE + read_file로 라이브 KIS 토큰 유출 + git_push 레포오염. /home·/api/*도 미인증(포트폴리오/판단노트 유출 + POST 변조). 텔레그램 봇도 인가 없음.
+
+**코드로 즉시 수정·배포(커넥터/락아웃 무위험, 6커밋 119d7e0~0f7f481)**:
+- `_is_sensitive_path` 공유 denylist (write_file/read_file/git_commit) — .claude/·.git/·.github/·hooks/·CLAUDE.md·*.sh/yml·.env*·token_cache.json 차단. **casefold(APFS 대소문자우회 .CLAUDE/ 방어 핵심)** + realpath + repo-root 상대화. → /mcp 미인증이어도 RCE/토큰유출/레포오염 차단. tests/test_sensitive_path.py 33케이스.
+- 텔레그램 group=-1 TypeHandler 오너게이트(CHAT_ID 인가) — 임의 사용자 명령 차단. test stub 17개에 TypeHandler/ApplicationHandlerStop 추가.
+- .gitignore .env* (시크릿백업 우발커밋 차단), read_report_pdf 경로검증 버그.
+- 리팩토링: kr_stock shadow _kis_get/_kis_headers 삭제(섀도잉 함정), 데드 get_db_conn·dart_inc 중복 collect_reports_daily 삭제, _ctx import 일관성. earnings.py 폐기 us_watchlist→load_us_watchlist.
+
+**게이트**: critic(Opus) 적대적 2회 — 1차 CRITICAL 2건(대소문자·절대경로 denylist 우회) 발견→수정→2차 SHIP(실증 CLOSED). code-review(Opus) 리팩토링 SHIP. verifier 1차 pytest 720→678(테스트 stub staleness)→stub 수정→**750 passed/0 fail**. 재시작 75977 클린(에러0).
+
+**🟠 사용자 조치 필요(코드로 불가 — 계정/엣지/포털)**:
+1. **/mcp 인증** — MCP_AUTH_TOKEN 설정은 claude.ai 커넥터 Bearer 동시 갱신 필요(커넥터-브레이킹). CF Access 서비스토큰 권장(인터랙티브 Gmail-PIN은 머신커넥터 불가).
+2. **Cloudflare Access**를 /home·/api/*·/dash-classic로 확장(현재 /dash만) — CF 대시보드. /mcp는 제외(커넥터).
+3. **시크릿 로테이션** — KIS 앱키/시크릿(+token_cache 무효화)·GitHub PAT·텔레그램 토큰. 라이브 KIS 토큰이 공개 /mcp로 장기 읽기가능했음=compromised 간주.
+- 반증/스킵: 0.0.0.0 바인드(deprioritized), /dash-classic XSS(no-edit zone), report_crawler 커플링·_helpers 분해(반증). telegram_bot 7잡 추출(#7)=테스트선행 필요 defer, MACRO_SENT dedup 중앙화(#8)=회귀위험>이득 defer.
+
+---
+
 ## 📄 2026-06-12 디버깅 배치 — 검증된 실버그 10건 수정·배포 (사용자 "리펙토링 디버깅 취약점 고쳐줘 / 디버깅 진행")
 
 **발단**: 사용자가 리팩토링·디버깅·취약점 셋 다 요청 → 우선 **디버깅** 트랙 착수. 확정단서(로그 9회+ `[telegram] 발송 실패: Message is too long`)부터 root-cause → 읽기전용 정찰 워크플로(debug-recon, 6렌즈×반증검증×랭킹, 21에이전트)로 형제버그 색출.
