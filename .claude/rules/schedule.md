@@ -5,7 +5,7 @@
 
 **표 읽는 법**
 - `D` = 요일 필터: `평일`(월~금), `주말`, `토`, `일`, `월`, `화~토`, `전체`
-- `담당 함수`는 `main_pkg/jobs/*.py` (US 레이팅·sanity·log_rotate 7개는 `main_pkg/telegram_bot.py`). 위치는 `grep -rn "def <name>" main_pkg/`로 확인
+- `담당 함수`는 `main_pkg/jobs/*.py` (US 레이팅 5개=`jobs/us_analyst.py`, sanity·log_rotate 2개=`jobs/sanity.py` — 2026-06-12 telegram_bot서 분리). 위치는 `grep -rn "def <name>" main_pkg/`로 확인
 - `최근 변경`은 기능 변경된 날짜만 기록 (시간 미세 조정 제외)
 
 ---

@@ -59,7 +59,7 @@ DATA_DIR         데이터 디렉토리 경로 (/Users/kreuzer/stock-bot/data)
 |------|------|------|
 | `kis_api/` | 패키지(23) | KIS/DART/Yahoo API, 데이터 I/O, WebSocket, 매크로, 백업, 미국 애널, NPS/13F. 기반: `_config`·`_session`·`_files`·`_helpers`·`_db`. 도메인: `kr_stock`·`us_stock`·`consensus`·`regime`·`news`·`macro`·`dart`·`fmp`·`polymarket`·`pension`·`portfolio`·`ranks`·`sec_edgar`·`universe`·`us_ratings`·`backup`·`websocket`. `from kis_api import *`로 공개 API 노출 |
 | `mcp_tools/` | 패키지 | `__init__`=`MCP_TOOLS` 스키마 배열(47개), `_registry`=`TOOL_HANDLERS` dict + `execute_tool`(elif 체인 폐기), `_execute`=`_execute_tool` 래퍼, `server`=JSON-RPC/SSE, `tools/*.py`=도구별 핸들러(20). 각 핸들러는 `from kis_api import *` |
-| `main.py` + `main_pkg/` | shim + 패키지 | `main.py`(~7줄)=진입점 shim. 로직은 `main_pkg/`: `telegram_bot`·`_entry`·`_ctx`·`schedule` + `jobs/`(23 잡파일). 텔레그램 봇 + 자동알림 스케줄 |
+| `main.py` + `main_pkg/` | shim + 패키지 | `main.py`(~7줄)=진입점 shim. 로직은 `main_pkg/`: `telegram_bot`·`_entry`·`_ctx`·`schedule` + `jobs/`(25 잡파일, US애널/sanity 포함). 텔레그램 봇 + 자동알림 스케줄 |
 | `db_collector/` | 패키지(14) | KIS+KRX 풀수집·SQLite·기술지표·스캐너·F/M/FCF·US애널 (2026-06 분해). `_db`=`db_write_lock`·`_get_db`, `collect`=일일 파이프라인, `scan`·`technicals`·`financial`·`alpha` 등. `__init__` 프록시가 `setattr(db_collector, X)`를 백킹 모듈 전체로 전파(monkeypatch 투명성 — 서브모듈 직접 패치 금지). 상세 → `.claude/rules/file-structure.md` |
 | `krx_crawler.py` | 단일파일(~1500) | db_collector 호환 wrapper (레거시 fallback) |
 | `dashboard.py` | 단일파일(~3700) | 구 `/dash` 웹 대시보드 (HTML 렌더링) |

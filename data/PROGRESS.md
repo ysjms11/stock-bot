@@ -17,6 +17,21 @@
 
 ---
 
+## 📄 2026-06-13 telegram_bot.py 7잡 분리 — jobs/us_analyst·sanity (사용자 "장기적으로 좋은방향으로 진행해")
+
+**발단**: 사용자 "분리 했던 거 같은데 확인" → 파일시스템 확인 결과 미완(7잡 전부 telegram_bot.py 1887줄 잔존, schedule이 거기서 import). 정찰 P3 "telegram_bot 7잡 추출 — 테스트 선행 필수" 항목. "장기 좋은 방향" 지시로 진행.
+
+**test-first 플레이북 (db_collector/dashboard_home 분해와 동일)**:
+- **Phase A** (안전망 선구축): `tests/test_us_analyst_extraction_characterization.py` 88개 — 순수헬퍼 골든 + import 스모크 22 + **LOAD_GLOBAL 해소검사 24**(이동 후 import 누락 캐치) + 의존성맵 안정성. 바이트코드 의존성맵 확보, 이동 전 green 베이스라인.
+- **Phase B** (verbatim 이동): telegram_bot.py **1887→1082줄**. `jobs/us_analyst.py`(644, 5잡+헬퍼5+상수2) + `jobs/sanity.py`(193, 2잡+_is_krx_business_day) 신규. telegram_bot.py **15심볼 하위호환 re-export**, schedule.py를 `jobs/`로 재배선. 순환 없음.
+
+**게이트**: code-review(Opus) SHIP — 15심볼 **바이트동일 실증**(git show 대조)·import 완전·clipped neighbor 0. verifier(Opus) SHIP — 전체 **841 passed/0 fail**·Phase A 88/0·캐스케이드·re-export 동일성·7잡 코루틴.
+
+**커밋** `caa69a2`(코드) + 문서(file-structure/schedule/CLAUDE.md + dart_inc 데드사본 메모 정정). 배포: 재시작 확인.
+**남은 defer**: krx_crawler shim(#6)·MACRO_SENT dedup(#8)·collect_shares_historical(#4 결정필요). 보안 사용자조치 3건 여전.
+
+---
+
 ## 📄 2026-06-12 취약점 + 리팩토링 배치 — 공개 터널 보안 + 데드코드 정리 (사용자 "리펙토링 디버그 취약점 찾고 수정해줘")
 
 **발단**: 디버깅 완료 후 취약점+리팩토링 트랙. 읽기전용 정찰 워크플로(sec-refactor-recon, 10렌즈[MCP인증/파일툴탈출/인젝션/시크릿/텔레그램인증/네트워크 + 데드코드/모놀리스/중복/일관성]×반증검증×트랙별랭킹, 57에이전트) → 보안 29건/리팩토링 10건 검증.
