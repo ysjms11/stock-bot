@@ -36,12 +36,12 @@ from main_pkg.jobs.events import (
     weekly_sat_port_check_notify, weekly_sun_discovery_notify,
     weekly_report_digest_notify,
 )
-# US ratings jobs are in telegram_bot.py (same scope as other weekly US jobs)
-from main_pkg.telegram_bot import (
+# US ratings jobs moved to jobs/ (2026-06-13 Phase B extraction)
+from main_pkg.jobs.us_analyst import (
     daily_us_rating_scan, weekly_us_ratings_universe_scan,
-    weekly_us_analyst_sync, hourly_us_holdings_check,
-    weekly_us_analyst_report, weekly_sanity_check, weekly_log_rotate,
+    weekly_us_analyst_sync, hourly_us_holdings_check, weekly_us_analyst_report,
 )
+from main_pkg.jobs.sanity import weekly_sanity_check, weekly_log_rotate
 
 
 def register_all_schedules(jq):
