@@ -1,3 +1,22 @@
+## 🐛 2026-06-13 reports DB 종목-리포트 오염 수정 (사용자 제보: 15103 한미반도체↔한미글로벌)
+
+**제보**: report_id 15103(한화 3/30 "놓쳐선 안 될 격변의 시기")이 ticker=042700(한미반도체)인데 PDF 본문은 한미글로벌(053690). prefix "한미" 매칭 충돌 추정 + name 컬럼에 워치 메모 오염(005930="삼성전자 추매").
+
+**debugger 진단 (제보 가설 일부 뒤집음)**:
+- **15103은 크롤러 버그 아님** — 한경 크롤러는 6자리 코드 검색(`search_text=ticker`)이라 prefix 충돌 불가. **한경컨센서스 소스 자체가 PDF를 잘못된 종목에 연결**한 데이터 오류(report_idx=647913). 본문 코드 불일치 전수 스캔 → 진짜 오매핑 8건뿐(나머지는 peer 언급).
+- **name 오염은 실재**: watchalert.json 사용자 메모 → `kis_api/_files.py:169`(load_kr_watch_dict) → `report_crawler.py:1369`(get_collection_tickers) → `:1331` INSERT. 실측 메모 오염 ~325건 + name=ticker 6,785건.
+
+**수정 (debugger→developer→reviewer(Opus)→verifier(Opus) 전체 통과)**:
+- `report_crawler.py:1392-1401` (+10줄만): get_collection_tickers() 반환 직전 stock_master 정규명 덮어쓰기(try/except, 실패 시 기존 동작). 소비자 3곳 시그니처 무변경.
+- `scripts/fix_report_name_pollution.py` 신규(dry-run 기본/--apply/--fix-mismatch/--scan, label별 백업+덮어쓰기 방지): **name 정규화 7,110행 UPDATE** · **15103 → 053690 재배정**(PDF 파일 report_pdfs/053690/ 이동, pdf_url 유지로 existing_urls dedupe가 재오염 차단) · **본문 오매핑 7건 정정**(3 DELETE 중복존재확인 후: 2208/6182/6797, 4 UPDATE: 4373·6691→004020, 6104→138930, 6801→112610). 멱등(재실행 0건) 검증.
+- 사후 DB: name 불일치 0 · 메모 잔여 0 · UNIQUE 위반 0 · test_report 24 passed.
+
+**사고 기록**: 1차 --apply 때 `_backup()` 파일명 충돌로 name_norm 7,110행 백업이 id15103 백업(1행)에 덮어써짐(reviewer 적발) → label 스킴+충돌방지 수정, 원본은 iCloud pre-fix stock.db로 복구 가능(docstring 명시). 잔존 백업: `data/archive/reports_name_fix_backup_20260613.json`(1행)·`reports_mismatch_fix_backup_20260613.json`(7행).
+
+**교훈**: ① 크롤러는 무죄여도 **소스 데이터 오류**가 DB를 오염시킴 — full_text 첫부분 `(6자리)` vs ticker 대조 스캔(`--scan`)을 주기 점검 도구로 보유. ② 워치리스트 name은 "사용자 메모" — 정규명이 필요한 소비자는 stock_master에서 가져올 것. ③ 일회성 데이터 수술도 백업 파일명 충돌 검사 필수.
+
+---
+
 ## 📄 2026-06-12 취약점 + 리팩토링 배치 — 공개 터널 보안 + 데드코드 정리 (사용자 "리펙토링 디버그 취약점 찾고 수정해줘")
 
 **발단**: 디버깅 완료 후 취약점+리팩토링 트랙. 읽기전용 정찰 워크플로(sec-refactor-recon, 10렌즈[MCP인증/파일툴탈출/인젝션/시크릿/텔레그램인증/네트워크 + 데드코드/모놀리스/중복/일관성]×반증검증×트랙별랭킹, 57에이전트) → 보안 29건/리팩토링 10건 검증.
