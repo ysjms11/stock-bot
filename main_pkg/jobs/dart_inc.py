@@ -61,14 +61,21 @@ async def daily_dart_incremental(context):
         return
 
     newly = report.get("newly_collected", 0)
+    disc = report.get("disclosures_found", 0)
     if newly <= 0:
-        # 조용히 스킵 (신규 공시 없음 — 대다수 평일이 그럼)
-        print(f"[dart_incr] 신규 공시 없음 — 공시 {report.get('disclosures_found',0)}건, "
+        # 신규 정기공시 수집 0건 — 정기공시는 계절성(Q1≈5월/Q2≈8월), 비수기엔 정상.
+        print(f"[dart_incr] 신규 공시 없음 — 공시 {disc}건, "
               f"중복 {report.get('already_in_db',0)}")
-        cnt = _track_silent_failure("dart_incr_zero", threshold=3)
-        if cnt:
-            await _alert_silent_failure(context, "dart_incr_zero", cnt,
-                f"DART 증분 0건 연속 {cnt}일 — 공시 발견 {report.get('disclosures_found',0)}건")
+        if disc == 0:
+            # 검색 자체가 0건이 장기 지속될 때만 경보 (실제 DART 목록 API/키/네트워크 이상 신호).
+            # 비수기에도 시장 전체 정기공시가 14일 연속 완전 0건이면 비정상.
+            cnt = _track_silent_failure("dart_incr_zero", threshold=14)
+            if cnt:
+                await _alert_silent_failure(context, "dart_incr_zero", cnt,
+                    f"DART 증분 검색 0건 {cnt}회 연속 — DART 목록 API 점검 필요(키/네트워크)")
+        else:
+            # 공시는 잡혔으나 신규 재무 없음(비수기 정상) → 카운터 리셋
+            _reset_silent_failure("dart_incr_zero")
         return
 
     _reset_silent_failure("dart_incr_zero")
