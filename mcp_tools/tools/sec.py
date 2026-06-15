@@ -10,6 +10,8 @@ import asyncio
 import logging
 from datetime import datetime
 
+from db_collector import db_write_lock
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,7 +131,8 @@ async def handle_get_sec_filings(arguments: dict) -> dict:
                 f["ticker"] = t
             all_filings.extend(filings)
             if save_db and filings:
-                saved = upsert_sec_filings(filings)
+                async with db_write_lock:
+                    saved = upsert_sec_filings(filings)
                 db_saved_total += saved
         except Exception as exc:
             logger.error("get_company_filings(%s, %s) 실패: %s", t, cik, exc)

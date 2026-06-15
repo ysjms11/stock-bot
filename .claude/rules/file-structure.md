@@ -76,9 +76,9 @@ tools/ — 19 핸들러 모듈 + `__init__.py`. 핸들러 47개 = 도구 1:1 (`t
 | `_ctx.py` | 153 | 공유 상수·공통 헬퍼 — 전 main_pkg 모듈의 import 원천 (_is_kr_trading_time, _extract_grade, _refresh_ws) |
 | `_entry.py` | 343 | post_init() · main() · _run_all() — MCP+텔레그램+WebSocket 기동, dashboard_home 라우트 등록(:257) |
 | `schedule.py` | 114 | `register_all_schedules(jq)` — 잡 50건 등록 (run_daily 46 + run_repeating 4) + PTB days= 매핑 가드 |
-| `telegram_bot.py` | 1,884 | 텔레그램 명령어 핸들러 + **미국 애널 잡 7종 본체** (`us_ratings`·`weekly_us_harvest`·`weekly_us_analyst_sync`·`us_holdings_noon/close`·`weekly_us_analyst`·`weekly_sanity`·`weekly_log_rotate`) |
+| `telegram_bot.py` | ~1,082 | 텔레그램 명령어 핸들러 (미국 애널/sanity 잡 7종은 2026-06-12 `jobs/us_analyst.py`·`jobs/sanity.py`로 분리 — telegram_bot이 15심볼 하위호환 re-export) |
 
-jobs/ — 22 잡모듈 + `__init__.py` (23파일). 파일 ↔ 등록 잡이름 (`schedule.py` 기준):
+jobs/ — 24 잡모듈 + `__init__.py` (25파일). 파일 ↔ 등록 잡이름 (`schedule.py` 기준):
 
 | 파일 | 함수 → 잡이름 |
 |------|---------------|
@@ -97,13 +97,15 @@ jobs/ — 22 잡모듈 + `__init__.py` (23파일). 파일 ↔ 등록 잡이름 (
 | `momentum.py` | check_supply_drain → `supply_drain` · momentum_exit_check → `momentum_check` |
 | `pension.py` | daily_pension_collect → `pension_collect` · daily_nps_dart_increment → `nps_dart_inc` · weekly_nps_collect → `weekly_nps` · daily_pension_alert → `pension_alert` |
 | `regime.py` | regime_transition_alert → `regime_transition` (60분) |
-| `reports.py` | collect_reports_daily → `report_collect` (정본 — `dart_inc.py`의 동명 함수는 미등록 사본) |
+| `reports.py` | collect_reports_daily → `report_collect` (정본; `dart_inc.py`의 데드 사본은 2026-06-12 삭제) |
 | `stoploss.py` | check_stoploss → `stoploss` (10분) |
 | `sunday.py` | sunday_30_reminder → `sunday_30` |
 | `universe.py` | weekly_universe_update → `universe_update` |
 | `us_summary.py` | us_market_summary → `us_summary_dst` · `us_summary_std` |
 | `watch_change.py` | watch_change_detect → `watch_change` |
 | `weekly_review.py` | weekly_review → `weekly` · snapshot_and_drawdown → `snapshot_dd` |
+| `us_analyst.py` | daily_us_rating_scan → `us_ratings` · weekly_us_ratings_universe_scan → `weekly_us_harvest` · weekly_us_analyst_sync → `weekly_us_analyst_sync` · hourly_us_holdings_check → `us_holdings_noon`·`us_holdings_close` · weekly_us_analyst_report → `weekly_us_analyst` (+헬퍼5·상수2, 2026-06-12 telegram_bot서 분리) |
+| `sanity.py` | weekly_sanity_check → `weekly_sanity` · weekly_log_rotate → `weekly_log_rotate` (+_is_krx_business_day, 2026-06-12 telegram_bot서 분리) |
 
 ## db_collector/ 패키지 구조 (2026-06 분해, 단일파일 4,439줄 → 14모듈)
 

@@ -56,10 +56,10 @@ _RATE_INTERVAL = 0.11  # ~9 req/s (여유 버퍼)
 async def _sec_get(session: aiohttp.ClientSession, url: str, params: dict = None) -> dict | str:
     """SEC EDGAR GET 요청 + rate limit 준수."""
     global _last_call_ts
-    elapsed = asyncio.get_event_loop().time() - _last_call_ts
+    elapsed = asyncio.get_running_loop().time() - _last_call_ts
     if elapsed < _RATE_INTERVAL:
         await asyncio.sleep(_RATE_INTERVAL - elapsed)
-    _last_call_ts = asyncio.get_event_loop().time()
+    _last_call_ts = asyncio.get_running_loop().time()
 
     headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
     try:

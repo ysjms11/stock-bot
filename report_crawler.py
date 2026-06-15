@@ -1389,4 +1389,14 @@ def get_collection_tickers() -> dict:
                 tickers[t] = v.get("name", t)
     except Exception:
         pass
+    # 워치리스트 name은 사용자 메모일 수 있음 → stock_master 정규명으로 보정 (없으면 기존값 유지)
+    try:
+        _conn = sqlite3.connect(DB_PATH, timeout=10)
+        _sm = dict(_conn.execute(
+            "SELECT symbol, name FROM stock_master WHERE name IS NOT NULL AND name != ''"
+        ).fetchall())
+        _conn.close()
+        tickers = {t: _sm.get(t, n) for t, n in tickers.items()}
+    except Exception:
+        pass
     return tickers

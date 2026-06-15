@@ -152,19 +152,58 @@ async def handle_get_rank(arguments: dict, token=None) -> dict | list:
     return result
 
 
+async def _fetch_us_detail(ticker: str, token: str) -> dict:
+    """미국 종목 상세 1건 — 단일/일괄 조회 공용. 필드 shape는 단일조회와 동일."""
+    excd = _guess_excd(ticker)
+    price_d = await kis_us_stock_price(ticker, token, excd)
+    detail_d = await kis_us_stock_detail(ticker, token, excd)
+    cur = float(price_d.get("last", 0) or 0)
+    base = float(price_d.get("base", 0) or 0)
+    return {
+        "ticker": ticker, "market": "US",
+        "price": cur,
+        "chg_pct": float(price_d.get("rate", 0) or 0),
+        "volume": int(price_d.get("tvol", 0) or 0),
+        "open": float(detail_d.get("open", 0) or 0),
+        "high": float(detail_d.get("high", 0) or 0),
+        "low": float(detail_d.get("low", 0) or 0),
+        "prev_close": base,
+        "w52h": float(detail_d.get("h52p", 0) or 0),
+        "w52l": float(detail_d.get("l52p", 0) or 0),
+        "per": float(detail_d.get("perx", 0) or 0) or None,
+        "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
+        "eps": float(detail_d.get("epsx", 0) or 0) or None,
+        "market_cap": detail_d.get("tomv", ""),
+        "sector": detail_d.get("e_icod", ""),
+    }
+
+
 async def handle_get_stock_detail(arguments: dict, token=None) -> dict | list:
     result = None
     # ── 다종목 일괄 조회 (tickers 파라미터) ──
     batch_tickers_raw = arguments.get("tickers", "")
     if batch_tickers_raw:
-        # ← 기존 get_batch_detail 핸들러
+        # ← 기존 get_batch_detail 핸들러 (미국 티커 지원 추가)
         raw = batch_tickers_raw
         delay = float(arguments.get("delay", 0.3) or 0.3)
         tickers = [t.strip().upper() for t in raw.split(",") if t.strip()][:20]
         if not tickers:
             result = {"error": "tickers는 필수입니다 (콤마 구분 종목코드)"}
         else:
-            result = await batch_stock_detail(tickers, token, delay=delay)
+            # ── 한국/미국 분리 후 시장별 조회, 입력 순서 보존 ──
+            us_list = [t for t in tickers if _is_us_ticker(t)]
+            kr_list = [t for t in tickers if not _is_us_ticker(t)]
+            by_ticker: dict = {}
+            if kr_list:
+                for r in await batch_stock_detail(kr_list, token, delay=delay):
+                    by_ticker[r.get("ticker")] = r
+            for t in us_list:
+                try:
+                    by_ticker[t] = await _fetch_us_detail(t, token)
+                except Exception as e:
+                    by_ticker[t] = {"ticker": t, "error": str(e)}
+                await asyncio.sleep(delay)
+            result = [by_ticker[t] for t in tickers if t in by_ticker]
     else:
         # ── 단일 종목 조회 (기존 로직) ──
         ticker = arguments.get("ticker", "005930").strip().upper()
@@ -254,28 +293,7 @@ async def handle_get_stock_detail(arguments: dict, token=None) -> dict | list:
 
         elif _is_us_ticker(ticker):
             # ── 미국 주식 ──
-            excd = _guess_excd(ticker)
-            price_d = await kis_us_stock_price(ticker, token, excd)
-            detail_d = await kis_us_stock_detail(ticker, token, excd)
-            cur = float(price_d.get("last", 0) or 0)
-            base = float(price_d.get("base", 0) or 0)
-            result = {
-                "ticker": ticker, "market": "US",
-                "price": cur,
-                "chg_pct": float(price_d.get("rate", 0) or 0),
-                "volume": int(price_d.get("tvol", 0) or 0),
-                "open": float(detail_d.get("open", 0) or 0),
-                "high": float(detail_d.get("high", 0) or 0),
-                "low": float(detail_d.get("low", 0) or 0),
-                "prev_close": base,
-                "w52h": float(detail_d.get("h52p", 0) or 0),
-                "w52l": float(detail_d.get("l52p", 0) or 0),
-                "per": float(detail_d.get("perx", 0) or 0) or None,
-                "pbr": float(detail_d.get("pbrx", 0) or 0) or None,
-                "eps": float(detail_d.get("epsx", 0) or 0) or None,
-                "market_cap": detail_d.get("tomv", ""),
-                "sector": detail_d.get("e_icod", ""),
-            }
+            result = await _fetch_us_detail(ticker, token)
         else:
             # ── 한국 주식 ──
             price = await kis_stock_price(ticker, token)

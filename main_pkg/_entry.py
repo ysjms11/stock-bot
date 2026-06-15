@@ -9,7 +9,7 @@ import signal
 from datetime import datetime, time as dtime
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, TypeHandler, ApplicationHandlerStop
 from aiohttp import web
 
 from main_pkg._ctx import (
@@ -192,6 +192,14 @@ def main():
     print("봇 시작 중...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
+    # ── 소유자 인증 게이트 (group=-1 → 모든 핸들러보다 먼저 실행) ──────────
+    _OWNER_IDS = {int(x) for x in str(CHAT_ID).replace(' ', '').split(',') if x}
+    async def _owner_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat = update.effective_chat
+        if chat is None or chat.id not in _OWNER_IDS:
+            raise ApplicationHandlerStop   # 소유자 아닌 요청은 무음 차단
+    app.add_handler(TypeHandler(Update, _owner_gate), group=-1)
+
     # 명령어 등록
     commands = [
         ("start", start), ("analyze", analyze), ("scan", scan), ("macro", macro),
@@ -253,6 +261,9 @@ async def _run_all(app, port):
     mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
     # 대시보드 라우트 (5/5 리팩토링으로 dashboard.py 분리)
     dashboard.register_routes(mcp_app)
+    import dashboard_home
+    dashboard_home.register_home_routes(mcp_app)
+    asyncio.create_task(dashboard_home.warm_caches())  # 콜드로드 방지 프리워밍 (비블로킹)
     runner = web.AppRunner(mcp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port, reuse_address=True)

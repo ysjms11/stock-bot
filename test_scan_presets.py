@@ -21,6 +21,8 @@ ext_stub.CommandHandler = object
 ext_stub.MessageHandler = object
 ext_stub.filters = type("filters", (), {"TEXT": None, "Regex": staticmethod(lambda x: x)})()
 ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
+ext_stub.TypeHandler = object
+ext_stub.ApplicationHandlerStop = type("ApplicationHandlerStop", (Exception,), {})
 sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
 
@@ -284,6 +286,7 @@ def _make_streak_stock(foreign_net_amt: int, foreign_ratio: float = 0.2,
     }
 
 
+@pytest.mark.live  # foreign_streak preset calls _get_foreign_streak_data_db() → real stock.db SQLite; fake JSON files in TEST_KRX_DB_DIR are ignored by the SQLite path
 def test_foreign_streak_5days():
     """5일 연속 외인 순매수인 A 통과, 교대로 음수인 B 탈락."""
     dates = ["20260328", "20260329", "20260330", "20260331", "20260401"]
@@ -321,6 +324,7 @@ def test_foreign_streak_5days():
         f"days_available should be 5, got {result.get('days_available')}"
 
 
+@pytest.mark.live  # foreign_streak preset calls _get_foreign_streak_data_db() → real stock.db SQLite; fake JSON files in TEST_KRX_DB_DIR are ignored by the SQLite path
 def test_foreign_streak_3days():
     """DB 파일이 3개뿐이면 days_available=3으로 동작."""
     dates = ["20260330", "20260331", "20260401"]

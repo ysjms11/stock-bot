@@ -296,32 +296,35 @@ async def collect_nps_5percent_disclosed() -> dict:
     inserted_new = 0
     quarters = set()
 
-    for r in rows:
-        name = r["name"]
-        report_date = r["report_date"]
-        ratio = r["ratio_pct"]
-        symbol = _match_company_to_symbol(name, direct_map, name_list)
-        if symbol:
-            matched += 1
-        else:
-            unmatched_names.append(name)
-        quarter = _date_to_quarter(report_date)
-        if quarter:
-            quarters.add(quarter)
+    # 쓰기 직렬화 — 네트워크 fetch 완료 후 sync INSERT 루프이므로 전체를 한 번만 잠근다.
+    from db_collector import db_write_lock
+    async with db_write_lock:
+        for r in rows:
+            name = r["name"]
+            report_date = r["report_date"]
+            ratio = r["ratio_pct"]
+            symbol = _match_company_to_symbol(name, direct_map, name_list)
+            if symbol:
+                matched += 1
+            else:
+                unmatched_names.append(name)
+            quarter = _date_to_quarter(report_date)
+            if quarter:
+                quarters.add(quarter)
 
-        try:
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO nps_holdings_disclosed
-                   (report_date, company_name, symbol, ratio_pct, quarter, source_file, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (report_date, name, symbol, ratio, quarter, atch_id, now_iso),
-            )
-            if cur.rowcount > 0:
-                inserted_new += 1
-        except Exception as e:
-            print(f"[nps_5pct] insert 실패 {name}: {e}")
+            try:
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO nps_holdings_disclosed
+                       (report_date, company_name, symbol, ratio_pct, quarter, source_file, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (report_date, name, symbol, ratio, quarter, atch_id, now_iso),
+                )
+                if cur.rowcount > 0:
+                    inserted_new += 1
+            except Exception as e:
+                print(f"[nps_5pct] insert 실패 {name}: {e}")
 
-    conn.commit()
+        conn.commit()
     conn.close()
 
     return {
@@ -637,26 +640,30 @@ async def collect_nps_us_13f(max_quarters: int = 4) -> dict:
             continue
 
         ins = 0
-        for r in rows:
-            try:
-                cur = conn.execute(
-                    """INSERT OR REPLACE INTO nps_us_holdings
-                       (accession, filing_date, period_end, quarter,
-                        cusip, name_of_issuer, value_usd, shares, ticker, collected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (acc, fl["filing_date"], fl["period_end"], fl["quarter"],
-                     r["cusip"], r.get("name_of_issuer", ""),
-                     r.get("value_usd", 0), r.get("shares", 0),
-                     "", now_iso),
-                )
-                if cur.rowcount > 0:
-                    ins += 1
-            except Exception:
-                pass
+        # 쓰기 직렬화 — fetch 완료 후 sync INSERT 루프이므로 per-filing 단위로 잠근다.
+        # commit을 같은 lock 블록 안에서 수행해 열린 트랜잭션이 lock 밖으로 유출되지 않게 한다.
+        from db_collector import db_write_lock
+        async with db_write_lock:
+            for r in rows:
+                try:
+                    cur = conn.execute(
+                        """INSERT OR REPLACE INTO nps_us_holdings
+                           (accession, filing_date, period_end, quarter,
+                            cusip, name_of_issuer, value_usd, shares, ticker, collected_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (acc, fl["filing_date"], fl["period_end"], fl["quarter"],
+                         r["cusip"], r.get("name_of_issuer", ""),
+                         r.get("value_usd", 0), r.get("shares", 0),
+                         "", now_iso),
+                    )
+                    if cur.rowcount > 0:
+                        ins += 1
+                except Exception:
+                    pass
+            conn.commit()
         total_inserted += ins
         processed.append({**fl, "status": "inserted", "rows": ins})
 
-    conn.commit()
     conn.close()
 
     return {
@@ -944,34 +951,37 @@ async def collect_nps_kr_full_from_whale_insight() -> dict:
     inserted = 0
     matched = 0
     unmatched_names = []
-    for (name, weight, valuation, change, share24, share25q4) in matches:
-        symbol = _match_company_to_symbol(name, direct_map, name_list)
-        if symbol:
-            matched += 1
-        else:
-            unmatched_names.append(name)
-        weight_v, weight_miss = _parse_pct(weight)
-        chg_v, chg_miss = _parse_pct(change)
-        s_prev, sp_miss = _parse_pct(share24)
-        s_curr, sc_miss = _parse_pct(share25q4)
-        eok = _parse_eok(valuation)
-        miss = 1 if (weight_miss or chg_miss or sp_miss or sc_miss) else 0
-        try:
-            conn.execute(
-                """INSERT OR REPLACE INTO nps_kr_full_holdings
-                   (snapshot_date, quarter_label, name, symbol,
-                    weight_pct, valuation_eok, change_pct,
-                    share_prev_pct, share_curr_pct,
-                    data_missing, source_version, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (snap_date, quarter_label, name, symbol,
-                 weight_v, eok, chg_v, s_prev, s_curr,
-                 miss, src_version, now_iso),
-            )
-            inserted += 1
-        except Exception:
-            pass
-    conn.commit()
+    # 쓰기 직렬화 — 네트워크 fetch 완료 후 sync INSERT 루프이므로 전체를 한 번만 잠근다.
+    from db_collector import db_write_lock
+    async with db_write_lock:
+        for (name, weight, valuation, change, share24, share25q4) in matches:
+            symbol = _match_company_to_symbol(name, direct_map, name_list)
+            if symbol:
+                matched += 1
+            else:
+                unmatched_names.append(name)
+            weight_v, weight_miss = _parse_pct(weight)
+            chg_v, chg_miss = _parse_pct(change)
+            s_prev, sp_miss = _parse_pct(share24)
+            s_curr, sc_miss = _parse_pct(share25q4)
+            eok = _parse_eok(valuation)
+            miss = 1 if (weight_miss or chg_miss or sp_miss or sc_miss) else 0
+            try:
+                conn.execute(
+                    """INSERT OR REPLACE INTO nps_kr_full_holdings
+                       (snapshot_date, quarter_label, name, symbol,
+                        weight_pct, valuation_eok, change_pct,
+                        share_prev_pct, share_curr_pct,
+                        data_missing, source_version, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (snap_date, quarter_label, name, symbol,
+                     weight_v, eok, chg_v, s_prev, s_curr,
+                     miss, src_version, now_iso),
+                )
+                inserted += 1
+            except Exception:
+                pass
+        conn.commit()
     conn.close()
 
     return {
@@ -1270,6 +1280,7 @@ async def collect_nps_dart_increments(days: int = 7) -> dict:
     nps_seen = 0
     fetched_corps = 0
 
+    from db_collector import db_write_lock
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as s:
         for cc, cname in corp_codes.items():
@@ -1278,6 +1289,8 @@ async def collect_nps_dart_increments(days: int = 7) -> dict:
             if d.get("status") != "000":
                 continue
             fetched_corps += 1
+            # 쓰기 직렬화 — fetch 완료 후 per-corp 단위로 sync INSERT 루프 잠금
+            nps_rows = []
             for rec in d.get("list", []) or []:
                 rep = rec.get("repror", "") or ""
                 # NPS 매칭 — 한글/영문/한자 모두
@@ -1294,27 +1307,31 @@ async def collect_nps_dart_increments(days: int = 7) -> dict:
                 # 같은 NPS 보고가 한 분기에 한 종목에 중복될 수 있어 (작성기준일 다름)
                 # → DART의 rcept_dt를 report_date로 사용
                 quarter = _date_to_quarter(rcept_dt)
-                try:
-                    cur = conn.execute(
-                        """INSERT OR REPLACE INTO nps_holdings_disclosed
-                           (report_date, company_name, symbol, ratio_pct, quarter,
-                            source_file, collected_at,
-                            stkqy, stkqy_irds, report_resn, source, rcept_no)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (rcept_dt, cname, sym,
-                         _parse_float_with_sign(rec.get("stkrt")),
-                         quarter, "", now_iso,
-                         _parse_int_with_sign(rec.get("stkqy")),
-                         _parse_int_with_sign(rec.get("stkqy_irds")),
-                         (rec.get("report_resn") or "").replace("\n", " ")[:200],
-                         "dart",
-                         rcept_no),
-                    )
-                    if cur.rowcount > 0:
-                        nps_inserted += 1
-                except Exception:
-                    pass
-    conn.commit()
+                nps_rows.append((rcept_dt, cname, sym,
+                    _parse_float_with_sign(rec.get("stkrt")),
+                    quarter, "", now_iso,
+                    _parse_int_with_sign(rec.get("stkqy")),
+                    _parse_int_with_sign(rec.get("stkqy_irds")),
+                    (rec.get("report_resn") or "").replace("\n", " ")[:200],
+                    "dart", rcept_no))
+            if nps_rows:
+                # commit을 같은 lock 블록 안에서 수행해 열린 트랜잭션이 lock 밖으로 유출되지 않게 한다.
+                async with db_write_lock:
+                    for row_args in nps_rows:
+                        try:
+                            cur = conn.execute(
+                                """INSERT OR REPLACE INTO nps_holdings_disclosed
+                                   (report_date, company_name, symbol, ratio_pct, quarter,
+                                    source_file, collected_at,
+                                    stkqy, stkqy_irds, report_resn, source, rcept_no)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                row_args,
+                            )
+                            if cur.rowcount > 0:
+                                nps_inserted += 1
+                        except Exception:
+                            pass
+                    conn.commit()
     conn.close()
 
     return {
@@ -1359,6 +1376,7 @@ async def collect_dart_5pct_changes(days: int = 14) -> dict:
     inserted = 0
     fetched_corps = 0
 
+    from db_collector import db_write_lock
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as s:
         for cc, cname in corp_codes.items():
@@ -1367,32 +1385,39 @@ async def collect_dart_5pct_changes(days: int = 14) -> dict:
             if d.get("status") != "000":
                 continue
             fetched_corps += 1
+            # 쓰기 직렬화 — fetch 완료 후 per-corp 단위로 sync INSERT 루프 잠금
+            dart5_rows = []
             for rec in d.get("list", []) or []:
                 rcept_no = rec.get("rcept_no", "")
                 if not rcept_no or rcept_no not in period_rcepts:
                     continue  # 우리 기간 내 보고만
                 sym = _match_company_to_symbol(cname, direct_map, name_list)
-                try:
-                    cur = conn.execute(
-                        """INSERT OR REPLACE INTO dart_5pct_changes
-                           (rcept_no, rcept_dt, corp_code, company, symbol,
-                            repror, stkqy, stkqy_irds, stkrt, stkrt_irds,
-                            report_resn, collected_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (rcept_no, rec.get("rcept_dt", ""), cc, cname, sym,
-                         rec.get("repror", ""),
-                         _parse_int_with_sign(rec.get("stkqy")),
-                         _parse_int_with_sign(rec.get("stkqy_irds")),
-                         _parse_float_with_sign(rec.get("stkrt")),
-                         _parse_float_with_sign(rec.get("stkrt_irds")),
-                         (rec.get("report_resn") or "").replace("\n", " ")[:200],
-                         now_iso),
-                    )
-                    if cur.rowcount > 0:
-                        inserted += 1
-                except Exception:
-                    pass
-    conn.commit()
+                dart5_rows.append((rcept_no, rec.get("rcept_dt", ""), cc, cname, sym,
+                    rec.get("repror", ""),
+                    _parse_int_with_sign(rec.get("stkqy")),
+                    _parse_int_with_sign(rec.get("stkqy_irds")),
+                    _parse_float_with_sign(rec.get("stkrt")),
+                    _parse_float_with_sign(rec.get("stkrt_irds")),
+                    (rec.get("report_resn") or "").replace("\n", " ")[:200],
+                    now_iso))
+            if dart5_rows:
+                # commit을 같은 lock 블록 안에서 수행해 열린 트랜잭션이 lock 밖으로 유출되지 않게 한다.
+                async with db_write_lock:
+                    for row_args in dart5_rows:
+                        try:
+                            cur = conn.execute(
+                                """INSERT OR REPLACE INTO dart_5pct_changes
+                                   (rcept_no, rcept_dt, corp_code, company, symbol,
+                                    repror, stkqy, stkqy_irds, stkrt, stkrt_irds,
+                                    report_resn, collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                row_args,
+                            )
+                            if cur.rowcount > 0:
+                                inserted += 1
+                        except Exception:
+                            pass
+                    conn.commit()
     conn.close()
 
     return {
@@ -1435,6 +1460,7 @@ async def collect_dart_10pct_insiders(days: int = 14) -> dict:
     inserted = 0
     fetched_corps = 0
 
+    from db_collector import db_write_lock
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as s:
         for cc, cname in corp_codes.items():
@@ -1443,8 +1469,9 @@ async def collect_dart_10pct_insiders(days: int = 14) -> dict:
             if d.get("status") != "000":
                 continue
             fetched_corps += 1
-            # 같은 rcept_no 내 row를 seq 부여
+            # 쓰기 직렬화 — fetch 완료 후 per-corp 단위로 sync INSERT 루프 잠금
             seq_counter = {}
+            dart10_rows = []
             for rec in d.get("list", []) or []:
                 rcept_no = rec.get("rcept_no", "")
                 if not rcept_no or rcept_no not in period_rcepts:
@@ -1452,27 +1479,32 @@ async def collect_dart_10pct_insiders(days: int = 14) -> dict:
                 seq = seq_counter.get(rcept_no, 0)
                 seq_counter[rcept_no] = seq + 1
                 sym = _match_company_to_symbol(cname, direct_map, name_list)
-                try:
-                    cur = conn.execute(
-                        """INSERT OR REPLACE INTO dart_10pct_insiders
-                           (rcept_no, seq, rcept_dt, corp_code, company, symbol,
-                            repror, shrholdr_role, stkqy, stkqy_irds, stkrt, stkrt_irds,
-                            collected_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (rcept_no, seq, rec.get("rcept_dt", ""), cc, cname, sym,
-                         rec.get("repror", ""),
-                         rec.get("isu_main_shrholdr", "") or "임원",
-                         _parse_int_with_sign(rec.get("sp_stock_lmp_cnt")),
-                         _parse_int_with_sign(rec.get("sp_stock_lmp_irds_cnt")),
-                         _parse_float_with_sign(rec.get("sp_stock_lmp_rate")),
-                         _parse_float_with_sign(rec.get("sp_stock_lmp_irds_rate")),
-                         now_iso),
-                    )
-                    if cur.rowcount > 0:
-                        inserted += 1
-                except Exception:
-                    pass
-    conn.commit()
+                dart10_rows.append((rcept_no, seq, rec.get("rcept_dt", ""), cc, cname, sym,
+                    rec.get("repror", ""),
+                    rec.get("isu_main_shrholdr", "") or "임원",
+                    _parse_int_with_sign(rec.get("sp_stock_lmp_cnt")),
+                    _parse_int_with_sign(rec.get("sp_stock_lmp_irds_cnt")),
+                    _parse_float_with_sign(rec.get("sp_stock_lmp_rate")),
+                    _parse_float_with_sign(rec.get("sp_stock_lmp_irds_rate")),
+                    now_iso))
+            if dart10_rows:
+                # commit을 같은 lock 블록 안에서 수행해 열린 트랜잭션이 lock 밖으로 유출되지 않게 한다.
+                async with db_write_lock:
+                    for row_args in dart10_rows:
+                        try:
+                            cur = conn.execute(
+                                """INSERT OR REPLACE INTO dart_10pct_insiders
+                                   (rcept_no, seq, rcept_dt, corp_code, company, symbol,
+                                    repror, shrholdr_role, stkqy, stkqy_irds, stkrt, stkrt_irds,
+                                    collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                row_args,
+                            )
+                            if cur.rowcount > 0:
+                                inserted += 1
+                        except Exception:
+                            pass
+                    conn.commit()
     conn.close()
 
     return {
@@ -1499,62 +1531,68 @@ async def collect_wi_changes() -> dict:
     conn.execute("PRAGMA busy_timeout = 30000;")
     now_iso = datetime.now(KST).isoformat()
 
+    from db_collector import db_write_lock
     # ── 5%룰 변동 (major_stock) ──
     major = await _fetch_wi_js_array(WI_MAJOR_JS, "MAJOR_DATA")
     major_inserted = 0
-    for rec in major:
-        try:
-            sym = _match_company_to_symbol(rec.get("company", ""), direct_map, name_list)
-            cur = conn.execute(
-                """INSERT OR REPLACE INTO wi_5pct_changes
-                   (report_date, company, symbol, stkqy, stkqy_irds,
-                    stkrt, stkrt_irds, report_resn, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    rec.get("date", ""),
-                    rec.get("company", ""),
-                    sym,
-                    _parse_int_with_sign(rec.get("stkqy")),
-                    _parse_int_with_sign(rec.get("stkqy_irds")),
-                    _parse_float_with_sign(rec.get("stkrt")),
-                    _parse_float_with_sign(rec.get("stkrt_irds")),
-                    rec.get("report_resn", ""),
-                    now_iso,
-                ),
-            )
-            if cur.rowcount > 0:
-                major_inserted += 1
-        except Exception:
-            pass
+    # 쓰기 직렬화 — fetch 완료 후 sync INSERT 루프이므로 전체를 한 번만 잠근다.
+    async with db_write_lock:
+        for rec in major:
+            try:
+                sym = _match_company_to_symbol(rec.get("company", ""), direct_map, name_list)
+                cur = conn.execute(
+                    """INSERT OR REPLACE INTO wi_5pct_changes
+                       (report_date, company, symbol, stkqy, stkqy_irds,
+                        stkrt, stkrt_irds, report_resn, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        rec.get("date", ""),
+                        rec.get("company", ""),
+                        sym,
+                        _parse_int_with_sign(rec.get("stkqy")),
+                        _parse_int_with_sign(rec.get("stkqy_irds")),
+                        _parse_float_with_sign(rec.get("stkrt")),
+                        _parse_float_with_sign(rec.get("stkrt_irds")),
+                        rec.get("report_resn", ""),
+                        now_iso,
+                    ),
+                )
+                if cur.rowcount > 0:
+                    major_inserted += 1
+            except Exception:
+                pass
+        conn.commit()
 
     # ── 10%↑ 보유자 매매 (elestock) ──
     ele = await _fetch_wi_js_array(WI_ELE_JS, "ELESTOCK_DATA")
     ele_inserted = 0
-    for rec in ele:
-        try:
-            sym = _match_company_to_symbol(rec.get("company", ""), direct_map, name_list)
-            cur = conn.execute(
-                """INSERT OR REPLACE INTO wi_10pct_insiders
-                   (report_date, company, symbol, stkqy, stkqy_irds,
-                    stkrt, stkrt_irds, shrholdr_role, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    rec.get("date", ""),
-                    rec.get("company", ""),
-                    sym,
-                    _parse_int_with_sign(rec.get("stkqy")),
-                    _parse_int_with_sign(rec.get("stkqy_irds")),
-                    _parse_float_with_sign(rec.get("stkrt")),
-                    _parse_float_with_sign(rec.get("stkrt_irds")),
-                    rec.get("isu_main_shrholdr", ""),
-                    now_iso,
-                ),
-            )
-            if cur.rowcount > 0:
-                ele_inserted += 1
-        except Exception:
-            pass
-    conn.commit()
+    # 쓰기 직렬화 — fetch 완료 후 sync INSERT 루프이므로 전체를 한 번만 잠근다.
+    async with db_write_lock:
+        for rec in ele:
+            try:
+                sym = _match_company_to_symbol(rec.get("company", ""), direct_map, name_list)
+                cur = conn.execute(
+                    """INSERT OR REPLACE INTO wi_10pct_insiders
+                       (report_date, company, symbol, stkqy, stkqy_irds,
+                        stkrt, stkrt_irds, shrholdr_role, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        rec.get("date", ""),
+                        rec.get("company", ""),
+                        sym,
+                        _parse_int_with_sign(rec.get("stkqy")),
+                        _parse_int_with_sign(rec.get("stkqy_irds")),
+                        _parse_float_with_sign(rec.get("stkrt")),
+                        _parse_float_with_sign(rec.get("stkrt_irds")),
+                        rec.get("isu_main_shrholdr", ""),
+                        now_iso,
+                    ),
+                )
+                if cur.rowcount > 0:
+                    ele_inserted += 1
+            except Exception:
+                pass
+        conn.commit()
     conn.close()
 
     return {

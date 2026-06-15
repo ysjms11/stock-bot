@@ -145,7 +145,7 @@ async def daily_kr_summary(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         # 캐시 미스 종목만 실시간 조회
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for row in port_rows:
             if row["ticker"] in consensus_map:
                 continue

@@ -120,27 +120,88 @@ async def handle_get_supply(arguments: dict, token=None) -> dict | list:
             result = await kis_investor_trend_estimate(ticker, token)
 
     elif supply_mode == "foreign_rank":
-        # ← 기존 get_foreign_rank 핸들러
+        # DB-first: daily_snapshot 최신 trade_date 외국인 순매수금액 랭킹
+        sort = arguments.get("sort", "buy").strip().lower()
+        n = int(arguments.get("n", 20) or 20)
+        n = max(1, min(n, 50))
+        import sqlite3 as _sqlite3
+        db_path = f"{_DATA_DIR}/stock.db"
+        db_rows = []
+        db_trade_date = None
         try:
-            rows = await kis_foreigner_trend(token)
-            if not rows:
+            _conn = _sqlite3.connect(db_path, timeout=10)
+            try:
+                db_trade_date = _conn.execute(
+                    "SELECT MAX(trade_date) FROM daily_snapshot"
+                ).fetchone()[0]
+                if db_trade_date:
+                    order = "DESC" if sort == "buy" else "ASC"
+                    cond = "d.foreign_net_amt > 0" if sort == "buy" else "d.foreign_net_amt < 0"
+                    cur = _conn.execute(f"""
+                        SELECT d.symbol, COALESCE(m.name, ''), d.foreign_net_amt,
+                               d.foreign_net_qty, d.close, d.change_pct, d.market_cap
+                        FROM daily_snapshot d
+                        LEFT JOIN stock_master m ON d.symbol = m.symbol
+                        WHERE d.trade_date = ? AND {cond}
+                        ORDER BY d.foreign_net_amt {order}
+                        LIMIT ?
+                    """, (db_trade_date, n))
+                    for sym, name, amt, qty, close, chg, mcap in cur.fetchall():
+                        db_rows.append({
+                            "ticker": sym,
+                            "name": name,
+                            "foreign_net_amt": amt,
+                            "foreign_net_qty": qty,
+                            "close": close,
+                            "chg_pct": chg,
+                            "market_cap_억": mcap or 0,
+                        })
+            finally:
+                _conn.close()
+        except Exception as _e:
+            db_rows = []
+
+        if db_rows:
+            result = {
+                "sort": sort,
+                "count": len(db_rows),
+                "source": "daily_snapshot DB",
+                "trade_date": db_trade_date,
+                "items": db_rows,
+            }
+        else:
+            # live KIS 폴백 (드문 경우: 당일 DB 미수집)
+            try:
+                kis_rows = await kis_foreigner_trend(token)
+                if kis_rows:
+                    result = {
+                        "sort": sort,
+                        "count": len(kis_rows[:n]),
+                        "source": "KIS live",
+                        "items": [
+                            {
+                                "ticker": r.get("mksc_shrn_iscd", ""),
+                                "name": r.get("hts_kor_isnm", ""),
+                                "foreign_net_amt": None,
+                                "foreign_net_qty": int(r.get("frgn_ntby_qty", 0) or 0),
+                            }
+                            for r in kis_rows[:n]
+                        ],
+                    }
+                else:
+                    result = {
+                        "items": [],
+                        "source": "none",
+                        "note": ("daily_snapshot DB에 데이터 없음. "
+                                 "KIS live도 미제공 (장중). "
+                                 "18:30 이후 재조회하거나 get_supply(mode='combined_rank') 사용."),
+                    }
+            except Exception as _e2:
                 result = {
                     "items": [],
-                    "note": ("장중 외국인 순매수 데이터 미제공. "
-                             "장 마감 후(15:40 이후) 조회하거나, "
-                             "get_supply(mode='combined_rank')로 장중 가집계를 확인하세요."),
+                    "source": "none",
+                    "note": f"DB 없음, KIS 폴백 실패: {_e2}",
                 }
-            else:
-                result = [
-                    {
-                        "ticker": r.get("mksc_shrn_iscd", ""),
-                        "name": r.get("hts_kor_isnm", ""),
-                        "net_buy": r.get("frgn_ntby_qty", "0"),
-                    }
-                    for r in rows[:15]
-                ]
-        except Exception as e:
-            result = {"error": str(e), "items": []}
 
     elif supply_mode == "combined_rank":
         # ← 기존 get_foreign_institution 핸들러

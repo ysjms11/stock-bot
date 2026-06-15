@@ -320,7 +320,7 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
     else:
         us_tickers = {}  # 부분 업데이트 시 US 수집 건너뜀
 
-    loop = _aio.get_event_loop()
+    loop = _aio.get_running_loop()
 
     # 한국 컨센서스 (FnGuide, 동기 → executor)
     new_kr: dict = {}
@@ -365,7 +365,9 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
             "us": old_us,
         }
         save_json(CONSENSUS_CACHE_FILE, cache)
-        _insert_consensus_history(new_kr, {})
+        from db_collector import db_write_lock
+        async with db_write_lock:
+            _insert_consensus_history(new_kr, {})
         print(f"[consensus_cache] 부분 저장 완료: KR {len(new_kr)}종목 갱신 (전체 {len(merged_kr)})")
         return cache
 
@@ -404,7 +406,9 @@ async def update_consensus_cache(kr_tickers: dict | None = None) -> dict:
         "us": new_us,
     }
     save_json(CONSENSUS_CACHE_FILE, cache)
-    _insert_consensus_history(new_kr, new_us)
+    from db_collector import db_write_lock
+    async with db_write_lock:
+        _insert_consensus_history(new_kr, new_us)
     print(f"[consensus_cache] 저장 완료: KR {len(new_kr)}종목, US {len(new_us)}종목")
     return cache
 

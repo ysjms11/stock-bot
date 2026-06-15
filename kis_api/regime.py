@@ -450,8 +450,12 @@ async def cmd_regime(mode: str = "current", market: str = "both", days: int = 5,
         return {"history": h[-days:], "total_records": len(h)}
 
     # ── current ──
-    kr_calc = calc_kr_regime()
-    us_calc = calc_us_regime()
+    # fdr.DataReader / yf_history are blocking I/O — offload to threads and
+    # run KR + US concurrently so neither blocks the event loop.
+    kr_calc, us_calc = await asyncio.gather(
+        asyncio.to_thread(calc_kr_regime),
+        asyncio.to_thread(calc_us_regime),
+    )
 
     # per-market 디바운스 적용
     kr_state = _apply_regime_debounce(state.get("kr", {}), kr_calc["regime_en"], today)

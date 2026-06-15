@@ -45,7 +45,7 @@ async def check_earnings_calendar(context: ContextTypes.DEFAULT_TYPE):
         # 보유/워치 티커 수집
         wl = load_watchlist()
         pf = load_json(PORTFOLIO_FILE, {})
-        us_wl = load_json(f"{_DATA_DIR}/us_watchlist.json", {})
+        us_wl = load_us_watchlist()
 
         known_tickers = set()
         for t in wl:

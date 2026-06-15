@@ -336,13 +336,13 @@ def collect_pension_flow_daily(date_str: str = None) -> dict:
 
 def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
                               held_watch_only: bool = False) -> dict:
-    """연기금 (NPS 우세) 종목별 누적 매매 — pykrx + KRX 로그인 활용.
+    """연기금 (NPS 우세) 종목별 누적 매매 — pension_flow_daily DB 1차, pykrx 폴백.
 
     한국 시장 8개 투자자 분류 중 '연기금' 카테고리 단독.
     NPS가 한국 연기금 매매의 60~80% 비중이라 사실상 NPS 시그널 근사치.
 
     Args:
-        days: 누적 일수 (기본 5)
+        days: 누적 거래일 수 (기본 5)
         market: 'KOSPI' / 'KOSDAQ' / 'ALL' (기본 ALL)
         top: 매수 TOP / 매도 TOP 각각 N개 (기본 30)
         held_watch_only: True면 보유+워치만 필터 (포트 점검용)
@@ -351,49 +351,130 @@ def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
         {
           "period": "YYYY-MM-DD ~ YYYY-MM-DD",
           "market": str,
-          "buy_top": [{ticker, name, net_amount_won, net_qty}, ...],
+          "days": int,
+          "total_tracked": int,
+          "buy_top": [{ticker, name, net_amount_won, net_qty, market}, ...],
           "sell_top": [...],
-          "held_watch_flow": [...]   # 보유+워치 양방향
+          "held_watch_flow": [],
+          "data_through": str,   # DB 최신 trade_date
+          "stale_days": int,     # 오늘과 최신일 대략적 거래일 차이
+          "source": str,
         }
     """
-    try:
-        from pykrx import stock as _krx
-    except ImportError:
-        return {"error": "pykrx 미설치"}
-
     today = datetime.now(KST)
-    # 영업일 기준 days 일치 — KRX는 주말/공휴일 자동 스킵
-    end_dd = today.strftime("%Y%m%d")
-    start_dd = (today - timedelta(days=days * 2 + 3)).strftime("%Y%m%d")  # 여유 있게
+    today_str = today.strftime("%Y%m%d")
 
-    markets = ["KOSPI", "KOSDAQ"] if market == "ALL" else [market]
-    all_rows = {}  # ticker → row dict
+    # ── 1차: pension_flow_daily DB ──────────────────────────────
+    db_path = f"{_DATA_DIR}/stock.db"
+    all_rows: dict = {}  # ticker → row dict
+    db_trade_date = None
+    db_used = False
 
-    for m in markets:
+    try:
+        import sqlite3 as _s
+        conn = _s.connect(db_path, timeout=10)
         try:
-            df = _krx.get_market_net_purchases_of_equities(start_dd, end_dd, m, "연기금")
-        except Exception as e:
-            print(f"[pension_fund] {m} 실패: {e}")
-            continue
-        if df is None or len(df) == 0:
-            continue
-        for ticker, row in df.iterrows():
-            net_amt = int(row.get("순매수거래대금", 0) or 0)
-            net_qty = int(row.get("순매수거래량", 0) or 0)
-            name = str(row.get("종목명", "") or "")
-            all_rows[str(ticker)] = {
-                "ticker": str(ticker),
-                "name": name,
-                "net_amount_won": net_amt,
-                "net_qty": net_qty,
-                "market": m,
-            }
+            conn.execute("PRAGMA cache_size = -32768;")
+            conn.execute("PRAGMA temp_store = MEMORY;")
+            # 최신 trade_date 기준으로 DISTINCT 거래일 상위 days개 선택
+            dates_rows = conn.execute(
+                "SELECT DISTINCT trade_date FROM pension_flow_daily "
+                "ORDER BY trade_date DESC LIMIT ?",
+                (days,),
+            ).fetchall()
+            if dates_rows:
+                db_trade_date = dates_rows[0][0]
+                selected_dates = tuple(d[0] for d in dates_rows)
+                # market 필터
+                if market == "ALL":
+                    mkt_cond = ""
+                    mkt_params: tuple = ()
+                else:
+                    mkt_cond = "AND market = ?"
+                    mkt_params = (market,)
+                placeholders = ",".join("?" * len(selected_dates))
+                sql = f"""
+                    SELECT symbol, name, market,
+                           SUM(net_amount_won) AS net_amt,
+                           SUM(net_qty)        AS net_q
+                    FROM pension_flow_daily
+                    WHERE trade_date IN ({placeholders}) {mkt_cond}
+                    GROUP BY symbol
+                """
+                cur = conn.execute(sql, selected_dates + mkt_params)
+                for sym, name, mkt, net_amt, net_qty in cur.fetchall():
+                    if net_amt == 0:
+                        continue
+                    all_rows[sym] = {
+                        "ticker": sym,
+                        "name": name or "",
+                        "net_amount_won": int(net_amt),
+                        "net_qty": int(net_qty or 0),
+                        "market": mkt or "",
+                    }
+                if all_rows:
+                    db_used = True
+        finally:
+            conn.close()
+    except Exception as _db_err:
+        all_rows = {}
+        db_used = False
 
-    # 기간 표시
-    period = f"{start_dd[:4]}-{start_dd[4:6]}-{start_dd[6:]} ~ {end_dd[:4]}-{end_dd[4:6]}-{end_dd[6:]}"
+    # ── 2차: pykrx live 폴백 (DB가 비었을 때만) ─────────────────
+    if not db_used:
+        try:
+            from pykrx import stock as _krx
+            end_dd = today_str
+            start_dd = (today - timedelta(days=days * 2 + 3)).strftime("%Y%m%d")
+            markets_list = ["KOSPI", "KOSDAQ"] if market == "ALL" else [market]
+            for m in markets_list:
+                try:
+                    df = _krx.get_market_net_purchases_of_equities(
+                        start_dd, end_dd, m, "연기금"
+                    )
+                except Exception as _e:
+                    print(f"[pension_fund] pykrx {m} 실패: {_e}")
+                    continue
+                if df is None or len(df) == 0:
+                    continue
+                for ticker, row in df.iterrows():
+                    net_amt = int(row.get("순매수거래대금", 0) or 0)
+                    net_qty = int(row.get("순매수거래량", 0) or 0)
+                    name = str(row.get("종목명", "") or "")
+                    if net_amt == 0:
+                        continue
+                    all_rows[str(ticker)] = {
+                        "ticker": str(ticker),
+                        "name": name,
+                        "net_amount_won": net_amt,
+                        "net_qty": net_qty,
+                        "market": m,
+                    }
+        except ImportError:
+            pass
 
-    # 보유+워치 필터 (held_watch_only or held_watch_flow 추출용)
-    held_watch_set = set()
+    # ── 기간 표시 ────────────────────────────────────────────────
+    if db_trade_date and db_used and dates_rows:
+        earliest = dates_rows[-1][0]
+        period = (f"{earliest[:4]}-{earliest[4:6]}-{earliest[6:]} ~ "
+                  f"{db_trade_date[:4]}-{db_trade_date[4:6]}-{db_trade_date[6:]}")
+    else:
+        end_dd2 = today_str
+        start_dd2 = (today - timedelta(days=days * 2 + 3)).strftime("%Y%m%d")
+        period = (f"{start_dd2[:4]}-{start_dd2[4:6]}-{start_dd2[6:]} ~ "
+                  f"{end_dd2[:4]}-{end_dd2[4:6]}-{end_dd2[6:]}")
+
+    # stale_days 근사 (달력일 기준, 거래일 근사)
+    stale_days = 0
+    if db_trade_date:
+        try:
+            dt_db = datetime.strptime(db_trade_date, "%Y%m%d")
+            stale_days = max(0, (today.replace(tzinfo=None) - dt_db).days)
+        except Exception:
+            stale_days = 0
+
+    # ── 보유+워치 필터 ───────────────────────────────────────────
+    held_watch_set: set = set()
     try:
         portfolio = load_json(PORTFOLIO_FILE, {})
         for k in portfolio.keys():
@@ -405,7 +486,7 @@ def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
     except Exception:
         pass
 
-    # 정렬 분리
+    # ── 정렬 분리 ────────────────────────────────────────────────
     buy_sorted = sorted(
         [r for r in all_rows.values() if r["net_amount_won"] > 0],
         key=lambda x: -x["net_amount_won"],
@@ -419,7 +500,6 @@ def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
         buy_sorted = [r for r in buy_sorted if r["ticker"] in held_watch_set]
         sell_sorted = [r for r in sell_sorted if r["ticker"] in held_watch_set]
 
-    # 보유+워치 양방향
     held_watch_flow = sorted(
         [r for r in all_rows.values() if r["ticker"] in held_watch_set],
         key=lambda x: -abs(x["net_amount_won"]),
@@ -433,6 +513,9 @@ def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
         "buy_top": buy_sorted[:top],
         "sell_top": sell_sorted[:top],
         "held_watch_flow": held_watch_flow,
+        "data_through": db_trade_date,
+        "stale_days": stale_days,
+        "source": "pension_flow_daily DB" if db_used else "pykrx live",
         "fetched_at": datetime.now(KST).isoformat(),
     }
 

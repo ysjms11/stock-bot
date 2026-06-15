@@ -12,6 +12,39 @@ from ._execute import _execute_tool
 _mcp_sessions: dict = {}       # session_id → asyncio.Queue
 _streamable_sessions: dict = {}  # session_id → {"created": float}
 
+def _is_content_block(item) -> bool:
+    """이미 완성된 MCP 콘텐츠 블록인지 검사 — type 뿐 아니라 필수 동반 필드까지 확인.
+    (data 핸들러가 우연히 'type' 키를 가진 경우의 오인 passthrough 방지)"""
+    if not isinstance(item, dict):
+        return False
+    t = item.get("type")
+    if t == "text":          return "text" in item
+    if t == "image":         return "data" in item and "mimeType" in item
+    if t == "audio":         return "data" in item and "mimeType" in item
+    if t == "resource":      return "resource" in item
+    if t == "resource_link": return "uri" in item
+    return False
+
+
+def _normalize_content(result) -> list[dict]:
+    """_execute_tool 결과를 MCP content 블록 리스트로 정규화.
+
+    - list: 각 아이템을 검사해 이미 유효한 content 블록이면 통과, 아니면 text로 감싼다.
+      유효 판정: _is_content_block() — type + 필수 동반 필드 동시 확인
+      (예: read_report_pdf가 반환하는 image/text/resource 블록은 그대로 통과)
+    - 그 외(dict 등): json.dumps 후 단일 text 블록으로 감싼다.
+    - json.dumps는 default=str로 직렬화 불가 값(datetime/Decimal 등)을 문자열 변환.
+    """
+    if isinstance(result, list):
+        content = []
+        for item in result:
+            if _is_content_block(item):
+                content.append(item)
+            else:
+                content.append({"type": "text", "text": json.dumps(item, ensure_ascii=False, default=str)})
+        return content
+    return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
+
 
 async def _handle_jsonrpc(body: dict) -> dict | None:
     """JSON-RPC 요청 처리 → 응답 dict (notification이면 None)"""
@@ -38,10 +71,7 @@ async def _handle_jsonrpc(body: dict) -> dict | None:
         tool_name = params.get("name", "")
         tool_args = params.get("arguments") or {}
         result = await _execute_tool(tool_name, tool_args)
-        if isinstance(result, list):
-            content = result
-        else:
-            content = [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
+        content = _normalize_content(result)
         return {"jsonrpc": "2.0", "id": req_id, "result": {"content": content}}
 
     return {"jsonrpc": "2.0", "id": req_id,

@@ -81,7 +81,7 @@ async def collect_macro_data() -> dict:
 
     # 1b. S&P 500 200일 이동평균 (judge_regime v6 기준)
     try:
-        sp_hist = _yf_history("^GSPC", "1y")
+        sp_hist = await asyncio.to_thread(_yf_history, "^GSPC", "1y")
         if sp_hist and len(sp_hist) >= 200:
             ma200 = sum(sp_hist[-200:]) / 200.0
             data.setdefault("SP500", {})["ma200"] = round(ma200, 2)

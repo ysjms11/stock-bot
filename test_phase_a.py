@@ -23,6 +23,8 @@ ext_stub.CommandHandler = object
 ext_stub.MessageHandler = object
 ext_stub.filters = type("filters", (), {"TEXT": None, "Regex": staticmethod(lambda x: x)})()
 ext_stub.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})()
+ext_stub.TypeHandler = object
+ext_stub.ApplicationHandlerStop = type("ApplicationHandlerStop", (Exception,), {})
 sys.modules.setdefault("telegram", telegram_stub)
 sys.modules.setdefault("telegram.ext", ext_stub)
 
@@ -118,7 +120,7 @@ class TestDividendScheduleApi:
             captured["T_DT"] = params.get("T_DT", "")
             return 200, {"output1": []}
 
-        with patch.object(kis_api, "_kis_get", new=_fake_kis_get):
+        with patch("kis_api.ranks._kis_get", new=_fake_kis_get):
             await kis_dividend_schedule(token="fake_token")
 
         now = datetime.now(KST)
@@ -140,7 +142,7 @@ class TestDividendScheduleApi:
         async def _fake_kis_get(session, path, tr_id, token, params):
             return 200, {"output1": sample_output}
 
-        with patch.object(kis_api, "_kis_get", new=_fake_kis_get):
+        with patch("kis_api.ranks._kis_get", new=_fake_kis_get):
             result = await kis_dividend_schedule(token="fake_token",
                                                  from_dt="20260329",
                                                  to_dt="20260630",
@@ -159,7 +161,7 @@ class TestDividendScheduleApi:
         async def _fake_kis_get(session, path, tr_id, token, params):
             return 200, {"output": sample}
 
-        with patch.object(kis_api, "_kis_get", new=_fake_kis_get):
+        with patch("kis_api.ranks._kis_get", new=_fake_kis_get):
             result = await kis_dividend_schedule(token="fake_token")
 
         assert result == sample
@@ -170,7 +172,7 @@ class TestDividendScheduleApi:
         async def _fake_kis_get(session, path, tr_id, token, params):
             return 200, {}
 
-        with patch.object(kis_api, "_kis_get", new=_fake_kis_get):
+        with patch("kis_api.ranks._kis_get", new=_fake_kis_get):
             result = await kis_dividend_schedule(token="fake_token")
 
         assert result == []
@@ -184,7 +186,7 @@ class TestDividendScheduleApi:
             captured.update(params)
             return 200, {"output1": []}
 
-        with patch.object(kis_api, "_kis_get", new=_fake_kis_get):
+        with patch("kis_api.ranks._kis_get", new=_fake_kis_get):
             await kis_dividend_schedule(token="fake_token",
                                          from_dt="20260101",
                                          to_dt="20260630",

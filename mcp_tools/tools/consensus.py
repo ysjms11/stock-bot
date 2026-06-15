@@ -114,11 +114,11 @@ async def handle_get_consensus(arguments: dict) -> dict | list:
     if not ticker:
         result = {"error": "ticker는 필수입니다"}
     elif ticker.isdigit():
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, fetch_fnguide_consensus, ticker
         )
     else:
-        r = await asyncio.get_event_loop().run_in_executor(
+        r = await asyncio.get_running_loop().run_in_executor(
             None, get_us_consensus, ticker
         )
         result = r if r else {"error": f"{ticker} 컨센서스 데이터 없음"}

@@ -1,3 +1,287 @@
+## 🐛 2026-06-13 reports DB 종목-리포트 오염 수정 (사용자 제보: 15103 한미반도체↔한미글로벌)
+
+**제보**: report_id 15103(한화 3/30 "놓쳐선 안 될 격변의 시기")이 ticker=042700(한미반도체)인데 PDF 본문은 한미글로벌(053690). prefix "한미" 매칭 충돌 추정 + name 컬럼에 워치 메모 오염(005930="삼성전자 추매").
+
+**debugger 진단 (제보 가설 일부 뒤집음)**:
+- **15103은 크롤러 버그 아님** — 한경 크롤러는 6자리 코드 검색(`search_text=ticker`)이라 prefix 충돌 불가. **한경컨센서스 소스 자체가 PDF를 잘못된 종목에 연결**한 데이터 오류(report_idx=647913). 본문 코드 불일치 전수 스캔 → 진짜 오매핑 8건뿐(나머지는 peer 언급).
+- **name 오염은 실재**: watchalert.json 사용자 메모 → `kis_api/_files.py:169`(load_kr_watch_dict) → `report_crawler.py:1369`(get_collection_tickers) → `:1331` INSERT. 실측 메모 오염 ~325건 + name=ticker 6,785건.
+
+**수정 (debugger→developer→reviewer(Opus)→verifier(Opus) 전체 통과)**:
+- `report_crawler.py:1392-1401` (+10줄만): get_collection_tickers() 반환 직전 stock_master 정규명 덮어쓰기(try/except, 실패 시 기존 동작). 소비자 3곳 시그니처 무변경.
+- `scripts/fix_report_name_pollution.py` 신규(dry-run 기본/--apply/--fix-mismatch/--scan, label별 백업+덮어쓰기 방지): **name 정규화 7,110행 UPDATE** · **15103 → 053690 재배정**(PDF 파일 report_pdfs/053690/ 이동, pdf_url 유지로 existing_urls dedupe가 재오염 차단) · **본문 오매핑 7건 정정**(3 DELETE 중복존재확인 후: 2208/6182/6797, 4 UPDATE: 4373·6691→004020, 6104→138930, 6801→112610). 멱등(재실행 0건) 검증.
+- 사후 DB: name 불일치 0 · 메모 잔여 0 · UNIQUE 위반 0 · test_report 24 passed.
+
+**사고 기록**: 1차 --apply 때 `_backup()` 파일명 충돌로 name_norm 7,110행 백업이 id15103 백업(1행)에 덮어써짐(reviewer 적발) → label 스킴+충돌방지 수정, 원본은 iCloud pre-fix stock.db로 복구 가능(docstring 명시). 잔존 백업: `data/archive/reports_name_fix_backup_20260613.json`(1행)·`reports_mismatch_fix_backup_20260613.json`(7행).
+
+**교훈**: ① 크롤러는 무죄여도 **소스 데이터 오류**가 DB를 오염시킴 — full_text 첫부분 `(6자리)` vs ticker 대조 스캔(`--scan`)을 주기 점검 도구로 보유. ② 워치리스트 name은 "사용자 메모" — 정규명이 필요한 소비자는 stock_master에서 가져올 것. ③ 일회성 데이터 수술도 백업 파일명 충돌 검사 필수.
+
+---
+
+## 📄 2026-06-13 telegram_bot.py 7잡 분리 — jobs/us_analyst·sanity (사용자 "장기적으로 좋은방향으로 진행해")
+
+**발단**: 사용자 "분리 했던 거 같은데 확인" → 파일시스템 확인 결과 미완(7잡 전부 telegram_bot.py 1887줄 잔존, schedule이 거기서 import). 정찰 P3 "telegram_bot 7잡 추출 — 테스트 선행 필수" 항목. "장기 좋은 방향" 지시로 진행.
+
+**test-first 플레이북 (db_collector/dashboard_home 분해와 동일)**:
+- **Phase A** (안전망 선구축): `tests/test_us_analyst_extraction_characterization.py` 88개 — 순수헬퍼 골든 + import 스모크 22 + **LOAD_GLOBAL 해소검사 24**(이동 후 import 누락 캐치) + 의존성맵 안정성. 바이트코드 의존성맵 확보, 이동 전 green 베이스라인.
+- **Phase B** (verbatim 이동): telegram_bot.py **1887→1082줄**. `jobs/us_analyst.py`(644, 5잡+헬퍼5+상수2) + `jobs/sanity.py`(193, 2잡+_is_krx_business_day) 신규. telegram_bot.py **15심볼 하위호환 re-export**, schedule.py를 `jobs/`로 재배선. 순환 없음.
+
+**게이트**: code-review(Opus) SHIP — 15심볼 **바이트동일 실증**(git show 대조)·import 완전·clipped neighbor 0. verifier(Opus) SHIP — 전체 **841 passed/0 fail**·Phase A 88/0·캐스케이드·re-export 동일성·7잡 코루틴.
+
+**커밋** `caa69a2`(코드) + 문서(file-structure/schedule/CLAUDE.md + dart_inc 데드사본 메모 정정). 배포: 재시작 확인.
+**남은 defer**: krx_crawler shim(#6)·MACRO_SENT dedup(#8)·collect_shares_historical(#4 결정필요). 보안 사용자조치 3건 여전.
+
+---
+
+## 📄 2026-06-12 취약점 + 리팩토링 배치 — 공개 터널 보안 + 데드코드 정리 (사용자 "리펙토링 디버그 취약점 찾고 수정해줘")
+
+**발단**: 디버깅 완료 후 취약점+리팩토링 트랙. 읽기전용 정찰 워크플로(sec-refactor-recon, 10렌즈[MCP인증/파일툴탈출/인젝션/시크릿/텔레그램인증/네트워크 + 데드코드/모놀리스/중복/일관성]×반증검증×트랙별랭킹, 57에이전트) → 보안 29건/리팩토링 10건 검증.
+
+**🔴 핵심 발견 — 전체 control plane 미인증 공개노출**: /mcp(MCP_AUTH_TOKEN 미설정→fail-open)로 47개 도구 익명 호출 가능 = write_file로 .claude/settings.json hooks 덮어쓰기 RCE + read_file로 라이브 KIS 토큰 유출 + git_push 레포오염. /home·/api/*도 미인증(포트폴리오/판단노트 유출 + POST 변조). 텔레그램 봇도 인가 없음.
+
+**코드로 즉시 수정·배포(커넥터/락아웃 무위험, 6커밋 119d7e0~0f7f481)**:
+- `_is_sensitive_path` 공유 denylist (write_file/read_file/git_commit) — .claude/·.git/·.github/·hooks/·CLAUDE.md·*.sh/yml·.env*·token_cache.json 차단. **casefold(APFS 대소문자우회 .CLAUDE/ 방어 핵심)** + realpath + repo-root 상대화. → /mcp 미인증이어도 RCE/토큰유출/레포오염 차단. tests/test_sensitive_path.py 33케이스.
+- 텔레그램 group=-1 TypeHandler 오너게이트(CHAT_ID 인가) — 임의 사용자 명령 차단. test stub 17개에 TypeHandler/ApplicationHandlerStop 추가.
+- .gitignore .env* (시크릿백업 우발커밋 차단), read_report_pdf 경로검증 버그.
+- 리팩토링: kr_stock shadow _kis_get/_kis_headers 삭제(섀도잉 함정), 데드 get_db_conn·dart_inc 중복 collect_reports_daily 삭제, _ctx import 일관성. earnings.py 폐기 us_watchlist→load_us_watchlist.
+
+**게이트**: critic(Opus) 적대적 2회 — 1차 CRITICAL 2건(대소문자·절대경로 denylist 우회) 발견→수정→2차 SHIP(실증 CLOSED). code-review(Opus) 리팩토링 SHIP. verifier 1차 pytest 720→678(테스트 stub staleness)→stub 수정→**750 passed/0 fail**. 재시작 75977 클린(에러0).
+
+**🟠 사용자 조치 필요(코드로 불가 — 계정/엣지/포털)**:
+1. **/mcp 인증** — MCP_AUTH_TOKEN 설정은 claude.ai 커넥터 Bearer 동시 갱신 필요(커넥터-브레이킹). CF Access 서비스토큰 권장(인터랙티브 Gmail-PIN은 머신커넥터 불가).
+2. **Cloudflare Access**를 /home·/api/*·/dash-classic로 확장(현재 /dash만) — CF 대시보드. /mcp는 제외(커넥터).
+3. **시크릿 로테이션** — KIS 앱키/시크릿(+token_cache 무효화)·GitHub PAT·텔레그램 토큰. 라이브 KIS 토큰이 공개 /mcp로 장기 읽기가능했음=compromised 간주.
+- 반증/스킵: 0.0.0.0 바인드(deprioritized), /dash-classic XSS(no-edit zone), report_crawler 커플링·_helpers 분해(반증). telegram_bot 7잡 추출(#7)=테스트선행 필요 defer, MACRO_SENT dedup 중앙화(#8)=회귀위험>이득 defer.
+
+---
+
+## 📄 2026-06-12 디버깅 배치 — 검증된 실버그 10건 수정·배포 (사용자 "리펙토링 디버깅 취약점 고쳐줘 / 디버깅 진행")
+
+**발단**: 사용자가 리팩토링·디버깅·취약점 셋 다 요청 → 우선 **디버깅** 트랙 착수. 확정단서(로그 9회+ `[telegram] 발송 실패: Message is too long`)부터 root-cause → 읽기전용 정찰 워크플로(debug-recon, 6렌즈×반증검증×랭킹, 21에이전트)로 형제버그 색출.
+
+**P0 (선처리, e520092)**: `_safe_send`/`_safe_send_dart` 3분기 전부 4096 길이처리 부재 → 초과 메시지 영구 드롭(손절·이벤트·매크로 알림 유실). 전송 choke point에 `_split_for_telegram`(개행경계 분할, limit=3500=UTF-16 이모지 마진) 추가. code-review CLEAN.
+
+**정찰 결과 검증 11건 → 9백로그(3건 반증 제외)**, 파일 disjoint라 developer 8명 병렬 → 통합 Opus 리뷰 → Opus verifier → 4 원자커밋:
+- **알림 유실 클러스터 (d892045, P1×2+P3)** 공통근본원인=*발송 성공 전* dedup/쿨다운 기록: ① `dart_check.py` seen_ids를 `_safe_send_dart` 전 저장 → 보유/워치 공시알림 영구억제 → `ok` 시에만 저장 ② `_ctx.py:_alert_silent_failure` 워치독이 발송 전 24h 쿨다운 소진+raw {e} Markdown 무폴백 → `_safe_send` 경유+`ok` 시에만 쿨다운 ③ `telegram_bot.py` /reports 엔티티 절단 무응답 + weekly_sanity bare send → try/plain·`_safe_send`.
+- **이벤트루프 블로킹 (daf7113+601a9f3, P2×3)** 동기 fdr/yf/pykrx가 단일루프 동결→손절(10분)·DART(5분) 폴러 굶김: `regime.py`(gather+to_thread 병렬), `macro.py`(yf to_thread), `collect.py`(_fetch_supply_data to_thread, db_write_lock 밖 유지).
+- **데이터정합/경쟁/락 (601a9f3+7be2e7e, P2×2+P3)**: `collect.py` short/ovtm 실패시 침묵-0→NULL(_has_supply 미러, 244종목/일 오인 해소, 실0 보존), `macro_job.py` macro_sent lost-update 경쟁→save 직전 fresh reload+merge, `sec.py` upsert db_write_lock 누락→`async with` 래핑(fetch는 락 밖).
+
+**게이트**: code-reviewer(Opus) **SHIP**(블로커0/중요0/NIT3) — #4 NULL-vs-0·컬럼순서, #5 calc_kr/us 스레드안전성(sync확정·공유가변상태0), sec 순환import없음·락동일성 정밀검토. verifier(Opus) **SHIP** — pytest **720 passed/17 skipped/0 failed**(베이스라인 동일), 8파일 parse+import, 스플리터·NULL가드 repro 통과.
+
+**배포**: e520092+4커밋 push(d30e58b..7be2e7e FF, ahead5/behind0) → `launchctl kickstart -k`(5949→36888). **실증 클린**: /health ok, warm_caches 6종 OK, WS·잡 기동, 트레이스백0, 재시작루프 0(최근 startup 이후 SIGTERM 0). 500-retry는 만성/외부(KIS API, 로그 90%=198,400건, 내 변경과 무관).
+
+**반증 제외 3건(skip)**: financial.py 0-instead-of-NULL(소비자 없음·raw 미읽힘), backfill supply 0(읽기 시 대칭 `or 0`), collect_shares_historical 락누락(데드코드). NIT: backfill path(collect.py:800) 0-instead-of-NULL 잔존(만성·무소비자, 정합성 코멘트만 권고).
+
+**남은 요청**: 리팩토링·취약점(공개 터널 /mcp 인증 등) 트랙 미착수 — 사용자 지시 대기.
+
+---
+
+## 📄 2026-06-10 dashboard_home.py 분해 — 단일파일 ~6,700줄 → dashboard_home/ 7모듈 패키지 (사용자 "계속해")
+
+**모놀리스 분해 2호** (db_collector 직후 동일 플레이북, worktree `refactor/dashboard-home-pkg`). 조건: 소비자 단 1곳(_entry.py — `register_home_routes`+`warm_caches` 2심볼), 테스트 0 → characterization 전략 재설계.
+
+- **P0 characterization 34개**: 템플릿/JS 상수 13종 **sha256 골든**(248KB `_HOME_SHELL` 조립 결과물 포함 — 최종 HTML byte 동결, r-string 재이스케이프 함정 원천 차단) + 라우트 테이블 57 + 오프라인 payload 키셋(whale/reports). 730 passed 베이스라인.
+- **P1~P4**: verbatim 셸 → `_assets.py`(5,133줄 — 템플릿 전부) → 도메인 5모듈(`_helpers` SWR캐시/`reports`/`whale`/`payloads` 1,495/`routes` 431) → core 소멸. 프록시 불필요(monkeypatch 소비자 0). `__doc__`도 해시 골든이라 `from .core import __doc__` 트릭으로 보존.
+- **게이트**: design-reviewer(Opus) — 캐시 동일성(SWR dict 단일 인스턴스)·서빙경로(GET /home 200 + body==_HOME_SHELL byte-exact 로컬 스모크)·import 부작용 전수 클린. code-reviewer(Opus) — 72함수 census 완전·바디 byte-identical.
+- **리뷰 수확 3건 수정**: ① `_helpers`의 죽은+깨진 `warm_caches` 중복본 제거(P3 잔재 — wire되면 즉시 NameError였음) ② **`test_undefined_names` 가드 확장**: PACKAGES에 `db_collector`(패키지화로 MODULES에선 __init__만 스캔되던 사각) + `dashboard_home` 추가 — 5/29 분할회귀 가드가 새 패키지 21개 서브모듈 커버 ③ **진짜 잠복버그 발굴·수정**: `payloads.py` `load_watchlist` 미import → market-signal 패널(short_sale/credit/lending)이 **원본부터 워치리스트 무시하고 005930 고정**이던 것(try/except이 삼켜온 silent bug) — import 1줄로 해소.
+- ~~잔여~~ → **6/11 전부 해소(cc23d21)**: `_WHALE_PANEL_REMOVED` 삭제(-376줄, `_HOME_SHELL` 해시 불변 검증), `_sqlite3` 미사용 import 2건, stale docstring. worktree 2개·refactor 브랜치 정리 완료.
+- **✅ 6/11 첫 밤 실증 (07:42 확인)**: 재시작 후 10,730줄 활동 — 구조적 에러 0·lock 0. 새 패키지 실기록 확인: dart_disclosure가 pension.py 경로로 169행 insert, us_ratings 신규 10건(예전 lock 33건→실패 1), 대시보드 warm 6종 전부 OK(미실증이던 네트워크 빌더 macro_panel·us_candidates 포함). 마지막 미실증 = 6/11 18:30 daily_collect → **19:45 자동 검증 예약됨**.
+
+---
+
+## 📄 2026-06-10 db_collector.py 분해 — 단일파일 4,439줄 → db_collector/ 14모듈 패키지 (사용자 "진행하자, 에이전트 팀으로")
+
+**모놀리스 분해 1호** (남은 후보였던 dashboard.py=무수정 영역·dashboard_home.py=사용자 활발 편집이라 db_collector 선정). **worktree 격리**(`refactor/db-collector-pkg`, 사용자 동시 세션과 트리 충돌 방지) + 에이전트 팀(developer Sonnet ×5 phase / code-reviewer Opus ×2 / critic·verifier **Fable**) + 새 인프라 첫 실전(characterization-first·fast_gate 훅).
+
+**Phase 구성** (phase별 커밋, 전 구간 696 passed/17 skipped 유지):
+- P0: characterization 71개 추가(순수 헬퍼 골든값) — 분해 중 read-only 안전망
+- P1: verbatim 셸 — db_collector.py→`db_collector/core.py` git mv + `__init__` 표면 동결 + **`_PackageModule` 프록시**(`setattr(db_collector,X)`를 백킹 모듈 전체로 전파 → 기존 테스트 monkeypatch 투명성 보존) + `_init_schema` `__file__` 경로 수정
+- P2~P4: 도메인 박리 13모듈(`_config`/`_db`(db_write_lock)/`krx`/`sector`/`master`/`technicals`/`scan`/`dividends`/`alpha`/`financial`/`us_analysts`/`backup`/`collect`) → core.py 소멸
+- 설계 포인트: `_RATE_SEM`은 setter/reader 동거 원칙(collect)+financial 독립 사본(순환 import 회피, 원본도 잡별 자체 초기화라 동작 동일·오히려 잡 간 세마포어 교체 레이스 제거). 박리 모듈은 core 상위 import 금지(순환 방지)
+
+**게이트 결과**: code-reviewer(Opus) 2회 — P1 APPROVE(프록시 6엣지 실측+P2+ 다중포워딩 권고), P2-P4 "Safe to merge"(67/67 함수·고위험 8개 byte-identical·락 싱글톤·DAG 무순환, verbatim NIT 3 수정). **critic(Fable) ACCEPT-WITH-RESERVATIONS**(CRITICAL 0, MAJOR 1=docs 미동기→이 커밋으로 해소, ops 함정 전수 클린: pyc 섀도잉·파일경로 참조·reload·launchd 전부 실측). **verifier(Fable) PASS**(9/9: 실DB 761k행 smoke·라이브 스캐너·monkeypatch 전파·67함수 census).
+
+**잔여 리스크(정직)**: 라이브 네트워크 잡(collect_daily 풀런·financial weekly)은 스위트 미실행 — **머지+재시작 후 첫 18:30 daily_collect가 실증**, 19:15/20:15/21:15/22:15 sanity 4중 백스톱. 일요일 6/14 lock 검증 스케줄과 합동 판정.
+
+**머지 절차**(critic 처방): ① fix 브랜치에 92cbb0e 이후 db_collector.py 수정 유무 확인(있으면 owning 모듈로 포팅) ② 머지 ③ **머지 결과물에서 풀스위트** ④ `launchctl kickstart -k`(18:30-19:35 피크 회피) ⑤ 루트 고아 `__pycache__/db_collector.cpython-312.pyc` 삭제 ⑥ 로그 ImportError 스모크.
+
+---
+
+## 📄 2026-06-10 리팩토링 에이전트 조사 + 고스타 레포 스틸맨 → 발췌 채택 적용 (사용자 "적용할거 다 적용해")
+
+**발단**: 사용자 "리팩토링용 에이전트 깃허브에 좋은 거 있어?" → 1차 조사(4렌즈 웹 리서치) 결론: **"리팩토링 전용 에이전트"는 사실상 부재** — 검색되는 건 (a)범용 코딩 에이전트(수평이동), (b)마크다운 프롬프트 컬렉션, (c)사망 프로젝트(Aider 휴면·Roo/Refact/Bowler 아카이브). 현 셋업(Claude Code+에이전트팀+green 테스트)이 수렴점. 진짜 추천 = 결정적 공구 추가(Serena/ast-grep/LibCST) + strangler-fig 패턴.
+
+**사용자 "그래도 스타 많은 애들 이유 있을 것" → 스틸맨 2차 조사(레포 실fetch)**: 절반 인정 — OpenHands 76k★(클로즈율 96.5%)·Serena 25k★(유기성장)·ast-grep 14k★는 진짜, **opencode 172k★=시류·claude-flow 58.7k★=기능 97% 스텁(독립감사, neural=Math.random)**. 스타 신뢰서열: 이슈클로즈율>기여자분포>릴리스>스타. 그리고 조사가 **우리 구멍 발견**: code-reviewer.md에 tools 제한 누락(OMC 이슈트래커의 'verifier가 Write 가지면 self-approve' 실버그와 동일 상태).
+
+**적용 (프레임워크 설치 0, 발췌 채택)**:
+1. **에이전트 md 4개 업그레이드**: code-reviewer(tools 제한 추가·안티인플레이션 계약·도메인 심각도 하한표·이번주 실사고 패턴 3종[db_write_lock 경계/async내 blocking/패치 네임스페이스]), critic(stale 5-file→패키지·하한·정직한 ACCEPT), verifier("테스트 없음"→625 스위트 표준화·다중리뷰어 머지규칙), python-developer(**Railway 화석 제거**→맥미니 launchd·elif→TOOL_HANDLERS·리팩터링 계약[phase 롤백/shim/PROGRESS 의무]·db_write_lock 불변식·침묵-0 금지)
+2. **훅 2개** (.claude/settings.json + scripts/hooks/): SubagentStop `fast_gate.sh`(변경 .py py_compile 서브초 게이트, exit2=자가수정 루프 — 원안 pytest-on-stop은 2분×매종료라 의도적 다운그레이드, 풀회귀는 verifier 담당) + PostToolUse `wip_autocommit.sh`(**wip/·refactor/ 브랜치에서만** 작동, git add -u로 시크릿 제외 — Aider 규율 백포트). 단독 실행 검증 완료(exit 0/0/2/no-op)
+3. **Serena MCP 설치**(local scope, uvx) + **pyright-lsp 공식 플러그인**(user scope) + pyright 1.1.410 npm 설치
+4. **ast-grep 0.43 + 룰 2개** (sgconfig.yml + .ast-grep/rules/): no-blocking-sleep-in-async(probe 4케이스 FP 0 — 단 to_thread용 중첩 sync def는 알려진 FP, advisory 전용), no-asyncio-get-event-loop(alias `_aio.` 포함) → **즉시 수확: 프로덕션 20곳 발견·수정**(19곳 일괄 + 리뷰어가 잡은 alias 1곳 consensus.py:323 — 3.12 deprecated, 이번주 테스트 터진 그 클래스) → 전부 get_running_loop()
+5. **scripts/star_forensics.sh** + 메모리 [[star-forensics]] — 도구 도입 전 5분 검증 루틴
+
+**참고**: 사용자 동시 세션 활발(딥서치 커밋 360d4b7 등) — 전 과정 명시적 스테이징 유지.
+
+---
+
+## 📄 2026-06-07 시스템 전체 점검 + SQLite 쓰기 직렬화 (사용자 "전체 점검 → 할 수 있는 거 다 해, 코드리뷰 잊지마")
+
+**시스템 점검 결과 — 전반 건강**: main+cloudflared running, health(로컬/공개/MCP) 200, DB 최신 거래일 20260605(2864종목) 수집 정상, 백업 iCloud 오늘자 current/previous 정상, 디스크 115G 여유(45%), git 동기화. 봇 활발히 로깅.
+- 🟠 유일 실질 이슈: **SQLite "database is locked"** — 로그 142건(weekly_harvest 108·us_ratings 33, 오늘 일요일 버스트). 비치명적(INSERT OR IGNORE, 다음 사이클 자동보충)이나 일요일 harvest가 매주 ~108 레이팅 유실.
+- 🟡 비조치: `data/report_pdfs/` 6.2G(data/ 92%, 증가주범·당장 위험X·정책 결정), forward_bot 워크트리 잔여 PID 9016(무해), launchd 과거 비정상종료(KeepAlive 복구·1.5일 안정).
+
+**근본원인 (측정 확정)**: busy_timeout=30000은 `_get_db()`에 **이미 적용**됨(추가무의미). `kis_api/_db.py:get_db_conn`은 **데드코드(0 사용)**. lock은 **쓰기-쓰기 경합** — 무거운 async 잡들이 "누적 후 단일 commit"으로 쓰기락 30초+ 점유(harvest 03:00↔nps 03:30, us_ratings 07:30↔financial 07:15 겹침). _init_schema는 0.6ms(무관).
+
+**장기 수정 (사용자 "장기 유리하게" 지시) — 공유 asyncio 쓰기 락**:
+- `db_collector.py:71` `db_write_lock = asyncio.Lock()` (단일 이벤트루프 공유 싱글톤). 무거운 async writer들의 **write+commit을 락 안에서 원자적으로**(fetch는 락 밖). reads/소규모는 그대로, busy_timeout은 프로세스간 backstop.
+- 적용: collect_daily/backfill/financial_weekly/dividends/on_disclosure (db_collector), us_ratings 일·주·시간 스캔 (telegram_bot), NPS/DART 7잡 (pension), consensus, dart insider.
+- ⚠️ **2× Opus 코드리뷰가 핵심 결함 발견·수정**: (1) 초기엔 commit만 락에 감싸 INSERT는 밖 → SQLite는 첫 INSERT에서 락 획득하므로 **직렬화 무효**(financial Phase A/B, dart batch, wi_changes, 5개 deferred-commit 사이트) → write+commit을 락 안으로 재구성. (2) `_update_supply_in_snapshot`이 락 보유 중 동기 pykrx 네트워크 → fetch/write 분리. 데드락 없음(전수 확인, 모든 in-lock callee는 sync def).
+- **검증 (Opus verifier PASS)**: 595 passed/0 failed, 단일 공유 락(5파일 동일 객체), 동시 gather 무데드락, 불변식 충족. **단 동시-부하 lock 제거 효과는 다음 일요일 harvest까지 실측 불가** — 정확성·무회귀·무데드락만 검증됨.
+
+**git**: **미커밋** (db_collector·telegram_bot·pension·consensus·dart 5파일 = 프로덕션 동작 변경[쓰기 직렬화 → 잡 약간 큐잉]). 런타임 동작 변경이라 사용자 검토/커밋 판단 권장. 직렬화는 "30초 후 실패(데이터 유실)" → "writer 끝날 때까지 대기(무손실)" 트레이드오프.
+
+**추가 sweep (사용자 "놓친 거 없는지 다시 확인" 지시 — AST로 모든 async def + _get_db + write 검사)**:
+- 락 누락 2건 추가 발견·수정: `backfill_day_via_chart`(텔레그램 백필 핸들러, db_collector.py:889 — per-ticker INSERT+commit 락 안), `_exec_watch_analyst`(MCP UPDATE+commit, mcp_tools/_helpers.py:790).
+- false positive: `_exec_us_analyst` SELECT만 = read-only, 락 불필요.
+- 데드코드 발견: `collect_shares_historical`(db_collector.py:3285) 호출자 0 — 정리 별도.
+- **forward_bot 별도 프로세스 점검**: `~/stock-bot/data/stock.db` 접근하나 INSERT/UPDATE 0건 = **read-only**(WAL 동시 R 무관). asyncio.Lock 유효성 보존.
+- ⚠️ **수동 스크립트 `backfill_gaps.py` 위험**: 봇 실행 중 동시 실행 시 락 우회(별도 프로세스 + 락 import 안 함). 의식해서 봇 정지 후 돌릴 것. flag.
+- 인프라 누락 보완: `requirements.txt`에 `pytest>=8.0` + `pytest-asyncio>=1.4` 명시(누락 시 async 테스트 ~82개 즉시 실패 footgun).
+- code-reviewer APPROVE(추가 3건 전부 정확), 595 passed/0 failed 유지.
+
+**⚠️ 동시 편집 감지**: 점검 중 `kis_api/regime.py` 13:09 사용자 동시 편집(+440줄 regime 알고리즘 확장) — 손 안 댐, 커밋도 제외. 일괄 `git add .` 금지.
+
+**다음 세션**: ① DB-lock 변경 커밋(8파일: db_collector·telegram_bot·pension·consensus·dart·mcp_tools/_helpers·requirements·PROGRESS — regime.py 사용자 WIP 제외) ② 일요일 harvest 로그서 lock 142→감소 확인 ③ report_pdfs 보존정책(선택) ④ `collect_shares_historical` 데드코드 삭제(선택).
+
+---
+
+## 📄 2026-06-05 대시보드 마켓맵 트리맵 (한경식) — 시세 탭 추가
+
+**요청**: `markets.hankyung.com/marketmap` 식 트리맵(종목=시총 면적·등락%=색·섹터 그룹) 추가. 기존 섹터 히트맵은 유지(공존).
+
+**구현** (`dashboard_home.py` 단독, 커밋 `49237fd`, 브랜치 `fix/collector-div-yield-foreign-amt`):
+- ECharts 5.5.1 CDN(**SVG 렌더러**) 트리맵. 신규 `GET /api/marketmap?market=kospi|kosdaq` (`_kr_marketmap_from_db`+executor+`_cached` TTL 3600). daily_snapshot+stock_master JOIN, 섹터별 시총상위 8 + 기타합산, 시총 500억↑·섹터 n≥3 필터. KOSPI 59섹터/380종, KOSDAQ 53/362.
+- 토글(KOSPI/KOSDAQ)·드릴다운(zoomToNode)·종목클릭→openStockModal·SWR. team: designer→dev→design-reviewer→verifier(PASS) + 메인세션 라이브 DOM 검증.
+
+**개발 중 잡은 버그 4종 (라이브 검증으로 발견 — reviewer가 놓친 것 포함)**:
+1. **market_cap 단위=억원**(증거 line 5918 `*100_000_000`, "시총(억)" 헤더). 필터 `>50000`은 5조컷이라 KOSPI 112종 붕괴 → `>500`(500억). [[market_cap은 억원 단위]]
+2. **ECharts 트리맵은 standalone `visualMap` 무시** → 색 안 칠해짐(단색 lavender). 노드별 `itemStyle.color`(연속 mmColor red→neutral→green)로 직접 매핑해야. visualMap/visualDimension 제거. [[treemap=itemStyle.color]]
+3. **`$nextTick`+`rAF` 래퍼가 렌더 차단**(loadMarketmap async 연속에서 $nextTick 미flush) → 직접 init + ResizeObserver로 복귀. (배경탭이면 rAF throttle로 렌더 불안정 — 라이브 검증 시 `visibilityState:hidden` 확인. 포커스 탭에선 정상.)
+4. **raw 문자열 `\n` 이스케이프 반전**: `_DASH_APP_JS = r"""`(raw)라 JS 개행은 `'\n'`(역슬래시1개). non-raw `_HOME_SHELL`의 `\\n` 규칙과 **반대**. [[raw 문자열은 \n, non-raw는 \\n]]
+
+**남은 다듬기(선택, 낮음)**: 작은 타일 종목명 truncation("삼"…) — area>30000(3조) 임계 조정 여지. 포커스 탭 실시각 확인은 사용자 몫(검증 시 탭 백그라운드라 스크린샷 불가, DOM/curl로 검증).
+
+---
+
+## 📄 2026-06-04 db_collector div_yield/foreign 침묵-0 회귀 + div_yield KIS-DPS 전환 (KRX 독립화)
+
+**발단**: 알파 연구 중 `daily_snapshot`의 두 필드 회귀 발견 — **div_yield** 2026-04-08부터 전종목 0, **foreign_net_amt** 05-07부터 간헐 0. 둘 다 upstream 실패를 **0으로 침묵 기록**(fetch 실패 ≠ 실제 0 구분 불가).
+
+**근본 원인**:
+- div_yield: v1(JSON)→v2(SQLite) 전환 때 "별도 계산" 보강 미포팅. `_store_daily_snapshot`가 0.0 하드코딩 + 갱신 코드 부재 → **애초에 수집 안 함**. (04-07까지 1282는 마이그된 v1 데이터)
+- foreign_net_amt: ① insert가 amt=0 하드코딩(주석 "히스토리 API에 금액 없음"은 **오류** — Phase-3 KIS `FHPTJ04160001`이 `frgn_ntby_tr_pbmn`(금액) 이미 반환, 매핑만 누락) ② 실 amt 소스 `_update_supply_in_snapshot`(pykrx)가 KRX soft-block 실패를 침묵(retry 무). KRX 포털 스크래핑은 세션 내내 다운(간헐적).
+
+**수정 (브랜치 `fix/collector-div-yield-foreign-amt`, 커밋 8개 push)**:
+- **foreign**: KIS `*_ntby_tr_pbmn×1e6`(원, 기존 pykrx값과 0.3~1.1% 일치)을 1차 소스로. 누락 시 **NULL(0 아님)**. pykrx는 retry+never-zero refiner로 강등. 전 구간(04-08~06-02)+05-08 데이터 KIS 복구(~92k행).
+- **div_yield → ★KIS 예탁원 DPS 기반 전환 (KRX 완전 독립)★**: 신규 `dividend_events` 테이블 + `collect_dividends()`(예탁원 HHKDB669102C0 종목별 현금 DPS, 일요일 07:20 주간잡) + `_recompute_div_yield_from_events()`(`div_yield = 직전12M DPS÷종가`, collect_daily 6c 매일 재계산, 무 API, 비파괴). 종전 pykrx div 경로 3함수 제거. **전종목 2864→payers 1373, events 1845, 04-08~06-02 ~1360종/일 채움. 신호 z=+1.80**(random 98% 상회).
+- **휴장일 가드**: collect_daily/backfill에 `_is_kr_trading_day` 추가(휴장일 평일에 KIS 직전영업일 시세로 spurious 행 생기던 것 차단). 기존 spurious 8,586행 삭제(04-12일·05-05·05-25, KIS chk-holiday 권위 확인). 휴장일 list telegram_bot→db_collector 단일화.
+- **부수**: 05-08 부분일(600→2768행 완성) · 백필 insert 금액0버그 fix · **pyarrow 설치**(누락으로 `divyield_reconstruct.py` sidecar/probe 침묵 실패하던 것 복구, requirements 등록) · 토큰 `.git/config`평문→`~/.git-credentials`(600) 이동.
+
+**핵심 교훈**:
+- **div_yield는 KRX 불필요** — KIS 예탁원 DPS÷종가로 매일 산출(KRX feed 죽어도 무관). 사용자 `RALPH/divyield_reconstruct.py`(DPS 역산, no-API)도 같은 원리, 검증됨(+0.34, deployable). [[KRX 스크래핑 의존 금지]]
+- "히스토리 API에 금액 없음" 같은 **주석 가정 검증 필수** — 실제로 KIS output2에 `*_ntby_tr_pbmn` 존재했음.
+- 침묵-0 안티패턴: **fetch 실패는 NULL+retry+가시화**, 실제 0과 구분.
+
+**브랜치 주의**: `fix/collector-div-yield-foreign-amt`는 dashboard 재구축·test 스위트 작업과 **공유 중**(동시 세션). main 머지 전 내용 확인 필수.
+
+**남은 것 (사용자 스킵 결정)**: 🔐 토큰 키체인 암호화(헤드리스 차단 확정)·교체(gh 미로그인 대화형) — 둘 다 선택, 봇 정상. 메모리 [[DB research]] "div_yield/foreign 배포 불가" 차단 **해제됨**.
+
+---
+
+## 📄 2026-06-04 테스트 스위트 분할 회귀 소탕 (사용자 "test_mcp_schema 7개 실패" → 옵션1 확장)
+
+**발단**: `test_mcp_schema.py` 7개 실패 — 헬퍼가 `open("mcp_tools.py")` 하는데 5/27 분할로 그 flat 파일이 사라짐. collection abort(6 error)에 가려져 **조용히 stale-fail 중**이던 분할 회귀. ([[package-refactor-stale-docs]])
+
+**요청 범위 (reviewer+verifier Opus 통과)**:
+- `test_mcp_schema.py` **7/7** — flat 파일 regex 스크래핑 → `MCP_TOOLS`(__init__) / `TOOL_HANDLERS`(_registry) **직접 import** + 핸들러 서브모드는 `mcp_tools/tools/*.py` **AST 파싱**으로 추출. elif 체인→dispatch dict 구조 반영. mutation-test로 non-vacuous 확인(팬텀 enum→FAIL).
+- `test_mcp_consolidation.py` **41/41** — stale `@patch("mcp_tools.X")` → `kis_api.get_kis_token`(토큰은 _registry 지역 import) + `mcp_tools.tools.<mod>.X`(핸들러가 `from kis_api import *`로 바인딩).
+- **collection error 6→0** (610 collect): test_backtest/regime/us_features/phase_b import 복구(심볼이 kis_api 서브모듈로 이동: SUPPLY_HISTORY_FILE/_REGIME_ORDER/US_SECTOR_ETFS, KR 감성 키워드 미사용 삭제).
+- **obsolete 2개 → module-level skip**(되돌리기 쉬움): `test_krx_otp`(krx_update 모듈 삭제·db_collector로 이동·OTP 방식 폐기), `test_consensus_ci`(get_hankyung_consensus 제거, 한경→FnGuide; def test_ 없는 라이브 텔레그램 스크립트).
+
+**옵션1 확장 — stale-path 소탕 (사용자 "니추천대로 진행"; 2 병렬 dev + reviewer + verifier)**:
+- 완전 green: test_backtest **18**, test_us_features **24**, test_us_ratings **13**, test_data_extension **14**, test_sector_flow_cache **12**, test_schedule_registration **1**(← `main.py` shim 아닌 `main_pkg/schedule.py` 읽도록 경로 교정, 등록 라인 제거 시 FAIL 확인=non-vacuous).
+- stale-path 수정·잔여는 behavioral: test_regime, test_edge_cases(23/3, reviewer 지적 토큰타깃 `kis_api.get_kis_token` 교정으로 +1), test_phase_b(SimulateTrade), test_scan_presets, test_report(dead `report_crawler.load_reports` patch 제거).
+- 패턴: `mcp_tools.X`→`mcp_tools.tools.<mod>.X`, `kis_api.X`(이동분 aiohttp/US_*_FILE)→서브모듈, `from main import X`→`main_pkg.*`(telegram_bot·_entry·_ctx·jobs.stoploss).
+
+**결과**: 175 failed → **111 failed / 497 passed / 2 skipped** (64 해소). 회귀 0(test_undefined_names 단독 통과 확인).
+
+옵션1 후 **175→111 fail**. 사용자 "니추천대로 다해" → 옵션2까지 전부 진행:
+
+**옵션2 — async 인프라 + behavioral + 격리 (Wave A/B, 4 병렬 dev + reviewer + verifier)**:
+- **Wave A: `pytest-asyncio` 1.4.0 venv 설치 + `pytest.ini asyncio_mode=auto`** → "async def not supported" ~82개 해제. test_tool_fallbacks 5·test_api_limits 12·test_phase_a 28 완전 green. 나머지 async 파일은 동일 stale-`@patch`로 드러나 레시피 적용(get_kis_token→kis_api, mcp_tools.X→tools.<mod>, kis_api.X→서브모듈, from main→main_pkg).
+- **라이브 마커 인프라**: `conftest.py`에 `--run-live` 옵션 + 기본 skip(`pytest_collection_modifyitems`), `pytest.ini` 마커 등록. pytest-asyncio가 라이브 KRX/DB 통합 테스트를 실제 실행시켜 hang 유발 → **15개 `@pytest.mark.live`** 마킹(KRX 네트워크 5·report DB 7·scanner DB 2 등; 기본 skip, `pytest --run-live`로 실행). bot 기존 관례.
+- **Wave B 잔여 stale-namespace/behavioral/격리**: test_dart_report 17(DART_REPORTS_DIR→`kis_api.dart`)·test_phase_b rotation 2(→`kis_api.kr_stock`)·test_regime 47(라벨 위기→공포·공격→탐욕 코드 검증 후 갱신, REGIME_STATE_FILE 격리, _yf_history→kis_api.news)·test_edge_cases 26(토큰 파일캐시 격리)·test_keyboard 29(cmd 출력 신규동작 갱신 + telegram stub cross-file 오염 = main_pkg purge+reimport로 해결)·test_report 24(extract_pdf_text 3-tuple). reviewer가 동작-갱신 단언을 실제 구현과 전수 대조(rubber-stamp 회귀 0).
+
+**최종 결과 (full suite, 기본 live-skip)**: **595 passed / 17 skipped / 0 failed**. 회귀 0. (시작: collection 불가·175 숨은 실패 → 0). 마지막 3건도 해결:
+- `test_mixed_sentiment`: 코드 갭 아님 — `_FINANCE_PHRASE_SCORES`는 의도적 큐레이션(컨텍스트 반전 "공매도 감소"=+3, bare "상승/급등" 모호하므로 제외). 옛 naive-keyword 기대가 stale → 입력을 큐레이션 긍정구문("사상 최대 어닝서프라이즈…하지만 우려도", +9)으로 교체해 "mixed→net positive" 의도 보존. **알고리즘 미수정**.
+- supply 2개: 사용자 foreign_rank DB-first에 맞춰 `@patch("sqlite3.connect", side_effect=Exception)`로 DB 비활성→KIS-live 폴백 경로 테스트(SQL 비커플링 → 사용자 추가 편집에 강건). dict shape(`source:"KIS live"`) 단언.
+
+**⚠️ 동시 세션 충돌 감지**: 작업 막바지(22:43) 사용자가 같은 브랜치에서 `mcp_tools/tools/supply.py`(foreign_rank → **DB-first** daily_snapshot, KIS는 폴백)·`kis_api/polymarket.py`(+163)·`dashboard_home.py` 동시 편집(이 PROGRESS 상단 db_collector 항목도 사용자 추가). **내 에이전트는 프로덕션 미수정 — revert 안 함**. 단 사용자의 foreign_rank DB-first 변경이 내가 고친 테스트 2개를 깸: `test_mcp_consolidation::TestGetSupply::test_foreign_rank`(mock_frgn.assert_called_once — DB경로가 KIS API 우회), `test_tool_fallbacks::test_get_supply_foreign_rank_empty_returns_note`("note" 미반환). → **해결**: 두 테스트를 DB-first 폴백 경로로 갱신(위 참조). SQL에 커플링 안 했으므로 사용자가 foreign_rank 쿼리 더 바꿔도 대체로 견딤. **supply.py/polymarket.py/dashboard_home.py는 사용자 작업 — 손대지 않음.**
+
+**git**: 전부 **미커밋**(test_*.py 22개 + conftest.py + pytest.ini + PROGRESS.md = 내 작업; supply.py/polymarket.py/dashboard_home.py = 사용자). pytest-asyncio는 venv 설치만(requirements.txt에 pytest 자체도 없는 기존 관례 따름). .claude/rules·CLAUDE.md 미수정(stale flat 경로 잔존하나 보호 파일 — 플래그).
+
+**docs 갱신 완료** (사용자 "다 해" 승인): CLAUDE.md(파일구조표 flat→패키지·MCP 47개·dispatch dict), `.claude/rules/add-mcp-tool.md`(절차 재작성: __init__ MCP_TOOLS→tools/<mod> 핸들러→_registry dict), `mcp-tools.md`(47), `file-structure.md`(stale 경고 헤더). 정책/워크플로 섹션은 미수정.
+
+**git**: 전부 **미커밋**. 내 작업(test 22개+conftest+pytest.ini+CLAUDE.md+rules 3개+PROGRESS) 과 사용자 WIP(supply/polymarket/dashboard_home)가 같은 브랜치 작업트리에 혼재 → 커밋 경계는 사용자 판단(자동 커밋 안 함). pytest-asyncio는 venv 설치만.
+
+**다음 세션**: 본 테스트 작업 완료. 잔여 = 전부 사용자 영역(① main 머지 타이밍 ② 사용자 collector/dashboard WIP 마무리). 새 MCP 도구 추가 시 갱신된 add-mcp-tool.md 따를 것.
+
+---
+
+## 📄 2026-06-03 대시보드 바닥부터 재구축 (사용자 "데쉬보드 너무 별로지 않냐")
+
+기존 `/dash`(dashboard.py 3700줄 string-concat 누적물, 10섹션·11탭 오버플로·데스크탑 여백·조용히 썩음)를 비판 → **새 `/home` 대시보드를 나란히 신축**. **브랜치 `fix/collector-div-yield-foreign-amt`** 에서 작업(세션 중 사용자가 collector/US_EXIT 작업으로 이 브랜치 사용 중인 것 발견 — [[deploy-main-직행]] 참고, 커밋 전 git branch 확인 교훈).
+
+**스택**: 무빌드 — Tailwind+Alpine+Lucide+Pretendard CDN, 서버는 JSON API만(`dashboard_home.py`), 표현은 Alpine 클라 렌더. **핵심 축**: MCP 핸들러(`execute_tool`)가 곧 데이터 계층(90% 래핑). `dashboard.py` **0줄 수정**(회귀 안전장치, /dash 그대로 fallback).
+
+**완성 (P0~P4 + 시그널, 전부 라이브 검증·커밋·브랜치 푸시):**
+- P0 골격(aa4318b): 셸+탭7+Alpine. P1 홈(4518ba7): /api/home 집계(부분실패 허용·TTL), 레짐배지+자산요약+신호카드. reviewer 지적 반영(W1 가짜 neutral 금지/W4 이벤트 regex/I1 손절 부호/W2 캐시누수/W3 컨센서스 노이즈).
+- P2 포트·워치(6e6f4d2): /api/portfolio(원화환산 grand)·/api/watch(stoploss_alerts 실값)·POST. 정렬 pill·종목 모달. TTL240s+stale-while-revalidate.
+- P3 Whale·리포트·기록(ec25f74): build_whale_payload(5서브탭)·build_reports_payload(4세그 KR101/US0/산업898/시황934)·기록(투자판단 레짐배지/매매/투자TODO). reports async await 버그 수정.
+- P4 신호 영속화(59468d0): kis_api append_signal/load_signal_feed(SIGNAL_FEED_FILE), momentum.py/anomaly.py에 **추가-only 훅**(dedup·텔레그램 발송 불변, try/except 래핑). /api/signals.
+- 시그널 탭(7dc4ff0): 5서브탭(신호피드/임박이벤트/발굴/DART/컨센서스). 라이브 이상급등 3건 영속화 end-to-end 확인.
+
+**7탭 전부 라이브 OK**: 홈/포트폴리오/워치·알림/시그널/기록/Whale/리포트. 콘솔 0.
+
+**시세 차원 추가 (4e53b72/69251f2, "현재가 관련이 하나도 없냐" 지적)**: 홈 지수 띠(KOSPI/KOSDAQ/S&P/나스닥) + 📈시세 탭(지수·등락률 상하위·거래량·종목 시세조회). KR 등락은 KIS 장중 미제공이라 daily_snapshot 종가 기준. 현재가 "-" 시 종가 폴백+"종가" 뱃지. **탭 8개**(홈/시세/포트/워치/시그널/기록/Whale/리포트).
+
+**P5 컷오버 완료 (242a2c7)**: `/dash`·`/dash-v2`→302 `/home`, `/dash-classic`→옛 `_handle_dash_v2` 보존. **미들웨어 아닌 라우트 교체**(register_routes 국소, 전역영향 회피). /dash 서브패스(whale/reports/pdf/file/decisions/trades/todo)·/api/*·/mcp·/health 전부 보존 라이브 확인. 롤백=3줄 revert.
+
+**폴리시 완료 (b98dba8)**: 기록 탭 페이지네이션(최근20+더보기) + 홈 DART 카드 누적라벨 정리. 탭키 단/복수 버그(signals→signal) 픽스.
+
+### 후속 빌드 (06-03~04, 사용자 "남들 사례 찾아 추가/보강/최적화" → "쭉쭉 진행")
+연구(OpenStock/Tremor/AddyOsmani 멀티에이전트/VoltAgent 등) → 우리 적용. **전부 라이브 검증·커밋·브랜치 푸시.**
+- **웹디자인 팀 신설** (`.claude/agents/`: ui-ux-designer/frontend-developer/design-reviewer, CLAUDE.md Agent Team 등록 b7e889c). 워크플로 architect→designer→frontend-dev→design-reviewer→verifier→메인 라이브확인. **실제 가동**(설계 spec→구현→리뷰), mount 타이밍 버그는 메인세션 라이브에서 포착·수정("검증이 병목" 입증).
+- **차트** (d36cd8f/60025e6): TradingView lightweight-charts(무빌드 CDN). 자산추이(area)·종목 캔들+거래량. mount 타이밍 fix(탭/모달 가시화 후 + rAF 0-width 가드).
+- **콜드로드 최적화** (0cb46b8): `_cached` 서버측 SWR(stale 즉시+백그라운드 갱신) + `warm_caches()` 시작 프리워밍. **홈/포트/워치 30s→0.002s.** (US후보·매크로 등 무거운 lazy 엔드포인트는 미프리워밍 → 첫 로드 ~40s, 백로그.)
+- **스켈레톤** (60f1e03): 11표면 "로딩중"텍스트→animate-pulse.
+- **히트맵** (214b2c0): 포트폴리오 손익(flex-grow=평가액,색=손익%) + KR 섹터(78개, /api/sector_heatmap, daily_snapshot 집계).
+- **US 애널 탭** (1a38513): 9번째 탭. 매수후보(get_us_buy_candidates)·레이팅변화(get_us_scan)·톱애널·종목 리서치 모달. 26k행 자산 표면화.
+- **매크로** (5c3fc11): 시세 탭 pill. /api/macro_panel(get_macro+external+polymarket+sector gather). 레짐배너·지표·Fed·섹터로테이션. (curve/침체확률은 get_macro_external 키 불일치로 비어있음 — 백로그.)
+- **알파스크리너+수급** (7a766f1): 시그널 탭 알파스크리너(F/M-Score·FCF·52주, /api/alpha) + 시세 탭 수급(외인/공매도/신용, /api/supply). 둘 다 pill로 흡수(탭 9개 유지). M-Score는 데이터 수집 전(graceful).
+
+**현재 = 9탭 풀 리서치/시그널 콕핏.** 무빌드 Tailwind+Alpine+Lucide+lightweight-charts. dashboard.py(옛 /dash-classic) 전 과정 무수정.
+
+**🟡 남은 것 (사용자 결정 필요 — 내가 안 함)**:
+1. **브랜치 → main 머지**: 대시보드+collector 전부 `fix/collector-div-yield-foreign-amt`에 있고 라이브, main(`8c9f70b`)엔 없음. 사용자 판단.
+2. **CLAUDE.md 인프라표 URL `/dash`→`/home`** (파일구조/팀은 사용자가 이미 갱신함, 인프라표 URL만 남음): 보호 파일, 명시 동의 후.
+
+**🔧 폴리시 백로그 (선택)**:
+- 무거운 엔드포인트(US후보·macro_panel) 프리워밍 추가 → 첫 로드 즉시화.
+- 매크로 국채곡선/침체확률(get_macro_external 반환 키 파싱) + M-Score(데이터 수집 전) 보강.
+- 접근성(aria/명암대비/키보드).
+
+---
+
 ## 📋 2026-06-01 세션 종료 핸드오프 (컴팩트 직전)
 
 ### 이번 세션(5/29~6/1) 성과 — 분할 회귀 소탕 + PDF 가독성

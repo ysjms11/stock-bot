@@ -161,9 +161,11 @@ async def macro_dashboard(context: ContextTypes.DEFAULT_TYPE):
         if not ok:
             return  # 발송 실패 시 sent_data 갱신 안 함 (다음 호출 재시도)
 
-        # 발송 성공 후 기록 (기존 키 보존)
-        sent_data["last"] = slot_key
-        save_json(MACRO_SENT_FILE, sent_data)
+        # 발송 성공 후 기록 — await 구간 동안 다른 잡이 파일에 쓸 수 있으므로
+        # 여기서 파일을 다시 읽어 병합한다 (stale-read 덮어쓰기 방지)
+        fresh = load_json(MACRO_SENT_FILE, {})
+        fresh["last"] = slot_key
+        save_json(MACRO_SENT_FILE, fresh)
     except Exception as e:
         print(f"매크로 대시보드 오류: {e}")
 

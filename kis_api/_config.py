@@ -4,7 +4,7 @@ from datetime import timezone, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # .env를 단일 진실원천으로 — 옛 launchctl setenv 값이 가리지 않게
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 환경변수 & 설정
@@ -53,6 +53,7 @@ REGIME_STATE_FILE      = f"{_DATA_DIR}/regime_state.json"
 MACRO_SENT_FILE        = f"{_DATA_DIR}/macro_sent.json"
 SILENT_FAILURE_LOG     = f"{_DATA_DIR}/silent_failure_log.json"
 TOKEN_CACHE_FILE       = f"{_DATA_DIR}/token_cache.json"
+SIGNAL_FEED_FILE       = f"{_DATA_DIR}/signal_feed.json"
 
 # ━━ GitHub Gist 백업 ━━
 GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")

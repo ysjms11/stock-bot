@@ -245,6 +245,20 @@ CREATE TABLE IF NOT EXISTS consensus_history (
     PRIMARY KEY (trade_date, symbol)
 );
 
+-- 배당 이벤트 (KIS 예탁원 HHKDB669102C0) — 종목별 현금배당 DPS.
+-- div_yield = 직전 12M 현금 DPS 합 / 당일 close. KRX 불필요(KIS API 소스).
+-- DPS는 sticky(연 1회)라 주 1회 수집이면 충분.
+CREATE TABLE IF NOT EXISTS dividend_events (
+    symbol       TEXT NOT NULL,
+    record_date  TEXT NOT NULL,          -- 배당기준일 YYYYMMDD
+    dps_cash     REAL NOT NULL DEFAULT 0,-- 1주당 현금배당금 (원)
+    divi_kind    TEXT DEFAULT '',        -- 결산/중간/분기
+    pay_date     TEXT DEFAULT '',        -- 지급일
+    fetched_at   TEXT DEFAULT '',
+    PRIMARY KEY (symbol, record_date, divi_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_divev_sym ON dividend_events(symbol);
+
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━
 -- 5. 증권사 리포트 (영구 보관)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -80,37 +80,6 @@ async def get_kis_index(token, index_code="0001"):
         return (await resp.json()).get("output", {})
 
 
-def _kis_headers(token, tr_id):
-    return {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET,
-        "tr_id": tr_id,
-    }
-
-
-async def _kis_get(session, path, tr_id, token, params):
-    """KIS API GET 호출 (429/5xx 자동 재시도, 공유 세션 fallback)."""
-    s = session if session and not getattr(session, 'closed', False) else _get_session()
-    url = f"{KIS_BASE_URL}{path}"
-    headers = _kis_headers(token, tr_id)
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        async with s.get(url, headers=headers, params=params) as r:
-            if r.status == 429 and attempt < max_retries:
-                print(f"[RETRY] {path} → 429, attempt {attempt}/{max_retries}")
-                await asyncio.sleep(1.0 * attempt)
-                continue
-            if r.status in (500, 502, 503) and attempt < max_retries:
-                print(f"[RETRY] {path} → {r.status}, attempt {attempt}/{max_retries}")
-                await asyncio.sleep(2.0)
-                continue
-            data = await r.json(content_type=None)
-            return r.status, data
-    return 500, {}
-
-
 async def kis_stock_price(ticker, token, session=None):
     s = session or aiohttp.ClientSession()
     try:
@@ -392,6 +361,11 @@ async def kis_investor_trend_history(ticker: str, token: str, n_days: int = 5, s
             "individual_net":  int(row.get("prsn_ntby_qty",  0) or 0),
             "foreign_buy":     int(row.get("frgn_shnu_vol",  0) or 0),
             "foreign_sell":    int(row.get("frgn_seln_vol",  0) or 0),
+            # 순매수 금액: KIS `*_ntby_tr_pbmn` 단위 백만원 → 원 (×1e6). 음수 가능.
+            # (히스토리 API에 금액이 "없다"는 종전 가정은 오류 — output2에 존재함)
+            "foreign_net_amt":     int(row.get("frgn_ntby_tr_pbmn", 0) or 0) * 1_000_000,
+            "institution_net_amt": int(row.get("orgn_ntby_tr_pbmn", 0) or 0) * 1_000_000,
+            "individual_net_amt":  int(row.get("prsn_ntby_tr_pbmn", 0) or 0) * 1_000_000,
         })
     return result
 
