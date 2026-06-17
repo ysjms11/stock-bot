@@ -140,6 +140,7 @@ from .dart import (
     _detect_krw_unit, parse_disclosure_summary,
     _parse_earnings_preview, _parse_buyback, _parse_dividend, _parse_rumor,
     _report_file_exists, save_dart_report, read_dart_report, list_dart_reports,
+    _resolve_corp_code,
 )
 
 # ━━ 미국 애널 레이팅 ━━

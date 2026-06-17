@@ -28,6 +28,7 @@ from kis_api import (
     load_corp_codes, search_dart_reports, save_dart_report,
     list_dart_reports, read_dart_report, DART_REPORTS_DIR,
     list_disclosures_for_ticker, fetch_and_cache_disclosure,
+    _resolve_corp_code,
     fetch_youtube_transcript,
     fmp_earnings_transcript, fmp_price_target_summary,
     fmp_analyst_estimates, fmp_stock_grades,
@@ -216,9 +217,7 @@ async def handle_get_dart(arguments: dict) -> dict | list:
             result = {"error": "내부자 거래는 한국 종목만 지원합니다."}
         else:
             # DB에 데이터 없으면 실시간 수집
-            universe = get_stock_universe() or {}
-            corp_map = await get_dart_corp_map(universe) if universe else {}
-            corp_code = corp_map.get(target_ticker, "")
+            corp_code = await _resolve_corp_code(target_ticker)
             fetched_new = 0
             if corp_code:
                 records = await kis_elestock(corp_code)

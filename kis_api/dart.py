@@ -719,6 +719,26 @@ async def _download_corp_codes() -> dict:
         return {}
 
 
+async def _resolve_corp_code(ticker: str) -> str:
+    """ticker → corp_code. dart_corp_map.json(211종) 우선, 없으면 corp_codes.json(전체) 폴백.
+
+    - dart_corp_map 값 형태: str (e.g. "00126380")
+    - corp_codes 값 형태: {"corp_code": "00139834", "corp_name": "LG씨엔에스"}
+    LG CNS(064400) 같은 신규상장/비워치 종목도 조회 가능.
+    """
+    if not ticker:
+        return ""
+    fast = await get_dart_corp_map({})
+    cc = fast.get(ticker)
+    if cc:
+        return cc if isinstance(cc, str) else cc.get("corp_code", "")
+    full = await load_corp_codes()
+    info = full.get(ticker)
+    if not info:
+        return ""
+    return info["corp_code"] if isinstance(info, dict) else info
+
+
 def _report_name_priority(report_nm: str) -> int:
     """보고서명 우선순위. 낮을수록 우선. 원본 > 정정 > 첨부정정."""
     nm = (report_nm or "").strip()
@@ -1055,8 +1075,7 @@ async def list_disclosures_for_ticker(ticker: str, days: int = 7) -> list[dict]:
         return []
 
     try:
-        corp_map = await get_dart_corp_map({})
-        corp_code = corp_map.get(ticker, "")
+        corp_code = await _resolve_corp_code(ticker)
         if not corp_code:
             return []
 
