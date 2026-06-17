@@ -1079,4 +1079,57 @@ from .jobs.sanity import weekly_sanity_check, weekly_log_rotate, _is_krx_busines
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 토스증권 잔고 동기화
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def synctoss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/synctoss — 토스증권 잔고를 portfolio.json에 동기화."""
+    from kis_api import sync_portfolio_from_toss
+    try:
+        await update.message.reply_text("⏳ 토스증권 잔고 조회 중...")
+        result = await sync_portfolio_from_toss()
+    except Exception as e:
+        try:
+            await update.message.reply_text(f"❌ 동기화 오류: {e}")
+        except Exception:
+            pass
+        return
+
+    if not result.get("ok"):
+        reason = result.get("reason", "unknown")
+        try:
+            await update.message.reply_text(f"❌ 토스 동기화 실패: {reason}\n포트폴리오 미변경")
+        except Exception:
+            pass
+        return
+
+    added    = result.get("added", [])
+    updated  = result.get("updated", [])
+    flagged  = result.get("flagged_missing", [])
+    kr_count = result.get("kr_count", 0)
+    us_count = result.get("us_count", 0)
+
+    lines = [
+        "✅ *토스증권 잔고 동기화 완료*\n",
+        f"KR {kr_count}종목 | US {us_count}종목",
+    ]
+    if added:
+        lines.append(f"\n➕ 신규 추가 ({len(added)}): {', '.join(added)}")
+    if updated:
+        lines.append(f"🔄 갱신 ({len(updated)}): {', '.join(updated)}")
+    if flagged:
+        lines.append(f"⚠️ Toss 미관찰 (유지됨, {len(flagged)}): {', '.join(flagged)}")
+    if not added and not updated:
+        lines.append("변경 없음")
+
+    try:
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception:
+        try:
+            await update.message.reply_text("\n".join(lines))
+        except Exception:
+            pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 봇 시작
