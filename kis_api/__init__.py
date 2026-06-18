@@ -207,6 +207,16 @@ from .pension import (
     collect_dart_10pct_insiders, collect_wi_changes, fetch_nps_kr_full_holdings,
 )
 
+# ━━ 토스증권 잔고 동기화 + 체결이력 + 캘린더 + 종목경고 ━━
+from .toss import (
+    get_toss_token, fetch_toss_accounts, fetch_toss_holdings,
+    sync_portfolio_from_toss,
+    fetch_toss_orders, sync_trades_from_toss,
+    fetch_toss_market_calendar, is_kr_business_day_toss,
+    is_us_market_open_now, check_kr_holiday_drift,
+    fetch_toss_stock_warnings, check_watch_warnings,
+)
+
 # ━━ SEC EDGAR 1차 공시 ━━
 from .sec_edgar import (
     ensure_cik_map_loaded, ticker_to_cik, bulk_fetch_cik_map,

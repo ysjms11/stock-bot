@@ -1079,4 +1079,171 @@ from .jobs.sanity import weekly_sanity_check, weekly_log_rotate, _is_krx_busines
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 토스증권 잔고 동기화
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def synctoss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/synctoss — 토스증권 잔고를 portfolio.json에 동기화."""
+    from kis_api import sync_portfolio_from_toss
+    try:
+        await update.message.reply_text("⏳ 토스증권 잔고 조회 중...")
+        result = await sync_portfolio_from_toss()
+    except Exception as e:
+        try:
+            await update.message.reply_text(f"❌ 동기화 오류: {e}")
+        except Exception:
+            pass
+        return
+
+    if not result.get("ok"):
+        reason = result.get("reason", "unknown")
+        try:
+            await update.message.reply_text(f"❌ 토스 동기화 실패: {reason}\n포트폴리오 미변경")
+        except Exception:
+            pass
+        return
+
+    added    = result.get("added", [])
+    updated  = result.get("updated", [])
+    flagged  = result.get("flagged_missing", [])
+    kr_count = result.get("kr_count", 0)
+    us_count = result.get("us_count", 0)
+
+    lines = [
+        "✅ *토스증권 잔고 동기화 완료*\n",
+        f"KR {kr_count}종목 | US {us_count}종목",
+    ]
+    if added:
+        lines.append(f"\n➕ 신규 추가 ({len(added)}): {', '.join(added)}")
+    if updated:
+        lines.append(f"🔄 갱신 ({len(updated)}): {', '.join(updated)}")
+    if flagged:
+        lines.append(f"⚠️ Toss 미관찰 (유지됨, {len(flagged)}): {', '.join(flagged)}")
+    if not added and not updated:
+        lines.append("변경 없음")
+
+    try:
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception:
+        try:
+            await update.message.reply_text("\n".join(lines))
+        except Exception:
+            pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 토스증권 체결이력 → trade_log 동기화
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def synctrades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/synctrades — 토스증권 체결이력을 trade_log.json에 증분 동기화."""
+    from kis_api import sync_trades_from_toss
+    try:
+        await update.message.reply_text("⏳ 토스 체결이력 조회 중...")
+        result = await sync_trades_from_toss()
+    except Exception as e:
+        try:
+            await update.message.reply_text(f"❌ 체결이력 동기화 오류: {e}")
+        except Exception:
+            pass
+        return
+
+    if not result.get("ok"):
+        reason = result.get("reason", "unknown")
+        try:
+            await update.message.reply_text(
+                f"❌ 체결이력 동기화 실패: {reason}\ntrade_log 미변경"
+            )
+        except Exception:
+            pass
+        return
+
+    added         = result.get("added", 0)
+    skipped       = result.get("skipped_existing", 0)
+    sells_pnl     = result.get("sells_with_pnl", 0)
+
+    lines = [
+        "✅ *토스 체결이력 동기화 완료*\n",
+        f"신규 추가: {added}건",
+        f"기존 유지(중복): {skipped}건",
+    ]
+    if sells_pnl > 0:
+        lines.append(f"매도 P&L 계산: {sells_pnl}건 (운용평균 근사치)")
+    if added == 0:
+        lines.append("새 체결 없음 (최신 상태)")
+
+    try:
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception:
+        try:
+            await update.message.reply_text("\n".join(lines))
+        except Exception:
+            pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 토스증권 종목 경고 점검
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def warnings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/warnings — 보유+워치리스트 KR 종목 Toss 경고 점검."""
+    from kis_api import check_watch_warnings
+    try:
+        await update.message.reply_text("⏳ 종목 경고 점검 중...")
+        warned = await check_watch_warnings()
+    except Exception as e:
+        try:
+            await update.message.reply_text(f"❌ 경고 점검 오류: {e}")
+        except Exception:
+            pass
+        return
+
+    if not warned:
+        try:
+            await update.message.reply_text("✅ 경고 종목 없음")
+        except Exception:
+            pass
+        return
+
+    lines = [f"⚠️ *경고 종목 {len(warned)}개*\n"]
+    for item in warned:
+        ticker   = item.get("ticker", "")
+        name     = item.get("name", ticker)
+        warnings = item.get("warnings", [])
+        _WARNING_LABELS = {
+            "LIQUIDATION_TRADING": "정리매매",
+            "OVERHEATED":          "단기과열",
+            "INVESTMENT_WARNING":  "투자경고",
+            "INVESTMENT_RISK":     "투자위험",
+            "VI":                  "VI발동",
+            "신주인수권":           "신주인수권",
+        }
+
+        def _fmt_warning(w) -> str:
+            if not isinstance(w, dict):
+                return str(w)[:120]
+            wtype  = w.get("warningType", "")
+            label  = _WARNING_LABELS.get(wtype, wtype)
+            start  = w.get("startDate", "")
+            end    = w.get("endDate") or ""
+            date_s = f"{start}~{end}" if end else start
+            return f"{label} {date_s}".strip()
+
+        warn_strs = [_fmt_warning(w) for w in warnings[:5]]  # 최대 5개
+        lines.append(f"*{name}* ({ticker})")
+        for ws in warn_strs:
+            lines.append(f"  • {ws}")
+        lines.append("")
+
+    msg = "\n".join(lines).strip()
+    try:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception:
+        try:
+            await update.message.reply_text(msg)
+        except Exception:
+            pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 봇 시작
