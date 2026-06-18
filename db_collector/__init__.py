@@ -133,7 +133,6 @@ from .alpha import (  # noqa: F401
     _ensure_alpha_columns,
     _update_alpha_metrics,
     update_all_alpha_metrics,
-    collect_shares_historical,
 )
 
 # 재무 수집 — financial.py 가 실소유자 (P3-6)

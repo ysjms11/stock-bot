@@ -3,23 +3,16 @@
 P3-5 박리: _parse_period, _build_period, _compute_ttm, _prev_yoy_period,
            _fs_source, _pick_net_income, _safe_div, _compute_fscore,
            _compute_mscore, _compute_fcf_metrics, _ensure_alpha_columns,
-           _update_alpha_metrics, update_all_alpha_metrics,
-           collect_shares_historical
+           _update_alpha_metrics, update_all_alpha_metrics
 """
 
-import asyncio
 import sqlite3
 import time
 from datetime import datetime
 
-from kis_api import _get_session
-from ._config import KST
 from ._db import _get_db
 
-# DART 분당 1000건 제한 → 안전 마진 900/분 = 0.067초/콜
-# collect_shares_historical 에서 사용. 패치 투명성: _BACKING에 등록되므로
-# monkeypatch.setattr(db_collector, "_DART_INTERVAL", 0.0) 가 이 모듈에도 전파됨.
-_DART_INTERVAL = 0.067
+# _DART_INTERVAL 은 financial.py 가 정본 소유. 이 모듈은 사용하지 않음.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # TTM 계산 엔진 (F/M/FCF Phase2)
@@ -169,134 +162,6 @@ def _compute_ttm(conn: sqlite3.Connection, ticker: str, end_period: str) -> dict
 
     out["periods_used"] = periods_used
     return out
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-# 발행주식수 소급 수집 (F/M/FCF Phase2)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-async def collect_shares_historical(quarters_back: int = 12,
-                                     tickers_limit: int | None = None) -> dict:
-    """DART stockTotqySttus API로 보통주 발행주식수 N분기 소급.
-
-    financial_quarterly.shares_out (주 단위) UPDATE.
-    이미 값이 있어도 덮어씀 (최신 API 결과 우선).
-
-    Args:
-        quarters_back: 과거 몇 분기 수집 (기본 12 = 3년)
-        tickers_limit: 테스트용 상한 (None=전종목)
-
-    Returns:
-        {"tickers", "quarters", "calls_made", "success", "updated", "duration_sec"}
-    """
-    from datetime import datetime as _dt
-    import time
-
-    conn = _get_db()
-    tickers = [r["symbol"] for r in conn.execute(
-        "SELECT symbol FROM stock_master"
-    ).fetchall()]
-    if tickers_limit:
-        tickers = tickers[:tickers_limit]
-    if not tickers:
-        conn.close()
-        return {"error": "stock_master 비어 있음"}
-
-    # corp_codes.json(3959) 우선, fallback dart_corp_map.json(211)
-    try:
-        from kis_api import load_corp_codes, get_dart_corp_map
-        full_map = await load_corp_codes()
-        corp_map = {tk: v["corp_code"] for tk, v in full_map.items()
-                    if v.get("corp_code")}
-        if not corp_map:
-            legacy = await get_dart_corp_map({})
-            corp_map = legacy if isinstance(legacy, dict) else {}
-    except Exception as e:
-        conn.close()
-        return {"error": f"corp_map 로드 실패: {e}"}
-    if not corp_map:
-        conn.close()
-        return {"error": "corp_map 비어 있음"}
-
-    # 타겟 분기 (DART 공시 지연 ~45일)
-    now = _dt.now(KST)
-    current_q = (now.month - 1) // 3 + 1
-    y, q = now.year, current_q - 1
-    if q < 1:
-        q = 4
-        y -= 1
-    targets = []
-    for _ in range(quarters_back):
-        targets.append((y, q))
-        q -= 1
-        if q < 1:
-            q = 4
-            y -= 1
-
-    total_calls = len(tickers) * len(targets)
-    print(f"[SharesHist] corp_map {len(corp_map)}종목, 대상 {len(tickers)}×{len(targets)}={total_calls}콜")
-    print(f"[SharesHist] 예상 {total_calls * _DART_INTERVAL / 60:.1f}분, "
-          f"타겟 {targets[-1]}~{targets[0]}")
-
-    from kis_api import dart_shares_outstanding
-
-    success = 0
-    updated = 0
-    done = 0
-    skipped_no_corp = 0
-    start = time.time()
-
-    session = _get_session()
-    for ticker in tickers:
-        corp_code = corp_map.get(ticker)
-        if not corp_code:
-            skipped_no_corp += 1
-            done += len(targets)
-            continue
-        for (ty, tq) in targets:
-            rp = _build_period(ty, tq)
-            try:
-                shares = await dart_shares_outstanding(
-                    corp_code, ty, tq, session=session
-                )
-                if shares is not None and shares > 0:
-                    success += 1
-                    # row 없으면 생성 (collect_financial_historical 이후 shares만 채우는 케이스도 대응)
-                    conn.execute(
-                        "INSERT OR IGNORE INTO financial_quarterly "
-                        "(symbol, report_period, collected_at) "
-                        "VALUES (?, ?, datetime('now'))",
-                        (ticker, rp),
-                    )
-                    cur = conn.execute(
-                        "UPDATE financial_quarterly SET shares_out=? "
-                        "WHERE symbol=? AND report_period=?",
-                        (shares, ticker, rp),
-                    )
-                    if cur.rowcount > 0:
-                        updated += 1
-            except Exception:
-                pass
-            done += 1
-            await asyncio.sleep(_DART_INTERVAL)
-            if done % 500 == 0:
-                conn.commit()
-                print(f"[SharesHist] {done}/{total_calls} (성공 {success}, UPDATE {updated})")
-    conn.commit()
-
-    conn.close()
-    duration = time.time() - start
-    print(f"[SharesHist] 완료 — 성공 {success}/{total_calls}, "
-          f"UPDATE {updated}, corp_map 스킵 {skipped_no_corp}, {duration:.1f}초")
-    return {
-        "tickers": len(tickers),
-        "quarters": len(targets),
-        "calls_made": total_calls,
-        "success": success,
-        "updated": updated,
-        "skipped_no_corp": skipped_no_corp,
-        "duration_sec": round(duration, 1),
-        "target_range": f"{targets[-1]} ~ {targets[0]}",
-    }
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

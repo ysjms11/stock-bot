@@ -400,32 +400,44 @@ async def fetch_toss_orders(status: str = "CLOSED", account_seq=None) -> list | 
     return all_orders
 
 
-async def sync_trades_from_toss() -> dict:
-    """Toss CLOSED 주문 → trade_log.json 증분 동기화.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# FEATURE ① — 별도 toss_trades.json 레저 (trade_log 완전 분리)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def sync_toss_trade_ledger() -> dict:
+    """Toss CLOSED 주문 → data/toss_trades.json 전용 레저 (trade_log 불간섭).
 
     정책:
-    - status=CLOSED 주문 조회; 조회 실패(None) → trade_log 미변경
-    - execution.filledQuantity > 0인 것만 (FILLED/PARTIALLY_FILLED 포함)
-    - orderId로 dedup — 이미 있는 항목은 보존 (수동 entry 포함)
-    - sell entry: running weighted-average cost basis로 P&L 계산 (근사치)
-    반환: {"ok": bool, ...}
+    - status=CLOSED 주문 조회; 조회 실패(None) → toss_trades.json 미변경
+    - execution.filledQuantity > 0인 것만 (CANCELED 스킵)
+    - orderId로 dedup (append-only, 기존 항목 보존)
+    - 최대 5000건 보관 (ordered_at 정렬)
+    - trade_log / TRADE_LOG_FILE 를 절대 건드리지 않음
+
+    반환: {"ok": bool, "added": int, "total": int, "skipped_existing": int}
     """
-    from ._config import TRADE_LOG_FILE
-    from ._files import load_trade_log, save_trade_log
+    from ._config import TOSS_TRADES_FILE
+    from ._files import load_json, save_json
 
     orders = await fetch_toss_orders(status="CLOSED")
 
-    # SAFETY GATE — fetch 실패 시 trade_log 미변경
+    # SAFETY GATE — fetch 실패 시 toss_trades.json 미변경
     if orders is None:
         return {"ok": False, "reason": "fetch_failed"}
 
-    # 기존 trade_log 로드
-    existing = load_trade_log()
-    existing_ids: set = {str(t.get("id", "")) for t in existing if t.get("id")}
+    # 기존 레저 로드 (default: {"trades": []})
+    existing_data = load_json(TOSS_TRADES_FILE, {"trades": []})
+    if not isinstance(existing_data, dict):
+        existing_data = {"trades": []}
+    existing_trades: list = existing_data.get("trades", [])
+    if not isinstance(existing_trades, list):
+        existing_trades = []
 
+    existing_ids: set = {str(t.get("id", "")) for t in existing_trades if t.get("id")}
+    skipped_existing = 0
     new_entries: list = []
+
     for order in orders:
-        # 체결 수량 확인
         execution = order.get("execution") or {}
         filled_qty_raw = execution.get("filledQuantity")
         avg_price_raw  = execution.get("averageFilledPrice")
@@ -436,15 +448,15 @@ async def sync_trades_from_toss() -> dict:
 
         avg_price = _parse_price(avg_price_raw)
         if avg_price is None:
-            print(f"[toss-trades] {order.get('orderId')} avg price 파싱 실패 — 스킵 (침묵-0 금지)")
+            print(f"[toss-ledger] {order.get('orderId')} avg_price 파싱 실패 — 스킵 (침묵-0 금지)")
             continue
 
         order_id = str(order.get("orderId", "")).strip()
         if not order_id:
             continue
 
-        # dedup
         if order_id in existing_ids:
+            skipped_existing += 1
             continue
 
         symbol    = str(order.get("symbol", "")).strip()
@@ -455,94 +467,189 @@ async def sync_trades_from_toss() -> dict:
         trade_date = ordered_at[:10] if len(ordered_at) >= 10 else ""
 
         entry: dict = {
-            "id":       order_id,
-            "ticker":   symbol,
-            "name":     symbol,     # symbol fallback; lookup below
-            "side":     side,
-            "qty":      float(filled_qty),
-            "price":    float(avg_price),
-            "date":     trade_date,
-            "currency": currency,
-            "source":   "toss",
+            "id":         order_id,
+            "ticker":     symbol,
+            "name":       symbol,   # symbol fallback (no external lookup to avoid rate-limit)
+            "side":       side,
+            "qty":        float(filled_qty),
+            "price":      float(avg_price),
+            "date":       trade_date,
+            "ordered_at": ordered_at,
+            "currency":   currency,
+            "source":     "toss",
         }
         new_entries.append(entry)
         existing_ids.add(order_id)
 
-    skipped_existing = len(orders) - len(new_entries) - sum(
-        1 for o in orders
-        if (_parse_qty((o.get("execution") or {}).get("filledQuantity")) or 0) <= 0
-    )
+    # 병합 + ordered_at 정렬 + 5000건 캡
+    merged = existing_trades + new_entries
+    merged.sort(key=lambda t: (t.get("ordered_at") or t.get("date") or "", t.get("id") or ""))
+    if len(merged) > 5000:
+        merged = merged[-5000:]
 
-    # 병합 + 날짜 정렬
-    merged = existing + new_entries
-    merged.sort(key=lambda t: (t.get("date") or "", t.get("id") or ""))
-
-    # ── Sell P&L (running weighted-average cost basis) ──────────────
-    # 침묵-0 금지: prior buy 없으면 None (fabricate 0 금지)
-    # toss-source sell entry에만 적용
-    buys_by_ticker: dict[str, list] = {}  # ticker → list of {"qty": float, "price": float}
-    sells_with_pnl = 0
-
-    for t in merged:
-        ticker = t.get("ticker", "")
-        side   = t.get("side", "")
-        source = t.get("source", "")
-
-        if side == "buy":
-            qty   = t.get("qty")
-            price = t.get("price")
-            if qty and price:
-                buys_by_ticker.setdefault(ticker, []).append(
-                    {"qty": float(qty), "price": float(price), "date": t.get("date", "")}
-                )
-
-        elif side == "sell" and source == "toss":
-            prior_buys = buys_by_ticker.get(ticker, [])
-            if prior_buys:
-                total_qty   = sum(b["qty"] for b in prior_buys)
-                total_cost  = sum(b["qty"] * b["price"] for b in prior_buys)
-                avg_cost    = total_cost / total_qty if total_qty > 0 else None
-
-                sell_qty   = float(t.get("qty") or 0)
-                sell_price = float(t.get("price") or 0)
-                sell_date  = t.get("date", "")
-                earliest_date = prior_buys[0].get("date", "")
-
-                if avg_cost and avg_cost > 0:
-                    pnl = (sell_price - avg_cost) * sell_qty
-                    pnl_pct = round((sell_price / avg_cost - 1) * 100, 2)  # PERCENT (e.g. 28.57, not 0.2857)
-                    result_str = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
-
-                    # holding_days
-                    holding_days: int | None = None
-                    if sell_date and earliest_date:
-                        try:
-                            d_sell = datetime.strptime(sell_date, "%Y-%m-%d").date()
-                            d_buy  = datetime.strptime(earliest_date, "%Y-%m-%d").date()
-                            holding_days = (d_sell - d_buy).days
-                        except ValueError:
-                            pass
-
-                    t["pnl"]          = round(pnl, 2)
-                    t["pnl_pct"]      = pnl_pct  # already rounded to 2dp percent
-                    t["result"]       = result_str
-                    t["holding_days"] = holding_days
-                    # note: running-avg approximation, not lot-exact
-                    t["pnl_note"]     = "running_avg"
-                    sells_with_pnl += 1
-            # no prior buy → leave pnl/result/holding_days absent (침묵-0 금지)
-
-    save_trade_log(merged)
+    save_json(TOSS_TRADES_FILE, {"trades": merged})
 
     print(
-        f"[toss-trades] 완료 — 신규 {len(new_entries)}건, "
-        f"기존유지 {len(existing)}건, P&L계산 {sells_with_pnl}건"
+        f"[toss-ledger] 완료 — 신규 {len(new_entries)}건, "
+        f"기존중복 {skipped_existing}건, 총 {len(merged)}건"
     )
     return {
         "ok":               True,
         "added":            len(new_entries),
+        "total":            len(merged),
         "skipped_existing": skipped_existing,
-        "sells_with_pnl":   sells_with_pnl,
+    }
+
+
+def get_toss_trade_summary() -> dict:
+    """toss_trades.json 레저 읽기전용 분석 — 통화별 실현손익 + 승률.
+
+    - KRW / USD 완전 분리 (혼산 절대 금지)
+    - 운용평균원가(running weighted-average cost) 기준 실현손익
+    - 매도 전에 매수 기록이 없으면 pnl=None (침묵-0 금지 / fabricate 금지)
+    - pnl_pct: 퍼센트 단위 (e.g. 28.57 = +28.57%)
+
+    반환 구조:
+    {
+      "total_trades": int,
+      "by_currency": {
+        "KRW": {"realized_pnl": float, "win": int, "loss": int, "win_rate_pct": float},
+        "USD": {...},
+      },
+      "by_ticker": {
+        "<currency>/<ticker>": {
+          "currency": str, "ticker": str,
+          "realized_pnl": float|None, "pnl_pct": float|None,
+          "open_qty": float,
+          "sell_count": int, "win_count": int,
+        }, ...
+      },
+      "recent_10": [trade_dict, ...],
+    }
+    """
+    from ._config import TOSS_TRADES_FILE
+    from ._files import load_json
+
+    data = load_json(TOSS_TRADES_FILE, {"trades": []})
+    trades: list = data.get("trades", []) if isinstance(data, dict) else []
+    if not isinstance(trades, list):
+        trades = []
+
+    # trades는 ordered_at 정렬 상태(sync_toss_trade_ledger 보장) — 순서 재정렬 보강
+    trades_sorted = sorted(
+        trades,
+        key=lambda t: (t.get("ordered_at") or t.get("date") or "", t.get("id") or "")
+    )
+
+    # 통화+티커별 running-avg 상태
+    # key = (currency, ticker)
+    _avg_state: dict[tuple, dict] = {}  # {"total_qty": float, "total_cost": float}
+    _ticker_stats: dict[tuple, dict] = {}
+
+    for trade in trades_sorted:
+        currency = str(trade.get("currency", "KRW")).upper()
+        ticker   = str(trade.get("ticker", "")).strip()
+        side     = str(trade.get("side", "")).lower()
+        qty      = trade.get("qty")
+        price    = trade.get("price")
+
+        if not ticker or not currency or not side:
+            continue
+        try:
+            qty   = float(qty)
+            price = float(price)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(qty) and math.isfinite(price)):
+            continue
+        if qty <= 0 or price <= 0:
+            continue
+
+        key = (currency, ticker)
+        if key not in _avg_state:
+            _avg_state[key] = {"total_qty": 0.0, "total_cost": 0.0}
+        if key not in _ticker_stats:
+            _ticker_stats[key] = {
+                "currency":     currency,
+                "ticker":       ticker,
+                "open_qty":     0.0,
+                "realized_pnl": None,
+                "pnl_pct":      None,
+                "sell_count":   0,
+                "win_count":    0,
+            }
+
+        state = _avg_state[key]
+        stats = _ticker_stats[key]
+
+        if side == "buy":
+            state["total_qty"]  += qty
+            state["total_cost"] += qty * price
+            stats["open_qty"]   += qty
+
+        elif side == "sell":
+            stats["sell_count"] += 1
+            stats["open_qty"]   = max(0.0, stats["open_qty"] - qty)
+
+            avg_cost = (
+                state["total_cost"] / state["total_qty"]
+                if state["total_qty"] > 0 else None
+            )
+            if avg_cost is not None and avg_cost > 0:
+                pnl = (price - avg_cost) * qty
+                pnl_pct = (price / avg_cost - 1) * 100
+
+                # 누산
+                prev_pnl = stats["realized_pnl"] if stats["realized_pnl"] is not None else 0.0
+                stats["realized_pnl"] = prev_pnl + pnl
+                stats["pnl_pct"] = round(pnl_pct, 2)  # 최신 매도 기준 (참고용)
+                if pnl > 0:
+                    stats["win_count"] += 1
+            # no prior buy → leave pnl None (침묵-0 금지)
+
+            # FIFO 방식으로 cost-basis 차감 (running avg 보전)
+            if state["total_qty"] >= qty:
+                ratio = qty / state["total_qty"]
+                state["total_cost"] -= state["total_cost"] * ratio
+                state["total_qty"]  -= qty
+                state["total_cost"] = max(0.0, state["total_cost"])
+                state["total_qty"]  = max(0.0, state["total_qty"])
+            else:
+                state["total_qty"]  = 0.0
+                state["total_cost"] = 0.0
+
+    # 통화별 집계
+    by_currency: dict[str, dict] = {}
+    for (currency, ticker), stats in _ticker_stats.items():
+        if currency not in by_currency:
+            by_currency[currency] = {"realized_pnl": 0.0, "win": 0, "loss": 0}
+        cur = by_currency[currency]
+        if stats["realized_pnl"] is not None:
+            cur["realized_pnl"] += stats["realized_pnl"]
+        cur["win"]  += stats["win_count"]
+        sell_losses  = stats["sell_count"] - stats["win_count"]
+        cur["loss"] += max(0, sell_losses)
+
+    for currency, cur in by_currency.items():
+        total_sells = cur["win"] + cur["loss"]
+        cur["win_rate_pct"] = round(cur["win"] / total_sells * 100, 1) if total_sells > 0 else None
+        cur["realized_pnl"] = round(cur["realized_pnl"], 2)
+
+    # by_ticker: key = "KRW/005930" 형태
+    by_ticker = {}
+    for (currency, ticker), stats in _ticker_stats.items():
+        k = f"{currency}/{ticker}"
+        by_ticker[k] = dict(stats)
+        if stats["realized_pnl"] is not None:
+            by_ticker[k]["realized_pnl"] = round(stats["realized_pnl"], 2)
+
+    recent_10 = trades_sorted[-10:] if len(trades_sorted) >= 10 else trades_sorted[:]
+
+    return {
+        "total_trades": len(trades_sorted),
+        "by_currency":  by_currency,
+        "by_ticker":    by_ticker,
+        "recent_10":    recent_10,
     }
 
 

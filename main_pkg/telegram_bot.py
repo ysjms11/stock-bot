@@ -1132,55 +1132,6 @@ async def synctoss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# 토스증권 체결이력 → trade_log 동기화
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-
-async def synctrades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/synctrades — 토스증권 체결이력을 trade_log.json에 증분 동기화."""
-    from kis_api import sync_trades_from_toss
-    try:
-        await update.message.reply_text("⏳ 토스 체결이력 조회 중...")
-        result = await sync_trades_from_toss()
-    except Exception as e:
-        try:
-            await update.message.reply_text(f"❌ 체결이력 동기화 오류: {e}")
-        except Exception:
-            pass
-        return
-
-    if not result.get("ok"):
-        reason = result.get("reason", "unknown")
-        try:
-            await update.message.reply_text(
-                f"❌ 체결이력 동기화 실패: {reason}\ntrade_log 미변경"
-            )
-        except Exception:
-            pass
-        return
-
-    added         = result.get("added", 0)
-    skipped       = result.get("skipped_existing", 0)
-    sells_pnl     = result.get("sells_with_pnl", 0)
-
-    lines = [
-        "✅ *토스 체결이력 동기화 완료*\n",
-        f"신규 추가: {added}건",
-        f"기존 유지(중복): {skipped}건",
-    ]
-    if sells_pnl > 0:
-        lines.append(f"매도 P&L 계산: {sells_pnl}건 (운용평균 근사치)")
-    if added == 0:
-        lines.append("새 체결 없음 (최신 상태)")
-
-    try:
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-    except Exception:
-        try:
-            await update.message.reply_text("\n".join(lines))
-        except Exception:
-            pass
-
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 토스증권 종목 경고 점검
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1234,6 +1185,118 @@ async def warnings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for ws in warn_strs:
             lines.append(f"  • {ws}")
         lines.append("")
+
+    msg = "\n".join(lines).strip()
+    try:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception:
+        try:
+            await update.message.reply_text(msg)
+        except Exception:
+            pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 토스증권 전용 체결 레저 (/tosstrades)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def tosstrades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/tosstrades — toss_trades.json 레저 동기화 + 실현손익 요약 (trade_log 불간섭)."""
+    from kis_api import sync_toss_trade_ledger, get_toss_trade_summary
+    try:
+        await update.message.reply_text("⏳ 토스 체결 레저 동기화 중 (약 30초)...")
+        sync_result = await sync_toss_trade_ledger()
+    except Exception as e:
+        try:
+            await update.message.reply_text(f"❌ 레저 동기화 오류: {e}")
+        except Exception:
+            pass
+        return
+
+    if not sync_result.get("ok"):
+        reason = sync_result.get("reason", "unknown")
+        try:
+            await update.message.reply_text(f"❌ 동기화 실패: {reason}\ntoss_trades.json 미변경")
+        except Exception:
+            pass
+        return
+
+    added   = sync_result.get("added", 0)
+    total   = sync_result.get("total", 0)
+    skipped = sync_result.get("skipped_existing", 0)
+
+    try:
+        summary = get_toss_trade_summary()
+    except Exception as e:
+        try:
+            await update.message.reply_text(
+                f"✅ 동기화 완료 (추가 {added}건, 총 {total}건)\n"
+                f"⚠️ 요약 계산 오류: {e}"
+            )
+        except Exception:
+            pass
+        return
+
+    by_currency = summary.get("by_currency", {})
+    by_ticker   = summary.get("by_ticker", {})
+    recent_10   = summary.get("recent_10", [])
+
+    lines = [
+        "✅ *토스 체결 레저 동기화 완료*\n",
+        f"총 체결: {total}건 (추가 {added}건, 기존중복 {skipped}건)\n",
+    ]
+
+    # 통화별 실현손익
+    for currency in ("KRW", "USD"):
+        cur = by_currency.get(currency)
+        if not cur:
+            continue
+        pnl    = cur.get("realized_pnl", 0)
+        wins   = cur.get("win", 0)
+        losses = cur.get("loss", 0)
+        wr     = cur.get("win_rate_pct")
+        sign   = "+" if pnl >= 0 else ""
+        sym    = "원" if currency == "KRW" else "$"
+        wr_str = f"{wr:.1f}%" if wr is not None else "N/A"
+        lines.append(
+            f"{'🇰🇷' if currency == 'KRW' else '🇺🇸'} {currency} 실현손익: {sign}{pnl:,.0f}{sym} | "
+            f"승률 {wr_str} ({wins}승/{losses}패)"
+        )
+
+    lines.append("")
+
+    # 종목별 TOP 5 (실현손익 절대값 기준)
+    ticker_items = [
+        (k, v) for k, v in by_ticker.items()
+        if v.get("realized_pnl") is not None
+    ]
+    ticker_items.sort(key=lambda x: abs(x[1].get("realized_pnl") or 0), reverse=True)
+    if ticker_items:
+        lines.append("📊 *종목별 실현손익 TOP 5*")
+        for k, v in ticker_items[:5]:
+            pnl_v   = v.get("realized_pnl") or 0
+            pnl_pct = v.get("pnl_pct")
+            ticker  = v.get("ticker", k)
+            cur     = v.get("currency", "KRW")
+            sym     = "원" if cur == "KRW" else "$"
+            sign    = "+" if pnl_v >= 0 else ""
+            pct_str = f" ({sign}{pnl_pct:.2f}%)" if pnl_pct is not None else ""
+            sc      = v.get("sell_count", 0)
+            lines.append(f"  • {ticker}: {sign}{pnl_v:,.0f}{sym}{pct_str} (매도 {sc}회)")
+        lines.append("")
+
+    # 최근 체결 3건
+    if recent_10:
+        lines.append("🕐 *최근 체결 3건*")
+        for t in recent_10[-3:]:
+            ticker  = t.get("ticker", "")
+            side    = "매수" if t.get("side") == "buy" else "매도"
+            price   = t.get("price", 0)
+            qty     = t.get("qty", 0)
+            date    = t.get("date", "")
+            cur     = t.get("currency", "KRW")
+            sym     = "원" if cur == "KRW" else "$"
+            lines.append(f"  {date} {side} {ticker} {qty}주 @ {price:,.0f}{sym}")
 
     msg = "\n".join(lines).strip()
     try:
