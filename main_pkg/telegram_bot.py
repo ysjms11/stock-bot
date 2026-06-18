@@ -1132,55 +1132,6 @@ async def synctoss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
-# 토스증권 체결이력 → trade_log 동기화
-# ━━━━━━━━━━━━━━━━━━━━━━━━━
-
-async def synctrades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/synctrades — 토스증권 체결이력을 trade_log.json에 증분 동기화."""
-    from kis_api import sync_trades_from_toss
-    try:
-        await update.message.reply_text("⏳ 토스 체결이력 조회 중...")
-        result = await sync_trades_from_toss()
-    except Exception as e:
-        try:
-            await update.message.reply_text(f"❌ 체결이력 동기화 오류: {e}")
-        except Exception:
-            pass
-        return
-
-    if not result.get("ok"):
-        reason = result.get("reason", "unknown")
-        try:
-            await update.message.reply_text(
-                f"❌ 체결이력 동기화 실패: {reason}\ntrade_log 미변경"
-            )
-        except Exception:
-            pass
-        return
-
-    added         = result.get("added", 0)
-    skipped       = result.get("skipped_existing", 0)
-    sells_pnl     = result.get("sells_with_pnl", 0)
-
-    lines = [
-        "✅ *토스 체결이력 동기화 완료*\n",
-        f"신규 추가: {added}건",
-        f"기존 유지(중복): {skipped}건",
-    ]
-    if sells_pnl > 0:
-        lines.append(f"매도 P&L 계산: {sells_pnl}건 (운용평균 근사치)")
-    if added == 0:
-        lines.append("새 체결 없음 (최신 상태)")
-
-    try:
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-    except Exception:
-        try:
-            await update.message.reply_text("\n".join(lines))
-        except Exception:
-            pass
-
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 토스증권 종목 경고 점검
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

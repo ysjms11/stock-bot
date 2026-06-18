@@ -211,7 +211,7 @@ from .pension import (
 from .toss import (
     get_toss_token, fetch_toss_accounts, fetch_toss_holdings,
     sync_portfolio_from_toss,
-    fetch_toss_orders, sync_trades_from_toss,
+    fetch_toss_orders,
     sync_toss_trade_ledger, get_toss_trade_summary,
     fetch_toss_market_calendar, is_kr_business_day_toss,
     is_us_market_open_now, check_kr_holiday_drift,

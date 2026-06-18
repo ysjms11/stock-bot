@@ -24,7 +24,7 @@ from main_pkg.telegram_bot import (
     setportfolio_cmd, setusportfolio_cmd,
     portfolio_cmd, alert_cmd,
     status_cmd, reports_cmd, help_cmd,
-    synctoss_cmd, synctrades_cmd, warnings_cmd, tosstrades_cmd,
+    synctoss_cmd, warnings_cmd, tosstrades_cmd,
 )
 
 # ── Reply Keyboard 버튼 핸들러 (_button_handler는 _entry.py에 정의) ──
@@ -214,7 +214,6 @@ def main():
         ("status", status_cmd), ("reports", reports_cmd),
         ("help", help_cmd),
         ("synctoss", synctoss_cmd),
-        ("synctrades", synctrades_cmd),
         ("warnings", warnings_cmd),
         ("tosstrades", tosstrades_cmd),
     ]
