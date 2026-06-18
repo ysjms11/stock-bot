@@ -1,12 +1,17 @@
-"""토스증권 Open API — 읽기전용 잔고 동기화.
+"""토스증권 Open API — 읽기전용 잔고 동기화 + 체결이력 + 장 캘린더 + 종목 경고.
 
 엔드포인트:
-  POST /oauth2/token  → Bearer 토큰 (client_credentials)
-  GET  /api/v1/accounts  → 계좌 목록
-  GET  /api/v1/holdings  → 보유종목 (X-Tossinvest-Account 헤더 필요)
+  POST /oauth2/token                        → Bearer 토큰 (client_credentials)
+  GET  /api/v1/accounts                     → 계좌 목록
+  GET  /api/v1/holdings                     → 보유종목 (X-Tossinvest-Account 헤더 필요)
+  GET  /api/v1/orders?status=CLOSED         → 체결이력 (페이지네이션)
+  GET  /api/v1/market-calendar/{country}    → 장 운영 캘린더 (KR/US)
+  GET  /api/v1/stocks/{symbol}/warnings     → 종목 경고 목록
 """
+import asyncio
 import math
 import os
+from datetime import date as _date
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -312,3 +317,466 @@ async def sync_portfolio_from_toss() -> dict:
         "kr_count":         kr_count,
         "us_count":         us_count,
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# FEATURE ① — 체결이력 조회 + trade_log 자동화
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def fetch_toss_orders(status: str = "CLOSED", account_seq=None) -> list | None:
+    """GET /api/v1/orders?status={status} (페이지네이션) — 전체 주문 목록 반환.
+
+    status: "OPEN" 또는 "CLOSED" (CLOSED = 종료된 주문)
+    account_seq: 미지정 시 fetch_toss_accounts()에서 첫 번째 계좌 사용.
+    반환: list of order dicts. 실패(API 오류) 시 None (빈 리스트와 구분).
+    페이지네이션: response.result.hasNext==True 이면 nextCursor를 cursor= 파라미터로 전달.
+    """
+    if account_seq is None:
+        accounts = await fetch_toss_accounts()
+        if not accounts:
+            print("[toss-orders] 계좌 목록 조회 실패")
+            return None
+        account_seq = accounts[0].get("accountSeq")
+        if not account_seq:
+            print("[toss-orders] accountSeq 없음")
+            return None
+
+    token = await get_toss_token()
+    if not token:
+        return None
+
+    headers = {
+        "Authorization":       f"Bearer {token}",
+        "X-Tossinvest-Account": str(account_seq),
+    }
+
+    all_orders: list = []
+    cursor: str | None = None
+    page = 0
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            while True:
+                params: dict = {"status": status}
+                if cursor:
+                    params["cursor"] = cursor
+
+                async with s.get(
+                    f"{TOSS_BASE}/api/v1/orders",
+                    headers=headers,
+                    params=params,
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        print(f"[toss-orders] HTTP {resp.status} (page={page}): {body[:200]}")
+                        return None
+                    data = await resp.json(content_type=None)
+
+                result = data.get("result", {})
+                if not isinstance(result, dict):
+                    print(f"[toss-orders] result 비정상 타입: {type(result)}")
+                    return None
+
+                orders = result.get("orders", [])
+                if isinstance(orders, list):
+                    all_orders.extend(orders)
+
+                has_next  = result.get("hasNext", False)
+                next_cur  = result.get("nextCursor")
+                page += 1
+
+                if not has_next or not next_cur:
+                    break
+
+                cursor = next_cur
+                await asyncio.sleep(0.3)  # rate limit — 429 on rapid calls
+
+    except Exception as e:
+        print(f"[toss-orders] 오류: {type(e).__name__}: {e}")
+        return None
+
+    print(f"[toss-orders] status={status} 총 {len(all_orders)}건 (pages={page})")
+    return all_orders
+
+
+async def sync_trades_from_toss() -> dict:
+    """Toss CLOSED 주문 → trade_log.json 증분 동기화.
+
+    정책:
+    - status=CLOSED 주문 조회; 조회 실패(None) → trade_log 미변경
+    - execution.filledQuantity > 0인 것만 (FILLED/PARTIALLY_FILLED 포함)
+    - orderId로 dedup — 이미 있는 항목은 보존 (수동 entry 포함)
+    - sell entry: running weighted-average cost basis로 P&L 계산 (근사치)
+    반환: {"ok": bool, ...}
+    """
+    from ._config import TRADE_LOG_FILE
+    from ._files import load_trade_log, save_trade_log
+
+    orders = await fetch_toss_orders(status="CLOSED")
+
+    # SAFETY GATE — fetch 실패 시 trade_log 미변경
+    if orders is None:
+        return {"ok": False, "reason": "fetch_failed"}
+
+    # 기존 trade_log 로드
+    existing = load_trade_log()
+    existing_ids: set = {str(t.get("id", "")) for t in existing if t.get("id")}
+
+    new_entries: list = []
+    for order in orders:
+        # 체결 수량 확인
+        execution = order.get("execution") or {}
+        filled_qty_raw = execution.get("filledQuantity")
+        avg_price_raw  = execution.get("averageFilledPrice")
+
+        filled_qty = _parse_qty(filled_qty_raw)
+        if filled_qty is None or filled_qty <= 0:
+            continue  # CANCELED 또는 미체결
+
+        avg_price = _parse_price(avg_price_raw)
+        if avg_price is None:
+            print(f"[toss-trades] {order.get('orderId')} avg price 파싱 실패 — 스킵 (침묵-0 금지)")
+            continue
+
+        order_id = str(order.get("orderId", "")).strip()
+        if not order_id:
+            continue
+
+        # dedup
+        if order_id in existing_ids:
+            continue
+
+        symbol    = str(order.get("symbol", "")).strip()
+        side_raw  = str(order.get("side", "")).upper()
+        side      = "buy" if side_raw == "BUY" else "sell"
+        currency  = str(order.get("currency", "KRW")).upper()
+        ordered_at = str(order.get("orderedAt", ""))
+        trade_date = ordered_at[:10] if len(ordered_at) >= 10 else ""
+
+        entry: dict = {
+            "id":       order_id,
+            "ticker":   symbol,
+            "name":     symbol,     # symbol fallback; lookup below
+            "side":     side,
+            "qty":      float(filled_qty),
+            "price":    float(avg_price),
+            "date":     trade_date,
+            "currency": currency,
+            "source":   "toss",
+        }
+        new_entries.append(entry)
+        existing_ids.add(order_id)
+
+    skipped_existing = len(orders) - len(new_entries) - sum(
+        1 for o in orders
+        if (_parse_qty((o.get("execution") or {}).get("filledQuantity")) or 0) <= 0
+    )
+
+    # 병합 + 날짜 정렬
+    merged = existing + new_entries
+    merged.sort(key=lambda t: (t.get("date") or "", t.get("id") or ""))
+
+    # ── Sell P&L (running weighted-average cost basis) ──────────────
+    # 침묵-0 금지: prior buy 없으면 None (fabricate 0 금지)
+    # toss-source sell entry에만 적용
+    buys_by_ticker: dict[str, list] = {}  # ticker → list of {"qty": float, "price": float}
+    sells_with_pnl = 0
+
+    for t in merged:
+        ticker = t.get("ticker", "")
+        side   = t.get("side", "")
+        source = t.get("source", "")
+
+        if side == "buy":
+            qty   = t.get("qty")
+            price = t.get("price")
+            if qty and price:
+                buys_by_ticker.setdefault(ticker, []).append(
+                    {"qty": float(qty), "price": float(price), "date": t.get("date", "")}
+                )
+
+        elif side == "sell" and source == "toss":
+            prior_buys = buys_by_ticker.get(ticker, [])
+            if prior_buys:
+                total_qty   = sum(b["qty"] for b in prior_buys)
+                total_cost  = sum(b["qty"] * b["price"] for b in prior_buys)
+                avg_cost    = total_cost / total_qty if total_qty > 0 else None
+
+                sell_qty   = float(t.get("qty") or 0)
+                sell_price = float(t.get("price") or 0)
+                sell_date  = t.get("date", "")
+                earliest_date = prior_buys[0].get("date", "")
+
+                if avg_cost and avg_cost > 0:
+                    pnl = (sell_price - avg_cost) * sell_qty
+                    pnl_pct = round((sell_price / avg_cost - 1) * 100, 2)  # PERCENT (e.g. 28.57, not 0.2857)
+                    result_str = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
+
+                    # holding_days
+                    holding_days: int | None = None
+                    if sell_date and earliest_date:
+                        try:
+                            d_sell = datetime.strptime(sell_date, "%Y-%m-%d").date()
+                            d_buy  = datetime.strptime(earliest_date, "%Y-%m-%d").date()
+                            holding_days = (d_sell - d_buy).days
+                        except ValueError:
+                            pass
+
+                    t["pnl"]          = round(pnl, 2)
+                    t["pnl_pct"]      = pnl_pct  # already rounded to 2dp percent
+                    t["result"]       = result_str
+                    t["holding_days"] = holding_days
+                    # note: running-avg approximation, not lot-exact
+                    t["pnl_note"]     = "running_avg"
+                    sells_with_pnl += 1
+            # no prior buy → leave pnl/result/holding_days absent (침묵-0 금지)
+
+    save_trade_log(merged)
+
+    print(
+        f"[toss-trades] 완료 — 신규 {len(new_entries)}건, "
+        f"기존유지 {len(existing)}건, P&L계산 {sells_with_pnl}건"
+    )
+    return {
+        "ok":               True,
+        "added":            len(new_entries),
+        "skipped_existing": skipped_existing,
+        "sells_with_pnl":   sells_with_pnl,
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# FEATURE ② — 장 운영 캘린더 (US 신규 + KR drift 감지)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def fetch_toss_market_calendar(country: str) -> dict | None:
+    """GET /api/v1/market-calendar/{country} → result dict (None on failure).
+
+    country: "KR" 또는 "US"
+    응답: {today:{date,…}, previousBusinessDay:{date}, nextBusinessDay:{date}}
+    """
+    country = country.upper()
+    data = await _toss_get(f"/api/v1/market-calendar/{country}")
+    if data is None:
+        return None
+    result = data.get("result")
+    if not isinstance(result, dict):
+        print(f"[toss-cal] {country} calendar result 비정상: {type(result)}")
+        return None
+    return result
+
+
+async def is_kr_business_day_toss(date_str: str | None = None) -> bool | None:
+    """Toss KR 캘린더로 오늘(또는 date_str)이 영업일인지 확인.
+
+    반환: True=영업일, False=휴장/주말, None=API 실패 (caller falls back).
+    date_str: "YYYY-MM-DD" 형식 (None = 오늘).
+    판정 로직: result.today.date 가 date_str과 일치 + today 안에 정규장/통합장 시간 정보 있으면 영업일.
+    주말/휴일이면 today.date가 요청일과 다를 수 있음 — previousBusinessDay / nextBusinessDay 브라케팅으로 확인.
+    """
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
+    cal = await fetch_toss_market_calendar("KR")
+    if cal is None:
+        return None
+
+    today_info = cal.get("today") or {}
+    today_date = today_info.get("date", "")[:10]
+
+    if today_date == date_str:
+        # today가 요청일: 정규장 또는 통합(+시장) 세션 정보 있으면 영업일
+        has_session = bool(
+            today_info.get("regularMarket")
+            or today_info.get("integrated")
+            or today_info.get("sessions")
+            or today_info.get("openTime")
+            or today_info.get("closeTime")
+        )
+        # 추가 방어: 명시적 holiday 마커
+        is_holiday = bool(today_info.get("holiday") or today_info.get("isHoliday"))
+        if is_holiday:
+            return False
+        # today가 요청일이고 세션 정보 없으면 휴장으로 취급
+        return has_session
+
+    # today 날짜가 요청일과 다름 — bracketing으로 판정
+    prev_date = (cal.get("previousBusinessDay") or {}).get("date", "")[:10]
+    next_date = (cal.get("nextBusinessDay") or {}).get("date", "")[:10]
+
+    if prev_date and next_date:
+        # date_str이 prev와 next 사이에 없으면 non-business day
+        return bool(prev_date <= date_str <= next_date and date_str != today_date)
+
+    # fallback: today가 요청일 아니면 영업일 아님
+    return False
+
+
+async def is_us_market_open_now() -> bool:
+    """현재 시각이 미국 정규장 운영 시간 안에 있는지 확인 (Toss US 캘린더 기반).
+
+    반환: True=장 중, False=장 외 또는 API 실패 (보수적).
+    """
+    cal = await fetch_toss_market_calendar("US")
+    if cal is None:
+        return False
+
+    today_info = cal.get("today") or {}
+
+    # 명시적 holiday/non-trading 마커
+    if today_info.get("holiday") or today_info.get("isHoliday"):
+        return False
+
+    # 세션 시간 파싱 시도 (openTime/closeTime or regularMarket.open/close)
+    open_str  = (
+        today_info.get("openTime")
+        or (today_info.get("regularMarket") or {}).get("open")
+        or (today_info.get("regularMarket") or {}).get("openTime")
+    )
+    close_str = (
+        today_info.get("closeTime")
+        or (today_info.get("regularMarket") or {}).get("close")
+        or (today_info.get("regularMarket") or {}).get("closeTime")
+    )
+
+    if not open_str or not close_str:
+        # 세션 정보 없으면 장 없음(휴장)으로 보수적 처리
+        return False
+
+    try:
+        # ISO 형식 파싱 (e.g. "2026-06-18T09:30:00-04:00")
+        from datetime import timezone as _tz
+        now_utc = datetime.now(_tz.utc)
+
+        def _parse_iso(s: str) -> datetime:
+            # Python 3.11+ fromisoformat handles +HH:MM; 3.9/3.10도 지원
+            try:
+                return datetime.fromisoformat(s)
+            except ValueError:
+                return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+        open_dt  = _parse_iso(open_str)
+        close_dt = _parse_iso(close_str)
+        return open_dt <= now_utc <= close_dt
+    except Exception as e:
+        print(f"[toss-cal] US 시간 파싱 실패: {e} (open={open_str!r}, close={close_str!r})")
+        return False
+
+
+async def check_kr_holiday_drift() -> dict:
+    """하드코딩된 _KR_MARKET_HOLIDAYS vs Toss KR 캘린더 드리프트 감지.
+
+    향후 30일 범위에서 Toss가 휴장이라고 알리는 날이 하드코딩 집합에 없거나,
+    반대로 하드코딩에는 있지만 Toss는 영업일로 볼 경우 불일치를 반환.
+
+    반환: {
+        "ok": bool,
+        "toss_holidays_not_in_hardcoded": ["YYYYMMDD", ...],
+        "hardcoded_not_in_toss":          ["YYYYMMDD", ...],
+        "checked_days": N,
+    }
+    API 실패 시 ok=False.
+    """
+    try:
+        from db_collector._config import _KR_MARKET_HOLIDAYS
+    except ImportError:
+        try:
+            from db_collector import _KR_MARKET_HOLIDAYS  # type: ignore[attr-defined]
+        except Exception as e:
+            return {"ok": False, "reason": f"_KR_MARKET_HOLIDAYS import 실패: {e}"}
+
+    today = _date.today()
+    dates_to_check: list[str] = []  # YYYY-MM-DD for API, YYYYMMDD for hardcoded
+    for offset in range(31):
+        d = today + timedelta(days=offset)
+        if d.weekday() < 5:  # 평일만 (주말은 양측 모두 공통 휴장)
+            dates_to_check.append(d.strftime("%Y-%m-%d"))
+
+    toss_not_in_hard: list = []
+    hard_not_in_toss: list = []
+
+    for date_str in dates_to_check:
+        date_compact = date_str.replace("-", "")
+        hardcoded_is_holiday = date_compact in _KR_MARKET_HOLIDAYS
+
+        toss_result = await is_kr_business_day_toss(date_str)
+        if toss_result is None:
+            # API 실패 — 중단
+            return {"ok": False, "reason": f"Toss API 실패 ({date_str})"}
+
+        toss_is_holiday = not toss_result
+
+        if toss_is_holiday and not hardcoded_is_holiday:
+            toss_not_in_hard.append(date_compact)
+        elif hardcoded_is_holiday and not toss_is_holiday:
+            hard_not_in_toss.append(date_compact)
+
+        await asyncio.sleep(0.3)  # rate limit
+
+    return {
+        "ok":                             True,
+        "toss_holidays_not_in_hardcoded": toss_not_in_hard,
+        "hardcoded_not_in_toss":          hard_not_in_toss,
+        "checked_days":                   len(dates_to_check),
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# FEATURE ③ — 종목 경고 점검
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def fetch_toss_stock_warnings(symbol: str) -> list:
+    """GET /api/v1/stocks/{symbol}/warnings → 경고 객체 리스트 반환.
+
+    빈 리스트 = 경고 없음 또는 API 실패 (실패는 로그만, 빈 list 반환 — crash 없음).
+    경고 필드는 실제 warned 종목을 보기 전까지 불명 → raw 그대로 반환.
+    """
+    symbol = symbol.strip().upper()
+    data = await _toss_get(f"/api/v1/stocks/{symbol}/warnings")
+    if data is None:
+        # _toss_get 이미 HTTP 오류 로그 출력 — 여기선 빈 list만 반환
+        return []
+    result = data.get("result", [])
+    if not isinstance(result, list):
+        print(f"[toss-warn] {symbol} warnings result 비정상 타입: {type(result)} — 스킵")
+        return []
+    return result
+
+
+async def check_watch_warnings() -> list:
+    """포트폴리오 보유 + 워치리스트 KR 종목에 대해 Toss 경고 일괄 점검.
+
+    반환: [{"ticker": str, "name": str, "warnings": list}, ...]  — 경고 있는 종목만.
+    US 종목은 Toss 경고가 KR 시장 개념이므로 스킵.
+    """
+    from ._config import PORTFOLIO_FILE
+    from ._files import load_json, load_kr_watch_dict
+
+    portfolio = load_json(PORTFOLIO_FILE, {})
+    _meta_keys = {"us_stocks", "cash_krw", "cash_usd"}
+
+    # KR 보유 종목 수집
+    ticker_name: dict[str, str] = {}
+    for ticker, info in portfolio.items():
+        if ticker in _meta_keys:
+            continue
+        if isinstance(info, dict):
+            ticker_name[ticker] = info.get("name", ticker)
+
+    # KR 워치리스트 추가
+    for ticker, name in load_kr_watch_dict().items():
+        ticker_name.setdefault(ticker, name)
+
+    warned: list = []
+    for ticker, name in ticker_name.items():
+        try:
+            warnings = await fetch_toss_stock_warnings(ticker)
+            if warnings:
+                warned.append({"ticker": ticker, "name": name, "warnings": warnings})
+        except Exception as e:
+            print(f"[toss-warn] {ticker} 경고 조회 오류: {e} — 스킵")
+        await asyncio.sleep(0.3)  # rate limit
+
+    print(f"[toss-warn] 점검 완료 — {len(ticker_name)}종목 점검, 경고 {len(warned)}종목")
+    return warned
