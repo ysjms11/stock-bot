@@ -4,6 +4,7 @@
   POST /oauth2/token                        → Bearer 토큰 (client_credentials)
   GET  /api/v1/accounts                     → 계좌 목록
   GET  /api/v1/holdings                     → 보유종목 (X-Tossinvest-Account 헤더 필요)
+  GET  /api/v1/buying-power?currency=KRW|USD → 현금 매수가능금액 (예수금)
   GET  /api/v1/orders?status=CLOSED         → 체결이력 (페이지네이션)
   GET  /api/v1/market-calendar/{country}    → 장 운영 캘린더 (KR/US)
   GET  /api/v1/stocks/{symbol}/warnings     → 종목 경고 목록
@@ -108,6 +109,37 @@ async def fetch_toss_accounts() -> list:
         print(f"[toss] accounts result 비정상 타입: {type(result)}")
         return []
     return result
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 현금 매수가능금액 (예수금)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def fetch_toss_buying_power(currency: str, account_seq=None) -> float | None:
+    """GET /api/v1/buying-power?currency={KRW|USD} → cashBuyingPower float.
+
+    반환값은 현금 매수가능금액(예수금)으로, D+2 미수금이 포함된 값이라 출금가능액과
+    미세 차이가 있을 수 있음.
+
+    account_seq 미지정 시 헤더를 붙이지 않음 (_toss_get 내부 처리).
+    응답 None / 키 없음 / 파싱 실패 → None 반환 (침묵-0 금지; 호출측이 None 가드).
+    """
+    currency = currency.upper()
+    data = await _toss_get(f"/api/v1/buying-power?currency={currency}", account_seq=account_seq)
+    if data is None:
+        return None
+    result = data.get("result")
+    if not isinstance(result, dict):
+        print(f"[toss-bp] buying-power result 비정상 타입: {type(result)}")
+        return None
+    raw = result.get("cashBuyingPower")
+    if raw is None:
+        print(f"[toss-bp] cashBuyingPower 필드 없음 (currency={currency}): {list(result.keys())}")
+        return None
+    parsed = _parse_price(raw)
+    if parsed is None:
+        print(f"[toss-bp] cashBuyingPower 파싱 실패 (raw={raw!r}) — 침묵-0 금지")
+    return parsed
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -229,9 +261,9 @@ async def sync_portfolio_from_toss() -> dict:
     - Toss KR/US 보유 → update/insert (name, qty, avg_price 갱신; 기존 bot-only 필드 보존)
     - portfolio.json에 있지만 Toss에 없는 종목 → toss_missing=True 플래그만 (삭제 안 함)
     - 재등장 시 toss_missing 플래그 제거
-    - cash_krw/cash_usd → 건드리지 않음
+    - cash_krw/cash_usd → buying-power API(예수금)로 동기화; fetch 실패 시 기존 값 보존
 
-    반환: {"ok": True/False, ...}
+    반환: {"ok": True/False, "cash_krw": float|None, "cash_usd": float|None, ...}
     """
     from ._config import PORTFOLIO_FILE
     from ._files import load_json, save_json
@@ -300,14 +332,28 @@ async def sync_portfolio_from_toss() -> dict:
             if ticker not in flagged:
                 flagged.append(ticker)
 
+    # ── 현금 동기화 (buying-power API) ───────────────────
+    account_seq = holdings.get("account_seq")
+    bp_krw = await fetch_toss_buying_power("KRW", account_seq=account_seq)
+    await asyncio.sleep(0.3)  # rate limit — 429 on rapid calls
+    bp_usd = await fetch_toss_buying_power("USD", account_seq=account_seq)
+    if bp_krw is not None:
+        portfolio["cash_krw"] = bp_krw
+    if bp_usd is not None:
+        portfolio["cash_usd"] = bp_usd
+
     save_json(PORTFOLIO_FILE, portfolio)
 
     kr_count = len(toss_kr)
     us_count = len(toss_us)
+    cash_log = (
+        f", KRW현금={bp_krw} USD현금={bp_usd}"
+        if (bp_krw is not None or bp_usd is not None) else " (현금 fetch 실패 — 기존 보존)"
+    )
     print(
         f"[toss-sync] 완료 — KR {kr_count}종목 (추가 {len(added_kr)}, 갱신 {len(updated_kr)}), "
         f"US {us_count}종목 (추가 {len(added_us)}, 갱신 {len(updated_us)}), "
-        f"미관찰 플래그 {len(flagged)}종목"
+        f"미관찰 플래그 {len(flagged)}종목{cash_log}"
     )
     return {
         "ok":               True,
@@ -316,6 +362,8 @@ async def sync_portfolio_from_toss() -> dict:
         "flagged_missing":  flagged,
         "kr_count":         kr_count,
         "us_count":         us_count,
+        "cash_krw":         bp_krw,
+        "cash_usd":         bp_usd,
     }
 
 

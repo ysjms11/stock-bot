@@ -106,7 +106,8 @@ class TestSyncPortfolio:
 
     @pytest.fixture(autouse=True)
     def _patch_portfolio_file(self, tmp_path, monkeypatch):
-        """conftest의 /tmp redirect 위에 추가로 PORTFOLIO_FILE을 tmp_path로 설정."""
+        """conftest의 /tmp redirect 위에 추가로 PORTFOLIO_FILE을 tmp_path로 설정.
+        fetch_toss_buying_power를 기본 None 반환으로 패치해 실API 호출 방지."""
         self._portfolio_path = str(tmp_path / "portfolio.json")
         monkeypatch.setattr("kis_api._config.PORTFOLIO_FILE", self._portfolio_path)
         monkeypatch.setattr("kis_api.toss.PORTFOLIO_FILE",    self._portfolio_path,
@@ -114,6 +115,10 @@ class TestSyncPortfolio:
         # _config 내 상수도 패치 (toss.py가 from ._config import PORTFOLIO_FILE 사용)
         import kis_api._config as _cfg
         monkeypatch.setattr(_cfg, "PORTFOLIO_FILE", self._portfolio_path)
+        # 기본: buying-power fetch → None (현금 보존; 개별 테스트에서 오버라이드 가능)
+        async def _fake_buying_power_none(currency, account_seq=None):
+            return None
+        monkeypatch.setattr("kis_api.toss.fetch_toss_buying_power", _fake_buying_power_none)
 
     def _write_portfolio(self, data: dict):
         import json
@@ -254,6 +259,46 @@ class TestSyncPortfolio:
         assert "toss_missing" not in port["005930"]
         # flagged_missing에 없어야 함
         assert "005930" not in r["flagged_missing"]
+
+    # ── 현금 동기화 — fetch 성공 시 갱신, 실패 시 보존 ──
+    @pytest.mark.asyncio
+    async def test_cash_synced_when_buying_power_available(self, _patch_holdings, monkeypatch):
+        """fetch_toss_buying_power가 값을 반환하면 cash_krw/cash_usd가 갱신됨."""
+        self._write_portfolio({
+            "us_stocks": {}, "cash_krw": 0.0, "cash_usd": 0.0,
+        })
+
+        async def _fake_buying_power(currency, account_seq=None):
+            return 2445478.0 if currency == "KRW" else 83.5
+
+        monkeypatch.setattr("kis_api.toss.fetch_toss_buying_power", _fake_buying_power)
+
+        from kis_api.toss import sync_portfolio_from_toss
+        r = await sync_portfolio_from_toss()
+        assert r["ok"] is True
+        port = self._read_portfolio()
+        assert port["cash_krw"] == 2445478.0
+        assert port["cash_usd"] == 83.5
+        # 반환 dict에도 포함
+        assert r["cash_krw"] == 2445478.0
+        assert r["cash_usd"] == 83.5
+
+    @pytest.mark.asyncio
+    async def test_cash_preserved_when_buying_power_fails(self, _patch_holdings):
+        """fetch_toss_buying_power가 None 반환하면 기존 cash 값이 보존됨 (기본 autouse 패치)."""
+        self._write_portfolio({
+            "us_stocks": {}, "cash_krw": 2565614.0, "cash_usd": 1.08,
+        })
+        from kis_api.toss import sync_portfolio_from_toss
+        r = await sync_portfolio_from_toss()
+        assert r["ok"] is True
+        port = self._read_portfolio()
+        # None 반환이므로 기존 값 그대로
+        assert port["cash_krw"] == 2565614.0
+        assert port["cash_usd"] == 1.08
+        # 반환 dict에는 None
+        assert r["cash_krw"] is None
+        assert r["cash_usd"] is None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -210,6 +210,7 @@ from .pension import (
 # ━━ 토스증권 잔고 동기화 + 체결이력 + 캘린더 + 종목경고 + 전용 레저 ━━
 from .toss import (
     get_toss_token, fetch_toss_accounts, fetch_toss_holdings,
+    fetch_toss_buying_power,
     sync_portfolio_from_toss,
     fetch_toss_orders,
     sync_toss_trade_ledger, get_toss_trade_summary,
