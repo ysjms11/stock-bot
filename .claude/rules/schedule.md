@@ -14,6 +14,7 @@
 
 | 주기 | 잡 이름 | 담당 함수 | 핵심 동작 | 최근 변경 |
 |------|---------|-----------|-----------|-----------|
+| 1분 | `toss_sync` | `toss_sync_job` | 토스증권 잔고 → portfolio.json 동기화 (읽기전용 풀, 무음) | 6/25 신규 |
 | 5분 | `dart` | `check_dart_disclosure` | DART 공시 체크 (8~20시 내부 필터, 워치+포트만) | 4/18 (30분→5분) |
 | 10분 | `stoploss` | `check_stoploss` | 손절/목표가 감시 (한국 장중 WebSocket, 미국 Yahoo 폴링) | — |
 | 30분 | `anomaly` | `check_anomaly` | 이상 이벤트 감지 (급등/급락) | — |

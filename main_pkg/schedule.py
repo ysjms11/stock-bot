@@ -42,6 +42,7 @@ from main_pkg.jobs.us_analyst import (
     weekly_us_analyst_sync, hourly_us_holdings_check, weekly_us_analyst_report,
 )
 from main_pkg.jobs.sanity import weekly_sanity_check, weekly_log_rotate
+from main_pkg.jobs.toss_sync import toss_sync_job
 
 
 def register_all_schedules(jq):
@@ -64,6 +65,7 @@ def register_all_schedules(jq):
     jq.run_repeating(check_anomaly, interval=1800, first=120, name="anomaly")
     jq.run_repeating(check_dart_disclosure, interval=300, first=180, name="dart")
     jq.run_repeating(regime_transition_alert, interval=3600, first=300, name="regime_transition")
+    jq.run_repeating(toss_sync_job, interval=60, first=45, name="toss_sync")
 
     # ── 일일/주간 잡 ──
     jq.run_daily(daily_kr_summary, time=dtime(15, 40, tzinfo=KST), days=(1,2,3,4,5), name="kr_summary")
