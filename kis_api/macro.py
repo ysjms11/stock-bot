@@ -130,18 +130,29 @@ async def collect_macro_data() -> dict:
         data["MARKET_FLOW"]  = {}
         data["FOREIGN_FLOW"] = {"amount_억": "?"}
 
-    # 5. 이벤트 캘린더 (날짜 미래 항목만 포함)
+    # 5. 이벤트 캘린더 (지난 항목 제외 + D-day 동적 계산 + 가까운 순 정렬)
     events = load_events()
-    now = datetime.now(KST)
-    upcoming = {}
+    today = datetime.now(KST).date()
+    dated = []  # (날짜, key, 렌더링값)
     for key, val in events.items():
+        if not isinstance(val, str) or not val.strip():
+            continue
+        if key.startswith("---"):              # 구분선 항목 스킵
+            continue
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", val)
+        if not m:                              # ISO 날짜 없는 서술/저널 항목은 피드 제외
+            continue
         try:
-            evt = datetime.strptime(val, "%Y-%m-%d")
-            if evt.date() >= now.date():
-                upcoming[key] = val
-        except Exception:
-            upcoming[key] = val   # "진행중" 같은 비날짜 값도 포함
-    data["EVENTS"] = upcoming
+            evt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+        except ValueError:
+            continue
+        if evt < today:                        # 지난 이벤트 제외
+            continue
+        d_days = (evt - today).days
+        rendered = re.sub(r"D[-+]\s*\d+", f"D-{d_days}", val, count=1)  # 박제 D-NN → 오늘 기준 재계산
+        dated.append((evt, key, rendered))
+    dated.sort(key=lambda x: x[0])             # 가까운 catalyst 먼저
+    data["EVENTS"] = {k: v for _, k, v in dated}
 
     # 6. 시간외 급등락 (SQLite daily_snapshot, pm 슬롯용)
     try:
