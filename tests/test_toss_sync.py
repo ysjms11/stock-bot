@@ -399,6 +399,103 @@ class TestRawHttpShape:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
+# account_seq 자동 해석 — fetch_toss_buying_power 단위 테스트
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_BUYING_POWER_PAYLOAD = {
+    "result": {
+        "cashBuyingPower": "2445478",
+        "currency": "KRW",
+    }
+}
+
+
+class TestBuyingPowerAutoResolve:
+    """fetch_toss_buying_power — account_seq 자동 해석 경로 검증."""
+
+    @pytest.mark.asyncio
+    async def test_auto_resolves_account_seq_when_none(self, monkeypatch):
+        """account_seq 미지정 시 fetch_toss_accounts()에서 첫 계좌 accountSeq를 취득해 API 호출."""
+        import copy
+
+        accounts_called = []
+        toss_get_calls = []
+
+        async def _fake_accounts():
+            accounts_called.append(True)
+            return [{"accountSeq": "99999", "accountType": "NORMAL"}]
+
+        async def _fake_toss_get(path, account_seq=None):
+            toss_get_calls.append((path, account_seq))
+            if "buying-power" in path:
+                return copy.deepcopy(_BUYING_POWER_PAYLOAD)
+            return None
+
+        monkeypatch.setattr("kis_api.toss.fetch_toss_accounts", _fake_accounts)
+        monkeypatch.setattr("kis_api.toss._toss_get", _fake_toss_get)
+
+        from kis_api.toss import fetch_toss_buying_power
+        result = await fetch_toss_buying_power("KRW")
+
+        # 계좌 자동 조회됐음
+        assert accounts_called, "fetch_toss_accounts가 호출되지 않음 — 자동 해석 누락"
+        # _toss_get 호출됐음 (buying-power 경로)
+        assert any("buying-power" in p for p, _ in toss_get_calls), "_toss_get buying-power 호출 없음"
+        # account_seq가 "99999"로 전달됐음
+        bp_call = next((ac for p, ac in toss_get_calls if "buying-power" in p), None)
+        assert bp_call == "99999", f"account_seq mismatch: {bp_call!r}"
+        # 현금값이 올바르게 파싱됨
+        assert result == pytest.approx(2445478.0), f"cash 파싱 실패: {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_no_accounts_returns_none(self, monkeypatch):
+        """계좌 목록이 빈 리스트이면 None 반환 (헤더 없는 요청 방지)."""
+        async def _fake_accounts():
+            return []
+
+        toss_get_called = []
+        async def _fake_toss_get(path, account_seq=None):
+            toss_get_called.append(path)
+            return None
+
+        monkeypatch.setattr("kis_api.toss.fetch_toss_accounts", _fake_accounts)
+        monkeypatch.setattr("kis_api.toss._toss_get", _fake_toss_get)
+
+        from kis_api.toss import fetch_toss_buying_power
+        result = await fetch_toss_buying_power("KRW")
+
+        assert result is None
+        # 계좌 없으면 buying-power GET을 시도하지 않아야 함
+        assert not any("buying-power" in p for p in toss_get_called), \
+            "계좌 없는데 buying-power GET 시도됨"
+
+    @pytest.mark.asyncio
+    async def test_provided_account_seq_skips_accounts_call(self, monkeypatch):
+        """account_seq를 명시 전달하면 fetch_toss_accounts()를 호출하지 않음 (프로덕션 경로)."""
+        import copy
+
+        accounts_called = []
+        async def _fake_accounts():
+            accounts_called.append(True)
+            return [{"accountSeq": "00000"}]
+
+        async def _fake_toss_get(path, account_seq=None):
+            if "buying-power" in path:
+                return copy.deepcopy(_BUYING_POWER_PAYLOAD)
+            return None
+
+        monkeypatch.setattr("kis_api.toss.fetch_toss_accounts", _fake_accounts)
+        monkeypatch.setattr("kis_api.toss._toss_get", _fake_toss_get)
+
+        from kis_api.toss import fetch_toss_buying_power
+        result = await fetch_toss_buying_power("KRW", account_seq="12345")
+
+        # fetch_toss_accounts 호출 없어야 함 (account_seq 이미 있음)
+        assert not accounts_called, "account_seq 제공됐는데 fetch_toss_accounts 호출됨"
+        assert result == pytest.approx(2445478.0)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 라이브 테스트 (--run-live 시 실행)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 

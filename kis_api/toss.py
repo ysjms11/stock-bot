@@ -121,9 +121,20 @@ async def fetch_toss_buying_power(currency: str, account_seq=None) -> float | No
     반환값은 현금 매수가능금액(예수금)으로, D+2 미수금이 포함된 값이라 출금가능액과
     미세 차이가 있을 수 있음.
 
-    account_seq 미지정 시 헤더를 붙이지 않음 (_toss_get 내부 처리).
+    account_seq 미지정 시 fetch_toss_accounts()에서 result[0].accountSeq 자동 해석.
+    계좌 조회 실패 또는 accountSeq 없으면 None 반환 (X-Tossinvest-Account 없이 호출하면 HTTP 400).
     응답 None / 키 없음 / 파싱 실패 → None 반환 (침묵-0 금지; 호출측이 None 가드).
     """
+    if account_seq is None:
+        accounts = await fetch_toss_accounts()
+        if not accounts:
+            print("[toss-bp] 계좌 목록 조회 실패 — buying-power 중단")
+            return None
+        account_seq = accounts[0].get("accountSeq")
+        if not account_seq:
+            print("[toss-bp] accountSeq 없음 — buying-power 중단")
+            return None
+
     currency = currency.upper()
     data = await _toss_get(f"/api/v1/buying-power?currency={currency}", account_seq=account_seq)
     if data is None:
