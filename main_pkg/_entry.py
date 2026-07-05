@@ -2,6 +2,7 @@
 auto-split from main.py.
 """
 import asyncio
+import logging
 import os
 import sys
 import socket
@@ -190,6 +191,8 @@ async def post_init(application: Application):
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
     print("봇 시작 중...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
@@ -268,7 +271,21 @@ async def _run_all(app, port):
     import dashboard_home
     dashboard_home.register_home_routes(mcp_app)
     asyncio.create_task(dashboard_home.warm_caches())  # 콜드로드 방지 프리워밍 (비블로킹)
-    runner = web.AppRunner(mcp_app)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    # aiohttp access 로깅 — incoming 요청 기록 (method/path/status/시각/클라IP)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━
+    _access_logger = logging.getLogger("aiohttp.access")
+    if not _access_logger.handlers:
+        _ah = logging.StreamHandler(sys.stdout)
+        _ah.setFormatter(logging.Formatter("%(message)s"))
+        _access_logger.addHandler(_ah)
+        _access_logger.setLevel(logging.INFO)
+        _access_logger.propagate = False
+    runner = web.AppRunner(
+        mcp_app,
+        access_log=_access_logger,
+        access_log_format='%t %{Cf-Connecting-Ip}i "%r" %s %b %Tf',
+    )
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port, reuse_address=True)
     await site.start()
