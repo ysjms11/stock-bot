@@ -1,0 +1,122 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# KR 레짐 v1 vs v2 역사 백테스트 (1998~현재 KOSPI)
+# 사용법: cd ~/stock-bot && ./venv/bin/python data/verify_regime_backtest_20260718.txt
+# 목적: 극단 우회(>92%ile) 방향 게이트(v2)가
+#   (a) 멜트업 오판을 얼마나 없애는지
+#   (b) 실제 폭락 8회의 조기 감지를 늦추지 않는지 검증.
+# 산식은 kis_api/regime.py calc_kr_regime()과 동일.
+# 결과: 콘솔 출력 + data/regime_backtest_v1v2.json 저장
+# ============================================================
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parent / "regime_backtest_v1v2.json"
+
+def load_closes():
+    try:
+        import FinanceDataReader as fdr
+        df = fdr.DataReader("KS11", "1998-01-01")
+        return df["Close"].dropna()
+    except Exception as e:
+        print(f"[warn] FDR 실패({e}) → yfinance 폴백")
+        import yfinance as yf
+        df = yf.download("^KS11", start="1998-01-01", auto_adjust=True, progress=False)
+        return df["Close"].squeeze().dropna()
+
+close = load_closes()
+print(f"data: {close.index[0].date()} ~ {close.index[-1].date()}  n={len(close)}")
+
+logret = np.log(close / close.shift(1))
+rv = logret.rolling(20).std(ddof=1) * np.sqrt(252) * 100
+
+def pct_rank_series(s, lookback=252):
+    arr = s.values
+    out = np.full(len(arr), np.nan)
+    for i in range(len(arr)):
+        v = arr[i]
+        if np.isnan(v):
+            continue
+        lo = max(0, i - lookback + 1)
+        win = arr[lo:i + 1]
+        win = win[~np.isnan(win)]
+        if len(win) < 30:
+            continue
+        out[i] = (win <= v).sum() / len(win) * 100
+    return pd.Series(out, index=s.index)
+
+vol_pct = pct_rank_series(rv)
+ma200 = close.rolling(200).mean()
+ma_dist = (close - ma200) / ma200 * 100
+
+v1_raw = ((vol_pct > 80) & (ma_dist < -3)) | (vol_pct > 92)
+v2_raw = ((vol_pct > 80) & (ma_dist < -3)) | ((vol_pct > 92) & (ma_dist < 0))
+
+def confirm3(raw):
+    return raw.astype(float).rolling(3).sum() >= 3   # 3거래일 연속 = 봇 디바운스 임계
+
+v1_conf, v2_conf = confirm3(v1_raw), confirm3(v2_raw)
+
+mask = (~vol_pct.isna()) & (~ma_dist.isna())
+res = {
+    "data_range": [str(close.index[0].date()), str(close.index[-1].date())],
+    "n_days": int(mask.sum()),
+    "v1_crisis_days": int((v1_raw & mask).sum()),
+    "v2_crisis_days": int((v2_raw & mask).sum()),
+    "v1_meltup_days": int((v1_raw & (ma_dist > 0) & mask).sum()),
+    "v2_meltup_days": int((v2_raw & (ma_dist > 0) & mask).sum()),
+}
+print(f"\n[전체 raw 🔴 일수] v1={res['v1_crisis_days']}  v2={res['v2_crisis_days']}")
+print(f"[그중 200MA 위(멜트업 오판)] v1={res['v1_meltup_days']}  v2={res['v2_meltup_days']}")
+
+mel = (v1_raw & (ma_dist > 0) & mask)
+if int(mel.sum()):
+    grp = mel[mel].groupby(mel[mel].index.to_period("Q")).size()
+    res["v1_meltup_by_quarter"] = {str(k): int(v) for k, v in grp.items()}
+    print("  v1 멜트업 오판 분기별:", res["v1_meltup_by_quarter"])
+
+episodes = [
+    ("2008_금융위기",     "2008-06-01", "2009-03-31"),
+    ("2011_유럽위기",     "2011-07-01", "2011-12-31"),
+    ("2015-16_차이나쇼크", "2015-07-01", "2016-03-31"),
+    ("2018_Q4급락",       "2018-09-01", "2019-01-31"),
+    ("2020_코로나",       "2020-01-15", "2020-05-31"),
+    ("2022_긴축약세장",   "2022-01-01", "2022-12-31"),
+    ("2024-08-05_엔캐리", "2024-07-01", "2024-09-30"),
+    ("2025-04_관세쇼크",  "2025-03-01", "2025-06-30"),
+]
+res["episodes"] = []
+print(f"\n{'에피소드':<20} {'v1확정':>12} {'v2확정':>12}  지연  (v2확정시 ma_dist / 확정→트로프 추가하락)")
+for name, s, e in episodes:
+    sl = slice(s, e)
+    seg = close.loc[sl]
+    if seg.empty:
+        continue
+    trough_date = seg.idxmin().date()
+
+    def first(x):
+        h = x.loc[sl]
+        h = h[h.fillna(False)]
+        return h.index[0] if len(h) else None
+
+    f1, f2 = first(v1_conf), first(v2_conf)
+    ep = {"name": name, "trough": str(trough_date),
+          "v1_confirm": str(f1.date()) if f1 is not None else None,
+          "v2_confirm": str(f2.date()) if f2 is not None else None}
+    if f1 is not None and f2 is not None:
+        ep["delay_busdays"] = int(np.busday_count(f1.date(), f2.date()))
+    if f2 is not None:
+        ep["v2_ma_dist_at_confirm"] = round(float(ma_dist.loc[f2]), 2)
+        ep["drop_confirm_to_trough_pct"] = round(float(seg.min() / close.loc[f2] - 1) * 100, 2)
+    res["episodes"].append(ep)
+    d1 = ep["v1_confirm"] or "미발동"
+    d2 = ep["v2_confirm"] or "미발동"
+    dl = ep.get("delay_busdays", "-")
+    md = ep.get("v2_ma_dist_at_confirm", "-")
+    dr = ep.get("drop_confirm_to_trough_pct", "-")
+    print(f"{name:<20} {d1:>12} {d2:>12}  {dl!s:>4}  ({md}% / {dr}%)")
+
+OUT.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"\n[saved] {OUT}")

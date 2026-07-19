@@ -626,5 +626,66 @@ class TestCmdRegimeOverrideMarket(unittest.TestCase):
         self.assertIn("탐욕", result["regime"])
 
 
+class TestKrCrisisDirectionGate(unittest.TestCase):
+    """calc_kr_regime — 극단 vol 방향 게이트 (E 하이브리드 v2, 2026-07-17)."""
+
+    def _run(self, vol_pct, ma_dist):
+        import kis_api.regime as rg
+        with patch.object(rg, "_fdr_closes", return_value=[100.0] * 300), \
+             patch.object(rg, "_realized_vol_series", return_value=[10.0] * 260), \
+             patch.object(rg, "_pct_rank", return_value=vol_pct), \
+             patch.object(rg, "_dist_from_ma", return_value=ma_dist):
+            return rg.calc_kr_regime()
+
+    def test_meltup_extreme_vol_not_crisis(self):
+        """2026-07-16 실사례: 상방 멜트업 극단 vol → 🔴 아님, 🟡 과열."""
+        r = self._run(96.8, 30.84)
+        self.assertEqual(r["regime_en"], "neutral")
+        self.assertIn("과열", r["logic"])
+
+    def test_downside_extreme_vol_is_crisis(self):
+        """하락 맥락의 극단 vol → 🔴 유지 (2008/2020형)."""
+        r = self._run(95.0, -5.0)
+        self.assertEqual(r["regime_en"], "crisis")
+
+    def test_trend_gate_crisis(self):
+        """80%ile 초과 + 200MA -3% 이하 → 🔴 유지."""
+        r = self._run(85.0, -4.0)
+        self.assertEqual(r["regime_en"], "crisis")
+
+    def test_mid_vol_shallow_dip_is_neutral_not_offensive(self):
+        """v1 갭 버그 구간(vol 80~92 & ma -3~0): 🟢로 새면 안 됨 → 🟡."""
+        r = self._run(85.0, -1.0)
+        self.assertEqual(r["regime_en"], "neutral")
+
+    def test_calm_uptrend_offensive(self):
+        """평온 + 상승 추세 → 🟢 유지."""
+        r = self._run(30.0, 5.0)
+        self.assertEqual(r["regime_en"], "offensive")
+
+    def test_extreme_bypass_shallow_dip_is_crisis(self):
+        """극단우회(vol>92 & ma<0) 단독 격리 검증.
+
+        추세게이트(vol>80 & ma<-3)는 ma_dist=-1.0이라 미충족 —
+        오직 극단우회 조건만으로 crisis가 되는지 확인 (방향게이트 자체 검증).
+        """
+        r = self._run(95.0, -1.0)
+        self.assertEqual(r["regime_en"], "crisis")
+
+    def test_extreme_vol_at_exact_zero_ma_is_not_crisis(self):
+        """ma_dist<0 strict 경계: ma_dist=0.0은 극단우회 미충족 → crisis 아님.
+
+        off-by-one(<=0) 회귀 방어 — 0.0은 하락 맥락이 아니므로 🔴로 새면 안 됨.
+        """
+        r = self._run(95.0, 0.0)
+        self.assertEqual(r["regime_en"], "neutral")
+
+    def test_high_vol_at_exact_zero_ma_is_overheat_neutral(self):
+        """ma_dist>=0 경계: vol=85(>80), ma_dist=0.0 → 과열 분기 🟡 Neutral."""
+        r = self._run(85.0, 0.0)
+        self.assertEqual(r["regime_en"], "neutral")
+        self.assertIn("과열", r["logic"])
+
+
 if __name__ == "__main__":
     unittest.main()

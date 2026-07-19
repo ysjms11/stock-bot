@@ -164,23 +164,37 @@ def calc_kr_regime() -> dict:
     if usdkrw_chg60 is not None and usdkrw_chg60 > 5:
         confirmations["usdkrw_surge"] = True
 
-    # E 하이브리드 (백테스트 확정): 추세게이트 + 극단vol 우회, vol_abs 절대폴백 제거.
-    #   지속형위기 7/8 적중(2008 26일前·2020 33일前 트로프前), whipsaw 35→11, 멜트업🔴 26→11.
+    # E 하이브리드 v2 (2026-07-17): 극단 우회에도 방향 게이트 추가.
+    #   v1 결함: vol_pct>92 우회가 방향 무시 → 상방 멜트업(가격≫200MA)의 극단 변동성을
+    #   폭락 공포로 오판, 유포리아 고점에서 🔴 발사(풀투자) 지시.
+    #   실사례: 2026-07-16 vol_pct=96.8%ile & ma_dist=+30.84% → 🔴 오판 (4일 확정).
+    #   원칙: 🔴 = "폭락 공포에 실탄 발사"(REGIME_DESIGN §2) → 하락 맥락(ma_dist<0) 필수.
+    #   상방 극단 변동성(vol>80 & ma_dist>=0)은 과열 경계 → 🟡 (비축).
+    #   부수 수정: neutral 상한(<=80) 제거 → vol 80~92 & ma -3~0 이 🟢로 새던 갭 봉합.
     crisis_condition = (
         (vol_pct is not None and vol_pct > 80 and ma_dist is not None and ma_dist < -3)
-        or (vol_pct is not None and vol_pct > 92)
+        or (vol_pct is not None and vol_pct > 92
+            and ma_dist is not None and ma_dist < 0)
+    )
+    overheat = (
+        not crisis_condition
+        and vol_pct is not None and vol_pct > 80
+        and ma_dist is not None and ma_dist >= 0
     )
     if crisis_condition:
         regime_en = "crisis"
         if vol_pct is not None and vol_pct > 92:
-            logic_parts.append(f"{pct_str} > 92%ile (극단 우회) → 🔴 Crisis (발사)")
+            logic_parts.append(f"{pct_str} > 92%ile & ma_dist={ma_dist:+.2f}% < 0 (극단 우회·하락 확인) → 🔴 Crisis (발사)")
         else:
             logic_parts.append(f"{pct_str} > 80%ile & 200MA {ma_dist:.2f}% < -3% (추세게이트) → 🔴 Crisis (발사)")
         if confirmations:
             logic_parts.append(f"확인: {confirmations}")
-    elif (vol_pct is not None and 50 <= vol_pct <= 80) or (ma_dist is not None and ma_dist < -5):
+    elif overheat:
         regime_en = "neutral"
-        logic_parts.append(f"{pct_str} 50~80%ile 또는 ma_dist={ma_dist}")
+        logic_parts.append(f"{pct_str} > 80%ile & ma_dist={ma_dist:+.2f}% >= 0 (상방 멜트업 과열) → 🟡 Neutral (경계·비축)")
+    elif (vol_pct is not None and vol_pct >= 50) or (ma_dist is not None and ma_dist < -5):
+        regime_en = "neutral"
+        logic_parts.append(f"{pct_str} >= 50%ile 또는 ma_dist={ma_dist}")
         logic_parts.append("→ 🟡 Neutral")
     else:
         regime_en = "offensive"
