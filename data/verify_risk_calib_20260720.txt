@@ -1,0 +1,190 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# 리스크신호 중재 v2 사전측정 (측정·시뮬 전용 — 라이브 코드 무변경)
+# 사용법: cd ~/stock-bot && ./venv/bin/python data/verify_risk_calib_20260720.txt
+# 산출: data/RISK_ARBITRATION_CALIB.md + .json (+ 콘솔)
+# 데이터 규칙: 스냅샷=qty·보유종목만 / 가격=외부 재구성(KR:FDR, US:yfinance×KRW=X)
+#             total_asset 델타 금지 → per-ticker 체인링크(공통 보유 기준)
+# ============================================================
+import json, math
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import FinanceDataReader as fdr
+import yfinance as yf
+
+ROOT = Path(__file__).resolve().parent
+DYP = "092780"
+D_SOFT, D_HARD = -7.0, -12.0
+LOOKBACK = 21  # 현행 브레이커 = 롤링 21스냅샷 total_asset 비율 (역산 확인됨)
+
+snaps = json.load(open(ROOT / "portfolio_history.json"))["snapshots"]
+toss_trades = json.load(open(ROOT / "toss_trades.json")).get("trades", [])
+
+OUT = {"generated": "2026-07-20", "rules": {
+    "prices": "KR=FDR, US=yfinance close × KRW=X (원화 일관)",
+    "returns": "per-ticker 체인링크(연속 스냅샷 공통보유·전기 qty), total_asset 델타 미사용",
+    "counterfactual": "DYP(092780) 제외 — 해방자본은 잔여 보유종목에 비례배분(가중 재정규화) 가정",
+    "breaker_formula": "rolling 21-snapshot total_asset 비율 (역산 확인)"}}
+
+# ── 1. assert + 데이터 품질 ─────────────────────────────
+assert all(s.get("holdings") for s in snaps), "holdings 결측 스냅샷 존재"
+dates = [s["date"] for s in snaps]
+kr_t = sorted({t for s in snaps for t in s["holdings"] if t.isdigit()})
+us_t = sorted({t for s in snaps for t in s["holdings"] if not t.isdigit()})
+
+dq = {"missing_days": [], "stale_days": [], "qty_jumps_no_trade": []}
+kospi_full = fdr.DataReader("KS11", "2026-03-25")["Close"].dropna()
+trad_days = [str(d.date()) for d in kospi_full.index
+             if dates[0] <= str(d.date()) <= dates[-1]]
+dq["missing_days"] = [d for d in trad_days if d not in set(dates)]
+
+for a, b in zip(snaps, snaps[1:]):
+    ha, hb = a["holdings"], b["holdings"]
+    for mkt, tick in (("KR", kr_t), ("US", us_t)):
+        common = [t for t in tick if t in ha and t in hb]
+        if common and all(ha[t].get("price") == hb[t].get("price") for t in common):
+            dq["stale_days"].append({"date": b["date"], "market": mkt, "n": len(common)})
+    for t in set(ha) & set(hb):
+        dq_ = (hb[t].get("qty") or 0) - (ha[t].get("qty") or 0)
+        if dq_ != 0:
+            win = [tr for tr in toss_trades if tr.get("ticker") == t
+                   and a["date"] <= tr.get("date", "") <= b["date"]]
+            traded = sum((tr.get("qty") or 0) * (1 if tr.get("side") == "buy" else -1) for tr in win)
+            if abs(traded - dq_) > 1e-9:
+                dq["qty_jumps_no_trade"].append(
+                    {"ticker": t, "from": a["date"], "to": b["date"],
+                     "qty_change": dq_, "trades_matched": traded})
+OUT["data_quality"] = dq
+
+# ── 2. 외부 가격 재구성 ─────────────────────────────────
+px, px_src = {}, {}
+for t in kr_t:
+    if t == DYP: continue
+    px[t] = fdr.DataReader(t, "2026-03-20")["Close"].dropna(); px_src[t] = "FDR"
+fx = yf.download("KRW=X", start="2026-03-20", auto_adjust=True, progress=False)["Close"].squeeze().dropna()
+for t in us_t:
+    try:
+        s = yf.download(t, start="2026-03-20", auto_adjust=True, progress=False)["Close"].squeeze().dropna()
+        assert len(s) > 10
+        px[t] = s; px_src[t] = "yfinance"
+    except Exception:
+        px[t] = fdr.DataReader(t, "2026-03-20")["Close"].dropna(); px_src[t] = "FDR(폴백)"
+spx = yf.download("^GSPC", start="2026-03-20", auto_adjust=True, progress=False)["Close"].squeeze().dropna()
+OUT["price_sources"] = px_src
+
+def at(s, d):
+    s2 = s[s.index <= pd.Timestamp(d)]
+    return float(s2.iloc[-1]) if len(s2) else None
+
+# ── 3. 합성 시계열 (DYP 제외, 원화 일관) ────────────────
+rows = []
+for a, b in zip(snaps, snaps[1:]):
+    d1, d2 = a["date"], b["date"]; h = a["holdings"]
+    fx1, fx2 = at(fx, d1), at(fx, d2)
+    def sleeve(tick, is_us):
+        v1 = v2 = 0.0
+        for t in tick:
+            if t == DYP or t not in h or t not in b["holdings"]: continue
+            q = h[t].get("qty") or 0
+            p1, p2 = at(px.get(t, pd.Series(dtype=float)), d1), at(px.get(t, pd.Series(dtype=float)), d2)
+            if q and p1 and p2:
+                if is_us: p1, p2 = p1 * fx1, p2 * fx2
+                v1 += q * p1; v2 += q * p2
+        return v1, v2
+    k1, k2 = sleeve(kr_t, False); u1, u2 = sleeve(us_t, True)
+    bk = at(kospi_full, d2) / at(kospi_full, d1) - 1
+    bu = (at(spx, d2) * fx2) / (at(spx, d1) * fx1) - 1
+    rows.append({"date": d2,
+                 "r_kr": k2/k1-1 if k1 else None, "r_us": u2/u1-1 if u1 else None,
+                 "r_tot": (k2+u2)/(k1+u1)-1 if (k1+u1) else None,
+                 "b_kr": bk, "b_us": bu,
+                 "b_blend": (k1*bk + u1*bu)/(k1+u1) if (k1+u1) else None,
+                 "w_us": u1/(k1+u1) if (k1+u1) else None})
+df = pd.DataFrame(rows)
+
+# ── 4. TE·자기상관·2σ 한도 ──────────────────────────────
+from scipy import stats
+def lag1(x):
+    x = np.asarray(x); x = x[~np.isnan(x)]
+    return float(np.corrcoef(x[:-1], x[1:])[0, 1]) if len(x) > 3 else None
+
+def te_block(act):
+    a = np.asarray([x for x in act if x is not None and not np.isnan(x)])
+    n = len(a); s = a.std(ddof=1)
+    lo = s * math.sqrt((n-1) / stats.chi2.ppf(0.975, n-1))
+    hi = s * math.sqrt((n-1) / stats.chi2.ppf(0.025, n-1))
+    rho = lag1(a)
+    corr = math.sqrt(max(0.2, 1 + 2*rho*(1 - 1/21))) if rho is not None else 1.0
+    te_m = s * math.sqrt(21) * corr
+    return {"n": n, "te_daily_pct": round(s*100, 2),
+            "te_daily_ci95_pct": [round(lo*100, 2), round(hi*100, 2)],
+            "lag1_active": round(rho, 2), "ar_corr": round(corr, 2),
+            "te_monthly_pct": round(te_m*100, 1),
+            "alpha_limit_2sigma_pp": round(-2*te_m*100, 1),
+            "alpha_limit_1p5sigma_pp": round(-1.5*te_m*100, 1),
+            "label": "잠정 (일간 표본 ~70개, 6개월 후 재캘리브레이션 필수)"}
+
+OUT["te"] = {
+    "KR_vs_KOSPI": te_block(df.r_kr - df.b_kr),
+    "US_vs_SPX_KRW": te_block(df.r_us - df.b_us),
+    "TOTAL_vs_BLEND": te_block(df.r_tot - df.b_blend)}
+OUT["autocorr_vanhemert"] = {
+    "port_daily_lag1": round(lag1(df.r_tot), 2),
+    "kospi_sample_lag1": round(lag1(df.b_kr), 2)}
+kl = fdr.DataReader("KS11", "1998-01-01")["Close"].dropna()
+OUT["autocorr_vanhemert"]["kospi_daily_1998_lag1"] = round(lag1(kl.pct_change().dropna().values), 2)
+OUT["autocorr_vanhemert"]["kospi_monthly_1998_lag1"] = round(
+    lag1(kl.resample("ME").last().pct_change().dropna().values), 2)
+
+# ── 5. 시뮬 (a): 실제 히스토리 — 오염 vs 클린, 이진 vs 쿠션 ──
+ta = pd.Series([s["total_asset_krw"] for s in snaps], index=dates)      # 오염(flow 포함)
+clean = pd.Series(np.cumprod([1] + [1 + (r if r is not None else 0) for r in df.r_tot]),
+                  index=[snaps[0]["date"]] + list(df.date))              # 클린 합성지수
+def dd21(s):
+    return (s / s.shift(LOOKBACK) - 1) * 100
+dd_dirty, dd_clean = dd21(ta), dd21(clean)
+trig_dirty = set(dd_dirty[dd_dirty <= D_SOFT].index)
+trig_clean = set(dd_clean[dd_clean <= D_SOFT].index)
+m_clean = ((dd_clean - D_HARD) / (D_SOFT - D_HARD)).clip(0, 1)
+OUT["sim_actual_73d"] = {
+    "false_triggers_flow": sorted(trig_dirty - trig_clean),
+    "masked_triggers_flow": sorted(trig_clean - trig_dirty),
+    "halt_days_binary_clean": len(trig_clean),
+    "halt_days_binary_dirty": len(trig_dirty),
+    "cushion_m_on_clean_trigger_days": {d: round(float(m_clean[d]), 2) for d in sorted(trig_clean)},
+    "mdd_clean_pct": round(float((clean/clean.cummax()-1).min())*100, 1),
+    "mdd_dirty_asis_pct": round(float((ta/ta.cummax()-1).min())*100, 1),
+    "note": "dirty MDD는 flow 오염 포함 — 4/1 출금이 -51%로 오독되는 결함의 수치화"}
+
+# ── 6. 시뮬 (b): KOSPI 프록시 에피소드 (베타1 가정 명시) ──
+dd_k = (kl / kl.shift(LOOKBACK) - 1) * 100
+m_k = ((dd_k - D_HARD) / (D_SOFT - D_HARD)).clip(0, 1)
+episodes = [("2008-10 금융위기", "2008-09-01", "2009-03-31"),
+            ("2020-03 코로나",   "2020-02-01", "2020-06-30"),
+            ("2026-07 급락",     "2026-06-01", str(kl.index[-1].date()))]
+sim_b = []
+for name, s0, s1 in episodes:
+    seg = kl.loc[s0:s1]; d = dd_k.loc[s0:s1]; m = m_k.loc[s0:s1]
+    halt = d[d <= D_SOFT]
+    fwd = []
+    for t in halt.index:
+        i = kl.index.get_loc(t); j = i + LOOKBACK
+        if j < len(kl):
+            fwd.append((float(kl.iloc[j]/kl.iloc[i]-1)*100, float(m[t])))
+    cost_bin = np.mean([f for f, _ in fwd]) if fwd else 0.0          # 이진: 전부 미참여
+    cost_cus = np.mean([f*(1-mm) for f, mm in fwd]) if fwd else 0.0  # 쿠션: (1-m)만 미참여
+    sim_b.append({"episode": name, "assumption": "포트=KOSPI 베타1 프록시",
+                  "halt_days_binary": int(len(halt)),
+                  "halt_days_cushion_m0": int((m[d <= D_SOFT] <= 0).sum()),
+                  "avg_m_on_halt": round(float(m[d <= D_SOFT].mean()), 2) if len(halt) else None,
+                  "mdd_pct": round(float((seg/seg.cummax()-1).min())*100, 1),
+                  "fwd21d_missed_binary_pct": round(float(cost_bin), 1),
+                  "fwd21d_missed_cushion_pct": round(float(cost_cus), 1)})
+OUT["sim_episodes"] = sim_b
+
+# ── 7. 저장 ─────────────────────────────────────────────
+(ROOT / "RISK_ARBITRATION_CALIB.json").write_text(
+    json.dumps(OUT, ensure_ascii=False, indent=2), encoding="utf-8")
+print(json.dumps(OUT, ensure_ascii=False, indent=2))
+print("\n[saved]", ROOT / "RISK_ARBITRATION_CALIB.json")
