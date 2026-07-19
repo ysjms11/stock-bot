@@ -284,7 +284,7 @@ async def _run_all(app, port):
     runner = web.AppRunner(
         mcp_app,
         access_log=_access_logger,
-        access_log_format='%t %{Cf-Connecting-Ip}i "%r" %s %b %Tf',
+        access_log_format='%t %{Cf-Connecting-Ip}i "%r" %s %b %Tf "%{User-Agent}i"',
     )
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port, reuse_address=True)

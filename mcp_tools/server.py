@@ -46,6 +46,20 @@ def _normalize_content(result) -> list[dict]:
     return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
 
 
+def _log_mcp_wire(request, body: dict, transport: str):
+    """MCP 요청 wire 진단 로깅 — method·protocolVersion·UA·IP만 (민감정보/arguments 제외)."""
+    try:
+        method = body.get("method", "?") if isinstance(body, dict) else "?"
+        pv = ""
+        if method == "initialize" and isinstance(body, dict):
+            pv = (body.get("params") or {}).get("protocolVersion", "")
+        ip = request.headers.get("Cf-Connecting-Ip", "-")
+        ua = request.headers.get("User-Agent", "-")
+        print(f"[mcp-wire] {transport} ip={ip} method={method} protocolVersion={pv!r} ua={ua!r}")
+    except Exception:
+        pass
+
+
 async def _handle_jsonrpc(body: dict) -> dict | None:
     """JSON-RPC 요청 처리 → 응답 dict (notification이면 None)"""
     # MCP_TOOLS는 __init__에서 import
@@ -138,6 +152,8 @@ async def mcp_messages_handler(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
 
+    _log_mcp_wire(request, body, "sse")
+
     response = await _handle_jsonrpc(body)
     if response is not None:
         await queue.put(response)
@@ -158,6 +174,8 @@ async def mcp_streamable_post_handler(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+
+    _log_mcp_wire(request, body, "streamable")
 
     if isinstance(body, list):
         return web.json_response({"error": "batch requests not supported"}, status=400)
