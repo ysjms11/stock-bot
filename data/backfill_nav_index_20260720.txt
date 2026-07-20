@@ -1,0 +1,431 @@
+#!/usr/bin/env python3
+"""backfill_nav_index_20260720.txt — NAV 체인(flow-adjusted) 백필 스크립트.
+
+브레이커 입력 픽스(2026-07-20) 부속 스크립트.
+kis_api/portfolio.py 의 save_portfolio_snapshot() 는 이 커밋부터 신규 저장분에
+nav_r / nav_index / holdings.price_ext / holdings.price_age_days 를 기록하지만,
+기존 73+ 스냅샷(2026-03-30~)에는 해당 필드가 없어 nav_index 체인이 시작점부터
+끊겨 있다. 이 스크립트는 과거 전체 스냅샷에 대해 **무조정 종가**로 price_ext를
+재조회 채우고, save_portfolio_snapshot()과 동일한 공식으로 nav_r/nav_index
+체인을 순차 계산한다.
+
+⚠️ 이 백필은 DYP(092780) 포함 실포트 NAV다. 리스크중재 v2 사전측정
+   (계산 부록 §4, cd4c929/c8f232a 등)의 ex-DYP(DYP 제외) 반사실 시뮬레이션과는
+   대상 자체가 다르므로 수치를 직접 비교하지 말 것 — 이 스크립트는 "실제 계좌가
+   그동안 어떻게 움직였는가"를 재구성하는 것이고, 그쪽은 "DYP가 없었다면"이라는
+   가정 시나리오다.
+
+가격 소스 (스냅샷에 저장된 "price"는 쓰지 않음 — WS 캐시/그날 조회가라 스테일
+가능. 실제로 XNDU 2026-07-17 저장가 11.75 vs 무조정 종가 9.99 — 15%+ 괴리 확인,
+이 버그의 실물 증거):
+  - KR: FinanceDataReader (fdr.DataReader) 무조정 종가
+  - US: yfinance (auto_adjust=False) 무조정 종가
+  - 환율: yfinance "KRW=X" 일별 종가 (단, nav_r 계산 자체는 스냅샷에 이미 저장된
+    usd_krw_rate를 우선 사용 — save_portfolio_snapshot() 실행 시점에 그날그날
+    fetch한 값이므로 가격처럼 스테일 위험이 없음. KRW=X 시리즈는 그 필드가 없는
+    경우의 폴백 + 리포트 계산용으로만 사용)
+
+실행:
+    venv/bin/python3 data/backfill_nav_index_20260720.txt --dry-run
+        → 파일 미기록, 리포트만 stdout 출력
+    venv/bin/python3 data/backfill_nav_index_20260720.txt
+        → portfolio_history.json.bak_20260720 백업 후 실제 덮어씀
+
+⚠️ 실제 실행(비-dry-run)은 리뷰 게이트 통과 후 메인 세션이 수행한다.
+   이 스크립트를 만든 세션은 --dry-run 이외의 모드로 실행하지 않는다.
+"""
+import argparse
+import json
+import os
+import shutil
+import sys
+from datetime import datetime, timedelta
+
+sys.path.insert(0, "/Users/kreuzer/stock-bot")
+os.chdir("/Users/kreuzer/stock-bot")
+from dotenv import load_dotenv
+load_dotenv("/Users/kreuzer/stock-bot/.env")
+
+from kis_api._config import PORTFOLIO_HISTORY_FILE, KST
+from kis_api._helpers import _is_us_ticker
+
+BACKUP_SUFFIX = ".bak_20260720"
+
+# 리포트 known-answer 판정용 기준일
+REPORT_DATES_FAKE_TRIGGER = ["2026-05-05", "2026-05-06"]   # ① 가짜발동 소거 확인
+REPORT_DATES_SPIKE        = ["2026-04-01", "2026-06-15"]   # ② 델타 스파이크 대비
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 1. 외부 가격 시리즈 조회 (FDR / yfinance) — 무조정 종가
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _fetch_kr_series(ticker: str, start: str, end: str) -> dict:
+    """FinanceDataReader 무조정 종가. 반환: {"YYYY-MM-DD": close(float), ...}"""
+    try:
+        import FinanceDataReader as fdr
+        df = fdr.DataReader(ticker, start, end)
+        if df is None or df.empty:
+            return {}
+        return {idx.strftime("%Y-%m-%d"): float(row["Close"]) for idx, row in df.iterrows()}
+    except Exception as e:
+        print(f"[backfill] KR {ticker} FDR 조회 실패: {e}")
+        return {}
+
+
+def _fetch_us_series(ticker: str, start: str, end: str) -> dict:
+    """yfinance auto_adjust=False 무조정 종가. 반환: {"YYYY-MM-DD": close(float), ...}"""
+    try:
+        import yfinance as yf
+        import pandas as pd
+        df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
+        if df is None or df.empty:
+            return {}
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel("Ticker")
+        return {idx.strftime("%Y-%m-%d"): float(row["Close"]) for idx, row in df.iterrows()}
+    except Exception as e:
+        print(f"[backfill] US {ticker} yfinance 조회 실패: {e}")
+        return {}
+
+
+def _fetch_fx_series(start: str, end: str) -> dict:
+    """KRW=X 일별 종가 (yfinance). usd_krw_rate 필드가 없는 구형 스냅샷의 폴백용."""
+    return _fetch_us_series("KRW=X", start, end)
+
+
+def _asof(series: dict, date: str, tolerance_days: int = 7):
+    """date 이하 가장 가까운 거래일 종가 (휴장일/공휴일 보정). tolerance 초과 시 None."""
+    if not series:
+        return None
+    if date in series:
+        return series[date]
+    d = datetime.strptime(date, "%Y-%m-%d")
+    for back in range(1, tolerance_days + 1):
+        cand = (d - timedelta(days=back)).strftime("%Y-%m-%d")
+        if cand in series:
+            return series[cand]
+    return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 2. 스냅샷 로드 + 유니버스 수집 + 일괄 시리즈 조회
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _load_history():
+    with open(PORTFOLIO_HISTORY_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _collect_universe(snaps):
+    kr, us = set(), set()
+    for s in snaps:
+        for ticker in (s.get("holdings") or {}):
+            (us if _is_us_ticker(ticker) else kr).add(ticker)
+    return sorted(kr), sorted(us)
+
+
+def _fetch_all_series(snaps):
+    if not snaps:
+        return {}, {}
+    start = (datetime.strptime(snaps[0]["date"], "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
+    end   = (datetime.now(KST) + timedelta(days=1)).strftime("%Y-%m-%d")  # "현재 조회가" 크로스체크(④)까지 커버
+    kr_tickers, us_tickers = _collect_universe(snaps)
+    print(f"[backfill] 유니버스: KR {len(kr_tickers)}종목 {kr_tickers}")
+    print(f"[backfill] 유니버스: US {len(us_tickers)}종목 {us_tickers}")
+    price_series = {}
+    for t in kr_tickers:
+        price_series[t] = _fetch_kr_series(t, start, end)
+    for t in us_tickers:
+        price_series[t] = _fetch_us_series(t, start, end)
+    fx_series = _fetch_fx_series(start, end)
+    return price_series, fx_series
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 3. price_ext 채우기 + NAV 체인 계산 (save_portfolio_snapshot과 동일 공식)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _apply_price_ext(snaps, price_series):
+    """각 스냅샷 holdings에 price_ext 기입 (외부 무조정 종가, asof).
+    기존 필드(price/qty/eval 등)는 무변조 — price_ext는 이번에 처음 채워지는
+    additive 필드다."""
+    dq_flags = []  # (date, ticker, reason)
+    for s in snaps:
+        date = s["date"]
+        for ticker, h in (s.get("holdings") or {}).items():
+            series = price_series.get(ticker, {})
+            px = _asof(series, date)
+            if px is None:
+                dq_flags.append((date, ticker, "외부 종가 조회 실패 (asof 7일 이내 없음)"))
+                continue
+            h["price_ext"] = round(px, 2) if _is_us_ticker(ticker) else int(round(px))
+    return dq_flags
+
+
+def _compute_nav_chain(snaps):
+    """save_portfolio_snapshot()의 NAV 체인 공식을 그대로 재현 (순차, prev→now).
+    r = [Σ q_prev·P_now·fx_now + cash_krw_prev + cash_usd_prev·fx_now]
+      / [Σ q_prev·P_prev·fx_prev + cash_krw_prev + cash_usd_prev·fx_prev] − 1
+    P_prev/P_now = price_ext(백필로 방금 채움) 우선, 없으면 price.
+    fx_now/fx_prev = 각 스냅샷에 저장된 usd_krw_rate (그날 fetch한 값, 스테일 아님).
+    반환: {date: old_delta_pct} — 구 total_asset_krw 일간 델타 (리포트②용, 별도 저장 안 함).
+    """
+    prev = None
+    old_delta = {}
+    for s in snaps:
+        date = s["date"]
+        fx_now = s.get("usd_krw_rate")
+
+        if prev is None:
+            s["nav_index"] = 100.0
+            s.pop("nav_r", None)
+        else:
+            fx_prev = prev.get("usd_krw_rate", fx_now)
+            cash_krw_prev = float(prev.get("cash_krw", 0) or 0)
+            cash_usd_prev = float(prev.get("cash_usd", 0) or 0)
+            numerator   = cash_krw_prev + cash_usd_prev * (fx_now or fx_prev or 0)
+            denominator = cash_krw_prev + cash_usd_prev * (fx_prev or 0)
+
+            for ticker, ph in (prev.get("holdings") or {}).items():
+                now_h = (s.get("holdings") or {}).get(ticker)
+                if now_h is None:
+                    continue  # 공통보유(prev∩now)만
+                q_prev = ph.get("qty", 0) or 0
+                p_prev = ph.get("price_ext")
+                if p_prev is None:
+                    p_prev = ph.get("price")
+                p_now = now_h.get("price_ext")
+                if p_now is None:
+                    p_now = now_h.get("price")
+                if p_prev is None or p_now is None:
+                    continue
+                is_us = _is_us_ticker(ticker)
+                fx_n = (fx_now or fx_prev or 1.0) if is_us else 1.0
+                fx_p = (fx_prev or fx_now or 1.0) if is_us else 1.0
+                numerator   += q_prev * float(p_now) * fx_n
+                denominator += q_prev * float(p_prev) * fx_p
+
+            if denominator > 0:
+                nav_r = numerator / denominator - 1
+                base_index = prev.get("nav_index", 100.0)
+                s["nav_r"] = round(nav_r, 6)
+                s["nav_index"] = round(base_index * (1 + nav_r), 4)
+            else:
+                s["nav_index"] = prev.get("nav_index", 100.0)
+
+        old_total = s.get("total_asset_krw") or s.get("total_eval_krw") or 0
+        prev_total = (prev.get("total_asset_krw") or prev.get("total_eval_krw") or 0) if prev else 0
+        old_delta[date] = round((old_total - prev_total) / prev_total * 100, 2) if prev_total else None
+
+        prev = s
+    return old_delta
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 4. check_drawdown()의 6/21 롤링 윈도우 로직을 전체 시계열에 재현 (구 vs 신 비교용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _total_field(s):
+    return s.get("total_asset_krw") or s.get("total_eval_krw") or 0
+
+
+def _nav_field(s):
+    return s.get("nav_index")
+
+
+def _rolling_dd_series(snaps, key_fn):
+    """kis_api.portfolio.check_drawdown()과 동일한 6/21 윈도우 계산을 전체
+    시계열의 매 인덱스마다 재현 (그날 "오늘"이었다면 나왔을 값)."""
+    out = []
+    for i in range(len(snaps)):
+        weekly_return = monthly_return = monthly_max_dd = None
+        if i + 1 >= 2:
+            today_v = key_fn(snaps[i])
+            if i + 1 >= 6:
+                week_v = key_fn(snaps[i - 5])
+                if week_v:
+                    weekly_return = round((today_v - week_v) / week_v * 100, 2)
+            if i + 1 >= 21:
+                month_v = key_fn(snaps[i - 20])
+                if month_v:
+                    monthly_return = round((today_v - month_v) / month_v * 100, 2)
+                window = [key_fn(s) for s in snaps[i - 20:i + 1]]
+                highs = [v for v in window if v and v > 0]
+                if highs:
+                    peak = max(highs)
+                    monthly_max_dd = round((today_v - peak) / peak * 100, 2) if peak > 0 else None
+        out.append({
+            "date": snaps[i]["date"],
+            "weekly_return": weekly_return,
+            "monthly_return": monthly_return,
+            "monthly_max_dd": monthly_max_dd,
+        })
+    return out
+
+
+def _alert_level(entry):
+    """check_drawdown()의 alerts 발동 로직 재현 — 발동 시 최고 레벨 문자열, 없으면 None."""
+    wr, mdd, mr = entry["weekly_return"], entry["monthly_max_dd"], entry["monthly_return"]
+    if mdd is not None and mdd <= -7:
+        return "CRITICAL(mdd)"
+    if mr is not None and mr <= -7:
+        return "CRITICAL(mr)"
+    if wr is not None and wr <= -4:
+        return "WARNING(wr)"
+    return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# 5. 리포트 ①~⑤
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _by_date(series):
+    return {e["date"]: e for e in series}
+
+
+def build_report(snaps, old_series, new_series, old_delta, price_series, dq_flags):
+    lines = []
+    old_by_date = _by_date(old_series)
+    new_by_date = _by_date(new_series)
+
+    lines.append("## ① 5/05·5/06 가짜발동 소거 여부 (21롤링, nav 기반)")
+    lines.append("")
+    lines.append("| 날짜 | 구 monthly_max_dd | 구 발동 | 신 monthly_max_dd | 신 발동 | 소거됨? |")
+    lines.append("|---|---|---|---|---|---|")
+    for d in REPORT_DATES_FAKE_TRIGGER:
+        o, n = old_by_date.get(d), new_by_date.get(d)
+        o_dd = o["monthly_max_dd"] if o else None
+        n_dd = n["monthly_max_dd"] if n else None
+        o_trig = "CRITICAL" if (o_dd is not None and o_dd <= -7) else "-"
+        n_trig = "CRITICAL" if (n_dd is not None and n_dd <= -7) else "-"
+        cleared = "YES" if (o_trig == "CRITICAL" and n_trig == "-") else ("N/A(구도 미발동)" if o_trig == "-" else "NO")
+        lines.append(f"| {d} | {o_dd} | {o_trig} | {n_dd} | {n_trig} | {cleared} |")
+    lines.append("")
+
+    lines.append("## ② 4/1·6/15 |신 r| < 5% 여부 (구 total_asset 델타 스파이크와 대비)")
+    lines.append("")
+    lines.append("| 날짜 | 구 일간델타(%) | 신 nav_r(%) | \\|신 r\\|<5%? |")
+    lines.append("|---|---|---|---|")
+    for d in REPORT_DATES_SPIKE:
+        s = next((x for x in snaps if x["date"] == d), None)
+        old_d = old_delta.get(d)
+        new_r = round(s.get("nav_r", 0.0) * 100, 2) if s and "nav_r" in s else None
+        ok = "YES" if (new_r is not None and abs(new_r) < 5) else ("N/A" if new_r is None else "NO")
+        lines.append(f"| {d} | {old_d} | {new_r} | {ok} |")
+    lines.append("")
+
+    lines.append("## ③ 구 MDD 최저점(-59.6% 부근) vs 신 DD")
+    lines.append("")
+    valid_old = [(e["date"], e["monthly_max_dd"]) for e in old_series if e["monthly_max_dd"] is not None]
+    if valid_old:
+        worst_date, worst_val = min(valid_old, key=lambda x: x[1])
+        n = new_by_date.get(worst_date)
+        n_dd = n["monthly_max_dd"] if n else None
+        lines.append(f"- 구 최저 monthly_max_dd: **{worst_val}%** ({worst_date})")
+        lines.append(f"- 같은 날짜 신 monthly_max_dd(nav 기반): **{n_dd}%**")
+        verdict = "정상범위 근접(|dd|<30%)" if (n_dd is not None and n_dd > -30) else "확인 필요"
+        lines.append(f"- 판정: {verdict} (⚠️ -20% 내외 기준은 리뷰어 사전측정 참고치, 이 스크립트가 자체 정의한 임계값 아님)")
+    else:
+        lines.append("- 구 monthly_max_dd 계산 가능한 스냅샷 없음 (21개 미만)")
+    lines.append("")
+
+    lines.append("## ④ 백필 최종일 가격 vs 현재 조회가 크로스체크 (|차이|>1% 플래그)")
+    lines.append("")
+    last = snaps[-1]
+    last_date = last["date"]
+    lines.append(f"- 백필 최종 스냅샷 날짜: {last_date}")
+    lines.append("")
+    lines.append("| 티커 | 백필가(price_ext) | 현재 조회가(시리즈 최신값) | 차이(%) | 플래그 |")
+    lines.append("|---|---|---|---|---|")
+    flagged = []
+    for ticker, h in (last.get("holdings") or {}).items():
+        series = price_series.get(ticker, {})
+        if not series:
+            continue
+        latest_date = max(series.keys())
+        latest_px = series[latest_date]
+        backfill_px = h.get("price_ext")
+        if backfill_px is None or not latest_px:
+            continue
+        diff_pct = round((latest_px - backfill_px) / backfill_px * 100, 2)
+        flag = "🚩" if abs(diff_pct) > 1 else ""
+        if flag:
+            flagged.append(ticker)
+        lines.append(f"| {ticker} | {backfill_px} | {latest_px} ({latest_date}) | {diff_pct} | {flag} |")
+    lines.append("")
+    lines.append(f"- 플래그(>1%) 목록: {flagged if flagged else '없음'}")
+    lines.append("  (참고: 최종 스냅샷일과 '현재' 사이 실제 거래일 갭이 있으면 정상적 가격변동으로도 1% 넘을 수 있음 — 버그 신호 아님)")
+    lines.append("")
+
+    lines.append("## ⑤ 일자별 구DD vs 신DD — 발동일 변화 목록")
+    lines.append("")
+    changed = []
+    for o, n in zip(old_series, new_series):
+        ol, nl = _alert_level(o), _alert_level(n)
+        if ol != nl:
+            changed.append((o["date"], ol, o["monthly_max_dd"], o["weekly_return"],
+                             nl, n["monthly_max_dd"], n["weekly_return"]))
+    lines.append(f"- 발동 상태가 바뀐 날짜 수: {len(changed)} / 전체 {len(snaps)}")
+    if changed:
+        lines.append("")
+        lines.append("| 날짜 | 구 발동 | 구 mdd | 구 wr | 신 발동 | 신 mdd | 신 wr |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for d, ol, omdd, owr, nl, nmdd, nwr in changed:
+            lines.append(f"| {d} | {ol or '-'} | {omdd} | {owr} | {nl or '-'} | {nmdd} | {nwr} |")
+    lines.append("")
+
+    if dq_flags:
+        lines.append("## DQ 플래그 (price_ext 조회 실패)")
+        lines.append("")
+        for date, ticker, reason in dq_flags:
+            lines.append(f"- {date} {ticker}: {reason}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# main
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def main(dry_run: bool):
+    print(f"[backfill] 시작 — dry_run={dry_run}")
+    history = _load_history()
+    snaps = sorted(history.get("snapshots", []), key=lambda x: x.get("date", ""))
+    print(f"[backfill] 스냅샷 {len(snaps)}건 ({snaps[0]['date']} ~ {snaps[-1]['date']})")
+
+    price_series, fx_series = _fetch_all_series(snaps)
+    dq_flags = _apply_price_ext(snaps, price_series)
+    old_delta = _compute_nav_chain(snaps)
+
+    old_series = _rolling_dd_series(snaps, _total_field)
+    new_series = _rolling_dd_series(snaps, _nav_field)
+
+    report = build_report(snaps, old_series, new_series, old_delta, price_series, dq_flags)
+    print("\n" + "=" * 70)
+    print(report)
+    print("=" * 70)
+
+    if dry_run:
+        print("\n[backfill] --dry-run — 파일 미기록")
+        return
+
+    backup_path = PORTFOLIO_HISTORY_FILE + BACKUP_SUFFIX
+    if os.path.exists(backup_path):
+        print(f"[backfill] 중단 — 백업 파일이 이미 존재함: {backup_path}")
+        print("[backfill] 기존 백업(순정 원본) 보존을 위해 이번 실행을 중단합니다.")
+        print("[backfill] 재실행하려면 기존 백업을 수동으로 다른 이름으로 이동한 뒤 다시 실행하세요.")
+        sys.exit(1)
+    shutil.copy(PORTFOLIO_HISTORY_FILE, backup_path)
+    print(f"[backfill] 백업: {backup_path}")
+    with open(PORTFOLIO_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump({"snapshots": snaps}, f, ensure_ascii=False, indent=2)
+    print(f"[backfill] 완료 — {PORTFOLIO_HISTORY_FILE} 갱신 ({len(snaps)}건)")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    main(dry_run=args.dry_run)
