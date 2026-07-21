@@ -2,6 +2,7 @@
 import os
 import json
 import re
+import time
 import asyncio
 import aiohttp
 import sqlite3
@@ -67,6 +68,9 @@ async def get_kis_ws_approval_key() -> str:
         return ""
 
 
+_PRICE_CACHE_TTL_SEC = 180  # 캐시 가격 유효기간(초). 틱 없으면 이후 None 반환 → 소비자 REST/Yahoo fallback
+
+
 class KisRealtimeManager:
     """KIS WebSocket 실시간 체결가 매니저
     - KR 통합체결가: H0UNCNT0 (KRX+NXT), 시간외: H0STOUP0 (16:00~18:00)
@@ -84,7 +88,7 @@ class KisRealtimeManager:
         self._running = False
         self._task = None
         self._fired: dict = {}  # {ticker: set(alert_types)} — 당일 발송 추적
-        self._price_cache: dict = {}  # {ticker: int|float} — 최신 체결가 캐시
+        self._price_cache: dict = {}  # {ticker: (price, ts)} — 최신 체결가 캐시 (ts=time.time() 저장시각)
 
     async def start(self, alert_callback, tickers: set):
         self._alert_cb = alert_callback
@@ -214,20 +218,28 @@ class KisRealtimeManager:
                     ticker = f[0]
                     price = int(f[2])
                 if price > 0:
-                    self._price_cache[ticker] = price
+                    self._price_cache[ticker] = (price, time.time())
                     if self._alert_cb:
                         await self._alert_cb(ticker, price)
             except Exception:
                 continue
 
     def get_cached_price(self, ticker: str):
-        """WebSocket 캐시에서 최신 체결가 반환. 없으면 None."""
-        return self._price_cache.get(ticker)
+        """WebSocket 캐시 최신 체결가 반환. TTL(_PRICE_CACHE_TTL_SEC) 초과 스테일이면 None → 소비자 fallback."""
+        entry = self._price_cache.get(ticker)
+        if entry is None:
+            return None
+        if not isinstance(entry, tuple):   # 방어: 예상 못한 bare 값
+            return None
+        price, ts = entry
+        if time.time() - ts > _PRICE_CACHE_TTL_SEC:
+            return None
+        return price
 
     def set_cached_price(self, ticker: str, price):
         """외부에서 캐시에 가격 저장 (REST fallback 등)."""
         if price and price > 0:
-            self._price_cache[ticker] = price
+            self._price_cache[ticker] = (price, time.time())
 
 
 # KisRealtimeManager 싱글톤
