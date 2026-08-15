@@ -3,6 +3,7 @@
 Phase B (2026-06-13): main_pkg/telegram_bot.py 에서 verbatim 추출.
 원본 telegram_bot.py 에 re-export 래퍼 유지 (backward-compat).
 """
+import asyncio
 import os
 from datetime import datetime, timedelta
 
@@ -14,7 +15,8 @@ from db_collector import _KR_MARKET_HOLIDAYS as _KRX_HOLIDAYS
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 주간 무결성 체크 (일 07:05 KST)
-# 최근 영업일 5일 daily_snapshot 누락 시 텔레그램 경고
+# 최근 영업일 10일 daily_snapshot 누락 시 텔레그램 경고
+# (2026-08-16: 5일→10일 확대 — 1주 초과 장애 시 윈도우 밖 영구누락 방지, 2026-08-07 사례)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _is_krx_business_day(d) -> bool:
@@ -27,9 +29,10 @@ def _is_krx_business_day(d) -> bool:
 
 
 async def weekly_sanity_check(context):
-    """매주 일요일 07:05: 최근 영업일 5일 daily_snapshot 존재 확인.
+    """매주 일요일 07:05: 최근 영업일 10일 daily_snapshot 존재 확인.
     KRX 공휴일(근로자의 날·신정·설·추석·임시공휴일 등)은 영업일에서 제외.
     당해 _KRX_HOLIDAYS 등록 카운트 부족 시 갱신 알림 (매주 발송 → 잊지 않게).
+    (2026-08-16: 윈도우 5일→10일 확대 — 1주 초과 장애 시 윈도우 밖 영구누락 방지, 2026-08-07 사례)
     """
     try:
         from db_collector import _get_db
@@ -37,27 +40,35 @@ async def weekly_sanity_check(context):
         cur = conn.execute(
             "SELECT trade_date, COUNT(*) FROM daily_snapshot "
             "WHERE trade_date >= ? GROUP BY trade_date ORDER BY trade_date DESC",
-            ((datetime.now(KST) - timedelta(days=14)).strftime("%Y%m%d"),)
+            # bizday 역산 창(안전상한 21일)보다 넓게 잡아야 함 — 14일이면 공휴일이
+            # 낀 주에 역산창 밖의 실존 스냅샷을 못 봐서 영구 오탐 (2026-08-16 리뷰)
+            ((datetime.now(KST) - timedelta(days=25)).strftime("%Y%m%d"),)
         )
         rows = cur.fetchall()
         conn.close()
-        # 지난 5 영업일 역산 — KRX 공휴일 제외
+        # 지난 10 영업일 역산 — KRX 공휴일 제외
         bizdays = []
         d = datetime.now(KST).date() - timedelta(days=1)
-        # 안전 상한: 14일 뒤로까지 (장기 연휴 대비)
-        for _ in range(14):
-            if len(bizdays) >= 5:
+        # 안전 상한: 21일 뒤로까지 (장기 연휴 + 1주 초과 장애 대비, 2026-08-07 사례)
+        for _ in range(21):
+            if len(bizdays) >= 10:
                 break
             if _is_krx_business_day(d):
                 bizdays.append(d.strftime("%Y%m%d"))
             d -= timedelta(days=1)
-        have = {r[0] for r in rows if r[1] > 1500}
+        # 정상 전종목 스냅샷 ~2,864 / 자동백필 산출물은 universe 규모(~600)뿐이라
+        # 옛 1500 임계로는 백필 완료일을 영구 재판정(무한 루프)함.
+        # >=500 이면 백필 완료로 인정, 진짜 결손(0~수백 미만)만 누락 판정 (2026-08-16 리뷰)
+        have = {r[0] for r in rows if r[1] >= 500}
         missing = [b for b in bizdays if b not in have]
         if missing:
             msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
             await _safe_send(context, msg)
 
             # 누락 영업일 감지 후 자동 백필 (학습 #28 영구 대응)
+            # 2026-08-16 리뷰: 회당 최대 5일 캡(오래된 날짜 우선) + 30분 전체 타임아웃
+            # — 07:15/07:20 잡·KIS API 레이트리밋과의 겹침을 제한. 캡 초과분은
+            # missing 상태로 남아 다음 주 재탐지·이월됨(별도 상태 파일 불필요).
             try:
                 import json as _json
                 from db_collector import backfill_day_via_chart
@@ -67,13 +78,27 @@ async def weekly_sanity_check(context):
                 if not tickers:
                     print("[catchup] universe 비어있음, 스킵", flush=True)
                 else:
-                    for d in missing:
-                        try:
-                            r = await backfill_day_via_chart(d, tickers)
-                            print(f"[catchup] {d}: ok={r['ok']} fail={r['fail']}",
-                                  flush=True)
-                        except Exception as e:
-                            print(f"[catchup] {d} 오류: {e}", flush=True)
+                    missing_sorted = sorted(missing)  # 오래된 날짜부터
+                    to_backfill = missing_sorted[:5]
+                    carryover = missing_sorted[5:]
+                    if carryover:
+                        print(f"[catchup] 회당 5일 캡 초과, 다음 주 이월: {carryover}",
+                              flush=True)
+
+                    async def _run_catchup():
+                        for d in to_backfill:
+                            try:
+                                r = await backfill_day_via_chart(d, tickers)
+                                print(f"[catchup] {d}: ok={r['ok']} fail={r['fail']}",
+                                      flush=True)
+                            except Exception as e:
+                                print(f"[catchup] {d} 오류: {e}", flush=True)
+
+                    try:
+                        await asyncio.wait_for(_run_catchup(), timeout=1800)
+                    except asyncio.TimeoutError:
+                        print("[catchup] 전체 백필 30분 타임아웃 — 중단 (다음 주 재탐지)",
+                              flush=True)
             except Exception as e:
                 print(f"[catchup] 오류: {e}", flush=True)
 
@@ -162,11 +187,13 @@ async def weekly_sanity_check(context):
 
 
 async def weekly_log_rotate(context):
-    """매주 일요일 23:30 KST - /tmp/stock-bot.log 트림 (100MB 초과 시 마지막 10MB).
+    """매주 일요일 23:30 KST - ~/Library/Logs/stock-bot.log 트림 (100MB 초과 시 마지막 10MB).
 
-    학습 #?? (5/9): mac /tmp 는 RAM-backed (APFS), 무한 성장 시 launchd
-    stdout 드롭 + working set eviction. launchd plist StandardOutPath
-    직접 쏟음 → 자동 트림 필요.
+    학습 #?? (5/9, 2026-08-16 경로 이동): mac /tmp 는 RAM-backed (APFS) 라
+    재부팅 시 로그가 소실됨 — 8/7~8/14 침묵장애 때 원인 추적이 불가능했던
+    핵심 원인 중 하나. launchd plist StandardOutPath 를 ~/Library/Logs/ 로
+    이동(재부팅에도 보존)하면서 트림 대상 경로도 동기화. 무한 성장 시
+    working set 증가는 여전히 문제이므로 트림 로직 자체는 유지.
 
     inode 보존 (POSIX append FD 호환): launchd 가 시작 시 O_APPEND 로 연
     FD 를 보유함. `mv tmp file` 패턴은 path 가 새 inode 를 가리키게 만들지만
@@ -177,7 +204,7 @@ async def weekly_log_rotate(context):
     """
     import os as _os
     import subprocess as _sp
-    log_path = "/tmp/stock-bot.log"
+    log_path = _os.path.expanduser("~/Library/Logs/stock-bot.log")
     try:
         size = _os.path.getsize(log_path)
         if size > 100 * 1024 * 1024:

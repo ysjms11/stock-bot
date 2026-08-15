@@ -67,7 +67,7 @@ from kis_api import (
 )
 
 try:
-    from db_collector import collect_daily, collect_financial_weekly
+    from db_collector import collect_daily, collect_financial_weekly, DB_PATH
     _HAS_DB_COLLECTOR = True
 except ImportError:
     _HAS_DB_COLLECTOR = False
@@ -190,6 +190,48 @@ async def post_init(application: Application):
         print(f"[us_analyst_sync] 부트 동기화 실패: {e}")
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# /health 신선도 확장 (2026-08-16, 8/7~8/14 침묵장애 재발방지)
+# 아웃바운드 네트워크만 죽은 좀비 상태(인바운드는 살아있어 /health 200이 계속 나옴)를
+# 외부 모니터가 감지할 수 있도록 마지막 스냅샷/수집 시각을 함께 노출.
+# 원칙: 어떤 예외에도 200 {"status":"ok"}는 보장 — 신선도 필드만 조용히 생략.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_health_cache = {"ts": 0.0, "payload": None, "ttl": 300}
+
+
+async def _handle_health(request):
+    """헬스체크 + 데이터 신선도. 정상 300초 캐시 / 필드 결손 시 30초로 단축(고착 방지)."""
+    import time as _t
+    now = _t.time()
+    if _health_cache["payload"] is not None and now - _health_cache["ts"] < _health_cache["ttl"]:
+        return web.json_response(_health_cache["payload"])
+    payload = {"status": "ok"}
+    try:
+        payload["last_snapshot"] = datetime.fromtimestamp(
+            os.path.getmtime(PORTFOLIO_HISTORY_FILE), tz=KST).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    try:
+        import sqlite3 as _sq
+        # 읽기전용 URI 연결 — 공개 엔드포인트가 경로 부재 시 빈 DB 파일을
+        # 생성하는 부작용을 차단 (2026-08-16 리뷰, 재현 확인됨)
+        con = _sq.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=2)
+        row = con.execute("SELECT MAX(trade_date) FROM daily_snapshot").fetchone()
+        con.close()
+        if row and row[0]:
+            payload["last_collect"] = str(row[0])
+    except Exception:
+        pass
+    _health_cache["ts"] = now
+    _health_cache["payload"] = payload
+    # 필드 결손(last_snapshot/last_collect 둘 중 하나라도 없음) 시 TTL 30초로 단축
+    # — 300초 그대로면 일시적 실패가 5분간 캐시에 고착됨 (2026-08-16 리뷰)
+    _health_cache["ttl"] = (
+        300 if ("last_snapshot" in payload and "last_collect" in payload) else 30
+    )
+    return web.json_response(payload)
+
+
 def main():
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
@@ -265,7 +307,7 @@ async def _run_all(app, port):
     mcp_app.router.add_post("/mcp", mcp_streamable_post_handler)
     mcp_app.router.add_delete("/mcp", mcp_streamable_delete_handler)
     mcp_app.router.add_options("/mcp", mcp_streamable_options_handler)
-    mcp_app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
+    mcp_app.router.add_get("/health", _handle_health)
     # 대시보드 라우트 (5/5 리팩토링으로 dashboard.py 분리)
     dashboard.register_routes(mcp_app)
     import dashboard_home

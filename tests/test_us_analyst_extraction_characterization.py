@@ -451,7 +451,7 @@ _EXPECTED_GLOBALS = {
     },
     "weekly_sanity_check": {
         "CHAT_ID", "KST", "UNIVERSE_FILE", "_DATA_DIR", "_KRX_HOLIDAYS",
-        "_is_krx_business_day", "_safe_send", "datetime", "os", "timedelta"
+        "_is_krx_business_day", "_safe_send", "asyncio", "datetime", "os", "timedelta"
     },
     "weekly_log_rotate": set(),
     "_detect_new_downgrades": {"_US_DOWNGRADE_PT_THRESHOLD", "_US_SELL_RATINGS"},
