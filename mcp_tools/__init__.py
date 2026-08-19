@@ -307,12 +307,12 @@ MCP_TOOLS = [
                      "required": ["ticker"]}},
 
     {"name": "read_file",
-     "description": "stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt, 최대 100KB. ../ 경로 차단. PDF 읽기는 read_report_pdf 사용.",
+     "description": "path만 넣고 호출하면 첫 청크와 next_offset을 반환합니다 — next_offset을 offset에 넣어 재호출을 반복하면(lines 생략 유지) next_offset이 사라질 때까지 파일 전체를 자동 순회할 수 있습니다. stock-bot 디렉토리 내 파일 읽기. 허용 확장자: .md/.py/.json/.txt. ≤100KB 파일은 lines 생략 시 한 번에 전체 반환(무변경). 100KB 초과 파일이거나 lines 지정 시 청크 단위로 반환하며 응답당 캡은 콘텐츠 기준 100KB(초과분은 줄 경계에서 자르고 truncated:true). 단일 줄이 100KB를 넘는 극단 케이스는 partial_line:true로 표시되고 해당 줄은 바이트 단위로 잘려 잔여는 접근 불가. ../ 경로 차단. PDF 읽기는 read_report_pdf 사용.",
      "inputSchema": {"type": "object",
                      "properties": {
                          "path": {"type": "string", "description": "stock-bot 디렉토리 기준 상대경로 (예: CLAUDE.md, kis_api.py)"},
-                         "lines": {"type": "integer", "description": "최대 N줄만 읽기 (생략 시 전체)"},
-                         "offset": {"type": "integer", "description": "시작 줄 번호 0-indexed (기본값 0, lines와 함께 사용)"},
+                         "lines": {"type": "integer", "description": "청크당 최대 줄 수 (생략 시 100KB 이하 파일은 전체 반환, 100KB 초과 파일은 offset부터 자동 청크 — 어느 경우든 응답 콘텐츠는 100KB로 캡됨)"},
+                         "offset": {"type": "integer", "description": "시작 줄 번호 0-indexed (기본값 0, 음수는 0으로 보정). 이전 응답의 next_offset을 그대로 넣어 이어읽기 — next_offset이 없으면 끝까지 읽은 것"},
                      },
                      "required": ["path"]}},
     {"name": "write_file",

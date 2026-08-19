@@ -88,24 +88,75 @@ async def handle_read_file(arguments: dict) -> dict | list:
                         "size_kb": _pdf_size // 1024,
                         "note": "PDF 파일입니다. Claude Code의 Read 도구로 직접 읽으세요.",
                     }
-            elif os.path.getsize(_fpath) > 100 * 1024:
-                result = {"error": f"파일 크기 초과 (최대 100KB, 실제 {os.path.getsize(_fpath) // 1024}KB)"}
             else:
-                _lines_limit = arguments.get("lines")
-                _offset = int(arguments.get("offset") or 0)
-                with open(_fpath, "r", encoding="utf-8") as _rf:
-                    if _lines_limit:
-                        _all = _rf.readlines()
-                        _sliced = _all[_offset: _offset + int(_lines_limit)]
+                _fsize = os.path.getsize(_fpath)
+                _raw_lines = arguments.get("lines")
+                _raw_offset = arguments.get("offset")
+                try:
+                    _lines_limit = None if _raw_lines in (None, "") else int(_raw_lines)
+                    _offset = 0 if _raw_offset in (None, "") else int(_raw_offset)
+                    _int_error = False
+                except (TypeError, ValueError):
+                    _int_error = True
+
+                if _int_error:
+                    result = {"error": "lines/offset은 정수여야 합니다"}
+                else:
+                    _offset = max(0, _offset)
+                    if _fsize <= 100 * 1024 and _lines_limit is None:
+                        # 100KB 이하 + lines 미지정 → 기존 전체읽기 동작 무변경
+                        with open(_fpath, "r", encoding="utf-8") as _rf:
+                            result = {"path": rel, "content": _rf.read()}
+                    else:
+                        # 100KB 초과이거나 lines 지정 → 청크 단위 읽기.
+                        # lines 미지정(자동 청크 모드)이면 offset부터 파일 끝까지를 요청 범위로 삼되
+                        # 아래 바이트 버짓으로 자연히 첫 청크만 반환됨 — 클라이언트는 path(+offset)만으로 순회 가능.
+                        _budget = 100 * 1024
+                        with open(_fpath, "r", encoding="utf-8") as _rf:
+                            _all = _rf.readlines()
+                        _total_lines = len(_all)
+                        _sliced = _all[_offset: _offset + _lines_limit] if _lines_limit is not None else _all[_offset:]
+                        _kept = []
+                        _kept_bytes = 0
+                        _truncated = False
+                        _partial_line = False
+                        for _ln in _sliced:
+                            _lb = len(_ln.encode("utf-8"))
+                            if _kept_bytes + _lb > _budget:
+                                _truncated = True
+                                break
+                            _kept.append(_ln)
+                            _kept_bytes += _lb
+                        if _truncated and not _kept and _sliced:
+                            # 단일 라인 자체가 버짓을 넘는 극단 케이스(예: corp_codes.json류) —
+                            # 바이트 단위로 잘라 반환. 잔여 바이트는 영구 접근 불가이므로
+                            # next_offset은 이 라인 "다음"으로 넘겨 무한 재요청을 방지한다.
+                            _kept = [_sliced[0].encode("utf-8")[:_budget].decode("utf-8", errors="ignore")]
+                            _partial_line = True
+                        _lines_returned = len(_kept)
+                        _next_offset = _offset + _lines_returned
                         result = {
                             "path": rel,
-                            "content": "".join(_sliced),
-                            "lines_returned": len(_sliced),
-                            "total_lines": len(_all),
+                            "content": "".join(_kept),
+                            "lines_returned": _lines_returned,
+                            "total_lines": _total_lines,
                             "offset": _offset,
                         }
-                    else:
-                        result = {"path": rel, "content": _rf.read()}
+                        if _truncated:
+                            result["truncated"] = True
+                        if _partial_line:
+                            result["partial_line"] = True
+                        if _next_offset < _total_lines:
+                            # 남은 내용 있음 — next_offset 제공(이게 순회 계속 신호)
+                            result["next_offset"] = _next_offset
+                            result["note"] = (
+                                f"라인 {_offset} 바이트절단, 잔여 접근불가. next_offset로 다음 줄부터 재호출"
+                                if _partial_line else
+                                "next_offset로 재호출해 이어읽기 — next_offset이 없으면 끝"
+                            )
+                        elif _partial_line:
+                            # 마지막 줄이 통째로 잘린 경우 — next_offset은 없지만(더 읽을 줄이 없음) 절단 사실은 안내
+                            result["note"] = f"라인 {_offset} 바이트절단, 잔여 접근불가"
 
     return result
 
