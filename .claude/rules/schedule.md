@@ -1,6 +1,6 @@
 # 스케줄 타임라인 (자동 잡)
 
-> `main_pkg/schedule.py`의 `register_all_schedules()` — `jq.run_daily` / `jq.run_repeating` 등록 50건의 전체 뷰.
+> `main_pkg/schedule.py`의 `register_all_schedules()` — `jq.run_daily` / `jq.run_repeating` 등록 52건(`run_daily` 47 + `run_repeating` 5)의 전체 뷰.
 > 새 잡 추가/삭제/시각 변경 시 **이 표도 함께 업데이트** (동일 커밋에 포함).
 
 **표 읽는 법**
@@ -80,6 +80,7 @@
 | 19:02 | 일 | `sunday_30` | `sunday_30_reminder` | Sunday 30 리마인더 | 5/28 +2m stagger |
 | 19:05 | 평일 | `daily_change_scan` | `daily_change_scan_alert` | 발굴 알림 (turnaround/fscore_jump/insider_cluster_buy) | 4/18 신규 |
 | 19:07 | 일 | `weekly_report_digest` | `weekly_report_digest_notify` | 비종목 리포트 분석 시간 알림 (통계 + Claude.ai 프롬프트 템플릿, 봇 판단 X) | 4/26 신규 |
+| 19:08 | 평일 | `market_data` | `daily_market_data_collect` | 매크로 일봉(VIX·10Y·DXY·WTI·FX·지수) + KOSPI/KOSDAQ 투자자 flow 시계열 저장 → 레짐 foreign_5d·SAT 8변수 임계 | 8/29 신규, 9/3 16:05→19:08 이동(KRX 확정수급 ~18시 이후 공개) |
 | 19:15 | 평일 | `collect_sanity_1` | `daily_collect_sanity_check` | 자가진단 — 당일 snapshot 0건이면 collect_daily 재실행 | 4/25 신규 |
 | 19:30 | 평일 | `daily_consensus` | `daily_consensus_check` | 컨센서스 상향 체크 | — |
 | 19:31 | 전체 | `event_d1` | `daily_event_d1_alert` | D-1 이벤트 알림 (events.json + Polymarket + Treasury, FOMC/주요 어닝/매크로 지표 매칭 시) | 5/28 +1m stagger |
@@ -103,6 +104,7 @@
 19:01  pension_alert (평일)  ← +1m stagger
 19:02  sunday_30 (일)        ← +2m stagger
 19:05  daily_change_scan  ─┐
+19:08  market_data (평일, KRX 확정수급 ~18시 이후 공개)
 19:15  collect_sanity_1   │ daily_collect 결과 또는 DB 의존
 19:30  daily_consensus    │
 19:31  event_d1           ← +1m stagger
@@ -111,7 +113,7 @@
 22:00  auto_backup (전체 일괄)
 ```
 
-**1~2분 stagger**로 동시 잡 충돌 회피. 신규 잡 추가 시 **19:08~19:14 / 19:16~19:29 구간** 비어 있음 (19:15는 `collect_sanity_1`).
+**1~2분 stagger**로 동시 잡 충돌 회피. 신규 잡 추가 시 **19:09~19:14 / 19:16~19:29 구간** 비어 있음 (19:08은 `market_data`, 19:15는 `collect_sanity_1`).
 
 ## 주말 활동
 

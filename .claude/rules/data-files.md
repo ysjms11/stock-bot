@@ -34,8 +34,8 @@
 | `/data/dart_disclosures/` | DART 공시 본문 txt 캐시 (`kis_api/dart.py` `DART_DISCLOSURE_CACHE_DIR`) | — |
 | `/data/deepdive/` · `decisions/` · `thesis/` · `research/` | 투자 워크플로 md 문서 디렉토리 (딥다이브/판단기록/thesis/리서치) | — |
 | `/data/std_sector_map.json` | 표준산업분류코드 캐시 `{ticker: {std_code, std_name}}` (1회 수집) | `{}` |
-| `/data/stock.db` | SQLite DB **20테이블+1뷰** (권위=`sqlite_master`): stock_master·daily_snapshot·financial_quarterly·consensus_history·dividend_events·reports·insider_transactions·sec_filings + 미국 애널 4종(us_analysts·us_analyst_ratings·us_analyst_coverage·us_consensus_snapshot) + 5%/10%룰 4종(dart_5pct_changes·dart_10pct_insiders·wi_5pct_changes·wi_10pct_insiders) + pension_flow_daily + nps_* 3종(nps_holdings_disclosed·nps_us_holdings·nps_kr_full_holdings) + v_daily_scan 뷰, ~480MB | — |
-| `/data/db_schema.sql` | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) — 단 pension/nps/dart·wi 5%·10%룰 테이블 8종은 런타임 생성이라 미수록 (12/20 테이블만 수록) | — |
+| `/data/stock.db` | SQLite DB **22테이블+1뷰** (권위=`sqlite_master`): stock_master·daily_snapshot·financial_quarterly·consensus_history·dividend_events·reports·insider_transactions·sec_filings + 미국 애널 4종(us_analysts·us_analyst_ratings·us_analyst_coverage·us_consensus_snapshot) + 5%/10%룰 4종(dart_5pct_changes·dart_10pct_insiders·wi_5pct_changes·wi_10pct_insiders) + pension_flow_daily + nps_* 3종(nps_holdings_disclosed·nps_us_holdings·nps_kr_full_holdings) + macro_daily·market_flow_daily(8/29 신규, `db_collector/market_data.py` — 레짐 foreign_5d·`get_macro_external` 8변수 임계 데이터 원천) + v_daily_scan 뷰, ~480MB | — |
+| `/data/db_schema.sql` | SQLite DB 스키마 정의 (테이블/인덱스/뷰 DDL) — 단 pension/nps/dart·wi 5%·10%룰 테이블 8종 + macro_daily·market_flow_daily(8/29 신규)는 런타임 생성이라 미수록 (12/22 테이블만 수록) | — |
 
 > 맥미니 로컬 `data/` 디렉토리 사용 (`DATA_DIR` 환경변수).
 > 환경변수 기반 자동복원 fallback 있음 (`BACKUP_PORTFOLIO`·`BACKUP_STOPLOSS`·`BACKUP_WATCHALERT` 등 7종, `kis_api/_files.py` `_BACKUP_MAP`. 구 `BACKUP_WATCHLIST`/`BACKUP_US_WATCHLIST`는 미사용 — watchalert.json 존재 시 무시 로그만 출력).

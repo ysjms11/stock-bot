@@ -520,19 +520,151 @@ def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
     }
 
 
-async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
-    """외부 매크로 시그널 통합 — Polymarket + Treasury curve + Fed Polymarket.
+def _calc_macro_thresholds(kst_date_str: str) -> dict:
+    """macro_daily 시계열 기반 매크로 8변수 임계 돌파 계산 (SAT_PORT_CHECK 대응, 2026-09 신규).
 
-    한 번 호출로 매크로 전체 외부 베팅 컨센서스 + 금리 곡선 침체 시그널 조회.
-    SAT_PORT_CHECK / SUN_DISCOVERY / 매크로 대시보드 자동 통합용.
+    VIX 밴드(20/30/40) + USD/KRW·WTI·DXY 5거래일 변화율 + US10Y 5거래일 변화(bp) +
+    KOSPI/S&P500 60일 이평 이탈(하회) 여부 + US10Y-2Y 스프레드(역전<0/0.25미만) = 8항목.
+    판정 로직(레짐/게이팅)에는 관여하지 않는 순수 표시용 additive 블록 — 데이터 부족 시
+    해당 item만 breached=None으로 표시하고 전체 호출은 항상 성공한다(전부 try/except).
+
+    Returns: {"asof": kst_date, "breaches": n, "items": [{"name","value","change",
+              "threshold","breached":bool|None,"note"}, ...]}
+    """
+    try:
+        import db_collector.market_data as _md
+    except Exception as e:
+        return {"asof": kst_date_str, "breaches": 0, "items": [], "note": f"db_collector 미가용: {e}"}
+
+    items = []
+
+    def _fallback(name, threshold, err=None):
+        items.append({
+            "name": name, "value": None, "change": None, "threshold": threshold,
+            "breached": None, "note": f"오류: {err}" if err else "데이터 부족",
+        })
+
+    def _add_band(name, series, bands):
+        try:
+            w = _md.series_asof_window(series, kst_date_str, 1)
+            if not w or w[0]["value"] is None:
+                return _fallback(name, f"{'/'.join(str(b) for b in bands)} 밴드")
+            v = w[0]["value"]
+            band_hit = next((b for b in sorted(bands, reverse=True) if v >= b), None)
+            items.append({
+                "name": name, "value": round(v, 2), "change": None,
+                "threshold": f"{'/'.join(str(b) for b in bands)} 밴드",
+                "breached": band_hit is not None,
+                "note": f"{band_hit} 밴드 돌파" if band_hit else "정상 밴드",
+            })
+        except Exception as e:
+            _fallback(name, f"{'/'.join(str(b) for b in bands)} 밴드", e)
+
+    def _add_5d_pct(name, series, threshold_pct):
+        try:
+            w = _md.series_asof_window(series, kst_date_str, 6)
+            if len(w) < 6 or w[0]["value"] is None or not w[5]["value"]:
+                return _fallback(name, f"±{threshold_pct}%")
+            latest, prior = w[0]["value"], w[5]["value"]
+            chg = round((latest / prior - 1) * 100, 2)
+            items.append({
+                "name": name, "value": round(latest, 4), "change": chg,
+                "threshold": f"±{threshold_pct}%", "breached": abs(chg) >= threshold_pct,
+                "note": f"5거래일 {chg:+.2f}%",
+            })
+        except Exception as e:
+            _fallback(name, f"±{threshold_pct}%", e)
+
+    def _add_5d_bp(name, series, threshold_bp):
+        try:
+            w = _md.series_asof_window(series, kst_date_str, 6)
+            if len(w) < 6 or w[0]["value"] is None or w[5]["value"] is None:
+                return _fallback(name, f"±{threshold_bp}bp")
+            latest, prior = w[0]["value"], w[5]["value"]
+            chg_bp = round((latest - prior) * 100, 1)  # 수익률(%) 차이 → bp
+            items.append({
+                "name": name, "value": round(latest, 3), "change": chg_bp,
+                "threshold": f"±{threshold_bp}bp", "breached": abs(chg_bp) >= threshold_bp,
+                "note": f"5거래일 {chg_bp:+.1f}bp",
+            })
+        except Exception as e:
+            _fallback(name, f"±{threshold_bp}bp", e)
+
+    def _add_vs_ma60(name, series):
+        try:
+            w = _md.series_asof_window(series, kst_date_str, 60)
+            if len(w) < 60 or any(r["value"] is None for r in w):
+                return _fallback(name, "60일 이평 이탈(하회)")
+            latest = w[0]["value"]
+            ma60 = sum(r["value"] for r in w) / len(w)
+            if not ma60:
+                return _fallback(name, "60일 이평 이탈(하회)")
+            dist_pct = round((latest - ma60) / ma60 * 100, 2)
+            items.append({
+                "name": name, "value": round(latest, 2), "change": dist_pct,
+                "threshold": "60일 이평 이탈(하회)", "breached": dist_pct < 0,
+                "note": f"MA60 대비 {dist_pct:+.2f}%",
+            })
+        except Exception as e:
+            _fallback(name, "60일 이평 이탈(하회)", e)
+
+    def _add_spread_band(name, series_a, series_b):
+        """장단기 금리 스프레드(series_a - series_b) — SAT_PORT_CHECK 표 그대로
+        "역전(<0) / 0.25 미만" 단일 밴드. 값 스케일은 macro_daily에 저장된 그대로
+        (us10y/us2y 둘 다 group="US" — 같은 룩어헤드 컷오프로 정렬됨)."""
+        try:
+            wa = _md.series_asof_window(series_a, kst_date_str, 1)
+            wb = _md.series_asof_window(series_b, kst_date_str, 1)
+            if not wa or not wb or wa[0]["value"] is None or wb[0]["value"] is None:
+                return _fallback(name, "역전(<0)/0.25 미만")
+            spread = round(wa[0]["value"] - wb[0]["value"], 3)
+            if spread < 0:
+                note = "역전"
+            elif spread < 0.25:
+                note = "0.25 미만"
+            else:
+                note = "정상"
+            items.append({
+                "name": name, "value": spread, "change": None,
+                "threshold": "역전(<0)/0.25 미만", "breached": spread < 0.25,
+                "note": note,
+            })
+        except Exception as e:
+            _fallback(name, "역전(<0)/0.25 미만", e)
+
+    _add_band("VIX", "vix", (20, 30, 40))
+    _add_5d_pct("USD/KRW", "usdkrw", 2.0)
+    _add_5d_bp("US10Y", "us10y", 20)
+    _add_5d_pct("WTI", "wti", 5.0)
+    _add_5d_pct("DXY", "dxy", 1.0)
+    _add_vs_ma60("KOSPI_vs_MA60", "kospi")
+    _add_vs_ma60("SP500_vs_MA60", "sp500")
+    _add_spread_band("US10Y-2Y", "us10y", "us2y")
+
+    breaches = sum(1 for it in items if it.get("breached") is True)
+    return {"asof": kst_date_str, "breaches": breaches, "items": items}
+
+
+async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
+    """외부 매크로 시그널 통합 — Polymarket + Treasury curve + Fed Polymarket + 임계 브레이치.
+
+    한 번 호출로 매크로 전체 외부 베팅 컨센서스 + 금리 곡선 침체 시그널 + macro_daily
+    기반 8변수 임계 돌파 조회. SAT_PORT_CHECK / SUN_DISCOVERY / 매크로 대시보드 자동 통합용.
 
     Returns:
         {"polymarket": [...], "fed": {...polymarket Fed decision...},
-         "treasury": {...}, "summary": "1줄 요약"}
+         "treasury": {...}, "thresholds": {...macro_daily 임계 브레이치, 2026-09 신규...},
+         "summary": "1줄 요약"}
     """
     poly = await fetch_polymarket(top=top_polymarket, min_volume=500_000)
     fed = await fetch_polymarket(top=3, min_volume=100_000, query="Fed decision")
     curve = await fetch_treasury_curve()
+
+    try:
+        thresholds = _calc_macro_thresholds(datetime.now(KST).strftime("%Y-%m-%d"))
+    except Exception as e:
+        thresholds = {"asof": datetime.now(KST).strftime("%Y-%m-%d"), "breaches": 0,
+                       "items": [], "note": f"오류: {e}"}
 
     # 1줄 요약
     summary_parts = []
@@ -554,6 +686,7 @@ async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
         "polymarket": poly,
         "fed": fed,
         "treasury": curve,
+        "thresholds": thresholds,
         "summary": " | ".join(summary_parts) if summary_parts else "데이터 부족",
         "fetched_at": datetime.now(KST).isoformat(),
     }

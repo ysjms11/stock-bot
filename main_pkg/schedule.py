@@ -43,6 +43,7 @@ from main_pkg.jobs.us_analyst import (
 )
 from main_pkg.jobs.sanity import weekly_sanity_check, weekly_log_rotate
 from main_pkg.jobs.toss_sync import toss_sync_job
+from main_pkg.jobs.market_data import daily_market_data_collect
 
 
 def register_all_schedules(jq):
@@ -72,6 +73,7 @@ def register_all_schedules(jq):
     jq.run_daily(us_market_summary, time=dtime(5,  5, tzinfo=KST), days=(2,3,4,5,6), name="us_summary_dst")
     jq.run_daily(us_market_summary, time=dtime(6,  5, tzinfo=KST), days=(2,3,4,5,6), name="us_summary_std")
     jq.run_daily(check_supply_drain,   time=dtime(15, 42, tzinfo=KST), days=(1,2,3,4,5), name="supply_drain")  # +2m (rate limit stagger)
+    jq.run_daily(daily_market_data_collect, time=dtime(19, 8, tzinfo=KST), days=(1,2,3,4,5), name="market_data")  # 8/29 신규, 9/3 16:05→19:08 이동 (KRX 확정수급 ~18시 이후 공개 — 19:05 daily_change_scan · 19:15 collect_sanity_1 사이 빈 슬롯)
     jq.run_daily(momentum_exit_check,  time=dtime(16, 30, tzinfo=KST), days=(1,2,3,4,5), name="momentum_check")
     jq.run_daily(snapshot_and_drawdown, time=dtime(15, 50, tzinfo=KST), days=(1,2,3,4,5), name="snapshot_dd")
     jq.run_daily(weekly_review,           time=dtime(7,  0, tzinfo=KST), days=(6,), name="weekly")

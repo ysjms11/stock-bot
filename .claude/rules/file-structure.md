@@ -1,6 +1,6 @@
 # 파일별 함수 구조 상세
 
-> ✅ **맵 갱신 완료 (2026-06-11)**: 2026-05 리팩터로 단일파일 `kis_api.py`·`mcp_tools.py`는 삭제되고 `main.py`는 7줄 shim만 남음 — 패키지 분리: `kis_api/`(23모듈), `mcp_tools/`(`__init__`·`_registry`·`_execute`·`_helpers`·`server`·`tools/*`), `main_pkg/`(`telegram_bot`·`_entry`·`_ctx`·`schedule`·`jobs/*`). `db_collector.py`도 2026-06 `db_collector/` 패키지(14모듈)로 분리됨. 아래는 실측 패키지 맵 (줄수는 2026-06-11 스냅샷 — ±드리프트 가능). **함수 위치 권위는 코드**: `grep -rn "def <name>" <pkg>/`.
+> ✅ **맵 갱신 완료 (2026-06-11, db_collector 모듈 수는 2026-09-03 갱신)**: 2026-05 리팩터로 단일파일 `kis_api.py`·`mcp_tools.py`는 삭제되고 `main.py`는 7줄 shim만 남음 — 패키지 분리: `kis_api/`(23모듈), `mcp_tools/`(`__init__`·`_registry`·`_execute`·`_helpers`·`server`·`tools/*`), `main_pkg/`(`telegram_bot`·`_entry`·`_ctx`·`schedule`·`jobs/*`). `db_collector.py`도 2026-06 `db_collector/` 패키지(2026-09 `market_data.py` 추가로 15모듈)로 분리됨. 아래는 실측 패키지 맵 (줄수는 2026-06-11 스냅샷 — ±드리프트 가능). **함수 위치 권위는 코드**: `grep -rn "def <name>" <pkg>/`.
 
 ## kis_api/ 패키지 구조 (2026-05 분해, 23모듈 11,077줄)
 
@@ -75,10 +75,10 @@ tools/ — 19 핸들러 모듈 + `__init__.py`. 핸들러 47개 = 도구 1:1 (`t
 | `__init__.py` | 5 | `main` re-export |
 | `_ctx.py` | 153 | 공유 상수·공통 헬퍼 — 전 main_pkg 모듈의 import 원천 (_is_kr_trading_time, _extract_grade, _refresh_ws) |
 | `_entry.py` | 343 | post_init() · main() · _run_all() — MCP+텔레그램+WebSocket 기동, dashboard_home 라우트 등록(:257) |
-| `schedule.py` | 114 | `register_all_schedules(jq)` — 잡 50건 등록 (run_daily 46 + run_repeating 4) + PTB days= 매핑 가드 |
+| `schedule.py` | 114 | `register_all_schedules(jq)` — 잡 52건 등록 (run_daily 47 + run_repeating 5, 2026-09-03 실측) + PTB days= 매핑 가드 |
 | `telegram_bot.py` | ~1,082 | 텔레그램 명령어 핸들러 (미국 애널/sanity 잡 7종은 2026-06-12 `jobs/us_analyst.py`·`jobs/sanity.py`로 분리 — telegram_bot이 15심볼 하위호환 re-export) |
 
-jobs/ — 24 잡모듈 + `__init__.py` (25파일). 파일 ↔ 등록 잡이름 (`schedule.py` 기준):
+jobs/ — 26 잡모듈 + `__init__.py` (27파일, 2026-09 `market_data.py` 신규). 파일 ↔ 등록 잡이름 (`schedule.py` 기준):
 
 | 파일 | 함수 → 잡이름 |
 |------|---------------|
@@ -94,6 +94,8 @@ jobs/ — 24 잡모듈 + `__init__.py` (25파일). 파일 ↔ 등록 잡이름 (
 | `insider.py` | check_insider_cluster → `insider_cluster` |
 | `kr_summary.py` | daily_kr_summary → `kr_summary` |
 | `macro_job.py` | macro_dashboard → `macro_am` · `macro_pm` |
+| `market_data.py` | daily_market_data_collect → `market_data` (2026-09 신규, 16:05→19:08 이동) |
+| `toss_sync.py` | toss_sync_job → `toss_sync` (1분 반복, 토스 잔고→portfolio.json 읽기전용 동기화) |
 | `momentum.py` | check_supply_drain → `supply_drain` · momentum_exit_check → `momentum_check` |
 | `pension.py` | daily_pension_collect → `pension_collect` · daily_nps_dart_increment → `nps_dart_inc` · weekly_nps_collect → `weekly_nps` · daily_pension_alert → `pension_alert` |
 | `regime.py` | regime_transition_alert → `regime_transition` (60분) |
@@ -107,7 +109,7 @@ jobs/ — 24 잡모듈 + `__init__.py` (25파일). 파일 ↔ 등록 잡이름 (
 | `us_analyst.py` | daily_us_rating_scan → `us_ratings` · weekly_us_ratings_universe_scan → `weekly_us_harvest` · weekly_us_analyst_sync → `weekly_us_analyst_sync` · hourly_us_holdings_check → `us_holdings_noon`·`us_holdings_close` · weekly_us_analyst_report → `weekly_us_analyst` (+헬퍼5·상수2, 2026-06-12 telegram_bot서 분리) |
 | `sanity.py` | weekly_sanity_check → `weekly_sanity` · weekly_log_rotate → `weekly_log_rotate` (+_is_krx_business_day, 2026-06-12 telegram_bot서 분리) |
 
-## db_collector/ 패키지 구조 (2026-06 분해, 단일파일 4,439줄 → 14모듈)
+## db_collector/ 패키지 구조 (2026-06 분해, 단일파일 4,439줄 → 15모듈, 2026-09 `market_data.py` 추가)
 
 | 모듈 | 소유 |
 |------|------|
@@ -125,6 +127,7 @@ jobs/ — 24 잡모듈 + `__init__.py` (25파일). 파일 ↔ 등록 잡이름 (
 | `alpha.py` | F/M/FCF 알파 엔진 (TTM/update_all_alpha_metrics/collect_shares_historical) |
 | `us_analysts.py` | 미국 애널 (sync_us_analyst_master/is_tier_s_analyst/find_us_buy_candidates) |
 | `backup.py` | backup_to_icloud |
+| `market_data.py` | 매크로 일봉(macro_daily) + 시장 투자자 flow 시계열(market_flow_daily) 저장 — `collect_macro_daily`/`collect_market_flow_daily`/`latest_asof`/`series_asof_window` (2026-09 신규, 레짐 foreign_5d·SAT 8변수 임계 데이터 원천) |
 
 > 함수 위치: `grep -rn "def <name>" db_collector/`. 박리 모듈은 core 미존재 — 외부는 항상 `from db_collector import X` (패키지 표면).
 

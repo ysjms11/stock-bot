@@ -115,7 +115,11 @@ async def collect_macro_data() -> dict:
         data["USDKRW"] = {"price": "?", "change_pct": "?"}
 
     # 4. 시장별 투자자매매동향 (KOSPI만, FHPTJ04040000)
-    # KOSDAQ은 API 응답 전부 0 → 공식 문의 필요, 당분간 KOSPI만
+    # ⚠️ 예전엔 "KOSDAQ은 API 응답 전부 0 → 원인불명"으로 기록돼 있었으나, 실제 원인은
+    # fid_input_iscd(및 _2)가 fid_input_iscd_1과 다른 시장코드("0001" 고정)로 호출되던
+    # 침묵-0 함정이었다 — kr_stock.py `_MARKET_IDX_CODE`로 2026-09-03 수정 완료
+    # (`_fetch_market_investor_flow`가 이제 KSP="0001"/KSQ="1001"을 일치시켜 호출).
+    # 이 함수는 여전히 KOSPI만 조회한다(judge_regime 호환 필드가 KOSPI 전제) — 코드 무변경.
     try:
         token = await get_kis_token()
         if token:

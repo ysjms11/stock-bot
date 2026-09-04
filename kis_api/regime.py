@@ -144,6 +144,29 @@ def calc_kr_regime() -> dict:
     except Exception as e:
         print(f"[regime/kr] USD/KRW 60일 변화 조회 실패 (무시): {e}")
 
+    # 외국인 5일 순매수 (억원, 확인용) — market_flow_daily 시계열 기반 (2026-09 신규).
+    # DB 미가용/데이터 부족 시 None 유지 (게이팅 로직에는 영향 없음, confirmations만 추가).
+    # W6 신선도 가드: 5행이 있어도 최신 date가 오늘-7일보다 오래됐으면(잡 중단·DB 공백 등)
+    # 스테일 값을 그대로 쓰지 않고 None 유지 — 아래 confirmations 플래그도 자연히 미설정.
+    foreign_5d = None
+    try:
+        import db_collector.market_data as _md
+        conn = _md._get_db()
+        try:
+            rows = conn.execute(
+                "SELECT date, frgn_net FROM market_flow_daily WHERE market='KSP' "
+                "ORDER BY date DESC LIMIT 5"
+            ).fetchall()
+        finally:
+            conn.close()
+        if len(rows) == 5:
+            stale_cutoff = (datetime.now(KST) - timedelta(days=7)).strftime("%Y-%m-%d")
+            if rows[0]["date"] >= stale_cutoff:
+                total_mn = sum(int(r["frgn_net"] or 0) for r in rows)  # 백만원 합계
+                foreign_5d = round(total_mn / 100)  # 백만원 → 억원
+    except Exception as e:
+        print(f"[regime/kr] foreign_5d 조회 실패 (무시): {e}")
+
     # 판정 (변동성 우선)
     logic_parts = []
     confirmations = {}
@@ -163,6 +186,9 @@ def calc_kr_regime() -> dict:
         confirmations["ma_below_minus10"] = True
     if usdkrw_chg60 is not None and usdkrw_chg60 > 5:
         confirmations["usdkrw_surge"] = True
+    # H3 결론상 확인용, 임계 -2조/5일은 잠정 (foreign_5d 단위=억원, -20000억원=-2조원)
+    if foreign_5d is not None and foreign_5d <= -20000:
+        confirmations["foreign_outflow_5d"] = True
 
     # E 하이브리드 v2 (2026-07-17): 극단 우회에도 방향 게이트 추가.
     #   v1 결함: vol_pct>92 우회가 방향 무시 → 상방 멜트업(가격≫200MA)의 극단 변동성을
@@ -219,7 +245,7 @@ def calc_kr_regime() -> dict:
             "vol_abs": vol_abs,
             "ma_dist": ma_dist,
             "usdkrw_chg60": usdkrw_chg60,
-            "foreign_5d": None,  # best-effort, 현재 미수집
+            "foreign_5d": foreign_5d,  # 억원, market_flow_daily 5일 합 (없으면 None)
         },
         "confirmations": confirmations,
         "logic": " | ".join(logic_parts),

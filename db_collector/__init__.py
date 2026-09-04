@@ -5,28 +5,33 @@
 # 다중 모듈 포워딩 — monkeypatch.setattr(db_collector, X)가 X를 정의한
 # 모든 백킹 모듈에 전파, 콜사이트가 어느 모듈에 있든 패치 보임.
 # _BACKING 순서: collect, _config, _db, krx, sector, master, technicals,
-#                scan, dividends, alpha, financial, us_analysts, backup
+#                scan, dividends, alpha, financial, us_analysts, backup, market_data
 
 import sys
 import types
 
-from . import collect     # noqa: F401 — P4a 박리: 수집 파이프라인
-from . import _config     # noqa: F401 — P2b-1 박리
-from . import _db         # noqa: F401 — P3-1 박리
-from . import krx         # noqa: F401 — P2b-4 박리
-from . import sector      # noqa: F401 — P2b-3 박리
-from . import master      # noqa: F401 — P3-2 박리
-from . import technicals  # noqa: F401 — P2b-2 박리
-from . import scan        # noqa: F401 — P3-3 박리
-from . import dividends   # noqa: F401 — P3-4 박리
-from . import alpha       # noqa: F401 — P3-5 박리
-from . import financial   # noqa: F401 — P3-6 박리
-from . import us_analysts # noqa: F401 — P3-7 박리
-from . import backup      # noqa: F401 — P3-8 박리
+from . import collect      # noqa: F401 — P4a 박리: 수집 파이프라인
+from . import _config      # noqa: F401 — P2b-1 박리
+from . import _db          # noqa: F401 — P3-1 박리
+from . import krx          # noqa: F401 — P2b-4 박리
+from . import sector       # noqa: F401 — P2b-3 박리
+from . import master       # noqa: F401 — P3-2 박리
+from . import technicals   # noqa: F401 — P2b-2 박리
+from . import scan         # noqa: F401 — P3-3 박리
+from . import dividends    # noqa: F401 — P3-4 박리
+from . import alpha        # noqa: F401 — P3-5 박리
+from . import financial    # noqa: F401 — P3-6 박리
+from . import us_analysts  # noqa: F401 — P3-7 박리
+from . import backup       # noqa: F401 — P3-8 박리
+from . import market_data  # noqa: F401 — 2026-09 신규: 매크로+flow 시계열
+# ⚠️ market_data.py는 kis_api.kr_stock을 함수 내부(collect_market_flow_daily)에서만
+# lazy import한다 — 여기서 db_collector 패키지 로드 시점에 kis_api 전체를 즉시
+# 트리거하지 않기 위함(순환 import 예방, W7).
 
 # 현재 백킹 모듈 목록.  _BACKING 순서 = 속성 탐색 우선순위.
 _BACKING: list = [collect, _config, _db, krx, sector, master, technicals,
-                  scan, dividends, alpha, financial, us_analysts, backup]
+                  scan, dividends, alpha, financial, us_analysts, backup,
+                  market_data]
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

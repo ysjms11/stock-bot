@@ -178,19 +178,28 @@ _TICKER_SECTOR = {
 }
 
 
+# FHPTJ04040000 시장 코드 매핑 — fid_input_iscd(및 _2)는 fid_input_iscd_1과 "같은 시장"으로
+# 일치시켜야 실제 수급 데이터가 채워진다 (실측 확인, 2026-09-03 읽기전용 1~2회 호출).
+# 불일치 시 (예: iscd="0001"+iscd_1="KSQ") rt_cd="0"으로 정상 응답하면서 frgn/orgn/prsn만
+# 조용히 0을 반환한다 — 에러가 안 나서 눈치채기 어려운 침묵-0 함정. iscd="1001"이 코스닥
+# (kis_api/kr_stock.py 다른 곳의 "0000:전체, 0001:거래소, 1001:코스닥" 코드와 일치).
+_MARKET_IDX_CODE = {"KSP": "0001", "KSQ": "1001"}
+
+
 async def _fetch_market_investor_flow(token: str, market: str) -> dict:
     """시장별 투자자매매동향(일별) FHPTJ04040000.
     market: "KSP"(코스피) or "KSQ"(코스닥)
     Returns: {"frgn": 백만원, "orgn": 백만원, "prsn": 백만원}
     """
     today = datetime.now(KST).strftime("%Y%m%d")
+    idx_code = _MARKET_IDX_CODE.get(market, "0001")
     params = {
         "fid_cond_mrkt_div_code": "U",
-        "fid_input_iscd": "0001",
+        "fid_input_iscd": idx_code,
         "fid_input_date_1": today,
         "fid_input_iscd_1": market,
         "fid_input_date_2": today,
-        "fid_input_iscd_2": "0001",
+        "fid_input_iscd_2": idx_code,
     }
     try:
         s = _get_session()
@@ -216,6 +225,97 @@ async def _fetch_market_investor_flow(token: str, market: str) -> dict:
         return {"frgn": frgn, "orgn": orgn, "prsn": prsn}
     except Exception:
         return {"frgn": 0, "orgn": 0, "prsn": 0}
+
+
+async def _fetch_market_investor_flow_range(token: str, market: str,
+                                             start_yyyymmdd: str, end_yyyymmdd: str) -> list:
+    """시장별 투자자매매동향(일별) FHPTJ04040000 — 범위 조회 (db_collector/market_data.py 전용).
+
+    ⚠️ 실측 확인 (2026-09-03, 읽기전용 호출): 이 TR은 "구간" 파라미터가 아니라
+    fid_input_date_1 = 조회 종료일(최근일) 기준으로 최대 300영업일치를 내림차순으로
+    자동 페이징해 돌려준다 (fid_input_date_1=20260820으로 호출 → 20260820부터
+    과거 300영업일 전인 20250529까지 300행 반환, 최신순). fid_input_date_2 는
+    응답에 영향이 없어 보인다.
+
+    ⚠️ 함정(추가 실측): fid_input_iscd(및 _2)는 fid_input_iscd_1과 "같은 시장"으로
+    맞춰야 한다 — 불일치 시 rt_cd="0"(정상)인데 frgn/orgn/prsn만 조용히 0이 되는
+    침묵-0 함정이 있다. KOSPI="0001", 코스닥="1001" (`_MARKET_IDX_CODE` 참조). 기존
+    `_fetch_market_investor_flow`가 이 사상을 KSQ에 대해 놓치고 있던 것도 이번에
+    같이 수정함(코스닥 인자로 호출된 적이 없어 지금까지 미발견).
+
+    start_yyyymmdd 이전까지 필요하면 반환분의 최고(oldest) 날짜-1일을 다음
+    fid_input_date_1로 재요청(청크 반복) — 안전 상한 20회(최대 ~6000영업일 ≈ 24년)로
+    무한루프 방지. 청크 간 asyncio.sleep(0.3) (rate limit).
+    ⚠️ 종료 조건은 실측 "300행" 페이지 크기를 가정하지 않는다(TR이 항상 정확히 300을
+    반환한다는 보장이 없음) — oldest<=start_yyyymmdd 도달, 커서 미전진(next_cursor
+    >= cursor_end), 빈 응답/rt_cd 오류, 안전 상한 range(20) 네 가지만으로 종료한다.
+
+    Returns: [{"date": "YYYYMMDD", "frgn": 백만원, "orgn": 백만원, "prsn": 백만원}, ...]
+             오름차순(과거→최근) 정렬. 실패/데이터 없음 시 [].
+    """
+    s = _get_session()
+    idx_code = _MARKET_IDX_CODE.get(market, "0001")
+    seen = {}
+    cursor_end = end_yyyymmdd
+    for _ in range(20):
+        params = {
+            "fid_cond_mrkt_div_code": "U",
+            "fid_input_iscd": idx_code,
+            "fid_input_date_1": cursor_end,
+            "fid_input_iscd_1": market,
+            "fid_input_date_2": cursor_end,
+            "fid_input_iscd_2": idx_code,
+        }
+        try:
+            _, d = await _kis_get(
+                s,
+                "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
+                "FHPTJ04040000",
+                token,
+                params,
+            )
+        except Exception as e:
+            print(f"[kr_stock/flow_range] {market} {cursor_end} 요청 실패: {e}")
+            break
+        if not d or d.get("rt_cd") != "0":
+            break
+        rows = d.get("output") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        if not isinstance(rows, list) or not rows:
+            break
+
+        dates_in_chunk = []
+        for row in rows:
+            date_str = row.get("stck_bsop_date")
+            if not date_str or len(date_str) != 8:
+                continue
+            dates_in_chunk.append(date_str)
+            if date_str in seen or date_str < start_yyyymmdd or date_str > end_yyyymmdd:
+                continue
+            try:
+                seen[date_str] = {
+                    "date": date_str,
+                    "frgn": int(row.get("frgn_ntby_tr_pbmn", 0) or 0),
+                    "orgn": int(row.get("orgn_ntby_tr_pbmn", 0) or 0),
+                    "prsn": int(row.get("prsn_ntby_tr_pbmn", 0) or 0),
+                }
+            except (TypeError, ValueError):
+                continue
+
+        if not dates_in_chunk:
+            break
+        oldest = min(dates_in_chunk)
+        if oldest <= start_yyyymmdd:
+            break
+        prev_dt = datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)
+        next_cursor = prev_dt.strftime("%Y%m%d")
+        if next_cursor >= cursor_end:
+            break
+        cursor_end = next_cursor
+        await asyncio.sleep(0.3)
+
+    return sorted(seen.values(), key=lambda r: r["date"])
 
 
 async def _fetch_sector_flow(token: str, sector_code: str) -> tuple:
