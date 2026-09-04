@@ -1,9 +1,19 @@
 """헬퍼 함수: 티커 판별, 거래소 추정, 시장 시간, 감성분석 데이터."""
 import os
 import re
+import threading
 from datetime import datetime
 
 from ._config import ET, _DATA_DIR
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# yfinance 호출 직렬화 락 (W5, 2026-09)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━
+# yf.download()은 모듈 전역 공유 dict(yfinance.shared._DFS/_ERRORS)를 쓰는 비스레드안전
+# 함수라 동시호출 시 심볼 간 DataFrame이 뒤섞일 수 있음 (2026-09-04 US 레짐 오전환 사고,
+# data/TICKET_regime_yf_race_20260904.md). kis_api._helpers/kr_stock/news, db_collector.us_analysts
+# 등 `yf.download` 전 지점 + `_yf_history`가 이 락 하나를 공유 (뉴스/ETF/market_data의 `Ticker` 직접 호출 5곳은 무락 — 조립에 shared._DFS를 안 써 실질 무해)해 서로 직렬화한다.
+YF_LOCK = threading.Lock()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # 티커 판별 & 거래소 추정

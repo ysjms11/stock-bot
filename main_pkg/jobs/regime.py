@@ -26,6 +26,7 @@ from kis_api import (
 
 async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
     try:
+        today = datetime.now(KST).strftime("%Y-%m-%d")
         state = load_json(REGIME_STATE_FILE, {})
         emoji_map = {"offensive": "🟢", "neutral": "🟡", "crisis": "🔴"}
         dial_map = {
@@ -45,6 +46,20 @@ async def regime_transition_alert(context: ContextTypes.DEFAULT_TYPE):
             ("us", "🇺🇸 US", "us"),
         ]:
             blk = state.get(mkt, {})
+
+            # W4(c): 무음 동결 방지 — 지표 조회가 연속 실패 중이면 하루 1회 경고
+            # (기존 전환 비교 로직과 독립 — continue로 스킵되지 않도록 먼저 처리)
+            streak = blk.get("unavailable_streak", 0) or 0
+            if streak >= 1:
+                warn_key = f"{mkt}_unavail_warned"
+                if trans_sent.get(warn_key) != today:
+                    cur_e = emoji_map.get(blk.get("current", ""), "?")
+                    lines.append(
+                        f"⚠️ {flag} 레짐 지표 조회 실패 {streak}일째 — 이전 상태({cur_e}) 유지 중"
+                    )
+                    trans_sent[warn_key] = today
+                    changed = True
+
             curr_en = blk.get("current", "")
             if not curr_en:
                 continue

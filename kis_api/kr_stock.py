@@ -27,6 +27,7 @@ from ._helpers import (
     _is_us_ticker, _guess_excd, _is_us_market_hours_kst, _is_us_market_closed,
     DART_KEYWORDS, _load_knu_senti_lex, _FINANCE_PHRASE_SCORES, _RANKING_RE,
     _US_POSITIVE_KEYWORDS, _US_NEGATIVE_KEYWORDS, _NYSE_TICKERS, _AMEX_TICKERS,
+    YF_LOCK,
 )
 from ._files import (
     load_json, save_json, load_watchlist, load_stoploss, load_us_watchlist,
@@ -528,7 +529,10 @@ def get_historical_ohlcv(ticker: str, years: int = 3) -> list:
     if is_us:
         try:
             import yfinance as yf
-            df = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True)
+            # W5: yf.download()의 전역공유 shared._DFS/_ERRORS 동시호출 뒤섞임 방지
+            # (kis_api._helpers.YF_LOCK 공용 락, data/TICKET_regime_yf_race_20260904.md)
+            with YF_LOCK:
+                df = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True)
             if df is None or df.empty:
                 return []
             # yfinance >=1.2 returns MultiIndex columns for single ticker

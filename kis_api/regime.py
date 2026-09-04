@@ -127,13 +127,32 @@ def calc_kr_regime() -> dict:
                 "ma_dist": None, "usdkrw_chg60": None, "foreign_5d": None,
             },
             "confirmations": {},
-            "logic": "KOSPI 데이터 부족(<230일) — 실현변동성 계산 불가, neutral 폴백",
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지 (KOSPI 데이터 부족 <230일)",
         }
 
     rv_series = _realized_vol_series(closes, 20)
     vol_pct = _pct_rank(rv_series, 252)
     vol_abs = round(rv_series[-1], 2) if rv_series else None
     ma_dist = _dist_from_ma(closes, 200)
+
+    # B1: 1차 입력(vol_pct·ma_dist) 중 하나라도 결측 — 조회 실패로 간주, 이전 state 보존을
+    # cmd_regime이 판단할 수 있도록 플래그만 세팅 (판정 임계 자체는 무변경).
+    # 주신호 vol_pct 하나만 없어도 crisis/overheat 판정 자체가 불가하므로 AND가 아닌 OR.
+    if vol_pct is None or ma_dist is None:
+        return {
+            "market": "KR",
+            "regime_en": "neutral",
+            "regime": _regime_emoji("neutral"),
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {
+                "vol_pct": vol_pct, "vol_abs": vol_abs,
+                "ma_dist": ma_dist, "usdkrw_chg60": None, "foreign_5d": None,
+            },
+            "confirmations": {},
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지",
+        }
 
     # 확인용 지표 (점수 미포함)
     usdkrw_chg60 = None
@@ -324,6 +343,30 @@ def calc_us_regime() -> dict:
     vix_pct = vix_data.get("vix_pct")
     vix_back = vix_data.get("backwardation", False)
 
+    # B1: 1차 입력(sp_dist·vix_pct) 중 하나라도 결측 — 조회 실패로 간주, 이전 state 보존을
+    # cmd_regime이 판단할 수 있도록 플래그만 세팅 (판정 임계 자체는 무변경).
+    # offensive/crisis 판정 둘 다 sp_dist AND vix_pct가 함께 필요하므로 하나만 없어도
+    # 판정 불가 — AND가 아닌 OR로 게이트.
+    if sp_dist is None or vix_pct is None:
+        return {
+            "market": "US",
+            "regime_en": "neutral",
+            "regime": _regime_emoji("neutral"),
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {
+                "sp_dist": sp_dist, "sp_slope": sp_slope, "vix_val": vix_val,
+                "vix_pct": vix_pct, "vix3m": vix_data.get("vix3m"),
+                "backwardation": vix_back, "term_ratio": vix_data.get("term_ratio"),
+            },
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지",
+            # 백워드호환: 구 indicators 키 (dashboard_home.py 등)
+            "_compat_indicators": {
+                "sp500_vs_200ma": sp_data,
+                "vix": vix_data,
+            },
+        }
+
     regime_en = "neutral"
     logic_parts = []
 
@@ -439,6 +482,19 @@ def _apply_regime_debounce(prev_cur: dict, new_regime: str, today: str) -> dict:
     }
 
 
+def _mark_unavailable_streak(prev: dict, today: str) -> dict:
+    """W4(b): data_unavailable인 시장의 기존 state[mkt]에 unavailable_streak/
+    unavailable_date를 누적한다 (같은 날 중복 호출은 증가 금지 — 무음 동결 방지용
+    카운터이지 판정/디바운스 로직이 아님). current·indicators·cash_posture 등
+    나머지 키는 그대로 보존 — 재계산을 트리거하지 않는다.
+    정상 계산 경로(state[mkt] 전체 재구성)로 돌아오면 이 두 키는 자연히 빠진다."""
+    blk = dict(prev or {})
+    if blk.get("unavailable_date") != today:
+        blk["unavailable_streak"] = int(blk.get("unavailable_streak", 0) or 0) + 1
+        blk["unavailable_date"] = today
+    return blk
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 # cmd_regime — 통합 진입점
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -497,48 +553,96 @@ async def cmd_regime(mode: str = "current", market: str = "both", days: int = 5,
         asyncio.to_thread(calc_us_regime),
     )
 
-    # per-market 디바운스 적용
-    kr_state = _apply_regime_debounce(state.get("kr", {}), kr_calc["regime_en"], today)
-    us_state = _apply_regime_debounce(state.get("us", {}), us_calc["regime_en"], today)
+    kr_prev = state.get("kr") or {}
+    us_prev = state.get("us") or {}
+    kr_unavailable = bool(kr_calc.get("data_unavailable"))
+    us_unavailable = bool(us_calc.get("data_unavailable"))
+    # W4(a): 무음 동결 방지 — 결측 시 반드시 로그를 남긴다.
+    if kr_unavailable:
+        print(f"[regime/kr] data_unavailable — 이전 상태 유지")
+    if us_unavailable:
+        print(f"[regime/us] data_unavailable — 이전 상태 유지")
+
+    def _retain_state(prev: dict) -> dict:
+        """data_unavailable 시 디바운스 재계산 없이 기존 state[mkt]를 그대로 반환
+        (판정 임계·디바운스 임계 무변경 — 재계산 자체를 건너뛰는 것뿐)."""
+        return {
+            "current": prev.get("current", "neutral"),
+            "days_in_regime": prev.get("days_in_regime", 0),
+            "debounce_count": prev.get("debounce_count", 0),
+            "pending_regime": prev.get("pending_regime"),
+            "confirmed": prev.get("confirmed", True),
+            "last_updated": prev.get("last_updated", ""),
+        }
+
+    # per-market 디바운스 적용 (data_unavailable인 시장은 재계산 건너뛰고 기존 state 보존)
+    kr_state = (_retain_state(kr_prev) if kr_unavailable
+                else _apply_regime_debounce(kr_prev, kr_calc["regime_en"], today))
+    us_state = (_retain_state(us_prev) if us_unavailable
+                else _apply_regime_debounce(us_prev, us_calc["regime_en"], today))
 
     # 백워드호환 indicators (구 대시보드가 "sp500_vs_200ma", "vix" 키로 읽을 수 있도록)
     us_compat_indicators = us_calc.pop("_compat_indicators", {})
     us_calc_indicators = us_calc.get("indicators", {})
 
-    # state 업데이트
-    state["kr"] = {**kr_state,
-                   "cash_posture": kr_calc["cash_posture"],
-                   "indicators": kr_calc["indicators"]}
-    state["us"] = {**us_state,
-                   "cash_posture": us_calc["cash_posture"],
-                   "indicators": us_calc_indicators}
+    # state 업데이트 (data_unavailable인 시장은 state[mkt] 덮어쓰기·indicators 갱신을 건너뜀,
+    # 대신 W4(b) unavailable_streak만 누적)
+    if not kr_unavailable:
+        state["kr"] = {**kr_state,
+                       "cash_posture": kr_calc["cash_posture"],
+                       "indicators": kr_calc["indicators"]}
+    else:
+        state["kr"] = _mark_unavailable_streak(kr_prev, today)
+    if not us_unavailable:
+        state["us"] = {**us_state,
+                       "cash_posture": us_calc["cash_posture"],
+                       "indicators": us_calc_indicators}
+    else:
+        state["us"] = _mark_unavailable_streak(us_prev, today)
 
     # FIX-1: state["current"] 덮어쓰기 직전에 직전 confirmed 캡처 (텔레그램 전환알림용)
-    prev_us_confirmed = (state.get("current") or {}).get("current", "neutral")
+    prev_current = state.get("current") or {}
+    prev_us_confirmed = prev_current.get("current", "neutral")
 
     # ★ 백워드호환 current — US 미러 (구 _read_regime/대시보드)
     us_confirmed = us_state["current"]
-    state["current"] = {
-        "current": us_confirmed,
-        "days_in_regime": us_state["days_in_regime"],
-        "debounce_count": us_state["debounce_count"],
-        "confirmed": us_state["confirmed"],
-        "pending_regime": us_state.get("pending_regime"),
-        "last_updated": today,
-        "indicators": {**us_compat_indicators},
-    }
-    state["prev_regime"] = prev_us_confirmed   # FIX-1: 직전 confirmed 캡처 (텔레그램 전환알림용)
+    if not us_unavailable:
+        state["current"] = {
+            "current": us_confirmed,
+            "days_in_regime": us_state["days_in_regime"],
+            "debounce_count": us_state["debounce_count"],
+            "confirmed": us_state["confirmed"],
+            "pending_regime": us_state.get("pending_regime"),
+            "last_updated": today,
+            "indicators": {**us_compat_indicators},
+        }
+        state["prev_regime"] = prev_us_confirmed   # FIX-1: 직전 confirmed 캡처 (텔레그램 전환알림용)
+    # us_unavailable: state["current"]/state["prev_regime"] 보존 (덮어쓰지 않음)
 
-    # history 기록 (같은 날 단일 row)
+    # history 기록 (같은 날 단일 row) — data_unavailable인 시장은 기존 state의
+    # indicators로 채움 (None으로 덮어쓰지 않음)
+    # W2: indicators가 None으로 저장돼 있을 수 있어 .get("indicators", {})만으로는
+    # (키는 있으나 값이 None) 케이스를 못 막음 — "or {}"로 이중 방어.
+    kr_vol_pct = (kr_calc["indicators"].get("vol_pct") if not kr_unavailable
+                  else ((state.get("kr") or {}).get("indicators") or {}).get("vol_pct"))
+    us_vix_pct = (us_calc_indicators.get("vix_pct") if not us_unavailable
+                  else ((state.get("us") or {}).get("indicators") or {}).get("vix_pct"))
+    us_sp_dist = (us_calc_indicators.get("sp_dist") if not us_unavailable
+                  else ((state.get("us") or {}).get("indicators") or {}).get("sp_dist"))
     h_entry = {
         "date": today,
         "regime": us_confirmed,  # FIX-3: 백워드호환 — history 소비처 "regime" 키 기대
         "kr": kr_state["current"],
         "us": us_confirmed,
-        "kr_vol_pct": kr_calc["indicators"].get("vol_pct"),
-        "us_vix_pct": us_calc_indicators.get("vix_pct"),
-        "us_sp_dist": us_calc_indicators.get("sp_dist"),
+        "kr_vol_pct": kr_vol_pct,
+        "us_vix_pct": us_vix_pct,
+        "us_sp_dist": us_sp_dist,
     }
+    # W3: 스테일 마커 — 결측 시장이 있으면만 필드 추가 (양 시장 정상이면 키 자체 미부여,
+    # 정상 row 바이트 불변)
+    _unavailable_markets = [m for m, flag in (("kr", kr_unavailable), ("us", us_unavailable)) if flag]
+    if _unavailable_markets:
+        h_entry["data_unavailable"] = _unavailable_markets
     hist = state.get("history", [])
     hist = [h for h in hist if h.get("date") != today]
     hist.append(h_entry)
@@ -564,11 +668,48 @@ async def cmd_regime(mode: str = "current", market: str = "both", days: int = 5,
         else f"→{_regime_emoji(kr_pending)} 전환 대기 {kr_state['debounce_count']}일차"
     )
 
+    # data_unavailable이면 top-level(백워드호환 US 미러) cash_posture/indicators도
+    # 오늘 실패한 새 계산이 아니라 보존된 기존 state를 그대로 노출
+    # W2: indicators가 명시적으로 None 저장돼 있을 수 있어 "or {...}"로 이중 방어
+    us_cash_posture = (us_calc["cash_posture"] if not us_unavailable
+                       else (state.get("us") or {}).get("cash_posture", us_calc["cash_posture"]))
+    us_top_indicators = ({**us_compat_indicators} if not us_unavailable
+                         else (prev_current.get("indicators") or {**us_compat_indicators}))
+
+    # W1: 결측 시장의 per-market 서브딕트도 실패 placeholder(regime_en="neutral" 등)가 아니라
+    # 보존된 state 값을 노출해야 함 — 안 그러면 res["kr"]/res["us"]가 상위(state 보존)와
+    # 모순됨. data_unavailable/logic 문구는 calc_*_regime이 반환한 그대로 유지.
+    kr_sub = {**kr_calc}
+    if kr_unavailable:
+        kr_sub["regime_en"] = kr_confirmed
+        kr_sub["regime"] = _regime_emoji(kr_confirmed)
+        kr_sub["cash_posture"] = (state.get("kr") or {}).get("cash_posture", kr_calc["cash_posture"])
+    kr_sub["debounce"] = {
+        "current": kr_confirmed,
+        "days": kr_days,
+        "confirmed": kr_state["confirmed"],
+        "pending": kr_pending,
+        "text": kr_debounce_msg,
+    }
+
+    us_sub = {**us_calc, "indicators": us_calc_indicators}
+    if us_unavailable:
+        us_sub["regime_en"] = us_confirmed
+        us_sub["regime"] = _regime_emoji(us_confirmed)
+        us_sub["cash_posture"] = (state.get("us") or {}).get("cash_posture", us_calc["cash_posture"])
+    us_sub["debounce"] = {
+        "current": us_confirmed,
+        "days": us_days,
+        "confirmed": us_state["confirmed"],
+        "pending": us_pending,
+        "text": us_debounce_msg,
+    }
+
     return {
         # ★ 백워드호환: top-level = US 미러
         "regime_en": us_confirmed,
         "regime": _regime_emoji(us_confirmed),
-        "cash_posture": us_calc["cash_posture"],
+        "cash_posture": us_cash_posture,
         "debounce": {
             "current": us_confirmed,
             "days": us_days,
@@ -576,30 +717,11 @@ async def cmd_regime(mode: str = "current", market: str = "both", days: int = 5,
             "pending": us_pending,
             "text": us_debounce_msg,
         },
-        "indicators": {**us_compat_indicators},
+        "indicators": us_top_indicators,
         "logic": us_calc.get("logic", ""),
         # per-market 상세
-        "kr": {
-            **kr_calc,
-            "debounce": {
-                "current": kr_confirmed,
-                "days": kr_days,
-                "confirmed": kr_state["confirmed"],
-                "pending": kr_pending,
-                "text": kr_debounce_msg,
-            },
-        },
-        "us": {
-            **us_calc,
-            "indicators": us_calc_indicators,
-            "debounce": {
-                "current": us_confirmed,
-                "days": us_days,
-                "confirmed": us_state["confirmed"],
-                "pending": us_pending,
-                "text": us_debounce_msg,
-            },
-        },
+        "kr": kr_sub,
+        "us": us_sub,
         "date": today,
     }
 

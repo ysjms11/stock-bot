@@ -233,8 +233,13 @@ def find_us_buy_candidates(
         tickers_list = [r["ticker"] for r in candidate_rows]
         prices = {}
         try:
-            data = yf.download(tickers=tickers_list, period="1d",
-                                progress=False, auto_adjust=True, threads=False)
+            # W5: yf.download() 전역공유 shared._DFS/_ERRORS 동시호출 뒤섞임 방지 —
+            # kis_api._helpers.YF_LOCK 공용 락 (data/TICKET_regime_yf_race_20260904.md).
+            # db_collector→kis_api 순환 import 방지를 위해 함수 내부에서 lazy import.
+            from kis_api._helpers import YF_LOCK
+            with YF_LOCK:
+                data = yf.download(tickers=tickers_list, period="1d",
+                                    progress=False, auto_adjust=True, threads=False)
             if not data.empty:
                 close = data["Close"]
                 if hasattr(close, "iloc"):

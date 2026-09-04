@@ -23,6 +23,7 @@ from ._config import (
     DART_BASE_URL,
 )
 from ._session import _get_session, _kis_get, _kis_headers, get_kis_token, _token_cache
+from . import _helpers  # W5: _helpers.YF_LOCK을 모듈 속성으로 조회(런타임 패치 가능하도록)
 from ._helpers import (
     _is_us_ticker, _guess_excd, _is_us_market_hours_kst, _is_us_market_closed,
     DART_KEYWORDS, _load_knu_senti_lex, _FINANCE_PHRASE_SCORES, _RANKING_RE,
@@ -277,11 +278,20 @@ def fetch_us_short_interest(ticker: str) -> dict:
 # 시장 레짐 판정 (복합점수 기반)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# yf.download()은 모듈 전역 공유 dict(yfinance.shared._DFS/_ERRORS)를 쓰는 비스레드안전
+# 함수라 동시호출 시 심볼 간 DataFrame이 뒤섞일 수 있음 (2026-09-04 US 레짐 오전환 사고).
+# yf.Ticker(symbol).history()는 shared._DFS를 읽지 않는다(에러 경로에서 쓰기만 함) —
+# download()처럼 여러 심볼 결과가 한 dict에 모였다가 조립되는 구조가 아니므로 뒤섞일 수
+# 없다. 그래도 belt-and-braces로 kis_api._helpers.YF_LOCK(전 yfinance 호출 지점 공용,
+# W5) 하나로 _yf_history 호출을 직렬화한다.
+
+
 def _yf_history(symbol: str, period: str = "2y") -> list:
     """yfinance 종가 히스토리 → [float, ...] (오래된 순)."""
     try:
         import yfinance as yf
-        df = yf.download(symbol, period=period, progress=False, auto_adjust=True)
+        with _helpers.YF_LOCK:
+            df = yf.Ticker(symbol).history(period=period, auto_adjust=True)
         if df is None or df.empty:
             return []
         col = df["Close"]

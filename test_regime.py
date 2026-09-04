@@ -4,7 +4,7 @@ import os
 import sys
 import asyncio
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timedelta, timezone
 
 # kis_api 모듈 로드 전에 /data 디렉토리 문제 방지
@@ -685,6 +685,473 @@ class TestKrCrisisDirectionGate(unittest.TestCase):
         r = self._run(85.0, 0.0)
         self.assertEqual(r["regime_en"], "neutral")
         self.assertIn("과열", r["logic"])
+
+
+class TestYfHistoryThreadSafety(unittest.TestCase):
+    """_yf_history — yf.download() 전역공유상태(shared._DFS/_ERRORS) 비스레드안전 회귀 방지.
+
+    2026-09-04 사고: KR/US 레짐이 asyncio.to_thread로 동시 실행되며 yf.download()의
+    모듈 전역 dict를 공유해 심볼 간 DataFrame이 뒤섞임(VIX↔VIX3M 값 교차오염) →
+    US 레짐 offensive→neutral 오전환. yf.Ticker(symbol).history()는 전역 공유 상태가
+    없어 스레드 안전 — download()를 더 이상 호출하지 않음을 고정한다.
+    """
+
+    def test_yf_history_uses_ticker_history_not_download(self):
+        import kis_api.news as news_mod
+
+        def _fail_if_download_called(*a, **kw):
+            raise AssertionError("_yf_history가 yf.download()를 호출함 — 스레드 비안전 경로 회귀")
+
+        import pandas as pd
+        mock_yf = MagicMock()
+        mock_yf.download.side_effect = _fail_if_download_called
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame({"Close": [1.0, 2.0, 3.0]})
+        mock_yf.Ticker.return_value = mock_ticker
+
+        with patch.dict(sys.modules, {"yfinance": mock_yf}):
+            result = news_mod._yf_history("^VIX", "2y")
+
+        self.assertEqual(result, [1.0, 2.0, 3.0])
+        mock_yf.download.assert_not_called()
+        mock_yf.Ticker.assert_called_once_with("^VIX")
+        mock_ticker.history.assert_called_once_with(period="2y", auto_adjust=True)
+
+
+class TestCmdRegimeDataUnavailable(unittest.TestCase):
+    """calc_kr/us_regime이 data_unavailable을 반환하면 cmd_regime이 기존 state를 보존.
+
+    2026-09-04 사고 재발방지: 지표 조회가 실패한 시장은 디바운스 재계산·state 덮어쓰기를
+    건너뛰고 직전 확정 레짐을 그대로 유지해야 함 (오전환 방지). 판정/디바운스 임계값
+    자체는 무변경 — 실패 시 '재계산을 아예 하지 않는다'는 게이트만 추가됨.
+    """
+
+    def setUp(self):
+        self.state_file = "/tmp/test_data/regime_state.json"
+        self.prev_state = {
+            "kr": {"current": "neutral", "days_in_regime": 3, "debounce_count": 3,
+                   "pending_regime": None, "confirmed": True, "last_updated": "2026-09-02",
+                   "cash_posture": "평상 5~8%",
+                   "indicators": {"vol_pct": 40.0, "vol_abs": 12.0, "ma_dist": 2.0,
+                                  "usdkrw_chg60": 1.0, "foreign_5d": 100}},
+            "us": {"current": "offensive", "days_in_regime": 5, "debounce_count": 8,
+                   "pending_regime": None, "confirmed": True, "last_updated": "2026-09-02",
+                   "cash_posture": "평상 5~8%",
+                   "indicators": {"sp_dist": 8.56, "sp_slope": "rising", "vix_val": 14.32,
+                                  "vix_pct": 2.8, "vix3m": 16.0, "backwardation": False,
+                                  "term_ratio": 0.9}},
+            "history": [],
+            "current": {"current": "offensive", "days_in_regime": 5, "debounce_count": 8,
+                        "confirmed": True, "pending_regime": None,
+                        "last_updated": "2026-09-02", "indicators": {"vix": {"value": 14.32}}},
+            "prev_regime": "offensive",
+        }
+        save_json(self.state_file, self.prev_state)
+
+    @staticmethod
+    def _unavailable_us():
+        return {
+            "market": "US", "regime_en": "neutral", "regime": "🟡 중립",
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {"sp_dist": None, "sp_slope": None, "vix_val": None,
+                           "vix_pct": None, "vix3m": None, "backwardation": False,
+                           "term_ratio": None},
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지",
+            "_compat_indicators": {"sp500_vs_200ma": {}, "vix": {}},
+        }
+
+    @staticmethod
+    def _unavailable_kr():
+        return {
+            "market": "KR", "regime_en": "neutral", "regime": "🟡 중립",
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {"vol_pct": None, "vol_abs": None, "ma_dist": None,
+                           "usdkrw_chg60": None, "foreign_5d": None},
+            "confirmations": {},
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지",
+        }
+
+    @staticmethod
+    def _available_kr(regime_en="offensive"):
+        return {
+            "market": "KR", "regime_en": regime_en, "regime": "🟢 탐욕",
+            "cash_posture": "평상 5~8%",
+            "indicators": {"vol_pct": 35.0, "vol_abs": 11.0, "ma_dist": 3.0,
+                           "usdkrw_chg60": 0.5, "foreign_5d": 200},
+            "confirmations": {},
+            "logic": "test-kr-available",
+        }
+
+    @staticmethod
+    def _available_us(regime_en="offensive"):
+        return {
+            "market": "US", "regime_en": regime_en, "regime": "🟢 탐욕",
+            "cash_posture": "평상 5~8%",
+            "indicators": {"sp_dist": 9.0, "sp_slope": "rising", "vix_val": 13.0,
+                           "vix_pct": 3.0, "vix3m": 15.0, "backwardation": False,
+                           "term_ratio": 0.87},
+            "logic": "test-us-available",
+            "_compat_indicators": {"sp500_vs_200ma": {}, "vix": {}},
+        }
+
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
+    def test_us_data_unavailable_preserves_state(self):
+        """(a) calc_us_regime이 data_unavailable → 기존 state['us'] 보존, history 당일
+        row도 이전 값으로 채워짐(None 아님), state['current']['current'] 불변.
+        W1/W3/W4(b) 확장: res['us'] 서브딕트도 보존값 노출, history row에
+        data_unavailable=['us'] 마커, unavailable_streak 1회 누적."""
+        import kis_api.regime as rg
+        with patch.object(rg, "calc_us_regime", return_value=self._unavailable_us()), \
+             patch.object(rg, "calc_kr_regime", return_value=self._available_kr()):
+            result = asyncio.run(cmd_regime(mode="current"))
+
+        state = load_json(self.state_file)
+        # 기존 US state 그대로 (offensive, 5일차) — neutral로 오전환되지 않음
+        self.assertEqual(state["us"]["current"], "offensive")
+        self.assertEqual(state["us"]["days_in_regime"], 5)
+        self.assertEqual(state["us"]["indicators"]["sp_dist"], 8.56)
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        today_row = next(h for h in state["history"] if h["date"] == today)
+        self.assertEqual(today_row["us"], "offensive")
+        self.assertIsNotNone(today_row["us_sp_dist"])
+        self.assertEqual(today_row["us_sp_dist"], 8.56)
+        # 상위 백워드호환 current 미러도 불변
+        self.assertEqual(state["current"]["current"], "offensive")
+        self.assertEqual(state["prev_regime"], "offensive")
+        # W1: res["us"] 서브딕트가 실패 placeholder("neutral")가 아니라 보존값 노출
+        self.assertEqual(result["us"]["regime_en"], "offensive")
+        self.assertIn("탐욕", result["us"]["regime"])
+        self.assertEqual(result["us"]["cash_posture"], "평상 5~8%")
+        # W3: history row에 스테일 마커
+        self.assertEqual(today_row.get("data_unavailable"), ["us"])
+        # W4(b): unavailable_streak 1회 누적 (오늘 최초 실패)
+        self.assertEqual(state["us"].get("unavailable_streak"), 1)
+        self.assertEqual(state["us"].get("unavailable_date"), today)
+
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
+    def test_us_unavailable_streak_no_double_count_same_day(self):
+        """W4(b): 같은 날 두 번 호출해도 unavailable_streak이 2로 늘지 않음."""
+        import kis_api.regime as rg
+        with patch.object(rg, "calc_us_regime", return_value=self._unavailable_us()), \
+             patch.object(rg, "calc_kr_regime", return_value=self._available_kr()):
+            asyncio.run(cmd_regime(mode="current"))
+            asyncio.run(cmd_regime(mode="current"))
+
+        state = load_json(self.state_file)
+        self.assertEqual(state["us"].get("unavailable_streak"), 1)
+
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
+    def test_kr_data_unavailable_preserves_state(self):
+        """(d) KR 대칭 케이스 — calc_kr_regime이 data_unavailable이면 기존 KR state 보존.
+        W3/W4(b) 확장: history row data_unavailable=['kr'], unavailable_streak 누적."""
+        import kis_api.regime as rg
+        with patch.object(rg, "calc_kr_regime", return_value=self._unavailable_kr()), \
+             patch.object(rg, "calc_us_regime", return_value=self._available_us()):
+            asyncio.run(cmd_regime(mode="current"))
+
+        state = load_json(self.state_file)
+        # 기존 KR state 그대로 — days_in_regime 재확정(3→4) 안 되고 3 유지
+        self.assertEqual(state["kr"]["current"], "neutral")
+        self.assertEqual(state["kr"]["days_in_regime"], 3)
+        self.assertEqual(state["kr"]["indicators"]["vol_pct"], 40.0)
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        today_row = next(h for h in state["history"] if h["date"] == today)
+        self.assertEqual(today_row["kr"], "neutral")
+        self.assertEqual(today_row["kr_vol_pct"], 40.0)
+        # US는 정상 갱신됨 (KR만 게이팅됨을 대칭 확인)
+        self.assertEqual(state["us"]["indicators"]["sp_dist"], 9.0)
+        # W3: history row에 스테일 마커 (kr만)
+        self.assertEqual(today_row.get("data_unavailable"), ["kr"])
+        # W4(b): unavailable_streak 1회 누적
+        self.assertEqual(state["kr"].get("unavailable_streak"), 1)
+        self.assertEqual(state["kr"].get("unavailable_date"), today)
+
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
+    def test_both_available_state_updates_normally(self):
+        """(b) 양쪽 다 정상 계산이면 기존처럼 새 indicators로 state가 갱신됨 (회귀 없음).
+        정상 경로에서 unavailable_streak/unavailable_date/history의 data_unavailable
+        키가 전혀 생기지 않는지도 함께 확인 (키셋 불변 회귀 방지)."""
+        import kis_api.regime as rg
+        with patch.object(rg, "calc_us_regime", return_value=self._available_us()), \
+             patch.object(rg, "calc_kr_regime", return_value=self._available_kr()):
+            asyncio.run(cmd_regime(mode="current"))
+
+        state = load_json(self.state_file)
+        self.assertEqual(state["us"]["indicators"]["sp_dist"], 9.0)
+        self.assertEqual(state["kr"]["indicators"]["vol_pct"], 35.0)
+        # 정상 경로 키셋 불변 — unavailable_streak/unavailable_date 없어야 함
+        self.assertNotIn("unavailable_streak", state["us"])
+        self.assertNotIn("unavailable_date", state["us"])
+        self.assertNotIn("unavailable_streak", state["kr"])
+        self.assertNotIn("unavailable_date", state["kr"])
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        today_row = next(h for h in state["history"] if h["date"] == today)
+        self.assertNotIn("data_unavailable", today_row)
+
+
+class TestB1MissingGateOR(unittest.TestCase):
+    """B1: 결측 게이트 AND→OR. offensive/crisis 판정에 두 입력이 함께 필요하므로
+    하나만 결측이어도 data_unavailable이어야 함 (기존 AND는 둘 다 없어야만 게이트됨)."""
+
+    def test_us_gspc_only_missing_triggers_unavailable(self):
+        """^GSPC만 실패(빈 리스트) → sp_dist=None, vix_pct는 정상이어도 data_unavailable."""
+        import numpy as np
+        np.random.seed(1)
+        vix_series = list(np.random.randn(300) * 5 + 20)
+
+        def mock_yf(symbol, period="2y"):
+            if symbol == "^VIX":
+                return vix_series
+            return []  # ^GSPC, ^VIX3M, ^VIX9D 전부 실패
+
+        import kis_api.regime as rg
+        with patch.object(rg, "_yf_history", side_effect=mock_yf):
+            result = rg.calc_us_regime()
+
+        self.assertTrue(result.get("data_unavailable"))
+        self.assertIsNone(result["indicators"]["sp_dist"])
+        self.assertIsNotNone(result["indicators"]["vix_pct"])
+
+    def test_us_vix_only_missing_triggers_unavailable(self):
+        """^VIX만 실패(빈 리스트) → vix_pct=None, sp_dist는 정상이어도 data_unavailable."""
+        sp_series = [float(4000 + i) for i in range(260)]
+
+        def mock_yf(symbol, period="2y"):
+            if symbol == "^GSPC":
+                return sp_series
+            return []  # ^VIX 및 파생(^VIX3M/^VIX9D) 전부 실패
+
+        import kis_api.regime as rg
+        with patch.object(rg, "_yf_history", side_effect=mock_yf):
+            result = rg.calc_us_regime()
+
+        self.assertTrue(result.get("data_unavailable"))
+        self.assertIsNotNone(result["indicators"]["sp_dist"])
+        self.assertIsNone(result["indicators"]["vix_pct"])
+
+    def test_kr_vol_pct_only_missing_triggers_unavailable(self):
+        """KR 주신호 vol_pct만 결측이어도(ma_dist는 정상) data_unavailable이어야 함."""
+        import kis_api.regime as rg
+        with patch.object(rg, "_fdr_closes", return_value=[100.0] * 300), \
+             patch.object(rg, "_realized_vol_series", return_value=[10.0] * 260), \
+             patch.object(rg, "_pct_rank", return_value=None), \
+             patch.object(rg, "_dist_from_ma", return_value=5.0):
+            result = rg.calc_kr_regime()
+
+        self.assertTrue(result.get("data_unavailable"))
+        self.assertIsNone(result["indicators"]["vol_pct"])
+        self.assertIsNotNone(result["indicators"]["ma_dist"])
+
+    def test_kr_ma_dist_only_missing_triggers_unavailable(self):
+        """KR ma_dist만 결측이어도(vol_pct는 정상) data_unavailable이어야 함."""
+        import kis_api.regime as rg
+        with patch.object(rg, "_fdr_closes", return_value=[100.0] * 300), \
+             patch.object(rg, "_realized_vol_series", return_value=[10.0] * 260), \
+             patch.object(rg, "_pct_rank", return_value=40.0), \
+             patch.object(rg, "_dist_from_ma", return_value=None):
+            result = rg.calc_kr_regime()
+
+        self.assertTrue(result.get("data_unavailable"))
+        self.assertIsNotNone(result["indicators"]["vol_pct"])
+        self.assertIsNone(result["indicators"]["ma_dist"])
+
+
+class TestW1SubdictReflectsPreservedState(unittest.TestCase):
+    """W1: 결측 시장의 res[mkt] 서브딕트(regime_en/regime/cash_posture)가 실패
+    placeholder("neutral" 등)가 아니라 보존된 state 값을 노출해야 함 — 안 그러면
+    상위(top-level, US 미러) 백워드호환 값과 res["kr"]/res["us"]가 서로 모순됨."""
+
+    def setUp(self):
+        self.state_file = "/tmp/test_data/regime_state.json"
+        self.prev_state = {
+            "kr": {"current": "crisis", "days_in_regime": 4, "debounce_count": 4,
+                   "pending_regime": None, "confirmed": True, "last_updated": "2026-09-03",
+                   "cash_posture": "🔴 발사 — 풀투자 지향(현금 최소)",
+                   "indicators": {"vol_pct": 95.0, "vol_abs": 40.0, "ma_dist": -12.0,
+                                  "usdkrw_chg60": 6.0, "foreign_5d": -25000}},
+            "us": {"current": "offensive", "days_in_regime": 5, "debounce_count": 8,
+                   "pending_regime": None, "confirmed": True, "last_updated": "2026-09-03",
+                   "cash_posture": "평상 5~8%",
+                   "indicators": {"sp_dist": 8.0, "sp_slope": "rising", "vix_val": 13.0,
+                                  "vix_pct": 3.0, "vix3m": 15.0, "backwardation": False,
+                                  "term_ratio": 0.87}},
+            "history": [],
+            "current": {"current": "offensive", "days_in_regime": 5, "debounce_count": 8,
+                        "confirmed": True, "pending_regime": None,
+                        "last_updated": "2026-09-03", "indicators": {}},
+            "prev_regime": "offensive",
+        }
+        save_json(self.state_file, self.prev_state)
+
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
+    def test_kr_unavailable_subdict_shows_preserved_crisis(self):
+        import kis_api.regime as rg
+        kr_unavail = {
+            "market": "KR", "regime_en": "neutral", "regime": "🟡 중립",
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {"vol_pct": None, "vol_abs": None, "ma_dist": None,
+                           "usdkrw_chg60": None, "foreign_5d": None},
+            "confirmations": {},
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지",
+        }
+        us_available = {
+            "market": "US", "regime_en": "offensive", "regime": "🟢 탐욕",
+            "cash_posture": "평상 5~8%",
+            "indicators": {"sp_dist": 8.5, "sp_slope": "rising", "vix_val": 13.5,
+                           "vix_pct": 3.5, "vix3m": 15.5, "backwardation": False,
+                           "term_ratio": 0.88},
+            "logic": "test-us-available",
+            "_compat_indicators": {"sp500_vs_200ma": {}, "vix": {}},
+        }
+        with patch.object(rg, "calc_kr_regime", return_value=kr_unavail), \
+             patch.object(rg, "calc_us_regime", return_value=us_available):
+            result = asyncio.run(cmd_regime(mode="current"))
+
+        # W1: res["kr"]가 실패 placeholder("neutral")가 아니라 보존값("crisis") 노출
+        self.assertEqual(result["kr"]["regime_en"], "crisis")
+        self.assertIn("공포", result["kr"]["regime"])
+        self.assertEqual(result["kr"]["cash_posture"], "🔴 발사 — 풀투자 지향(현금 최소)")
+        # data_unavailable/logic은 calc_kr_regime이 반환한 그대로 유지
+        self.assertTrue(result["kr"]["data_unavailable"])
+        self.assertEqual(result["kr"]["logic"], "지표 조회 실패 — 이전 상태 유지")
+        # US는 정상 계산 + 보존값과 일치 (동일 신호 반복 → 디바운스 유지)
+        self.assertEqual(result["us"]["regime_en"], "offensive")
+
+
+class TestW2IndicatorsNoneNoCrash(unittest.TestCase):
+    """W2: state[mkt]["indicators"]가 명시적으로 None이어도 cmd_regime이 예외 없이
+    반환해야 함 (.get("indicators", {})는 키가 있고 값이 None이면 방어되지 않음)."""
+
+    def setUp(self):
+        self.state_file = "/tmp/test_data/regime_state.json"
+        save_json(self.state_file, {
+            "kr": {"current": "neutral", "days_in_regime": 1, "debounce_count": 1,
+                   "pending_regime": None, "confirmed": True, "last_updated": "2026-09-03",
+                   "cash_posture": "경계 8~15% (실탄 비축)",
+                   "indicators": {"vol_pct": 40.0, "vol_abs": 12.0, "ma_dist": 2.0,
+                                  "usdkrw_chg60": 1.0, "foreign_5d": 100}},
+            "us": {"current": "neutral", "days_in_regime": 1, "debounce_count": 1,
+                   "pending_regime": None, "confirmed": True, "last_updated": "2026-09-03",
+                   "cash_posture": "경계 8~15% (실탄 비축)",
+                   "indicators": None},
+            "history": [],
+            "current": {"current": "neutral", "days_in_regime": 1, "debounce_count": 1,
+                        "confirmed": True, "pending_regime": None,
+                        "last_updated": "2026-09-03", "indicators": None},
+            "prev_regime": "neutral",
+        })
+
+    @patch("kis_api.regime.REGIME_STATE_FILE", "/tmp/test_data/regime_state.json")
+    def test_us_indicators_none_no_crash(self):
+        import kis_api.regime as rg
+        us_unavail = {
+            "market": "US", "regime_en": "neutral", "regime": "🟡 중립",
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {"sp_dist": None, "sp_slope": None, "vix_val": None,
+                           "vix_pct": None, "vix3m": None, "backwardation": False,
+                           "term_ratio": None},
+            "data_unavailable": True,
+            "logic": "지표 조회 실패 — 이전 상태 유지",
+            "_compat_indicators": {"sp500_vs_200ma": {}, "vix": {}},
+        }
+        kr_available = {
+            "market": "KR", "regime_en": "neutral", "regime": "🟡 중립",
+            "cash_posture": "경계 8~15% (실탄 비축)",
+            "indicators": {"vol_pct": 45.0, "vol_abs": 13.0, "ma_dist": 1.0,
+                           "usdkrw_chg60": 0.2, "foreign_5d": -100},
+            "confirmations": {},
+            "logic": "test-kr-available",
+        }
+        with patch.object(rg, "calc_us_regime", return_value=us_unavail), \
+             patch.object(rg, "calc_kr_regime", return_value=kr_available):
+            try:
+                result = asyncio.run(cmd_regime(mode="current"))
+            except Exception as e:
+                self.fail(f"cmd_regime이 indicators=None 상황에서 예외를 던짐: {e}")
+
+        self.assertIsInstance(result, dict)
+        self.assertIn("us", result)
+        self.assertIn("kr", result)
+
+
+class TestYfLockShared(unittest.TestCase):
+    """W5: _yf_history가 kis_api._helpers.YF_LOCK(모든 yfinance 호출 지점 공용 락)을
+    획득하는지 확인 — 모듈 속성 자체를 목으로 교체해 런타임 패치 가능함을 고정."""
+
+    def test_yf_history_acquires_shared_yf_lock(self):
+        import kis_api.news as news_mod
+        import kis_api._helpers as helpers_mod
+        import pandas as pd
+
+        mock_lock = MagicMock()
+        mock_lock.__enter__ = MagicMock(return_value=None)
+        mock_lock.__exit__ = MagicMock(return_value=False)
+
+        mock_yf = MagicMock()
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame({"Close": [1.0, 2.0]})
+        mock_yf.Ticker.return_value = mock_ticker
+
+        with patch.object(helpers_mod, "YF_LOCK", mock_lock), \
+             patch.dict(sys.modules, {"yfinance": mock_yf}):
+            result = news_mod._yf_history("^VIX", "2y")
+
+        self.assertEqual(result, [1.0, 2.0])
+        mock_lock.__enter__.assert_called_once()
+        mock_lock.__exit__.assert_called_once()
+
+
+class TestRegimeTransitionUnavailableWarning(unittest.TestCase):
+    """W4(c): regime_transition_alert가 unavailable_streak>=1인 시장에 대해 하루 1회
+    "조회 실패 N일째 — 이전 상태 유지" 경고를 텔레그램 메시지에 포함해야 함
+    (무음 동결 방지 — 사용자가 봇 침묵을 실패로 오인하지 않도록)."""
+
+    def setUp(self):
+        self.state_file = "/tmp/test_data/regime_state.json"
+        self.trans_file = "/tmp/test_data/regime_transition_sent.json"
+        save_json(self.state_file, {
+            "kr": {"current": "offensive", "unavailable_streak": 3,
+                   "unavailable_date": "2026-09-04",
+                   "indicators": {"vol_pct": 20.0, "ma_dist": 5.0}},
+            "us": {"current": "crisis",
+                   "indicators": {"sp_dist": -5.0, "vix_pct": 95.0}},
+        })
+        # kr/us 모두 이미 "발송됨" 상태로 기록 — 전환 알림과 분리해 경고만 단독 검증
+        save_json(self.trans_file, {"kr": "offensive", "us": "crisis"})
+
+    @staticmethod
+    def _make_context():
+        ctx = MagicMock()
+        ctx.bot.send_message = AsyncMock(return_value=None)
+        return ctx
+
+    def test_unavailable_streak_warning_sent_once(self):
+        import main_pkg.jobs.regime as jr
+        with patch.object(jr, "REGIME_STATE_FILE", self.state_file):
+            ctx = self._make_context()
+            asyncio.run(jr.regime_transition_alert(ctx))
+
+        self.assertEqual(ctx.bot.send_message.call_count, 1)
+        sent_text = ctx.bot.send_message.call_args.kwargs.get("text", "")
+        self.assertIn("🇰🇷 KR 레짐 지표 조회 실패 3일째", sent_text)
+        self.assertIn("이전 상태(🟢) 유지 중", sent_text)
+
+        trans_sent = load_json(self.trans_file)
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        self.assertEqual(trans_sent.get("kr_unavail_warned"), today)
+
+    def test_unavailable_streak_warning_not_repeated_same_day(self):
+        import main_pkg.jobs.regime as jr
+        with patch.object(jr, "REGIME_STATE_FILE", self.state_file):
+            asyncio.run(jr.regime_transition_alert(self._make_context()))
+            ctx2 = self._make_context()
+            asyncio.run(jr.regime_transition_alert(ctx2))
+
+        # 2차 호출은 오늘 이미 경고를 보냈으므로 추가 발송 없음 (전환도 없음 → 완전 무음)
+        self.assertEqual(ctx2.bot.send_message.call_count, 0)
 
 
 if __name__ == "__main__":
