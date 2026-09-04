@@ -58,6 +58,17 @@ async def daily_collect_job(context):
         return
 
     if report.get("skipped"):
+        if report.get("reason") == "holiday_duplicate_rollback":
+            rolled = report.get("rolled_back") or {}
+            # W3: plain text 발송 — _KR_MARKET_HOLIDAYS 같은 언더스코어 토큰이 Markdown
+            # 파싱을 깨뜨릴 수 있어 이 모듈의 다른 알림과 동일하게 parse_mode 없이 보낸다.
+            await context.bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"📅 복제 감지({rolled.get('date', report.get('date', ''))}, "
+                     f"{rolled.get('pct', '?')}%) — 휴장일 추정, "
+                     f"{rolled.get('deleted', '?')}행 롤백. "
+                     f"휴장일이면 _KR_MARKET_HOLIDAYS 등록",
+            )
         return  # 주말/공휴일 조용히 스킵
 
     if "error" not in report:
@@ -69,6 +80,15 @@ async def daily_collect_job(context):
             name = _PHASE_KR.get(phase, phase)
             msg += f"\n  {name}: {pr['success']}✓ {pr['failed']}✗"
         await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        # W1: 복제-감지됐지만 KIS 캔들상 실거래일로 확증된 경우 — 데이터는 보존했으나
+        # 수집 이상이 의심되므로 별도 경고(휴장일 롤백 알림과 달리 조사 필요).
+        if report.get("reason") == "duplicate_but_trading_day":
+            dup = report.get("duplicate_check") or {}
+            await context.bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"⚠️ 복제 감지({dup.get('pct', '?')}%)지만 KIS 캔들상 거래일 — "
+                     f"수집 이상 의심, 확인 필요",
+            )
         _reset_silent_failure("daily_collect_error")
         try:
             from db_collector import backup_to_icloud
@@ -109,6 +129,19 @@ async def daily_collect_sanity_check(context):
     if now.weekday() >= 5:
         return
     today = now.strftime("%Y%m%d")
+
+    try:
+        from db_collector import _is_kr_trading_day, is_rolled_back_today
+        # _is_kr_trading_day는 "%Y%m%d" 문자열 전용 — date 객체를 넘기면 fail-open True.
+        if not _is_kr_trading_day(today):
+            print(f"[sanity] {today} 휴장일 → 스킵")
+            return
+        if is_rolled_back_today(today):
+            print(f"[sanity] {today} 자가롤백 처리 완료 → 스킵 (재실행/알림 안 함)")
+            return
+    except Exception as e:
+        print(f"[sanity] 휴장일/롤백 가드 확인 실패(무시): {e}")
+
     try:
         from db_collector import _get_db
         conn = _get_db()

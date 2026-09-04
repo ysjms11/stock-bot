@@ -23,6 +23,7 @@
 | `/data/regime_state.json` | 레짐 상태 (KR/US 분리 + 전환 히스토리) — Gist 백업 대상(`_BACKUP_FILES_LIST`) | `{}` |
 | `/data/token_cache.json` | KIS 토큰 파일 캐시 `{token, expires}` (23시간) | `{}` |
 | `/data/signal_feed.json` | 시그널 피드 (알림/대시보드 공용 이벤트 로그) | `[]` |
+| `/data/holiday_rollback.json` | 미등록 휴장일 자가롤백 마커 `{YYYYMMDD: {deleted, same_pct, at}}` — `collect_daily`가 직전 거래일과 종가 98%+ 동일(≥100행)이면 당일 snapshot 삭제 후 기록, sanity 잡은 이 날 재수집 스킵 (2026-09-04) | `{}` |
 | `/data/silent_failure_log.json` | 무음 실패 감시 로그 (잡별 0건 결과 추적, `main_pkg/_ctx.py`) | `{}` |
 | `/data/sector_flow_cache.json` · `sector_rotation.json` | 섹터 수급 당일 캐시 + 섹터 로테이션 상태 | `{}` |
 | `/data/supply_history.json` | 종목별 수급 히스토리 (외인 보유율 등 교차확인용) | `{}` |

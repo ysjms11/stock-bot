@@ -9,6 +9,7 @@ reader(_rate_limited)가 동거해야 `global _RATE_SEM` 선언이 올바른 모
 참조한다.  financial.py 는 별도 _RATE_SEM/_rate_limited 사본을 소유한다(순환 방지).
 """
 
+import os
 import sqlite3
 import asyncio
 import aiohttp
@@ -20,6 +21,7 @@ from ._config import (
     KST,
     _PHASE_TIMEOUT,
     _is_kr_trading_day,
+    _DATA_DIR,
 )
 from ._db import _get_db, db_write_lock
 from .krx import fetch_krx_market_data
@@ -424,12 +426,244 @@ async def collect_daily(date: str = None) -> dict:
         print(f"[collect_daily] 알파 메트릭 계산 실패: {e}")
         report["alpha"] = {"error": str(e)}
 
+    # 미등록 휴장일 자가롤백 (2026-07-18 신설, 2026-09 B1/W1/W2 리뷰 반영)
+    # _KR_MARKET_HOLIDAYS는 하드코딩이라 신규 공휴일(예: 2026 제헌절 재지정)을 놓치고,
+    # 그날 KIS가 직전 영업일 시세를 그대로 반환해 복제 행이 쌓인다(실제 2,864행 유입).
+    # 목록 갱신에 의존하지 말고 결과물로 판정: 직전 거래일과 종가가 98%+ 동일하면 휴장으로
+    # 간주하고 방금 저장한 행을 되돌린다. 원인 불문(신규 공휴일·KIS 이상) 방어.
+    # _resolve_holiday_duplicate가 판정(sync, to_thread)→W1 KIS 확증→롤백(락 안 write만)을
+    # 전부 오케스트레이션한다.
+    try:
+        outcome = await _resolve_holiday_duplicate(date)
+        if outcome and outcome.get("skipped_reason"):
+            report["skipped_reason"] = outcome["skipped_reason"]
+            print(f"[collect_daily] {date} 복제-감지 판정 보류: {outcome['skipped_reason']}")
+        elif outcome and outcome["reason"] == "duplicate_but_trading_day":
+            detect = outcome["duplicate_check"]
+            report["reason"] = "duplicate_but_trading_day"
+            report["duplicate_check"] = detect
+            print(f"[collect_daily] ⚠️ {date} 직전 거래일과 {detect['pct']}% 동일하지만 "
+                  f"KIS 캔들상 거래일 → 롤백/마커 보류, 수집 이상 의심")
+        elif outcome:  # holiday_duplicate_rollback
+            rolled = outcome["rolled_back"]
+            report["skipped"] = True
+            report["reason"] = "holiday_duplicate_rollback"
+            report["rolled_back"] = rolled
+            print(f"[collect_daily] ⚠️ {date} 직전 거래일과 {rolled['pct']}% 동일 "
+                  f"→ 미등록 휴장일로 판정, {rolled['deleted']}행 롤백")
+            return report
+    except Exception as e:
+        print(f"[collect_daily] 복제-감지 가드 실패(무시): {type(e).__name__}: {e}")
+
     report["duration"] = (datetime.now() - start).total_seconds()
     print(
         f"[collect_daily] 완료 — {len(tickers)}종목 "
         f"({report['duration']:.1f}s)"
     )
     return report
+
+
+def _rollback_marker_path() -> str:
+    return f"{_DATA_DIR}/holiday_rollback.json"
+
+
+def is_rolled_back_today(date: str) -> bool:
+    """date(YYYYMMDD)가 자가롤백 마커에 이미 기록돼 있으면 True.
+
+    daily_collect_sanity_check(19:15/20:15/21:15/22:15 재실행 루프)가 이미 처리된
+    미등록 휴장일 롤백을 "당일 0건 → 재수집 필요"로 오인해 collect_daily를 반복
+    재실행+알림하지 않도록 방어. 마커 파일 부재/파싱 실패 시 False(보수적으로 미롤백 취급).
+
+    ⚠️ load_json(path, {})를 쓰면 default가 not None이라 마커 파일이 아직 없을 때도
+    빈 dict를 디스크에 새로 써버린다(+ .lock 파일까지) — 조회일 뿐인 함수가 부작용으로
+    파일을 생성하면 안 되므로 존재 여부를 먼저 확인한다.
+    """
+    path = _rollback_marker_path()
+    if not os.path.exists(path):
+        return False
+    from kis_api._files import load_json
+    marker = load_json(path, None) or {}
+    return date in marker
+
+
+def _persist_rollback_marker(date: str, result: dict):
+    """롤백 발생 사실을 {DATA_DIR}/holiday_rollback.json에 upsert (sanity 재실행 차단용)."""
+    from kis_api._files import load_json, save_json
+    path = _rollback_marker_path()
+    marker = load_json(path, {})
+    marker[date] = {
+        "deleted": result["deleted"],
+        "same_pct": result["pct"],
+        "at": datetime.now(KST).isoformat(),
+    }
+    save_json(path, marker)
+
+
+def _detect_holiday_duplicate(date: str, thresh: float = 0.98) -> dict | None:
+    """date 수집 결과가 직전 거래일의 복제인지 순수 read로 판정 (DB 쓰기 없음, sync).
+
+    호출부(_resolve_holiday_duplicate)가 asyncio.to_thread로 감싸 이벤트루프를 막지
+    않는다. B1: 판정(read)과 롤백(write)을 분리 — 이 함수는 절대 DELETE/commit하지 않는다.
+
+    휴장일에 KIS가 직전 영업일 시세를 반환하는 특성 때문에 생기는 spurious 행 방어.
+    정상 거래일이 우연히 98% 동일할 확률은 사실상 0 (종가가 전종목 그대로일 수 없음).
+
+    Returns:
+      - None: 판정 불가(오늘 수집 자체가 tot<100로 too small) 또는 복제 아님(비율<thresh)
+        → 정상 진행.
+      - {"skipped_reason": "prev_partial"}: W2 — 최근 10거래일 내 rows(prev)>=0.9*tot(date)인
+        직전 거래일을 찾지 못함(부분수집된 날을 prev로 오판하는 것 방지) → 판정 자체 보류.
+      - {"date","prev","tot","same","pct","zero_ratio"}: 복제 후보 — 호출부가 W1(KIS 캔들
+        확증) 후 최종적으로 롤백 여부를 결정한다. zero_ratio는 매칭된 same행 중 양일 모두
+        close=0인 비율(KRX 폴백 실패로 0=0이 "동일"로 오판되는 케이스 판별용, 호출부가
+        마커 저장 여부를 결정할 때 사용).
+    """
+    conn = _get_db()
+    try:
+        tot = conn.execute(
+            "SELECT COUNT(*) FROM daily_snapshot WHERE trade_date = ?", (date,)
+        ).fetchone()[0]
+        # 최소행 가드: 부분 수집 실패로 수십 행만 쌓인 경우 100% 동일 우연 일치로 오판하는 것을
+        # 방지. 정상 연속 거래일의 동일종가 비율 실측 10~14% — 98% 임계 자체는 유지.
+        if not tot or tot < 100:
+            return None
+
+        # W2: prev를 단순 MAX(trade_date)로 고르면 부분수집(예: KRX 장애로 수십 행만
+        # 저장된 날)을 직전 거래일로 잘못 채택해 종가 비교 자체가 무의미해진다.
+        # rows(prev) >= 0.9*tot(date)인 가장 최근 거래일을 최대 10일 소급 탐색.
+        cand_dates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT trade_date FROM daily_snapshot WHERE trade_date < ? "
+            "ORDER BY trade_date DESC LIMIT 10", (date,)
+        ).fetchall()]
+        prev = None
+        for cand in cand_dates:
+            cand_tot = conn.execute(
+                "SELECT COUNT(*) FROM daily_snapshot WHERE trade_date = ?", (cand,)
+            ).fetchone()[0]
+            if cand_tot >= 0.9 * tot:
+                prev = cand
+                break
+        if not prev:
+            return {"skipped_reason": "prev_partial"}
+
+        same = conn.execute(
+            "SELECT COUNT(*) FROM daily_snapshot a JOIN daily_snapshot b "
+            "ON a.symbol = b.symbol WHERE a.trade_date = ? AND b.trade_date = ? "
+            "AND a.close = b.close",
+            (prev, date),
+        ).fetchone()[0]
+        ratio = same / tot
+        if ratio < thresh:
+            return None
+
+        # W1 close=0 가드용 사전 계산: 매칭된 same행 중 양일 모두 close=0인 비율.
+        # KRX 폴백이 양일 모두 실패하면 close=0끼리 "동일"로 매칭되어 복제로 오판될 수
+        # 있음 — 호출부가 이 비율로 마커 저장 여부(자가치유 허용)를 결정한다.
+        zero_same = conn.execute(
+            "SELECT COUNT(*) FROM daily_snapshot a JOIN daily_snapshot b "
+            "ON a.symbol = b.symbol WHERE a.trade_date = ? AND b.trade_date = ? "
+            "AND a.close = b.close AND a.close = 0",
+            (prev, date),
+        ).fetchone()[0]
+        zero_ratio = (zero_same / same) if same else 0.0
+
+        return {
+            "date": date, "prev": prev, "tot": tot, "same": same,
+            "pct": round(ratio * 100), "zero_ratio": zero_ratio,
+        }
+    finally:
+        conn.close()
+
+
+async def _kis_confirms_trading_day(date: str, ticker: str = "005930") -> bool | None:
+    """W1: 복제-감지 결과가 실제로는 정상 거래일일 가능성을 KIS 캔들로 재확증.
+
+    유동성 대표종목(삼성전자 005930)의 FHKST03010100 일봉 캔들에 date가 존재하면
+    실제 거래일(=복제-감지가 오탐)로 판단 — backfill_day_via_chart의 기존 호출 패턴 재사용.
+
+    Returns: True(캔들 존재=거래일) / False(캔들 없음=휴장 추정) / None(조회 실패=판정불가,
+    호출부는 기존 롤백 로직대로 진행).
+    """
+    try:
+        from kis_api import get_kis_token, _kis_get
+        token = await get_kis_token()
+        if not token:
+            return None
+        end_dt = (datetime.strptime(date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+        start_dt = (datetime.strptime(date, "%Y%m%d") - timedelta(days=5)).strftime("%Y%m%d")
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            _, d = await _kis_get(s,
+                "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                "FHKST03010100", token,
+                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+                 "FID_INPUT_DATE_1": start_dt, "FID_INPUT_DATE_2": end_dt,
+                 "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+        row = next((c for c in (d.get("output2") or [])
+                    if c.get("stck_bsop_date") == date), None)
+        return row is not None
+    except Exception as e:
+        print(f"[collect_daily] KIS 캔들 확증 실패(무시, 기존 롤백 로직 진행): "
+              f"{type(e).__name__}: {e}")
+        return None
+
+
+async def _rollback_holiday_duplicate(detect: dict) -> dict:
+    """복제 확정된 detect 결과를 삭제(DELETE+commit) — B1: write는 반드시 db_write_lock
+    안에서 이벤트루프를 막지 않는 순수 sync SQL 한 블록(connect~commit)으로 수행한다.
+    마커 저장(파일 I/O)은 락 해제 후 수행 — sqlite 락과 무관한 리소스라 락 안에 둘 이유가 없다.
+
+    W1 close=0 가드: 매칭 same행의 50%+가 양일 모두 close=0이면(KRX 폴백 실패로 인한
+    오탐 가능성) 롤백은 하되(중복 데이터를 남겨두지 않기 위해) 마커는 남기지 않아
+    sanity 재실행이 다음 시도에서 자가치유할 수 있게 한다.
+    """
+    date = detect["date"]
+    conn = _get_db()
+    try:
+        async with db_write_lock:
+            conn.execute("DELETE FROM daily_snapshot WHERE trade_date = ?", (date,))
+            conn.commit()
+    finally:
+        conn.close()
+
+    result = {"date": date, "prev": detect["prev"], "deleted": detect["tot"], "pct": detect["pct"]}
+
+    if detect.get("zero_ratio", 0.0) > 0.5:
+        result["marker_skipped"] = "zero_close_majority"
+        print(f"[collect_daily] {date} 롤백하되 마커 미기록 "
+              f"(close=0 매칭 {detect['zero_ratio']:.0%} — 자가치유 허용)")
+        return result
+
+    try:
+        _persist_rollback_marker(date, result)
+    except Exception as e:
+        print(f"[collect_daily] 롤백 마커 저장 실패(무시): {type(e).__name__}: {e}")
+    return result
+
+
+async def _resolve_holiday_duplicate(date: str, thresh: float = 0.98) -> dict | None:
+    """휴장일 복제-감지 전체 오케스트레이션: 판정(sync read, to_thread) → W1 KIS 확증
+    → 롤백(write, db_write_lock). collect_daily의 유일한 진입점.
+
+    Returns:
+      - None: 판정 불가/복제 아님 → 정상 진행.
+      - {"reason": "prev_partial", "skipped_reason": "prev_partial"}: W2 판정 보류.
+      - {"reason": "duplicate_but_trading_day", "duplicate_check": {...}}: W1, KIS 캔들상
+        실거래일로 확증 → 롤백/마커 모두 보류(데이터 보존, 수집 이상 의심 알림 대상).
+      - {"reason": "holiday_duplicate_rollback", "rolled_back": {...}}: 롤백 완료.
+    """
+    detect = await asyncio.to_thread(_detect_holiday_duplicate, date, thresh)
+    if not detect:
+        return None
+    if detect.get("skipped_reason"):
+        return {"reason": detect["skipped_reason"], "skipped_reason": detect["skipped_reason"]}
+
+    confirmed_trading = await _kis_confirms_trading_day(date)
+    if confirmed_trading is True:
+        return {"reason": "duplicate_but_trading_day", "duplicate_check": detect}
+
+    rolled = await _rollback_holiday_duplicate(detect)
+    return {"reason": "holiday_duplicate_rollback", "rolled_back": rolled}
 
 
 async def backfill_day_via_chart(date: str, tickers: list) -> dict:

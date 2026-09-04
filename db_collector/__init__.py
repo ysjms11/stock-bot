@@ -175,6 +175,11 @@ from .collect import (  # noqa: F401
     collect_daily,
     backfill_day_via_chart,
     collect_daily_backfill,
+    _detect_holiday_duplicate,
+    _kis_confirms_trading_day,
+    _rollback_holiday_duplicate,
+    _resolve_holiday_duplicate,
+    is_rolled_back_today,
 )
 
 

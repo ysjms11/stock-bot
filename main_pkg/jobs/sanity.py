@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from kis_api import *           # KST, CHAT_ID, UNIVERSE_FILE 등 star-import
 from kis_api import _DATA_DIR   # explicit private import
 from main_pkg._ctx import _safe_send
-from db_collector import _KR_MARKET_HOLIDAYS as _KRX_HOLIDAYS
+from db_collector import _KR_MARKET_HOLIDAYS as _KRX_HOLIDAYS, is_rolled_back_today
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -60,7 +60,10 @@ async def weekly_sanity_check(context):
         # 옛 1500 임계로는 백필 완료일을 영구 재판정(무한 루프)함.
         # >=500 이면 백필 완료로 인정, 진짜 결손(0~수백 미만)만 누락 판정 (2026-08-16 리뷰)
         have = {r[0] for r in rows if r[1] >= 500}
-        missing = [b for b in bizdays if b not in have]
+        # 미등록 휴장일 자가롤백 마커(collect_daily의 복제-감지 가드)에 있는 날짜는 제외 —
+        # 이미 "휴장일 추정"으로 판정·롤백된 날을 결손으로 재판정하면 매주 헛백필
+        # (backfill_day_via_chart)과 헛알림이 반복된다.
+        missing = [b for b in bizdays if b not in have and not is_rolled_back_today(b)]
         if missing:
             msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
             await _safe_send(context, msg)

@@ -277,6 +277,16 @@ def test_is_kr_trading_day_explicit_holiday_false():
     assert _is_kr_trading_day("20260603") is False
 
 
+def test_is_kr_trading_day_chuseok_substitute_20261005_false():
+    """20261005 = 개천절(10/3 토) 대체휴일(월) — 2026-09 신규 등록분."""
+    assert _is_kr_trading_day("20261005") is False
+
+
+def test_is_kr_trading_day_year_end_20261231_false():
+    """20261231 = KRX 연말휴장 — 2026-09 신규 등록분."""
+    assert _is_kr_trading_day("20261231") is False
+
+
 def test_is_kr_trading_day_invalid_format_conservative_true():
     """Invalid format → conservative True (allow collection)."""
     assert _is_kr_trading_day("invalid") is True
