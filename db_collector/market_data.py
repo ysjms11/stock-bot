@@ -120,22 +120,26 @@ def _fetch_macro_rows(latest_map: dict, today_str: str, backfill_from: str) -> d
     시리즈 하나 실패해도 나머지는 진행(per-series try/except, 침묵-0 금지 원칙에 따라
     실패는 "error:..." 문자열로 구분).
 
+    ⚠️ W9(2026-09-04): "latest >= today_str면 조기 종료"(rows=[])를 제거했다 — 그
+    분기 때문에 같은 날 두 번째 이후 실행(수동 백필/장애 복구 재실행 포함)이 통째로
+    no-op이 되어, 예를 들어 장중에 넣은 잠정 수급 행이 저녁 정기 잡에서 갱신되지
+    못하고 그대로 고정되는 결함이 있었다. INSERT OR REPLACE라 같은 날 재조회는
+    안전하게 멱등이므로 항상 latest-5일(backfill_from보다 이르면 backfill_from로
+    clamp)부터 오늘까지 재조회한다.
+
     Returns: {series: [(date_str, value), ...] | "error:..."}
     """
     results = {}
     for series, meta in MACRO_SERIES.items():
         try:
             latest = latest_map.get(series)
-            if latest and latest >= today_str:
-                results[series] = []
-                continue
-
             if latest:
-                # W1+B1 보완(2026-09): latest+1일이 아니라 latest-5일부터 재조회.
-                # INSERT OR REPLACE라 진행중 봉(당일 16시 KST 시점의 WTI/금/DXY/10Y 등
-                # 아직 마감 전 종가)이 다음 실행에서 확정치로 자동 덮인다.
+                # latest+1일이 아니라 latest-5일부터 재조회(W1+B1). INSERT OR REPLACE라
+                # 진행중 봉(당일 16시 KST 시점의 WTI/금/DXY/10Y 등 아직 마감 전 종가)이
+                # 다음 실행에서 확정치로 자동 덮인다. backfill_from보다 이르게 내려가지
+                # 않도록 max로 clamp.
                 start_dt = datetime.strptime(latest, "%Y-%m-%d") - timedelta(days=5)
-                start = start_dt.strftime("%Y-%m-%d")
+                start = max(backfill_from, start_dt.strftime("%Y-%m-%d"))
             else:
                 start = backfill_from
 
@@ -146,7 +150,9 @@ def _fetch_macro_rows(latest_map: dict, today_str: str, backfill_from: str) -> d
 
 
 async def collect_macro_daily(backfill_from: str = "2024-01-01") -> dict:
-    """시리즈별 macro_daily 최신 date-5일(없으면 backfill_from)~오늘까지 수집 → INSERT OR REPLACE.
+    """시리즈별 macro_daily max(latest date-5일, backfill_from)(latest 없으면 backfill_from)
+    ~오늘까지 수집 → INSERT OR REPLACE. 이미 오늘 행이 있어도 조기 종료하지 않는다(W9,
+    아래 `_fetch_macro_rows` 참고) — INSERT OR REPLACE라 재실행은 항상 멱등.
 
     fetch(FDR/yfinance, blocking I/O)와 write(INSERT~commit)를 분리한다: fetch는
     asyncio.to_thread로 이벤트루프 밖에서 수행하고, write는 db_write_lock 안에서
@@ -235,8 +241,8 @@ def latest_asof(series: str, kst_date: str, conn: sqlite3.Connection = None) -> 
 # #3 시장 투자자 flow 시계열 (KOSPI/KOSDAQ)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def collect_market_flow_daily(token: str, backfill_from: str = "2024-01-01") -> dict:
-    """KSP/KSQ 시장 투자자 flow 시계열 DB 최신 date-5일 ~ 오늘 수집 (없으면 backfill_from부터,
-    macro와 동일 시그니처).
+    """KSP/KSQ 시장 투자자 flow 시계열 DB max(최신 date-5일, backfill_from) ~ 오늘 수집
+    (최신 없으면 backfill_from부터, macro와 동일 시그니처).
 
     네트워크 fetch(+청크 간 sleep)는 락 밖에서 수행하고, INSERT~commit 트랜잭션
     전체를 db_write_lock 안에서 한 블록으로 처리한다 (CLAUDE.md DB 쓰기 불변식).
@@ -253,12 +259,17 @@ async def collect_market_flow_daily(token: str, backfill_from: str = "2024-01-01
     등 침묵-0 함정 재발 신호, kis_api/kr_stock.py `_MARKET_IDX_CODE` 주석 참고) 저장하지
     않고 {"error": "all_zero", "market": ...}로 표시해 잡의 silent-failure 카운트를 유도한다.
 
+    ⚠️ W9(2026-09-04): "latest >= today면 조기 종료"(rows_written=0)를 제거했다 — 오늘
+    이미 (장중 잠정치 등으로) 행이 있어도, 같은 날 재실행이 재조회 없이 no-op이 되어
+    당일 행이 잠정치로 고정되는 결함이었다. `_fetch_market_investor_flow_range`가
+    `date > end_yyyymmdd`(=오늘) 행을 이미 걸러내므로(kis_api/kr_stock.py) 룩어헤드
+    걱정 없이 항상 재조회한다 — INSERT OR REPLACE라 멱등, 비용은 시장당 API 1~2콜.
+
     Returns: {"KSP": rows_written(int) | {"error": "all_zero", ...} | "error:...", "KSQ": ...}
     """
     conn = _get_db()
 
     today_dt = datetime.now(KST)
-    today_str = today_dt.strftime("%Y-%m-%d")
     today_yyyymmdd = today_dt.strftime("%Y%m%d")
     backfill_yyyymmdd = backfill_from.replace("-", "")
 
@@ -279,13 +290,9 @@ async def collect_market_flow_daily(token: str, backfill_from: str = "2024-01-01
     for market in ("KSP", "KSQ"):
         try:
             latest = latest_map.get(market)
-            if latest and latest >= today_str:
-                results[market] = 0
-                continue
-
             if latest:
                 start_dt = datetime.strptime(latest, "%Y-%m-%d") - timedelta(days=5)
-                start_yyyymmdd = start_dt.strftime("%Y%m%d")
+                start_yyyymmdd = max(backfill_yyyymmdd, start_dt.strftime("%Y%m%d"))
             else:
                 start_yyyymmdd = backfill_yyyymmdd
 

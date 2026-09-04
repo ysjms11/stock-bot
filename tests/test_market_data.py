@@ -774,3 +774,89 @@ class TestCollectMarketFlowDailyGuards:
         conn.close()
         assert ksp_cnt == 0  # all_zero 청크는 저장되지 않음
         assert ksq_cnt == 1
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 9. W9 — "latest >= today면 조기 종료" 제거 확인 (같은 날 재실행이 no-op 되던 결함)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class TestSameDayRerunRefetches:
+    """오늘 날짜 행이 이미 있어도(예: 장중 잠정치 수동 백필) 재실행하면 fetch가 다시
+    호출되고 INSERT OR REPLACE로 오늘 행이 새 값으로 덮어써져야 한다 — 예전에는
+    "latest >= today"면 조기 종료해 이 재조회 자체가 스킵됐다(라이브 결함 재현)."""
+
+    def test_macro_same_day_rerun_refetches_and_overwrites(self, tmp_db, monkeypatch):
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 4, 19, 8, tzinfo=tz)
+        monkeypatch.setattr(md, "datetime", _FixedDatetime)
+
+        conn = md._get_db()
+        md._ensure_market_data_tables(conn)
+        # 오늘(2026-09-04) 이미 잠정치가 들어가 있는 상태로 시딩.
+        _seed_macro(conn, "vix", [("2026-09-04", 15.0)])
+        conn.close()
+
+        calls = []
+
+        def fake_fetch(meta, start, end):
+            calls.append((start, end))
+            return [("2026-09-04", 99.0)]
+
+        monkeypatch.setattr(md, "_fetch_series_closes", fake_fetch)
+
+        result = asyncio.run(md.collect_macro_daily())
+
+        # 조기 종료 없이 시리즈 전부(11개) fetch가 호출됨 — "latest>=today"로 스킵된
+        # 시리즈가 하나도 없어야 한다.
+        assert len(calls) == len(md.MACRO_SERIES)
+        assert all(v == 1 for v in result.values())
+
+        conn = md._get_db()
+        row = conn.execute(
+            "SELECT value FROM macro_daily WHERE series='vix' AND date='2026-09-04'"
+        ).fetchone()
+        cnt = conn.execute("SELECT COUNT(*) c FROM macro_daily WHERE series='vix'").fetchone()["c"]
+        conn.close()
+        assert row["value"] == 99.0  # 잠정치(15.0)가 새 값(99.0)으로 덮어써짐
+        assert cnt == 1  # 중복 행 없이 upsert
+
+    def test_flow_same_day_rerun_refetches_and_overwrites(self, tmp_db, monkeypatch):
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 4, 19, 8, tzinfo=tz)
+        monkeypatch.setattr(md, "datetime", _FixedDatetime)
+
+        conn = md._get_db()
+        md._ensure_market_data_tables(conn)
+        # 오늘(2026-09-04) 이미 잠정 수급 행이 들어가 있는 상태로 시딩 (KSP/KSQ 둘 다).
+        _seed_flow(conn, "KSP", [("2026-09-04", 1000)])
+        _seed_flow(conn, "KSQ", [("2026-09-04", 1000)])
+        conn.close()
+
+        calls = []
+
+        async def fake_range(token, market, start, end):
+            calls.append(market)
+            return [{"date": "20260904", "frgn": 555, "orgn": -111, "prsn": -444}]
+
+        monkeypatch.setattr(kr_stock, "_fetch_market_investor_flow_range", fake_range)
+        monkeypatch.setattr(md.asyncio, "sleep", AsyncMock(return_value=None))
+
+        result = asyncio.run(md.collect_market_flow_daily("tok"))
+
+        # 조기 종료 없이 KSP/KSQ 둘 다 재조회됨.
+        assert sorted(calls) == ["KSP", "KSQ"]
+        assert result == {"KSP": 1, "KSQ": 1}
+
+        conn = md._get_db()
+        ksp_row = conn.execute(
+            "SELECT frgn_net FROM market_flow_daily WHERE date='2026-09-04' AND market='KSP'"
+        ).fetchone()
+        ksp_cnt = conn.execute(
+            "SELECT COUNT(*) c FROM market_flow_daily WHERE market='KSP'"
+        ).fetchone()["c"]
+        conn.close()
+        assert ksp_row["frgn_net"] == 555  # 잠정치(1000)가 새 값(555)으로 덮어써짐
+        assert ksp_cnt == 1  # 중복 행 없이 upsert
