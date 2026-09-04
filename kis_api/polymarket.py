@@ -520,13 +520,23 @@ def fetch_pension_fund_flow(days: int = 5, market: str = "ALL", top: int = 30,
     }
 
 
-def _calc_macro_thresholds(kst_date_str: str) -> dict:
+def _calc_macro_thresholds(kst_date_str: str, treasury: dict | None = None) -> dict:
     """macro_daily 시계열 기반 매크로 8변수 임계 돌파 계산 (SAT_PORT_CHECK 대응, 2026-09 신규).
 
     VIX 밴드(20/30/40) + USD/KRW·WTI·DXY 5거래일 변화율 + US10Y 5거래일 변화(bp) +
     KOSPI/S&P500 60일 이평 이탈(하회) 여부 + US10Y-2Y 스프레드(역전<0/0.25미만) = 8항목.
     판정 로직(레짐/게이팅)에는 관여하지 않는 순수 표시용 additive 블록 — 데이터 부족 시
     해당 item만 breached=None으로 표시하고 전체 호출은 항상 성공한다(전부 try/except).
+
+    Args:
+        treasury: fetch_treasury_curve() 결과(옵션). 있으면 US10Y-2Y 항목이 Treasury
+            공식값(spread_10y_2y, FRED DGS10-DGS2)을 사용 — macro_daily의 us10y-us2y는
+            us2y가 2YY=F 선물 프록시(+하루 지연)라 실제 스프레드와 오차가 있다(예: 0.56 vs
+            공식 0.40). treasury가 None/error/spread_10y_2y 없음이면 기존 macro_daily
+            프록시로 폴백한다.
+            ⚠️ W4 PIT 가드: fetch_treasury_curve()는 항상 "현재" 시점의 최신 값만 반환하고
+            과거 날짜를 조회하는 파라미터가 없다 — kst_date_str이 오늘(KST)이 아니면
+            treasury가 유효해도 무시하고 macro_daily 프록시로 폴백한다(시점 불일치 방지).
 
     Returns: {"asof": kst_date, "breaches": n, "items": [{"name","value","change",
               "threshold","breached":bool|None,"note"}, ...]}
@@ -609,9 +619,11 @@ def _calc_macro_thresholds(kst_date_str: str) -> dict:
             _fallback(name, "60일 이평 이탈(하회)", e)
 
     def _add_spread_band(name, series_a, series_b):
-        """장단기 금리 스프레드(series_a - series_b) — SAT_PORT_CHECK 표 그대로
+        """장단기 금리 스프레드(series_a - series_b) — macro_daily 선물 프록시 폴백 경로.
         "역전(<0) / 0.25 미만" 단일 밴드. 값 스케일은 macro_daily에 저장된 그대로
-        (us10y/us2y 둘 다 group="US" — 같은 룩어헤드 컷오프로 정렬됨)."""
+        (us10y/us2y 둘 다 group="US" — 같은 룩어헤드 컷오프로 정렬됨). us2y는 2YY=F 선물
+        프록시(+하루 지연)라 Treasury 공식 스프레드와 오차가 있다 — _add_treasury_spread가
+        treasury 공식값 미가용 시에만 호출하는 폴백."""
         try:
             wa = _md.series_asof_window(series_a, kst_date_str, 1)
             wb = _md.series_asof_window(series_b, kst_date_str, 1)
@@ -627,7 +639,44 @@ def _calc_macro_thresholds(kst_date_str: str) -> dict:
             items.append({
                 "name": name, "value": spread, "change": None,
                 "threshold": "역전(<0)/0.25 미만", "breached": spread < 0.25,
-                "note": note,
+                "note": f"{note} · 선물 프록시(2YY=F)",
+            })
+        except Exception as e:
+            _fallback(name, "역전(<0)/0.25 미만", e)
+
+    def _add_treasury_spread(name, treasury_dict, series_a, series_b):
+        """US10Y-2Y — Treasury 공식값(FRED DGS10-DGS2, fetch_treasury_curve) 우선 사용.
+        treasury_dict가 None/error/spread_10y_2y 없음이면 macro_daily 선물 프록시
+        (_add_spread_band)로 폴백. 돌파 기준(<0.25)은 두 경로 동일하게 유지.
+
+        W4 PIT(point-in-time) 가드: fetch_treasury_curve()는 항상 "현재" 시점의 최신
+        FRED 수익률을 반환할 뿐 과거 날짜 파라미터를 받지 않는다 — kst_date_str이
+        오늘(KST) 날짜가 아니면(예: 백필/과거 재계산 호출) treasury_dict를 완전히
+        무시하고 macro_daily 프록시로 폴백한다. 그렇지 않으면 오늘자 스프레드가 다른
+        날짜의 보고서에 잘못 붙는 시점 불일치가 생긴다."""
+        today_str = datetime.now(KST).strftime("%Y-%m-%d")
+        if kst_date_str != today_str:
+            return _add_spread_band(name, series_a, series_b)
+        if (not treasury_dict or treasury_dict.get("error")
+                or treasury_dict.get("spread_10y_2y") is None):
+            return _add_spread_band(name, series_a, series_b)
+        try:
+            spread = treasury_dict["spread_10y_2y"]
+            prior = treasury_dict.get("spread_10y_2y_1w_ago")
+            # change 단위는 %p(퍼센트 포인트) — bp 변환 없음. US10Y 항목(bp)과 스케일이
+            # 다르므로 note에 명시(예: "1주 +0.16%p").
+            chg = round(spread - prior, 2) if prior is not None else None
+            if spread < 0:
+                note = "역전"
+            elif spread < 0.25:
+                note = "0.25 미만"
+            else:
+                note = "정상"
+            chg_note = f" · 1주 {chg:+.2f}%p" if chg is not None else ""
+            items.append({
+                "name": name, "value": spread, "change": chg,
+                "threshold": "역전(<0)/0.25 미만", "breached": spread < 0.25,
+                "note": f"{note} · Treasury 공식{chg_note}",
             })
         except Exception as e:
             _fallback(name, "역전(<0)/0.25 미만", e)
@@ -639,7 +688,7 @@ def _calc_macro_thresholds(kst_date_str: str) -> dict:
     _add_5d_pct("DXY", "dxy", 1.0)
     _add_vs_ma60("KOSPI_vs_MA60", "kospi")
     _add_vs_ma60("SP500_vs_MA60", "sp500")
-    _add_spread_band("US10Y-2Y", "us10y", "us2y")
+    _add_treasury_spread("US10Y-2Y", treasury, "us10y", "us2y")
 
     breaches = sum(1 for it in items if it.get("breached") is True)
     return {"asof": kst_date_str, "breaches": breaches, "items": items}
@@ -661,7 +710,7 @@ async def fetch_external_macro_signals(top_polymarket: int = 8) -> dict:
     curve = await fetch_treasury_curve()
 
     try:
-        thresholds = _calc_macro_thresholds(datetime.now(KST).strftime("%Y-%m-%d"))
+        thresholds = _calc_macro_thresholds(datetime.now(KST).strftime("%Y-%m-%d"), treasury=curve)
     except Exception as e:
         thresholds = {"asof": datetime.now(KST).strftime("%Y-%m-%d"), "breaches": 0,
                        "items": [], "note": f"오류: {e}"}

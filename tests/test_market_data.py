@@ -272,7 +272,8 @@ class TestMacroThresholds:
         for name in ("VIX", "USD/KRW", "US10Y", "WTI", "DXY", "KOSPI_vs_MA60", "SP500_vs_MA60", "US10Y-2Y"):
             assert by_name[name]["breached"] is False, f"{name} 예상외 breach"
         assert by_name["VIX"]["note"] == "정상 밴드"
-        assert by_name["US10Y-2Y"]["note"] == "정상"
+        # treasury 인자 미전달(=None) → macro_daily 선물 프록시(2YY=F) 폴백 경로.
+        assert by_name["US10Y-2Y"]["note"] == "정상 · 선물 프록시(2YY=F)"
         assert result["breaches"] == 0
 
     def test_insufficient_data_case(self, tmp_db):
@@ -322,6 +323,124 @@ class TestMacroThresholds:
         result = _calc_macro_thresholds("2026-09-03")
         assert result["items"] == []
         assert result["breaches"] == 0
+
+    def test_treasury_official_value_overrides_db_proxy(self, tmp_db, monkeypatch):
+        """treasury 공식값(FRED) 제공 시 US10Y-2Y가 macro_daily 선물 프록시가 아니라
+        treasury['spread_10y_2y']를 사용 — change는 bp 아니라 %p 소수 2자리, 나머지
+        7항목/전체 개수는 그대로.
+
+        W4 PIT 가드: treasury override는 kst_date_str이 "오늘"일 때만 적용되므로,
+        이 테스트가 실제 실행 날짜와 무관하게 결정적이도록 "오늘"을 kst_date로 고정한다."""
+        import kis_api.polymarket as poly_mod
+
+        conn = md._get_db()
+        md._ensure_market_data_tables(conn)
+        kst_date = "2026-09-03"
+
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 3, 15, 0, tzinfo=tz)
+        monkeypatch.setattr(poly_mod, "datetime", _FixedDatetime)
+
+        # us10y/us2y 프록시로는 0.45(us10y=4.55, us2y=4.10)가 나오도록 시딩 — treasury
+        # 공식값(0.15)과 확실히 달라야 override 여부를 판별할 수 있다.
+        self._seed_full(
+            conn, kst_date,
+            vix_latest=14.0,
+            usdkrw_latest=1360.0, usdkrw_prior=1358.0,
+            us10y_latest=4.55, us10y_prior=4.50,
+            us2y_latest=4.10,
+            wti_latest=79.0, wti_prior=80.0,
+            dxy_latest=99.2, dxy_prior=99.0,
+            kospi_latest_mult=1.02,
+            sp500_rows=60,
+        )
+        conn.close()
+
+        treasury = {"spread_10y_2y": 0.15, "spread_10y_2y_1w_ago": 0.55,
+                    "recession_signal": "주의 (역전 임박)"}
+        result = _calc_macro_thresholds(kst_date, treasury=treasury)
+        by_name = {it["name"]: it for it in result["items"]}
+
+        item = by_name["US10Y-2Y"]
+        assert item["value"] == 0.15           # treasury 공식값 — DB 프록시(0.45)가 아님
+        assert item["change"] == -0.4          # 0.15 - 0.55, %p 소수 2자리(bp 변환 없음)
+        assert item["breached"] is True         # 0.15 < 0.25
+        assert "Treasury 공식" in item["note"]
+        assert "1주 -0.40%p" in item["note"]    # 단위 표기(misc d) — %p, bp 아님
+        assert len(result["items"]) == 8        # 8항목 수 유지
+        # 다른 7항목은 이 케이스와 무관하게 정상 계산되어 있어야 함
+        assert by_name["VIX"]["value"] == 14.0
+
+    def test_treasury_ignored_when_kst_date_str_not_today(self, tmp_db, monkeypatch):
+        """W4 PIT 가드 — fetch_treasury_curve()는 항상 "현재" 시점의 최신 값만 반환하므로,
+        kst_date_str이 오늘(KST)이 아니면 treasury가 유효해도 무시하고 macro_daily
+        프록시로 폴백해야 한다(과거/미래 날짜에 오늘자 스프레드가 잘못 붙는 것 방지)."""
+        import kis_api.polymarket as poly_mod
+
+        conn = md._get_db()
+        md._ensure_market_data_tables(conn)
+        kst_date = "2026-09-03"  # "오늘"로 고정할 09-05보다 이전 날짜
+
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 5, 10, 0, tzinfo=tz)  # 오늘 = 09-05 ≠ kst_date
+        monkeypatch.setattr(poly_mod, "datetime", _FixedDatetime)
+
+        self._seed_full(
+            conn, kst_date,
+            vix_latest=14.0,
+            usdkrw_latest=1360.0, usdkrw_prior=1358.0,
+            us10y_latest=4.55, us10y_prior=4.50,
+            us2y_latest=4.10,      # DB 프록시 스프레드 = 0.45
+            wti_latest=79.0, wti_prior=80.0,
+            dxy_latest=99.2, dxy_prior=99.0,
+            kospi_latest_mult=1.02,
+            sp500_rows=60,
+        )
+        conn.close()
+
+        # treasury 자체는 완전히 유효한 값 — 그럼에도 날짜가 "오늘"이 아니므로 무시돼야 함.
+        treasury = {"spread_10y_2y": 0.15, "spread_10y_2y_1w_ago": 0.55,
+                    "recession_signal": "주의 (역전 임박)"}
+        result = _calc_macro_thresholds(kst_date, treasury=treasury)
+        by_name = {it["name"]: it for it in result["items"]}
+
+        item = by_name["US10Y-2Y"]
+        assert item["value"] == 0.45           # DB 프록시 — treasury(0.15) 무시됨
+        assert item["breached"] is False
+        assert "선물 프록시(2YY=F)" in item["note"]
+        assert len(result["items"]) == 8
+
+    def test_treasury_missing_or_error_falls_back_to_db_proxy(self, tmp_db):
+        """treasury가 None / error / spread_10y_2y 없음 → macro_daily 선물 프록시로 폴백
+        (기존 동작 그대로), note에 출처 표기."""
+        conn = md._get_db()
+        md._ensure_market_data_tables(conn)
+        kst_date = "2026-09-03"
+        self._seed_full(
+            conn, kst_date,
+            vix_latest=14.0,
+            usdkrw_latest=1360.0, usdkrw_prior=1358.0,
+            us10y_latest=4.55, us10y_prior=4.50,
+            us2y_latest=4.10,      # DB 프록시 스프레드 = 0.45
+            wti_latest=79.0, wti_prior=80.0,
+            dxy_latest=99.2, dxy_prior=99.0,
+            kospi_latest_mult=1.02,
+            sp500_rows=60,
+        )
+        conn.close()
+
+        for bad_treasury in (None, {"error": "fetch failed"}, {"spread_10y_2y": None}):
+            result = _calc_macro_thresholds(kst_date, treasury=bad_treasury)
+            by_name = {it["name"]: it for it in result["items"]}
+            item = by_name["US10Y-2Y"]
+            assert item["value"] == 0.45, f"폴백 실패: {bad_treasury!r}"
+            assert item["breached"] is False
+            assert "선물 프록시(2YY=F)" in item["note"]
+            assert len(result["items"]) == 8
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

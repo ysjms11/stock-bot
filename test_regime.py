@@ -7,6 +7,8 @@ import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 # kis_api 모듈 로드 전에 /data 디렉토리 문제 방지
 os.makedirs("/tmp/test_data", exist_ok=True)
 
@@ -31,6 +33,25 @@ from kis_api.regime import (
 )
 
 KST = timezone(timedelta(hours=9))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_kis_api_regime_state_file(tmp_path, monkeypatch):
+    """kis_api.regime.REGIME_STATE_FILE을 모든 테스트에서 강제 tmp 격리(안전망).
+
+    kis_api.regime 모듈은 `from ._config import REGIME_STATE_FILE`로 자기 네임스페이스에
+    독립 바인딩하므로, 위 파일 상단의 `kis_api.REGIME_STATE_FILE = ...`(패키지 표면 심볼)
+    패치는 kis_api.regime에 전파되지 않는다. 이 파일의 cmd_regime 호출 테스트는 전부
+    `@patch("kis_api.regime.REGIME_STATE_FILE", ...)` 데코레이터로 개별 보호되지만, 향후
+    데코레이터 없이 추가되는 테스트가 실수로 프로덕션 data/regime_state.json에 쓰는 사고를
+    막기 위한 마지막 방어선. autouse라 unittest.TestCase 메서드에도 자동 적용된다
+    (pytest는 데코레이터 없는 autouse fixture만 TestCase에 주입 가능).
+    기존 @patch 데코레이터는 테스트 본문 실행 중에만 이 값을 한 번 더 덮어쓰므로 충돌 없음.
+    """
+    monkeypatch.setattr(
+        kis_api.regime, "REGIME_STATE_FILE", str(tmp_path / "regime_state.json")
+    )
+    yield
 
 
 class TestZScore(unittest.TestCase):
