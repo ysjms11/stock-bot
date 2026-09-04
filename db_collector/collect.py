@@ -472,31 +472,81 @@ def is_rolled_back_today(date: str) -> bool:
 
     daily_collect_sanity_check(19:15/20:15/21:15/22:15 재실행 루프)가 이미 처리된
     미등록 휴장일 롤백을 "당일 0건 → 재수집 필요"로 오인해 collect_daily를 반복
-    재실행+알림하지 않도록 방어. 마커 파일 부재/파싱 실패 시 False(보수적으로 미롤백 취급).
+    재실행+알림하지 않도록 방어.
+
+    실패 모드별 반환값 (아래 둘은 보수 방향이 서로 반대다 — 혼동 주의):
+    - 마커 파일 자체 부재/파싱 실패, marker가 dict가 아님(배열/None 등), 또는 date 항목이
+      아예 없음 → False(보수적으로 "미롤백" 취급 — sanity가 정상적으로 재검사/재알림하게
+      둔다).
+    - date 항목은 있는데 그 안의 "at" 필드만 파싱 실패 → True(보수적으로 "유효한 롤백"
+      취급, 기존 방어 동작 유지). 이 경우는 False로 떨어뜨리면 오히려 위험하다: 이미
+      weekly_sanity_check가 "📅 자가롤백 처리일" 라인으로 해당 날짜를 노출하므로 침묵
+      위험이 없는 반면, False로 재판정하면 이미 휴장일로 처리된 날을 매주 헛백필
+      (backfill_day_via_chart)+헛알림으로 반복하게 된다.
 
     ⚠️ load_json(path, {})를 쓰면 default가 not None이라 마커 파일이 아직 없을 때도
     빈 dict를 디스크에 새로 써버린다(+ .lock 파일까지) — 조회일 뿐인 함수가 부작용으로
     파일을 생성하면 안 되므로 존재 여부를 먼저 확인한다.
+
+    마커 만료(30일, 읽기측): "at"이 30일 초과 경과한 항목은 무시(False)한다. 아주 오래된
+    마커가 weekly_sanity_check의 결손 감시를 영구히 죽이는 것을 방지한다(2026-09 리뷰).
+    holiday_rollback.json 자체가 무기한 누적되지 않게 하는 쓰기측 prune은
+    _persist_rollback_marker 참조 — 읽기측(여기)과 쓰기측 둘 다 있어야 실제로 누적이
+    방지된다.
     """
     path = _rollback_marker_path()
     if not os.path.exists(path):
         return False
     from kis_api._files import load_json
     marker = load_json(path, None) or {}
-    return date in marker
+    if not isinstance(marker, dict):
+        return False
+    entry = marker.get(date)
+    if not entry:
+        return False
+    at = entry.get("at") if isinstance(entry, dict) else None
+    if at:
+        try:
+            marked_dt = datetime.fromisoformat(at)
+            if (datetime.now(KST) - marked_dt) > timedelta(days=30):
+                return False
+        except Exception:
+            pass
+    return True
 
 
 def _persist_rollback_marker(date: str, result: dict):
-    """롤백 발생 사실을 {DATA_DIR}/holiday_rollback.json에 upsert (sanity 재실행 차단용)."""
+    """롤백 발생 사실을 {DATA_DIR}/holiday_rollback.json에 upsert (sanity 재실행 차단용).
+
+    쓰기측 prune(2026-09 리뷰): upsert할 때마다 기존 항목 중 "at"이 30일 초과 경과한
+    것을 함께 제거한다. is_rolled_back_today의 30일 만료는 읽기측(True/False 판정)만
+    바꿀 뿐 파일 자체를 줄이지 않으므로, 이 함수가 쓰기 시점에 실제로 걷어내야
+    holiday_rollback.json이 무기한 누적되지 않는다. "at" 파싱 실패 항목은 (읽기측과
+    동일하게) 보수적으로 삭제하지 않고 유지한다.
+    """
     from kis_api._files import load_json, save_json
     path = _rollback_marker_path()
     marker = load_json(path, {})
-    marker[date] = {
+    if not isinstance(marker, dict):
+        marker = {}
+    now = datetime.now(KST)
+    pruned = {}
+    for d, entry in marker.items():
+        at = entry.get("at") if isinstance(entry, dict) else None
+        if at:
+            try:
+                marked_dt = datetime.fromisoformat(at)
+                if (now - marked_dt) > timedelta(days=30):
+                    continue  # 만료 — prune
+            except Exception:
+                pass  # "at" 파싱 실패는 보수적으로 유지(삭제하지 않음)
+        pruned[d] = entry
+    pruned[date] = {
         "deleted": result["deleted"],
         "same_pct": result["pct"],
-        "at": datetime.now(KST).isoformat(),
+        "at": now.isoformat(),
     }
-    save_json(path, marker)
+    save_json(path, pruned)
 
 
 def _detect_holiday_duplicate(date: str, thresh: float = 0.98) -> dict | None:
@@ -616,6 +666,11 @@ async def _rollback_holiday_duplicate(detect: dict) -> dict:
     W1 close=0 가드: 매칭 same행의 50%+가 양일 모두 close=0이면(KRX 폴백 실패로 인한
     오탐 가능성) 롤백은 하되(중복 데이터를 남겨두지 않기 위해) 마커는 남기지 않아
     sanity 재실행이 다음 시도에서 자가치유할 수 있게 한다.
+
+    stock_master는 롤백 대상이 아니다: name/market/sector/sector_krx/std_code/
+    listing_shares/updated_at만 갖고(db_schema.sql 기준) 가격·날짜 컬럼이 없어, 휴장일에
+    UPSERT로 복제돼도 값 자체가 직전 거래일과 동일해 무해하다
+    (DELETE 필요 없음 — 이 함수는 daily_snapshot만 삭제한다).
     """
     date = detect["date"]
     conn = _get_db()

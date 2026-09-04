@@ -20,9 +20,8 @@ import os
 
 import pytest
 
+import mcp_tools.tools.files as files_mod
 from mcp_tools.tools.files import handle_read_file
-
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "data")
 
 _LINE_BYTES = 100  # "line%06d" (10) + padding(89) + "\n" (1) = 100 bytes, ASCII-only
 _BUDGET = 100 * 1024
@@ -48,46 +47,46 @@ def _write_lines_file(path: str, n_lines: int) -> str:
 
 
 @pytest.fixture
-def big_file():
+def _bot_root(tmp_path, monkeypatch):
+    """handle_read_file 등 4곳이 공유하는 base-dir 상수(mcp_tools.tools.files._BOT_ROOT)를
+    tmp_path로 monkeypatch — 프로덕션 data/ 디렉토리에 테스트 파일을 쓰고 지우는 부작용을
+    없앤다(2026-09 리뷰). rel 경로는 기존처럼 "data/<fname>"을 쓰므로 tmp_path 밑에도
+    동일하게 data/ 서브디렉토리를 만든다."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(files_mod, "_BOT_ROOT", str(tmp_path))
+    return data_dir
+
+
+@pytest.fixture
+def big_file(_bot_root):
     """150KB 파일 (1536 lines * 100 bytes = 153600 bytes = 150KB)."""
     fname = "_test_read_file_chunked_big.txt"
-    fpath = os.path.join(_DATA_DIR, fname)
+    fpath = os.path.join(str(_bot_root), fname)
     n_lines = 1536
     content = _write_lines_file(fpath, n_lines)
-    try:
-        yield f"data/{fname}", n_lines, content
-    finally:
-        if os.path.exists(fpath):
-            os.remove(fpath)
+    yield f"data/{fname}", n_lines, content
 
 
 @pytest.fixture
-def small_file():
+def small_file(_bot_root):
     """50KB 파일 (512 lines * 100 bytes = 51200 bytes = 50KB) — 기존 동작 회귀 확인용."""
     fname = "_test_read_file_chunked_small.txt"
-    fpath = os.path.join(_DATA_DIR, fname)
+    fpath = os.path.join(str(_bot_root), fname)
     n_lines = 512
     content = _write_lines_file(fpath, n_lines)
-    try:
-        yield f"data/{fname}", n_lines, content
-    finally:
-        if os.path.exists(fpath):
-            os.remove(fpath)
+    yield f"data/{fname}", n_lines, content
 
 
 @pytest.fixture
-def giant_line_file():
+def giant_line_file(_bot_root):
     """단일 거대 라인(150000 bytes, >100KB) + 뒤이은 짧은 라인 2개."""
     fname = "_test_read_file_chunked_giant_line.txt"
-    fpath = os.path.join(_DATA_DIR, fname)
+    fpath = os.path.join(str(_bot_root), fname)
     giant = ("A" * 150000) + "\n"
     content = giant + "short1\n" + "short2\n"
     _write_file(fpath, content)
-    try:
-        yield f"data/{fname}", content, giant
-    finally:
-        if os.path.exists(fpath):
-            os.remove(fpath)
+    yield f"data/{fname}", content, giant
 
 
 # ── 1. 100KB 초과 + lines 없음 → 첫 청크 즉시 반환 (안내에러 폐기) ────────
@@ -254,20 +253,16 @@ async def test_giant_line_sets_partial_line_and_skips_it(giant_line_file):
     assert "next_offset" not in follow  # 파일 끝 — 순회 종료
 
 
-async def test_giant_line_as_only_line_has_no_next_offset():
+async def test_giant_line_as_only_line_has_no_next_offset(_bot_root):
     """거대 라인이 파일의 마지막(유일한) 라인이면 next_offset이 없어야 함(잔여 접근 불가 안내만)."""
     fname = "_test_read_file_chunked_giant_only.txt"
-    fpath = os.path.join(_DATA_DIR, fname)
+    fpath = os.path.join(str(_bot_root), fname)
     content = ("B" * 150000)  # 개행 없는 단일 라인
     _write_file(fpath, content)
-    try:
-        result = await handle_read_file({"path": f"data/{fname}"})
-        assert result["partial_line"] is True
-        assert "next_offset" not in result
-        assert "바이트절단" in result["note"]
-    finally:
-        if os.path.exists(fpath):
-            os.remove(fpath)
+    result = await handle_read_file({"path": f"data/{fname}"})
+    assert result["partial_line"] is True
+    assert "next_offset" not in result
+    assert "바이트절단" in result["note"]
 
 
 # ── 9. lines/offset 정수 가드 + 음수 offset 보정 ─────────────────────────

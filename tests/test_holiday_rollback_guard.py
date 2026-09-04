@@ -7,19 +7,28 @@
 - db_collector.collect._rollback_holiday_duplicate: DELETE는 반드시 db_write_lock 안에서
   commit까지 한 블록(B1), zero_ratio>0.5면 롤백하되 마커 미기록(W1 close=0 가드).
 - db_collector.collect._resolve_holiday_duplicate: 판정→W1 확증→롤백 전체 오케스트레이션.
-- db_collector.is_rolled_back_today: 마커 존재/부재 판정, 부재 시 파일 생성 부작용 없음.
+- db_collector.is_rolled_back_today: 마커 존재/부재 판정, 부재 시 파일 생성 부작용 없음,
+  "at" 30일 초과 경과 마커는 만료로 간주해 무시, marker가 dict 아니면(배열/None) False
+  가드, entry의 "at" 파싱 자체가 불가능하면 보수적으로 True(유효한 롤백) 취급(2026-09 리뷰).
+- db_collector._persist_rollback_marker: upsert 시 30일 초과 경과 항목을 함께 prune —
+  is_rolled_back_today의 읽기측 만료만으론 파일이 줄지 않으므로 쓰기측에서도 걷어냄.
 - main_pkg.jobs.collect.daily_collect_sanity_check: 휴장일/롤백일 스킵(재실행+알림 안 함),
   정상 거래일 0건은 기존대로 재실행
 - main_pkg.jobs.collect.daily_collect_job: holiday_duplicate_rollback / duplicate_but_trading_day
   사유별 운영자 알림(plain text, W3), 기존 주말/공휴일 조용한 스킵은 무변경
 - collect_daily ↔ daily_collect_job 계약: 실제 collect_daily()(KIS/pykrx 네트워크 구간만 mock)가
   반환하는 report 키 구조를 daily_collect_job이 그대로 소비하는지 end-to-end로 확인
+- main_pkg.jobs.sanity.weekly_sanity_check: 자가롤백 마커로 결손에서 제외한 날짜를 조용히
+  빼지 않고 주간 메시지에 "📅 자가롤백 처리일" 로 명시(2026-09 리뷰, 침묵-0 금지 원칙).
+  마커일+진짜 누락일이 동시에 있어도 누락 라인엔 마커일이 섞이지 않고, 백필
+  (backfill_day_via_chart, 이 파일에서는 전부 AsyncMock)은 진짜 누락일에만 호출됨.
 
 실 DB/실 data 디렉토리는 건드리지 않는다 — 전부 tmp_path sqlite + monkeypatch
 (db_collector.DB_PATH / db_collector._DATA_DIR).
 """
 import asyncio
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,6 +36,7 @@ import pytest
 import db_collector
 import kis_api
 import main_pkg.jobs.collect as job_mod
+import main_pkg.jobs.sanity as sanity_mod
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -660,3 +670,195 @@ class TestCollectDailyJobContract:
         sent_text = ctx.bot.send_message.call_args.kwargs.get("text", "")
         assert "20261006" in sent_text
         assert "120" in sent_text
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 8. db_collector.is_rolled_back_today — 마커 30일 만료 (2026-09 리뷰)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class TestRollbackMarkerExpiry:
+    def test_marker_expires_after_30_days(self, tmp_env):
+        """"at"이 30일 초과 경과한 마커는 무시(False), 30일 이내는 여전히 유효(True) —
+        holiday_rollback.json 무기한 누적 방지 + 오래된 마커가 결손 감시를 영구히
+        죽이는 것 방지(2026-09 리뷰)."""
+        marker_path = str(tmp_env / "holiday_rollback.json")
+        stale_at = (datetime.now(db_collector.KST) - timedelta(days=31)).isoformat()
+        fresh_at = (datetime.now(db_collector.KST) - timedelta(days=29)).isoformat()
+        with open(marker_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "20260101": {"deleted": 10, "same_pct": 99, "at": stale_at},
+                "20260201": {"deleted": 5, "same_pct": 98, "at": fresh_at},
+            }, f)
+
+        assert db_collector.is_rolled_back_today("20260101") is False  # 31일 경과 → 만료
+        assert db_collector.is_rolled_back_today("20260201") is True   # 29일 경과 → 유효
+
+    def test_write_side_prunes_stale_entries_on_upsert(self, tmp_env):
+        """_persist_rollback_marker가 upsert 시 30일 초과 경과 항목을 실제로 제거하는지
+        (쓰기측 prune) — is_rolled_back_today의 30일 만료는 읽기측 판정만 바꿀 뿐 파일
+        자체를 줄이지 않으므로, 이 테스트가 없으면 "누적 방지" 문구가 docstring에만
+        존재하는 거짓 서술로 남는다(2026-09 리뷰)."""
+        marker_path = str(tmp_env / "holiday_rollback.json")
+        stale_at = (datetime.now(db_collector.KST) - timedelta(days=45)).isoformat()
+        with open(marker_path, "w", encoding="utf-8") as f:
+            json.dump({"20260101": {"deleted": 10, "same_pct": 99, "at": stale_at}}, f)
+
+        db_collector._persist_rollback_marker("20260901", {"deleted": 1, "pct": 100})
+
+        with open(marker_path, encoding="utf-8") as f:
+            marker = json.load(f)
+        assert "20260101" not in marker  # 45일 경과 → prune됨
+        assert "20260901" in marker      # 새로 upsert한 항목은 유지
+
+    def test_at_unparseable_treated_as_valid_rollback(self, tmp_env):
+        """verifier 케이스 (b): 마커 항목은 있는데 그 안의 "at"이 파싱 불가능한 값이면
+        만료 여부를 판단할 수 없으므로 보수적으로 "유효한 롤백"으로 취급(True)한다 — False로
+        떨어뜨리면 이미 처리된 휴장일을 weekly_sanity_check가 매주 헛백필
+        (backfill_day_via_chart)+헛알림으로 반복하게 된다. 이미 "📅 자가롤백 처리일"
+        라인으로 날짜가 노출되므로 침묵 위험은 없다(2026-09 리뷰, is_rolled_back_today
+        docstring 상충 정정과 짝을 이루는 회귀 테스트)."""
+        marker_path = str(tmp_env / "holiday_rollback.json")
+        with open(marker_path, "w", encoding="utf-8") as f:
+            json.dump({"20260301": {"deleted": 3, "same_pct": 99, "at": "not-a-timestamp"}}, f)
+
+        assert db_collector.is_rolled_back_today("20260301") is True
+
+    def test_marker_not_dict_returns_false(self, tmp_env):
+        """holiday_rollback.json이 (손상 등으로) dict가 아니라 배열/None이면
+        AttributeError 없이 보수적으로 False(미롤백 취급) — isinstance 가드(2026-09 리뷰)."""
+        marker_path = str(tmp_env / "holiday_rollback.json")
+        with open(marker_path, "w", encoding="utf-8") as f:
+            json.dump(["20260101", "20260102"], f)
+
+        assert db_collector.is_rolled_back_today("20260101") is False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 9. main_pkg.jobs.sanity.weekly_sanity_check — 자가롤백 제외일 가시화 (2026-09 리뷰)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class TestWeeklySanityRollbackVisibility:
+    """조용히 빼지 않기 — 자가롤백 마커로 결손에서 제외한 날짜가 있으면(다른 진짜 누락
+    영업일이 없어 종전이면 메시지 자체가 발송 안 됐을 상황에도) 주간 메시지에
+    "📅 자가롤백 처리일"로 명시한다."""
+
+    @pytest.fixture(autouse=True)
+    def _safety(self, tmp_env, monkeypatch):
+        """weekly_sanity_check의 백필 분기(if missing: ... backfill_day_via_chart)가 진짜
+        누락일이 있는 테스트에서 실행될 수 있으므로, 실 KIS API를 때리지 않도록
+        backfill_day_via_chart를 AsyncMock으로 무력화 + UNIVERSE_FILE을 프로덕션
+        data/stock_universe.json 대신 소규모 tmp 파일로 patch한다(2026-09 리뷰 —
+        기존 테스트는 missing이 항상 빈 리스트라 이 분기가 실행되지 않아 드러나지 않았음)."""
+        mock_backfill = AsyncMock(return_value={"ok": 1, "fail": 0})
+        monkeypatch.setattr(db_collector, "backfill_day_via_chart", mock_backfill)
+        universe_path = tmp_env / "stock_universe.json"
+        universe_path.write_text(json.dumps({"codes": {"000001": "테스트종목"}}), encoding="utf-8")
+        monkeypatch.setattr(sanity_mod, "UNIVERSE_FILE", str(universe_path))
+        self.mock_backfill = mock_backfill
+
+    @staticmethod
+    def _bizdays(now):
+        bizdays = []
+        d = now.date() - timedelta(days=1)
+        for _ in range(21):
+            if len(bizdays) >= 10:
+                break
+            if sanity_mod._is_krx_business_day(d):
+                bizdays.append(d.strftime("%Y%m%d"))
+            d -= timedelta(days=1)
+        return bizdays
+
+    def test_rolled_back_day_shown_even_when_nothing_else_missing(self, tmp_env, monkeypatch):
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 6, 22, 7, 5, tzinfo=tz)
+        monkeypatch.setattr(sanity_mod, "datetime", _FixedDatetime)
+        # 확장 sanity_warnings 블록(raw sqlite3.connect)이 프로덕션 data/stock.db를 건드리지
+        # 않도록 _DATA_DIR도 tmp로 리다이렉트한다. main_pkg.jobs.sanity는 kis_api._DATA_DIR을
+        # 별도로 바인딩하므로(`from kis_api import _DATA_DIR`) db_collector 쪽 tmp_env 패치와는
+        # 무관 — 여기서 직접 패치해야 한다.
+        monkeypatch.setattr(sanity_mod, "_DATA_DIR", str(tmp_env))
+
+        bizdays = self._bizdays(datetime(2026, 6, 22, 7, 5))
+        excluded = bizdays[3]
+        prev_for_dup = bizdays[4]  # _detect_holiday_duplicate가 자동 선택할 직전 거래일
+        keep = [b for b in bizdays if b != excluded]
+
+        conn = db_collector._get_db()
+        for idx, b in enumerate(keep):
+            # 500은 have 판정 임계(>=500)의 경계값이라 브리틀함 — 600으로 여유를 둔다
+            # (2026-09 리뷰).
+            _seed_snapshot(conn, b, 600, offset=idx * 3)
+        # excluded를 prev_for_dup 종가 복제로 시딩 → 휴장일 복제로 판정되게 함
+        _seed_snapshot(conn, excluded, 120, same_close_as=prev_for_dup)
+        conn.close()
+
+        detect = db_collector._detect_holiday_duplicate(excluded)
+        assert detect is not None
+        asyncio.run(db_collector._rollback_holiday_duplicate(detect))
+        assert db_collector.is_rolled_back_today(excluded) is True
+
+        ctx = MagicMock()
+        ctx.bot.send_message = AsyncMock(return_value=None)
+        asyncio.run(sanity_mod.weekly_sanity_check(ctx))
+
+        sent_texts = [c.kwargs.get("text", "") for c in ctx.bot.send_message.call_args_list]
+        assert any(excluded in t and "자가롤백 처리일" in t for t in sent_texts), sent_texts
+        # 진짜 결손이 아니므로 "누락 영업일" 경고는 없어야 함 (조용히 빼는 대신 명시만 추가)
+        assert not any("daily_snapshot 누락 영업일" in t for t in sent_texts)
+        # 진짜 누락이 없으므로 백필도 호출되지 않아야 함
+        self.mock_backfill.assert_not_called()
+
+    def test_marker_day_excluded_from_missing_line_and_backfill_targets_real_gap_only(
+        self, tmp_env, monkeypatch
+    ):
+        """verifier 케이스 (a): 마커일 + 진짜 누락일이 동시에 있을 때 —
+        (1) "⚠️ daily_snapshot 누락 영업일" 라인에 마커일은 없고 진짜 누락일만 있어야 하며
+        (2) backfill_day_via_chart는 진짜 누락일에 대해서만 정확히 1회 호출돼야 한다
+        (마커일까지 재백필하면 헛수집 반복, 2026-09 리뷰)."""
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 6, 22, 7, 5, tzinfo=tz)
+        monkeypatch.setattr(sanity_mod, "datetime", _FixedDatetime)
+        monkeypatch.setattr(sanity_mod, "_DATA_DIR", str(tmp_env))
+
+        bizdays = self._bizdays(datetime(2026, 6, 22, 7, 5))
+        marker_day = bizdays[3]
+        missing_day = bizdays[5]  # snapshot 자체를 시딩하지 않음 → 진짜 결손
+        prev_for_dup = bizdays[4]  # _detect_holiday_duplicate가 자동 선택할 직전 거래일
+        keep = [b for b in bizdays if b not in (marker_day, missing_day)]
+
+        conn = db_collector._get_db()
+        for idx, b in enumerate(keep):
+            _seed_snapshot(conn, b, 600, offset=idx * 3)
+        # marker_day를 prev_for_dup 종가 복제로 시딩 → 휴장일 복제 판정 → 롤백+마커
+        _seed_snapshot(conn, marker_day, 120, same_close_as=prev_for_dup)
+        conn.close()
+
+        detect = db_collector._detect_holiday_duplicate(marker_day)
+        assert detect is not None
+        asyncio.run(db_collector._rollback_holiday_duplicate(detect))
+        assert db_collector.is_rolled_back_today(marker_day) is True
+        assert db_collector.is_rolled_back_today(missing_day) is False  # 마커 없음, 진짜 결손
+
+        ctx = MagicMock()
+        ctx.bot.send_message = AsyncMock(return_value=None)
+        asyncio.run(sanity_mod.weekly_sanity_check(ctx))
+
+        # missing과 rolled_back_days가 둘 다 있으면 weekly_sanity_check가 한 메시지에
+        # "\n".join으로 라인을 합쳐 보낸다 — 메시지 전체가 아니라 각 라인 단위로 검사해야
+        # marker_day가 (다른 라인인) "자가롤백 처리일" 쪽에 있는 것과 혼동하지 않는다.
+        sent_texts = [c.kwargs.get("text", "") for c in ctx.bot.send_message.call_args_list]
+        combined = next((t for t in sent_texts if "daily_snapshot 누락 영업일" in t), None)
+        assert combined is not None, sent_texts
+        lines = combined.splitlines()
+        missing_line = next(l for l in lines if l.startswith("⚠️ daily_snapshot 누락 영업일"))
+        assert missing_day in missing_line
+        assert marker_day not in missing_line  # 마커일은 누락 라인에서 부재해야 함
+
+        rollback_line = next(l for l in lines if l.startswith("📅 자가롤백 처리일"))
+        assert marker_day in rollback_line
+
+        # 백필은 진짜 누락일에 대해서만 정확히 1회
+        called_dates = [c.args[0] for c in self.mock_backfill.call_args_list]
+        assert called_dates == [missing_day]

@@ -30,3 +30,7 @@ def pytest_configure(config):
         "markers",
         "live: external network call required (skip in CI with -m 'not live')",
     )
+
+
+# _isolate_regime_state_file fixture는 루트 conftest.py로 이동함(2026-09 리뷰) —
+# 루트 test_*.py 25개도 함께 커버하기 위함. 이 파일에서는 삭제.

@@ -55,6 +55,13 @@ except ImportError:
     _REPORT_AVAILABLE = False
     REPORT_DB_PATH = ""
 
+# stock-bot 레포 루트 (mcp_tools/tools/files.py에서 3단계 상위). read_file/write_file/
+# list_files/read_report_pdf 4곳의 경로탈출 가드가 공유하는 base — 모듈 속성으로 뽑아둬야
+# 테스트가 실제 레포 대신 tmp 디렉토리를 가리키도록 monkeypatch할 수 있다
+# (2026-09 리뷰: 이전엔 함수마다 인라인 재계산이라 patch 지점이 없어 테스트가 실제
+# data/ 밑에 파일을 쓰고 지우는 부작용이 있었음).
+_BOT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
 
 async def handle_read_file(arguments: dict) -> dict | list:
     result = None
@@ -70,7 +77,7 @@ async def handle_read_file(arguments: dict) -> dict | list:
         if not any(rel.endswith(ext) for ext in _allowed_ext):
             result = {"error": f"허용 확장자: {', '.join(_allowed_ext)}"}
         else:
-            _base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+            _base = _BOT_ROOT
             _fpath = os.path.realpath(os.path.join(_base, rel))
             # 5/9 hardening: prefix collision 차단 (os.sep 경계 검사)
             if _fpath != _base and not _fpath.startswith(_base + os.sep):
@@ -181,7 +188,7 @@ async def handle_write_file(arguments: dict) -> dict | list:
         elif len(content.encode("utf-8")) > 200 * 1024:
             result = {"error": f"내용 크기 초과 (최대 200KB)"}
         else:
-            _base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+            _base = _BOT_ROOT
             _fpath = os.path.realpath(os.path.join(_base, rel))
             # 5/9 hardening: prefix collision 차단 (os.sep 경계 검사)
             if _fpath != _base and not _fpath.startswith(_base + os.sep):
@@ -201,7 +208,7 @@ async def handle_list_files(arguments: dict) -> dict | list:
     if ".." in rel or rel.startswith("/"):
         result = {"error": "상위 디렉토리 접근 불가 (../ 및 절대경로 차단)"}
     else:
-        _base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+        _base = _BOT_ROOT
         _dpath = os.path.realpath(os.path.join(_base, rel))
         # 5/9 hardening: prefix collision 차단 (os.sep 경계 검사)
         if _dpath != _base and not _dpath.startswith(_base + os.sep):
@@ -300,7 +307,7 @@ async def handle_read_report_pdf(arguments: dict) -> dict | list:
                 # 보안: path traversal 차단 (세 모드 공통)
                 _pdf_path = os.path.realpath(_row["pdf_path"])
                 _data_base = os.path.realpath(_DATA_DIR) if _DATA_DIR else ""
-                _bot_base  = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+                _bot_base  = _BOT_ROOT
                 # Fix: explicit parens + os.sep boundary so that neither branch
                 # is dead and a sibling directory (e.g. /…/stock-bot-evil) cannot
                 # pass via a prefix match without the separator boundary.

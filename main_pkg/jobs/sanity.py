@@ -60,14 +60,32 @@ async def weekly_sanity_check(context):
         # 옛 1500 임계로는 백필 완료일을 영구 재판정(무한 루프)함.
         # >=500 이면 백필 완료로 인정, 진짜 결손(0~수백 미만)만 누락 판정 (2026-08-16 리뷰)
         have = {r[0] for r in rows if r[1] >= 500}
-        # 미등록 휴장일 자가롤백 마커(collect_daily의 복제-감지 가드)에 있는 날짜는 제외 —
-        # 이미 "휴장일 추정"으로 판정·롤백된 날을 결손으로 재판정하면 매주 헛백필
-        # (backfill_day_via_chart)과 헛알림이 반복된다.
-        missing = [b for b in bizdays if b not in have and not is_rolled_back_today(b)]
-        if missing:
-            msg = f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}"
-            await _safe_send(context, msg)
+        # 미등록 휴장일 자가롤백 마커(collect_daily의 복제-감지 가드)에 있는 날짜는 결손
+        # 판정에서 제외한다 — 단, 조용히 빼지 않고 주간 메시지에 처리일을 명시한다(침묵-0
+        # 금지 원칙, 2026-09 리뷰). is_rolled_back_today가 30일 초과 마커를 자체 만료
+        # 처리하므로 여기서 별도 필터링은 불필요.
+        rolled_back_days = sorted(
+            b for b in bizdays if b not in have and is_rolled_back_today(b)
+        )
+        missing = [b for b in bizdays if b not in have and b not in rolled_back_days]
+        if missing or rolled_back_days:
+            msg_lines = []
+            if missing:
+                msg_lines.append(f"⚠️ daily_snapshot 누락 영업일: {', '.join(missing)}")
+            if rolled_back_days:
+                msg_lines.append(
+                    f"📅 자가롤백 처리일(휴장 추정): {', '.join(rolled_back_days)}"
+                )
+                msg_lines.append(
+                    "→ 휴장일이면 `db_collector/_config.py` `_KR_MARKET_HOLIDAYS` 등록"
+                )
+            # 백틱·언더스코어 포함 라인이 섞여 들어올 수 있어 _safe_send 기본값인
+            # parse_mode="Markdown"에 맡기지 않고 명시적으로 plain text 발송한다
+            # (2026-09 리뷰 — _safe_send에 파싱 실패 시 plain 폴백은 있지만, 예방적으로
+            # 처음부터 parse_mode=None으로 보내 애초에 파싱 실패/오렌더링 여지를 없앤다).
+            await _safe_send(context, "\n".join(msg_lines), parse_mode=None)
 
+        if missing:
             # 누락 영업일 감지 후 자동 백필 (학습 #28 영구 대응)
             # 2026-08-16 리뷰: 회당 최대 5일 캡(오래된 날짜 우선) + 30분 전체 타임아웃
             # — 07:15/07:20 잡·KIS API 레이트리밋과의 겹침을 제한. 캡 초과분은
